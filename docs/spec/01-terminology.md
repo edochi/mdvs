@@ -1,0 +1,153 @@
+# Terminology
+
+**Status: DRAFT**
+
+Canonical definitions for all terms used across mdvs specs. Every spec references this document rather than redefining terms.
+
+---
+
+## Core Concepts
+
+### Vault
+
+The target directory of markdown files that mdvs indexes. Any directory containing `.md` files — an Obsidian vault, a Hugo content directory, a Zettelkasten folder, a flat notes directory. mdvs makes no assumptions about the directory's structure or tooling.
+
+### Frontmatter
+
+YAML, TOML, or JSON metadata block at the top of a markdown file, delimited by `---` (YAML) or `+++` (TOML). Extracted by `gray_matter`. Not all files have frontmatter; files without it are still indexed with NULL metadata.
+
+### Field
+
+A single key in a file's frontmatter (e.g., `title`, `tags`, `date`). Fields have inferred or explicitly declared types. Defined in `frontmatter.toml`.
+
+### Field Schema
+
+The set of all field definitions in `frontmatter.toml`, including types, validation rules, and promotion flags. Shared between `mfv` and `mdvs`.
+
+### Promoted Field
+
+A frontmatter field that becomes a typed column on the `mdfiles` DuckDB table instead of being stored in the JSON `metadata` column. Selected by the user during `mdvs init`. Enables direct SQL filtering (e.g., `WHERE tags @> ['rust']`) without JSON extraction functions. The `promoted` flag in `frontmatter.toml` is mdvs-specific and ignored by `mfv`.
+
+### Metadata Column
+
+The `metadata JSON` column on the `mdfiles` table. Stores all non-promoted frontmatter fields as a JSON object. Queryable via DuckDB JSON functions (e.g., `metadata->>'author'`).
+
+### Chunk
+
+A segment of a markdown file's body, produced by semantic splitting via `text-splitter`'s `MarkdownSplitter`. Each chunk is a self-contained piece of content that respects a configurable maximum size. Chunks are the unit of embedding and vector search — search results resolve to chunks, which map back to files via `filename`.
+
+### Plain Text
+
+The result of stripping all markdown syntax from a chunk via `pulldown-cmark`. Only `Event::Text(...)` content is retained. This clean text is what gets embedded and stored in the `plain_text` column. The stripping removes bold, italic, links, code fences, headings markers, list markers, etc.
+
+### Embedding
+
+A fixed-size floating-point vector (`Vec<f32>`) representing the semantic meaning of a chunk's plain text. Produced by a Model2Vec model. Stored as `FLOAT[N]` in DuckDB where N is the model's output dimension (e.g., 256).
+
+### Content Hash
+
+A hash (xxhash or blake3) of the full file content (frontmatter + body). Stored per-file in `mdfiles.content_hash`. Used for incremental indexing — only files whose hash has changed are reprocessed.
+
+---
+
+## Models and Embeddings
+
+### Model2Vec
+
+A family of static embedding models that tokenize input, look up pre-computed token embeddings, and mean-pool. No transformer forward pass, no GPU required. Inference is effectively instant. The `model2vec-rs` Rust crate handles download, caching, and inference.
+
+### POTION Model
+
+A specific family of Model2Vec models from `minishlab`. The default model is `minishlab/potion-multilingual-128M` (256-dimensional, ~30MB, 101 languages).
+
+### Model Identity
+
+Three values that uniquely identify the model used to produce embeddings in a database:
+
+| Field | Source | Purpose |
+|---|---|---|
+| **Model ID** | HuggingFace repo ID (e.g., `minishlab/potion-multilingual-128M`) | Identifies the model family |
+| **Model Dimension** | Output vector size (e.g., 256) | Schema validation for `FLOAT[N]` |
+| **Model Revision** | Git commit SHA of the downloaded snapshot | Detects silent model weight updates |
+
+Stored in `vault_meta`. See [Model Mismatch Workflow](30-workflows/model-mismatch.md).
+
+### HNSW Index
+
+Hierarchical Navigable Small World graph index on the `chunks.embedding` column. Created by DuckDB's `vss` community extension. Enables fast approximate nearest neighbor search with cosine distance metric.
+
+---
+
+## Database
+
+### Database File
+
+The file `.mdvs.duckdb` located at the root of the vault. Co-located with the data so it's portable — move the directory, the index follows. Should be `.gitignore`-d.
+
+### `vault_meta` Table
+
+Key-value table storing index configuration: model identity, promoted field list, chunk size, vault path, timestamps. See [Database Schema](20-database/schema.md).
+
+### `mdfiles` Table
+
+One row per markdown file. Contains the filename (primary key), dynamically generated promoted columns, a JSON metadata column, and a content hash. Schema varies per vault based on which fields the user promoted.
+
+### `chunks` Table
+
+One row per semantic chunk. Contains chunk ID, parent filename (FK to `mdfiles`), chunk index, nearest heading, plain text, embedding vector, and character count.
+
+---
+
+## Configuration
+
+### `frontmatter.toml`
+
+Field schema file shared between `mfv` and `mdvs`. Defines field types, validation rules, and promotion flags. Generated by `mfv init` or `mdvs init`. See [Configuration: frontmatter.toml](40-configuration/frontmatter-toml.md).
+
+### `.mdvs.toml`
+
+Search-specific settings file used only by `mdvs`. Configures model selection, chunk sizing, storage options, search behavior, and search defaults. See [Configuration: .mdvs.toml](40-configuration/mdvs-toml.md).
+
+---
+
+## Tools
+
+### mdvs
+
+The full semantic search CLI binary (~20MB). Depends on `mdvs-schema` and `mfv` crates. Provides indexing, search, validation, and export commands.
+
+### mfv (Markdown Frontmatter Validator)
+
+Standalone frontmatter validation CLI binary (~2MB). No DuckDB, no embeddings. Independently publishable. Useful for CI pipelines, blog linting, documentation validation.
+
+### `mdvs-schema`
+
+Shared library crate. Defines field types, the type system, and TOML parsing for `frontmatter.toml`. Dependency of both `mfv` and `mdvs`.
+
+---
+
+## Operations
+
+### Incremental Indexing
+
+The default indexing mode. Compares content hashes to determine which files are new, modified, deleted, or unchanged. Only reprocesses changed files.
+
+### Reindex
+
+Full rebuild of all embeddings. Nulls all existing embeddings and recomputes them from stored `plain_text`. Does not require filesystem re-read. Triggered by `mdvs reindex`, typically after a model change.
+
+### Note-Level Ranking
+
+Search ranking strategy that groups chunk-level results by file. A file's score is the **maximum similarity** (minimum cosine distance) across all its chunks. The snippet and heading shown are from the best-matching chunk.
+
+---
+
+## Related Documents
+
+- [Database Schema](20-database/schema.md)
+- [Configuration: frontmatter.toml](40-configuration/frontmatter-toml.md)
+- [Configuration: .mdvs.toml](40-configuration/mdvs-toml.md)
+- [Workflow: Model Mismatch](30-workflows/model-mismatch.md)
+- [Crate: mdvs-schema](10-crates/mdvs-schema/spec.md)
+- [Crate: mfv](10-crates/mfv/spec.md)
+- [Crate: mdvs](10-crates/mdvs/spec.md)
