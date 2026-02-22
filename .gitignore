@@ -21,7 +21,8 @@ target
 #.idea/
 
 # Obsidian
-*/.obsidian/workspace.json
+.obsidian/
+**/.obsidian/
 
 # macOS
 .DS_Store
