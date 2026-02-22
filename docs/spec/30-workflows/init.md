@@ -126,7 +126,7 @@ sequenceDiagram
 
     %% Database setup
     CLI->>DB: Create .mdvs.duckdb
-    CLI->>DB: INSTALL vss FROM community; LOAD vss;
+    CLI->>DB: INSTALL vss FROM community, LOAD vss
     CLI->>DB: CREATE TABLE vault_meta (...)
     CLI->>DB: INSERT vault_meta keys (model identity, promoted fields, etc.)
     CLI->>DB: CREATE TABLE mdfiles (...dynamic promoted columns...)
