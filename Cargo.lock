@@ -1685,6 +1685,7 @@ dependencies = [
  "anyhow",
  "assert_cmd",
  "assert_fs",
+ "chrono",
  "clap",
  "globset",
  "gray_matter",

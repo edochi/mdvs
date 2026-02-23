@@ -4,7 +4,7 @@ use std::process;
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 
-use mdvs_schema::{FieldDef, Schema, auto_promote, discover_fields};
+use mdvs_schema::{FieldDef, LockFile, Schema, auto_promote, discover_fields};
 use mfv::output::{OutputFormat, format_diagnostics};
 use mfv::scan::scan_directory;
 use mfv::validate::validate;
@@ -19,8 +19,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Scan markdown files and discover frontmatter fields
-    Scan {
+    /// Initialize config by scanning markdown files and discovering frontmatter fields
+    Init {
         /// Directory to scan
         #[arg(long, default_value = ".")]
         dir: PathBuf,
@@ -33,9 +33,17 @@ enum Command {
         #[arg(long, default_value = "0.5")]
         threshold: f64,
 
-        /// Write config to file (default: mfv.toml if flag present with no value)
-        #[arg(long, num_args = 0..=1, default_missing_value = "mfv.toml")]
-        output: Option<PathBuf>,
+        /// Config file path to write
+        #[arg(long, default_value = "mfv.toml")]
+        config: PathBuf,
+
+        /// Overwrite existing config
+        #[arg(long)]
+        force: bool,
+
+        /// Print discovery table only, write nothing
+        #[arg(long)]
+        dry_run: bool,
     },
 
     /// Validate frontmatter against schema
@@ -58,12 +66,14 @@ fn main() {
     let cli = Cli::parse();
 
     let result = match cli.command {
-        Command::Scan {
+        Command::Init {
             dir,
             glob,
             threshold,
-            output,
-        } => cmd_scan(&dir, &glob, threshold, output.as_deref()),
+            config,
+            force,
+            dry_run,
+        } => cmd_init(&dir, &glob, threshold, &config, force, dry_run),
         Command::Check {
             dir,
             schema,
@@ -77,9 +87,23 @@ fn main() {
     }
 }
 
-fn cmd_scan(dir: &Path, glob: &str, threshold: f64, output: Option<&Path>) -> Result<()> {
+fn cmd_init(
+    dir: &Path,
+    glob: &str,
+    threshold: f64,
+    config_path: &Path,
+    force: bool,
+    dry_run: bool,
+) -> Result<()> {
     if !dir.is_dir() {
         bail!("{} is not a directory", dir.display());
+    }
+
+    if !dry_run && config_path.exists() && !force {
+        bail!(
+            "{} already exists (use --force to overwrite)",
+            config_path.display()
+        );
     }
 
     eprintln!("Scanning {}...", dir.display());
@@ -93,51 +117,74 @@ fn cmd_scan(dir: &Path, glob: &str, threshold: f64, output: Option<&Path>) -> Re
 
     let frontmatters: Vec<Option<&serde_json::Value>> =
         files.iter().map(|f| f.frontmatter.as_ref()).collect();
+    let files_with_frontmatter = frontmatters.iter().filter(|f| f.is_some()).count();
     let mut fields = discover_fields(&frontmatters);
     auto_promote(&mut fields, total, threshold);
 
-    // Print field table to stdout
-    println!(
+    // Print field table to stderr
+    eprintln!(
         "{:<20} {:<12} {:>5}/{:<5} Promoted",
         "Field", "Type", "Count", "Total"
     );
-    println!("{}", "-".repeat(56));
+    eprintln!("{}", "-".repeat(56));
     for f in &fields {
         let marker = if f.promoted { "Y" } else { "" };
-        println!(
+        eprintln!(
             "{:<20} {:<12} {:>5}/{:<5} {}",
             f.name, f.field_type, f.count, total, marker
         );
     }
 
-    if let Some(output_path) = output {
-        // Build schema from discovered fields
-        let field_defs: Vec<FieldDef> = fields
-            .iter()
-            .map(|f| FieldDef {
-                name: f.name.clone(),
-                field_type: f.field_type.clone(),
-                required: false,
-                paths: vec![],
-                pattern: None,
-                values: vec![],
-                promoted: f.promoted,
-            })
-            .collect();
-
-        let schema = Schema {
-            glob: glob.to_string(),
-            fields: field_defs,
-            promote_threshold: Some(threshold),
-        };
-
-        let toml_str = schema.to_toml_string();
-        std::fs::write(output_path, &toml_str)
-            .with_context(|| format!("failed to write {}", output_path.display()))?;
-        eprintln!("\nWrote {}", output_path.display());
+    if dry_run {
+        return Ok(());
     }
 
+    // Build schema from discovered fields
+    let field_defs: Vec<FieldDef> = fields
+        .iter()
+        .map(|f| FieldDef {
+            name: f.name.clone(),
+            field_type: f.field_type.clone(),
+            required: false,
+            paths: vec![],
+            pattern: None,
+            values: vec![],
+            promoted: f.promoted,
+        })
+        .collect();
+
+    let schema = Schema {
+        glob: glob.to_string(),
+        fields: field_defs,
+        promote_threshold: Some(threshold),
+    };
+
+    let toml_str = schema.to_toml_string();
+    std::fs::write(config_path, &toml_str)
+        .with_context(|| format!("failed to write {}", config_path.display()))?;
+    eprintln!("\nWrote {}", config_path.display());
+
+    // Write lock file next to config
+    let lock_path = lock_path_for(config_path);
+    let generated_at = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S").to_string();
+    let lock = LockFile::from_discovery(
+        &fields,
+        total,
+        files_with_frontmatter,
+        glob,
+        threshold,
+        &generated_at,
+    );
+    std::fs::write(&lock_path, lock.to_toml_string())
+        .with_context(|| format!("failed to write {}", lock_path.display()))?;
+    eprintln!("Wrote {}", lock_path.display());
+
     Ok(())
+}
+
+/// Derive the lock file path from a config path: `foo.toml` → `foo.lock`.
+fn lock_path_for(config_path: &Path) -> PathBuf {
+    config_path.with_extension("lock")
 }
 
 /// Resolve schema path by precedence:

@@ -50,7 +50,15 @@ Cargo workspace with three crates:
 Both tools share the same TOML schema structure (`[[fields.field]]` array-of-tables format). Each tool looks for its own config file first:
 
 - **`mfv.toml`** — standalone mfv users; `mfv check` precedence: `--schema` → `mfv.toml` → `mdvs.toml`
+- **`mfv.lock`** — auto-generated discovery snapshot from `mfv init`. Captures all fields, types, counts, promoted status.
 - **`mdvs.toml`** — used by mdvs (also found by mfv as fallback). Contains field schema + search-specific sections (model, chunk size, storage, search defaults). Unknown sections silently ignored.
+
+### mfv Commands
+
+- `init` — discover fields, write config (`mfv.toml`) + lock (`mfv.lock`), print frequency table to stderr
+  - `--dir <path>` (default `.`), `--glob <pattern>` (default `**/*.md`), `--threshold <f64>` (default `0.5`)
+  - `--config <path>` (default `mfv.toml`), `--force` (overwrite existing), `--dry-run` (print table only)
+- `check` — validate files against schema (unchanged)
 
 ## Key Dependencies
 

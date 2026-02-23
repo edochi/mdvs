@@ -20,11 +20,12 @@ mdvs/
 │   │       ├── field_type.rs      # FieldType enum (String, Date, Boolean, etc.)
 │   │       ├── field_def.rs       # FieldDef struct, RawFieldDef serde intermediate
 │   │       ├── discovery.rs       # discover_fields(), auto_promote(), infer_type()
+│   │       ├── lock.rs           # LockFile — discovery snapshot (mfv.lock / mdvs.lock)
 │   │       └── schema.rs         # Schema parsing, rules_for_path(), TOML roundtrip
 │   ├── mfv/                       # library + binary: Markdown Frontmatter Validator
 │   │   ├── src/
 │   │   │   ├── lib.rs             # module re-exports
-│   │   │   ├── main.rs            # CLI: scan + check subcommands
+│   │   │   ├── main.rs            # CLI: init + check subcommands
 │   │   │   ├── extract.rs         # YAML/TOML frontmatter extraction → JSON
 │   │   │   ├── scan.rs            # directory walking + glob filtering
 │   │   │   ├── validate.rs        # validate(files, schema) → Vec<Diagnostic>
@@ -183,7 +184,7 @@ Note: `N` in `FLOAT[N]` is determined at init time based on the chosen model's o
 
 Not all notes have frontmatter, and those that do may have wildly different fields depending on the user's workflow (Obsidian, Zettelkasten, blog, research notes, etc.). Rather than hardcoding assumptions about which fields matter, `mdvs` discovers them from the config file.
 
-**Field discovery** is done via `mfv scan`, which walks the directory, extracts frontmatter from all matching files, and produces a frequency table. The `--output` flag writes this as a config file. Fields are auto-promoted based on a configurable threshold (fraction of files a field must appear in). The user can then edit the config to adjust types, add validation rules, and toggle `promoted` flags.
+**Field discovery** is done via `mfv init`, which walks the directory, extracts frontmatter from all matching files, and produces a frequency table. It writes both a config file (`mfv.toml`) and a lock file (`mfv.lock`) that captures the full discovery snapshot. Fields are auto-promoted based on a configurable threshold (fraction of files a field must appear in). The user can then edit the config to adjust types, add validation rules, and toggle `promoted` flags.
 
 Field definitions (including `promoted = true`) are stored in `mdvs.toml`, and the promoted list is also stored in `vault_meta` for runtime validation. No interactive prompts — everything is config-driven.
 
@@ -200,7 +201,7 @@ The user can override inferred types in config if needed, but the defaults shoul
 
 **No frontmatter at all**: the note still gets indexed — promoted columns are NULL, metadata is `{}`, and the full content is still chunked and embedded.
 
-**Config-driven**: field promotion is controlled entirely by the config file. There are no interactive prompts — `mfv scan --output` generates the initial config, and the user edits it from there.
+**Config-driven**: field promotion is controlled entirely by the config file. There are no interactive prompts — `mfv init` generates the initial config, and the user edits it from there.
 
 #### Chunking Strategy
 
@@ -491,26 +492,28 @@ Shows: directory path, DB size, file count, chunk count, model ID/dimension/revi
 mfv <command> [options]
 
 COMMANDS:
-    scan      Discover frontmatter fields, print frequency table, optionally write config
+    init      Discover frontmatter fields, write config + lock file
     check     Validate files against schema
 ```
 
-### `mfv scan`
+### `mfv init`
 
 ```
-mfv scan [--dir <path>] [--glob <pattern>] [--threshold <f64>] [--output [path]]
+mfv init [--dir <path>] [--glob <pattern>] [--threshold <f64>] [--config <path>] [--force] [--dry-run]
 
 Options:
     --dir         Directory to scan (default: .)
     --glob        File glob pattern (default: **/*.md)
     --threshold   Auto-promote threshold — fraction of files a field must appear in (default: 0.5)
-    --output      Write config to file; flag with no value defaults to mfv.toml
+    --config      Config file path to write (default: mfv.toml)
+    --force       Overwrite existing config
+    --dry-run     Print discovery table only, write nothing
 ```
 
-Scans markdown files, discovers frontmatter fields via type inference, and prints a frequency table to stdout. Status messages go to stderr. Fields appearing in at least `--threshold` fraction of files are marked as promoted.
+Scans markdown files, discovers frontmatter fields via type inference, and prints a frequency table to stderr. Fields appearing in at least `--threshold` fraction of files are marked as promoted. Writes both a config file (`mfv.toml`) and a lock file (`mfv.lock`) that captures the full discovery snapshot.
 
 ```
-$ mfv scan
+$ mfv init --dry-run
 
 Field                Type          Count/Total Promoted
 --------------------------------------------------------
@@ -521,7 +524,42 @@ draft                boolean          4/12
 rating               float            1/12
 ```
 
-With `--output`, the discovered schema is written as a TOML config file. This is the starting point for building a validation schema — the user edits the generated file to add `required`, `pattern`, and `values` rules.
+Refuses if the config file already exists — use `--force` to overwrite. The `--dry-run` flag prints the table without writing any files. The discovered schema is the starting point for building a validation schema — the user edits the generated config to add `required`, `pattern`, and `values` rules.
+
+### Lock File (`mfv.lock`)
+
+The lock file captures the full discovery snapshot at `init` time — every field found, its inferred type, count, and promoted status. It sits next to the config file and follows the Cargo analogy:
+
+```
+mfv.toml       ↔  Cargo.toml     (config — what you want)
+mfv.lock       ↔  Cargo.lock     (resolved state — what was actually used)
+```
+
+Format:
+
+```toml
+# Auto-generated by mfv init. Do not edit.
+# To regenerate: mfv init --force
+
+[discovery]
+total_files = 12
+files_with_frontmatter = 10
+glob = "**/*.md"
+threshold = 0.5
+generated_at = "2025-06-12T10:00:00"
+
+[[field]]
+name = "title"
+type = "string"
+count = 11
+promoted = true
+
+[[field]]
+name = "tags"
+type = "string[]"
+count = 10
+promoted = true
+```
 
 ### `mfv check`
 
@@ -564,7 +602,7 @@ Both `mfv` and `mdvs` share the same TOML schema structure. The tools look for t
 - **`mfv`** reads: `--schema` flag → `mfv.toml` → `mdvs.toml` → error
 - **`mdvs`** always reads/writes: `mdvs.toml`
 
-Standalone `mfv` users get `mfv.toml` (generated by `mfv scan --output`). Users of both tools share `mdvs.toml` — `mfv` discovers it via fallback. Unknown TOML sections are silently ignored, so `mfv` works fine with an `mdvs.toml` that contains search-specific sections.
+Standalone `mfv` users get `mfv.toml` (generated by `mfv init`). Users of both tools share `mdvs.toml` — `mfv` discovers it via fallback. Unknown TOML sections are silently ignored, so `mfv` works fine with an `mdvs.toml` that contains search-specific sections.
 
 ### Field Schema
 
@@ -668,7 +706,7 @@ Goal: extract the schema and validation layers into their own crates. Ship `mfv`
 
 - [x] Restructure into Cargo workspace: `mdvs-schema`, `mfv`, `mdvs`
 - [x] `mdvs-schema`: field definition types, `[[fields.field]]` TOML parsing, type inference engine
-- [x] `mfv scan`: discover frontmatter fields, print frequency table, auto-promote by threshold, optionally write config
+- [x] `mfv init`: discover frontmatter fields, print frequency table, auto-promote by threshold, write config + lock file
 - [x] `mfv check`: validate files against schema, human/json/github output formats
 - [x] Schema resolution precedence: `--schema` → `mfv.toml` → `mdvs.toml` → error
 - [x] Validation rules: `required`, `paths` (glob-scoped via globset), `pattern` (regex), `values` (enum)

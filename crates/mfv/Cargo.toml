@@ -15,6 +15,7 @@ path = "src/main.rs"
 [dependencies]
 mdvs-schema = { path = "../mdvs-schema" }
 anyhow = "1"
+chrono = "0.4"
 clap = { version = "4", features = ["derive"] }
 globset = "0.4"
 gray_matter = "0.2"
