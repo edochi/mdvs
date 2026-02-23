@@ -12,16 +12,27 @@ The project is a Cargo workspace with three crates. The schema and validation la
 
 ```
 mdvs/
-├── Cargo.toml                    # workspace root
+├── Cargo.toml                     # workspace root
 ├── crates/
 │   ├── mdvs-schema/               # library: field definitions, type system, TOML parsing
-│   │   └── src/lib.rs
-│   ├── mfv/                      # library + binary: Markdown Frontmatter Validator
 │   │   └── src/
-│   │       ├── lib.rs            # validate(files, schema) → Vec<Diagnostic>
-│   │       └── main.rs           # standalone CLI
+│   │       ├── lib.rs             # re-exports
+│   │       ├── field_type.rs      # FieldType enum (String, Date, Boolean, etc.)
+│   │       ├── field_def.rs       # FieldDef struct, RawFieldDef serde intermediate
+│   │       ├── discovery.rs       # discover_fields(), auto_promote(), infer_type()
+│   │       └── schema.rs         # Schema parsing, rules_for_path(), TOML roundtrip
+│   ├── mfv/                       # library + binary: Markdown Frontmatter Validator
+│   │   ├── src/
+│   │   │   ├── lib.rs             # module re-exports
+│   │   │   ├── main.rs            # CLI: scan + check subcommands
+│   │   │   ├── extract.rs         # YAML/TOML frontmatter extraction → JSON
+│   │   │   ├── scan.rs            # directory walking + glob filtering
+│   │   │   ├── validate.rs        # validate(files, schema) → Vec<Diagnostic>
+│   │   │   ├── diagnostic.rs      # Diagnostic + DiagnosticKind types
+│   │   │   └── output.rs          # human / json / github formatters
+│   │   └── tests/                 # integration tests (assert_cmd)
 │   └── mdvs/                      # binary: full semantic search tool
-│       └── src/main.rs           # depends on mdvs-schema + mfv
+│       └── src/main.rs            # depends on mdvs-schema + mfv
 ```
 
 | Crate | Binary | Size | Use case |
@@ -30,7 +41,7 @@ mdvs/
 | `mfv` | `mfv` | ~2MB | Standalone frontmatter linter/validator. No DuckDB, no embeddings. |
 | `mdvs` | `mdvs` | ~20MB | Full semantic search + validation. Depends on both crates above. |
 
-The schema definition file (`frontmatter.toml`) is shared between `mfv` and `mdvs`. One source of truth for field definitions, used by the validator standalone and by `mdvs` for both validation and schema generation.
+Both tools share the same TOML schema structure but look for their own config file first. Standalone `mfv` users create `mfv.toml`; users of both tools share `mdvs.toml` — `mfv` discovers it via fallback. The schema format (field definitions, types, validation rules) is identical in both files. Unknown sections are silently ignored, so `mfv` works fine with an `mdvs.toml` that contains search-specific settings.
 
 ## Tech Stack
 
@@ -131,15 +142,15 @@ CREATE TABLE vault_meta (
 --   vault_path         Absolute path to directory root at index time
 --   glob_pattern       File glob used for indexing
 --   created_at         When the index was first created
---   last_indexed_at    When the last index/reindex completed
+--   last_indexed_at    When the last index completed
 
 -- One row per markdown file
 -- Promoted columns are generated dynamically at init based on the user's
--- field schema (defined in frontmatter.toml). No hardcoded columns.
+-- field schema (defined in mdvs.toml). No hardcoded columns.
 -- Example below assumes the user promoted title, tags, date:
 CREATE TABLE mdfiles (
     filename      VARCHAR PRIMARY KEY,  -- relative path from directory root
-    -- promoted frontmatter fields (varies per directory, from frontmatter.toml):
+    -- promoted frontmatter fields (varies per directory, from mdvs.toml):
     title         VARCHAR,              -- NULL if absent in frontmatter
     tags          VARCHAR[],            -- NULL if absent in frontmatter
     date          DATE,                 -- NULL if absent in frontmatter
@@ -170,29 +181,11 @@ Note: `N` in `FLOAT[N]` is determined at init time based on the chosen model's o
 
 #### Frontmatter Handling
 
-Not all notes have frontmatter, and those that do may have wildly different fields depending on the user's workflow (Obsidian, Zettelkasten, blog, research notes, etc.). Rather than hardcoding assumptions about which fields matter, `mdvs init` discovers them.
+Not all notes have frontmatter, and those that do may have wildly different fields depending on the user's workflow (Obsidian, Zettelkasten, blog, research notes, etc.). Rather than hardcoding assumptions about which fields matter, `mdvs` discovers them from the config file.
 
-**During `init`**, `mdvs` scans a sample of .md files (first 100, or all if fewer), extracts all frontmatter keys via `gray_matter`, and presents a frequency table:
+**Field discovery** is done via `mfv scan`, which walks the directory, extracts frontmatter from all matching files, and produces a frequency table. The `--output` flag writes this as a config file. Fields are auto-promoted based on a configurable threshold (fraction of files a field must appear in). The user can then edit the config to adjust types, add validation rules, and toggle `promoted` flags.
 
-```
-Scanning frontmatter... found 847/1203 files with frontmatter.
-
-Common fields:
-  title        842 files   (99%)
-  tags         798 files   (94%)
-  date         756 files   (89%)
-  category     412 files   (49%)
-  author       389 files   (46%)
-  status       123 files   (15%)
-  draft        45 files    (5%)
-
-Which fields should be promoted to searchable columns?
-(Others are still queryable via JSON metadata)
-
-Select fields [default: title, tags, date]: _
-```
-
-The user selects fields, and those become typed columns on the `mdfiles` table. The field definitions (including `promoted = true`) are written to `frontmatter.toml`, and the promoted list is also stored in `vault_meta` for runtime validation.
+Field definitions (including `promoted = true`) are stored in `mdvs.toml`, and the promoted list is also stored in `vault_meta` for runtime validation. No interactive prompts — everything is config-driven.
 
 **Type inference** for promoted fields:
 
@@ -207,7 +200,7 @@ The user can override inferred types in config if needed, but the defaults shoul
 
 **No frontmatter at all**: the note still gets indexed — promoted columns are NULL, metadata is `{}`, and the full content is still chunked and embedded.
 
-**Non-interactive mode**: for scripting or CI, `mdvs init --promoted title,tags,date` skips the interactive prompt.
+**Config-driven**: field promotion is controlled entirely by the config file. There are no interactive prompts — `mfv scan --output` generates the initial config, and the user edits it from there.
 
 #### Chunking Strategy
 
@@ -225,7 +218,7 @@ This handles all note shapes gracefully:
 - **Long prose notes** without headings: splits at paragraph/sentence boundaries instead of producing one enormous chunk.
 - **Very long sections**: automatically sub-splits at paragraph or sentence level, which was previously deferred to v0.4.
 
-The default `max_chunk_size` is 1000 characters, configurable in `.mdvs.toml` or via `--chunk-size` at init. Character-based sizing is sufficient since model2vec handles variable-length input; token-precise splitting is unnecessary.
+The default `max_chunk_size` is 1000 characters, configurable in `mdvs.toml` or via `--chunk-size` at init. Character-based sizing is sufficient since model2vec handles variable-length input; token-precise splitting is unnecessary.
 
 **Plain text extraction**: `text-splitter` returns chunks that still contain markdown formatting. Each chunk is then passed through `pulldown-cmark` to extract only `Event::Text(...)` content, stripping all syntax (bold, italic, links, code fences, etc.). This clean plain text is what gets embedded and stored in `plain_text`.
 
@@ -267,7 +260,7 @@ Every operation that touches embeddings (`index`, `search`, `similar`) checks mo
      Database schema expects:  FLOAT[256]  (model: minishlab/potion-multilingual-128M)
      Current model produces:   FLOAT[384]  (model: minishlab/some-other-model)
 
-   Run `mdvs reindex` to rebuild with the new model.
+   Run `mdvs index --full` to rebuild with the new model.
    ```
 
 2. **Model ID mismatch** → hard error. Different models produce incompatible embedding spaces.
@@ -279,7 +272,7 @@ Every operation that touches embeddings (`index`, `search`, `similar`) checks mo
    Embeddings are incompatible across different models.
    Options:
      • Switch back:  mdvs --model minishlab/potion-multilingual-128M search "query"
-     • Reindex all:  mdvs reindex
+     • Reindex all:  mdvs index --full
    ```
 
 3. **Revision mismatch** (same model ID, different commit SHA) → warning, not error. The vectors are probably close but not identical. Search still works, results may be slightly off.
@@ -288,16 +281,16 @@ Every operation that touches embeddings (`index`, `search`, `similar`) checks mo
      Database indexed with revision: a1b2c3d
      Current model revision:         e4f5g6h
 
-   Results may be slightly inconsistent. Run `mdvs reindex` for clean results.
+   Results may be slightly inconsistent. Run `mdvs index --full` for clean results.
    ```
 
 4. **All match** → proceed normally.
 
-For `index` specifically (which writes new embeddings), a revision mismatch is promoted to a hard error — we don't want to mix embeddings from different revisions in the same index. The user must either pin the old revision or reindex.
+For `index` specifically (which writes new embeddings), a revision mismatch is promoted to a hard error — we don't want to mix embeddings from different revisions in the same index. The user must either pin the old revision or run `index --full`.
 
 #### Reindex on Model Change
 
-`mdvs reindex` sets all embeddings to NULL and recomputes them. Because `plain_text` is stored per-chunk, this requires no filesystem re-read or re-parsing — just re-embedding. For a 5,000-note vault with static embeddings, this takes seconds.
+`mdvs index --full` sets all embeddings to NULL and recomputes them. Because `plain_text` is stored per-chunk, this requires no filesystem re-read or re-parsing — just re-embedding. For a 5,000-note vault with static embeddings, this takes seconds.
 
 No migration adapters, no dual indexes. Just full rebuild.
 
@@ -307,15 +300,14 @@ No migration adapters, no dual indexes. Just full rebuild.
 mdvs <command> [options]
 
 COMMANDS:
-    init      Initialize a new index (scans frontmatter, selects promoted fields)
-    index     Build or update the index (incremental)
-    reindex   Full rebuild (e.g., after model change)
+    init      Initialize a new index (create DB, download model, generate config)
+    index     Build or update the index (incremental by default, --full for rebuild)
     search    Semantic search across notes
-    similar   Find notes similar to a given note
+    similar   Find notes similar to a given note (v0.4)
     validate  Validate frontmatter against schema (delegates to mfv)
-    query     Run raw SQL against the indexed data
-    export    Export database tables as Parquet files
     info      Show index status and statistics
+    query     Run raw SQL against the indexed data (future)
+    export    Export database tables as Parquet files (future)
 ```
 
 ### Global Options
@@ -330,17 +322,16 @@ COMMANDS:
 ### `mdvs init`
 
 ```
-mdvs init [--model <hf-model-id>] [--revision <commit-sha>] [--glob <pattern>] [--promoted <fields>] [--chunk-size <n>]
+mdvs init [--model <hf-model-id>] [--revision <commit-sha>] [--glob <pattern>] [--chunk-size <n>]
 
 Options:
     --model        HuggingFace model ID (default: minishlab/potion-multilingual-128M)
     --revision     Pin a specific model revision by Git commit SHA (default: latest)
     --glob         File glob pattern (default: **/*.md)
-    --promoted     Comma-separated promoted fields, skips interactive prompt (e.g. title,tags,date)
     --chunk-size   Maximum chunk size in characters (default: 1000)
 ```
 
-Creates the .duckdb file, installs/loads the DuckDB vss extension, scans frontmatter to discover fields and present the interactive promotion prompt (unless `--promoted` is given), creates the schema with user-chosen promoted columns, downloads and caches the embedding model. Stores all configuration in `vault_meta`. Shows a progress bar during downloads.
+Creates the .duckdb file, installs/loads the DuckDB vss extension, creates the schema with promoted columns from `mdvs.toml` (generates a default config if missing), downloads and caches the embedding model. Stores all configuration in `vault_meta`. No interactive prompts — field promotion is driven entirely by the config file.
 
 If `--revision` is omitted, the latest available revision is downloaded and its SHA is recorded. If specified, that exact revision is fetched from HuggingFace. Pinning a revision is recommended for reproducibility — it prevents silent model updates from causing revision mismatch warnings.
 
@@ -350,10 +341,11 @@ If `--revision` is omitted, the latest available revision is downloaded and its 
 mdvs index [--full]
 
 Options:
-    --full     Force full re-index (skip incremental diff)
+    --full     Force full rebuild (replaces the old `reindex` command — updates vault_meta
+               with new model identity, NULLs all embeddings, recomputes)
 ```
 
-Scans the directory, diffs against stored hashes, processes only changed files. Default mode is incremental.
+Scans the directory, diffs against stored hashes, processes only changed files. Default mode is incremental. Use `--full` after a model change to rebuild all embeddings (no filesystem re-read needed since `plain_text` is stored per-chunk).
 
 ### `mdvs search`
 
@@ -479,7 +471,7 @@ DuckDB uses its own internal columnar format (not Parquet) for storage, but `COP
 mdvs validate [--dir <path>] [--schema <path>]
 ```
 
-Delegates to the `mfv` validation engine (the `mfv` crate is a library dependency). Validates all markdown files against the field schema defined in `frontmatter.toml`. This is a convenience command — it runs the same logic as `mfv check` but from within the `mdvs` binary.
+Delegates to the `mfv` validation engine (the `mfv` crate is a library dependency). Validates all markdown files against the field schema defined in `mdvs.toml`. This is a convenience command — it runs the same logic as `mfv check` but from within the `mdvs` binary.
 
 ### `mdvs info`
 
@@ -499,18 +491,37 @@ Shows: directory path, DB size, file count, chunk count, model ID/dimension/revi
 mfv <command> [options]
 
 COMMANDS:
-    init      Scan frontmatter, generate schema file (frontmatter.toml)
+    scan      Discover frontmatter fields, print frequency table, optionally write config
     check     Validate files against schema
-    inspect   Show frontmatter stats (field frequency, type distribution)
 ```
 
-### `mfv init`
+### `mfv scan`
 
 ```
-mfv init [--dir <path>] [--glob <pattern>]
+mfv scan [--dir <path>] [--glob <pattern>] [--threshold <f64>] [--output [path]]
+
+Options:
+    --dir         Directory to scan (default: .)
+    --glob        File glob pattern (default: **/*.md)
+    --threshold   Auto-promote threshold — fraction of files a field must appear in (default: 0.5)
+    --output      Write config to file; flag with no value defaults to mfv.toml
 ```
 
-Scans markdown files, discovers frontmatter fields, presents the interactive frequency table (same as `mdvs init`), and generates `frontmatter.toml`. No promoted field selection — that concept belongs to `mdvs`. Instead, `mfv init` generates a minimal schema with type inference and no validation rules. The user adds rules (required, pattern, enum) by editing the file.
+Scans markdown files, discovers frontmatter fields via type inference, and prints a frequency table to stdout. Status messages go to stderr. Fields appearing in at least `--threshold` fraction of files are marked as promoted.
+
+```
+$ mfv scan
+
+Field                Type          Count/Total Promoted
+--------------------------------------------------------
+title                string          11/12     Y
+tags                 string[]        10/12     Y
+date                 date             9/12     Y
+draft                boolean          4/12
+rating               float            1/12
+```
+
+With `--output`, the discovered schema is written as a TOML config file. This is the starting point for building a validation schema — the user edits the generated file to add `required`, `pattern`, and `values` rules.
 
 ### `mfv check`
 
@@ -518,87 +529,75 @@ Scans markdown files, discovers frontmatter fields, presents the interactive fre
 mfv check [--dir <path>] [--schema <path>] [--format <fmt>]
 
 Options:
-    --dir       Directory to scan (default: .)
-    --schema    Path to frontmatter.toml (default: ./frontmatter.toml)
+    --dir       Directory to validate (default: .)
+    --schema    Path to schema file (overrides auto-discovery)
     --format    Output format: human (default), json, github
 ```
 
-Validates all matching files against the schema. Exit codes: 0 = all valid, 1 = validation errors found, 2 = schema/config error.
+Validates all matching files against the schema. Schema resolution precedence (when `--schema` is not given): `mfv.toml` in target dir → `mdvs.toml` in target dir → error.
+
+Exit codes: 0 = all valid, 1 = validation errors found, 2 = config/runtime error.
 
 ```
 $ mfv check
 
-Checking 1203 files against frontmatter.toml...
+Checking 1203 files against mfv.toml
 
-  ✗ blog/half-finished-post.md
-      missing required field 'status' (required in blog/**)
+blog/half-finished-post.md
+  - status: required field missing
 
-  ✗ papers/new-idea.md
-      field 'doi' value "not-a-doi" doesn't match pattern ^10\.\d{4,9}/.*
+papers/new-idea.md
+  - doi: value "not-a-doi" does not match pattern /^10\.\d{4,9}/.*/
 
-  ✗ notes/quick-thought.md
-      field 'tags' expected string[], got string
+notes/quick-thought.md
+  - tags: expected type 'string[]', got 'string'
 
-3 errors in 1203 files.
+3 error(s) in 3 file(s)
 ```
 
-The `--format github` mode outputs GitHub Actions annotations (`::error file=...`) for CI integration.
-
-### `mfv inspect`
-
-```
-mfv inspect [--dir <path>]
-```
-
-Shows field frequency, inferred types, and sample values — the same discovery table from `init`, but read-only. Useful for understanding a new vault before writing a schema.
-
-```
-$ mfv inspect
-
-Scanned 1203 files (847 with frontmatter).
-
-  Field           Files     Type        Sample values
-  title           842 (99%) string      "My Post", "Research Notes"
-  tags            798 (94%) string[]    ["rust", "crdt"], ["blog"]
-  date            756 (89%) date        2025-06-12, 2024-11-03
-  category        412 (49%) string      "tech", "personal"
-  status          123 (15%) string      "draft", "published", "review"
-  doi             34  (4%)  string      "10.1234/abc.def"
-```
+The `--format github` mode outputs GitHub Actions annotations (`::error file=...`) for CI integration. The `--format json` mode outputs a JSON array of `{file, field, message}` objects.
 
 ## Configuration
 
-Configuration is split across two files. `frontmatter.toml` defines the field schema (shared between `mfv` and `mdvs`). `.mdvs.toml` contains search-specific settings (only used by `mdvs`).
+Both `mfv` and `mdvs` share the same TOML schema structure. The tools look for their own config file first:
 
-### `frontmatter.toml` — Field Schema (shared)
+- **`mfv`** reads: `--schema` flag → `mfv.toml` → `mdvs.toml` → error
+- **`mdvs`** always reads/writes: `mdvs.toml`
 
-This file is the single source of truth for frontmatter field definitions. Both `mfv` and `mdvs` read it. Generated by `mfv init` or `mdvs init`.
+Standalone `mfv` users get `mfv.toml` (generated by `mfv scan --output`). Users of both tools share `mdvs.toml` — `mfv` discovers it via fallback. Unknown TOML sections are silently ignored, so `mfv` works fine with an `mdvs.toml` that contains search-specific sections.
+
+### Field Schema
 
 ```toml
-[directory]
 glob = "**/*.md"
 
-# Field definitions
-# Minimal by default — type is auto-inferred, validation rules are opt-in.
-# Only 'promoted' is mdvs-specific (ignored by mfv).
+[fields]
+promote_threshold = 0.5         # auto-promote fields appearing in ≥50% of files
 
-[fields.title]
+[[fields.field]]
+name = "title"
+type = "string"
 promoted = true                 # becomes a typed column in mdvs's mdfiles table
 
-[fields.tags]
+[[fields.field]]
+name = "tags"
+type = "string[]"
 promoted = true
 
-[fields.date]
+[[fields.field]]
+name = "date"
+type = "date"
 promoted = true
 
-[fields.status]
-type = "enum"                   # explicit type override (normally auto-inferred)
+[[fields.field]]
+name = "status"
+type = "enum"
 values = ["draft", "review", "published"]
 required = true
 paths = ["blog/**"]             # only required in files matching this glob
-promoted = false                # stays in JSON metadata column in mdvs
 
-[fields.doi]
+[[fields.field]]
+name = "doi"
 type = "string"
 required = true
 paths = ["papers/**"]
@@ -620,9 +619,11 @@ promoted = true
 
 Type inference (when `type` is not explicitly set): YAML lists → `string[]`, parseable dates → `date`, booleans → `boolean`, numbers → `integer`/`float`, everything else → `string`.
 
-A minimal `frontmatter.toml` for someone who just wants promoted fields and no validation is ~10 lines. Validation rules layer on top for users who want them.
+Fields not listed in the config are auto-discovered, type-inferred, and promoted or not based on `promote_threshold`. A minimal config with just promoted fields and no validation rules is ~10 lines.
 
-### `.mdvs.toml` — Search Settings (vvs only)
+### Search Settings (mdvs only)
+
+These sections are only used by `mdvs` and are ignored by `mfv`:
 
 ```toml
 [model]
@@ -636,7 +637,7 @@ max_chunk_size = 1000  # characters
 store_raw_content = false       # if true, adds raw_content VARCHAR to mdfiles
 
 [behavior]
-on_search = "auto"              # "auto" = incremental sync before search, "strict" = error if stale
+on_stale = "auto"               # "auto" = incremental sync before search, "strict" = error if stale
 
 [search]
 default_limit = 10
@@ -645,36 +646,34 @@ snippet_length = 120
 
 ## Release Plan
 
-### v0.1 — MVP (Proof of Concept)
+### v0.1 — MVP (Proof of Concept) ✅
 
 Goal: validate that all the pieces fit together. Single-crate prototype, not yet a workspace.
 
-- [ ] Single `main.rs`, no subcommands yet
-- [ ] Open DuckDB, load vss extension
-- [ ] Read .md files with `walkdir`, extract frontmatter via `gray_matter` → mdfiles table
-- [ ] Split markdown body with `text-splitter` MarkdownSplitter → semantic chunks
-- [ ] Extract plain text from each chunk via `pulldown-cmark` (strip markdown syntax)
-- [ ] Extract nearest heading from each chunk for display metadata
-- [ ] Load a Model2Vec model via `model2vec-rs`
-- [ ] Compute embeddings per chunk, insert into DuckDB as `FLOAT[256]`
-- [ ] Create HNSW index on chunks via vss extension
-- [ ] Hardcoded query, print results joined back to mdfiles
-- [ ] **Validates**: gray_matter handles real Obsidian frontmatter (including edge cases), text-splitter produces sensible chunks across different note shapes (short, long, with/without headings), pulldown-cmark plain text extraction is clean, duckdb-rs handles FLOAT[N] params, vss extension loads cleanly, model2vec-rs loads potion model from HF cache, model revision can be resolved from HF cache directory, two-table join works with HNSW
+- [x] Single `main.rs`, no subcommands yet
+- [x] Open DuckDB, load vss extension
+- [x] Read .md files with `walkdir`, extract frontmatter via `gray_matter` → mdfiles table
+- [x] Split markdown body with `text-splitter` MarkdownSplitter → semantic chunks
+- [x] Extract plain text from each chunk via `pulldown-cmark` (strip markdown syntax)
+- [x] Extract nearest heading from each chunk for display metadata
+- [x] Load a Model2Vec model via `model2vec-rs`
+- [x] Compute embeddings per chunk, insert into DuckDB as `FLOAT[256]`
+- [x] Create HNSW index on chunks via vss extension
+- [x] Hardcoded query, print results joined back to mdfiles
+- [x] **Validated**: gray_matter handles real Obsidian frontmatter, text-splitter produces sensible chunks, pulldown-cmark plain text extraction is clean, duckdb-rs handles FLOAT[N] via SQL literals, vss extension loads cleanly, model2vec-rs loads potion model from HF cache, two-table join works with HNSW
 
-Deliverable: a script that works end-to-end on a real vault. No CLI, no config, just proof it works.
-
-### v0.2 — Workspace + mfv
+### v0.2 — Workspace + mfv ✅
 
 Goal: extract the schema and validation layers into their own crates. Ship `mfv` as a standalone tool.
 
-- [ ] Restructure into Cargo workspace: `mdvs-schema`, `mfv`, `mdvs`
-- [ ] `mdvs-schema`: field definition types, TOML parsing (`frontmatter.toml`), type inference engine
-- [ ] `mfv init`: scan frontmatter, generate `frontmatter.toml` with inferred types
-- [ ] `mfv check`: validate files against schema, human-readable error output
-- [ ] `mfv inspect`: field frequency table and type distribution
-- [ ] `mfv check --format github`: GitHub Actions annotation output for CI
-- [ ] Validation rules: `required`, `paths` (glob-scoped), `pattern` (regex), `values` (enum)
-- [ ] Exit codes: 0 = valid, 1 = errors, 2 = config error
+- [x] Restructure into Cargo workspace: `mdvs-schema`, `mfv`, `mdvs`
+- [x] `mdvs-schema`: field definition types, `[[fields.field]]` TOML parsing, type inference engine
+- [x] `mfv scan`: discover frontmatter fields, print frequency table, auto-promote by threshold, optionally write config
+- [x] `mfv check`: validate files against schema, human/json/github output formats
+- [x] Schema resolution precedence: `--schema` → `mfv.toml` → `mdvs.toml` → error
+- [x] Validation rules: `required`, `paths` (glob-scoped via globset), `pattern` (regex), `values` (enum)
+- [x] Exit codes: 0 = valid, 1 = errors, 2 = config error
+- [x] Comprehensive test suite: 39 unit tests + 22 integration tests (assert_cmd)
 
 Deliverable: `mfv` is independently useful and publishable. Someone running a Hugo blog can `cargo install mfv` and use it in CI without pulling in DuckDB.
 
@@ -683,11 +682,11 @@ Deliverable: `mfv` is independently useful and publishable. Someone running a Hu
 Goal: something you can actually use daily for search.
 
 - [ ] `init`, `index`, `search` subcommands via clap
-- [ ] `mdvs init` generates both `frontmatter.toml` and `.mdvs.toml`
-- [ ] Interactive frontmatter discovery and promotion prompt during init
-- [ ] `--promoted` flag for non-interactive init
-- [ ] Dynamic mdfiles table schema based on promoted fields from `frontmatter.toml`
+- [ ] `mdvs init` generates `mdvs.toml` (or uses existing), creates DB, downloads model
+- [ ] Config-driven field promotion (no interactive prompts — reads from `mdvs.toml`)
+- [ ] Dynamic mdfiles table schema based on promoted fields from `mdvs.toml`
 - [ ] Incremental indexing with content hashing (per-file diffing, chunk rebuild on change)
+- [ ] `index --full` for full rebuild (replaces separate `reindex` command)
 - [ ] Model identity storage: model_id, model_dimension, model_revision in vault_meta
 - [ ] Model mismatch detection (hard error on ID/dimension mismatch, warning on revision mismatch for search, hard error on revision mismatch for index)
 - [ ] `--model` and `--revision` flags on init and as global overrides
@@ -696,7 +695,7 @@ Goal: something you can actually use daily for search.
 - [ ] Human-readable table output with chunk-level snippets and heading indicators
 - [ ] `mdvs validate` (delegates to mfv engine)
 - [ ] `info` command
-- [ ] Staleness behavior: `on_search = "auto"` (incremental sync before search) and `"strict"` modes
+- [ ] Staleness behavior: `on_stale = "auto"` (incremental sync before search) and `"strict"` modes
 
 ### v0.4 — Polish
 
@@ -704,11 +703,10 @@ Goal: comfortable for daily use, handles edge cases.
 
 - [ ] `similar` command (note-to-note or chunk-to-chunk similarity)
 - [ ] `query` command (raw SQL passthrough)
-- [ ] `reindex` command (full rebuild — updates vault_meta with new model identity, NULLs all embeddings, recomputes)
 - [ ] `export` command (Parquet export of mdfiles, chunks, metadata)
 - [ ] `--format json` and `--format paths` output modes
 - [ ] Configurable `max_chunk_size` in config and via `--chunk-size` at init
-- [ ] `store_raw_content` option in `.mdvs.toml`
+- [ ] `store_raw_content` option in `mdvs.toml`
 - [ ] Proper error messages for common failures (vss extension download issues, model download issues, empty directory)
 - [ ] Handle edge cases: empty frontmatter, non-UTF8 files, binary files in directory
 
@@ -783,14 +781,17 @@ Pre-built binaries are the primary distribution path. Built in CI via `cargo-dis
 
 ## Open Questions
 
-- **FLOAT[N] parameter binding**: how does `duckdb-rs` handle passing `Vec<f32>` into a fixed-size array column? May need Arrow appender or SQL literal formatting.
-- **vss extension version compatibility**: does the vss community extension support the same DuckDB version that `duckdb-rs` bundles? Version skew could be a problem. (The yaml and markdown extensions are no longer a concern — they've been replaced by Rust crates.)
+- **vss extension version compatibility**: does the vss community extension support the same DuckDB version that `duckdb-rs` bundles? Version skew could be a problem.
 - **text-splitter heading extraction**: `text-splitter` returns raw markdown chunks without structured heading metadata. Need to validate that a lightweight pulldown-cmark pass over each chunk reliably extracts the relevant heading for the `§ Heading` display. Edge cases: chunks that span across headings, chunks with no headings at all.
-- **gray_matter edge cases**: Obsidian notes may have unusual frontmatter (missing closing `---`, nested YAML, non-standard delimiters). Need to test `gray_matter` against a real vault and handle parse failures gracefully (skip frontmatter, still index the content).
 - **Dynamic schema generation**: generating `CREATE TABLE mdfiles (...)` dynamically based on promoted field selection at init. Need to handle type inference carefully (especially detecting VARCHAR[] vs VARCHAR for list-valued fields). Also need to handle schema changes if the user re-inits with different promoted fields.
-- **Model revision resolution**: need to verify whether `model2vec-rs` exposes the Git commit SHA of the loaded model. If not, fall back to reading it from the HuggingFace cache directory structure (`~/.cache/huggingface/hub/models--org--name/snapshots/<sha>/`). This path convention is stable but undocumented — worth confirming it holds for model2vec-rs's cache layout.
-- **crates.io name availability**: verify that `mdvs` and `mfv` are available on crates.io before publishing. (Initial search suggests both are clear.)
-- **frontmatter.toml conflicts**: when both `mfv init` and `mdvs init` can generate `frontmatter.toml`, need clear behavior for the case where the file already exists (merge? error? overwrite with confirmation?).
-- **Promoted field as a vvs-only concern**: `mfv` ignores `promoted = true/false` in field definitions since it has no database. Need to ensure `mdvs-schema` cleanly separates the "what fields exist and their rules" concern from the "which fields are promoted" concern, so `mfv` doesn't need to know about DuckDB columns.
+- **Model revision resolution**: need to verify whether `model2vec-rs` exposes the Git commit SHA of the loaded model. If not, fall back to reading it from the HuggingFace cache directory structure (`~/.cache/huggingface/hub/models--org--name/snapshots/<sha>/`).
+- **crates.io name availability**: verify that `mdvs` and `mfv` are available on crates.io before publishing.
 - **Enum type mapping**: how `enum` fields with `values` map to DuckDB — probably just `VARCHAR` with application-level validation, since DuckDB doesn't have native enum constraints on insert. Validation happens via `mfv check` / `mdvs validate`, not at the DB layer.
-- **Path-scoped requirements**: implementing glob matching for the `paths` field in validation rules. Need a glob crate (e.g., `glob` or `globset`) as a dependency of `mfv`. The paths are relative to the directory root.
+
+### Resolved
+
+- **FLOAT[N] parameter binding**: resolved — embeddings are inserted as SQL literals `[...]::FLOAT[256]` (no `Vec<f32>` ToSql support in duckdb-rs).
+- **gray_matter edge cases**: resolved — tested against real vaults; unclosed delimiters and malformed YAML/TOML return `None` gracefully.
+- **Config file conflicts**: resolved — no shared `frontmatter.toml`. Each tool has its own file (`mfv.toml` / `mdvs.toml`) with fallback precedence.
+- **Promoted field separation**: resolved — `mfv` ignores `promoted` and unknown TOML sections via serde defaults.
+- **Path-scoped requirements**: resolved — using `globset` crate for glob matching on `paths` field in validation rules.
