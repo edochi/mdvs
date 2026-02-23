@@ -27,5 +27,9 @@ target
 # Jupyter
 .ipynb_checkpoints/
 
+# DuckDB
+*.duckdb
+*.duckdb.wal
+
 # macOS
 .DS_Store
