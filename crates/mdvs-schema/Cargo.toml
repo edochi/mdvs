@@ -1,0 +1,8 @@
+[package]
+name = "mdvs-schema"
+version = "0.1.0"
+edition = "2024"
+description = "Field definitions, type system, and frontmatter field discovery for mdvs"
+
+[dependencies]
+serde_json = "1"

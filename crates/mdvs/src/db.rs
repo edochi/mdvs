@@ -2,11 +2,12 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use duckdb::{params, Connection};
+use duckdb::{Connection, params};
+use mdvs_schema::{FieldInfo, FieldType};
 use serde_json::Value;
 
 use crate::embed::embedding_to_sql;
-use crate::types::{ChunkData, FieldInfo, FieldType, SearchResult};
+use crate::types::{ChunkData, SearchResult};
 
 pub fn open_db(path: &Path) -> Result<Connection> {
     let conn = Connection::open(path).context("Failed to open DuckDB")?;

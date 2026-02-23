@@ -1,0 +1,18 @@
+[package]
+name = "mdvs"
+version = "0.1.0"
+edition = "2024"
+description = "Semantic search over directories of markdown files"
+
+[dependencies]
+mdvs-schema = { path = "../mdvs-schema" }
+mfv = { path = "../mfv" }
+anyhow = "1"
+duckdb = { version = "1", features = ["bundled"] }
+model2vec-rs = "*"
+pulldown-cmark = "0.12"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+text-splitter = { version = "0.16", features = ["markdown"] }
+walkdir = "2"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }

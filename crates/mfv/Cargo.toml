@@ -1,0 +1,11 @@
+[package]
+name = "mfv"
+version = "0.1.0"
+edition = "2024"
+description = "Markdown frontmatter extraction library for mdvs"
+
+[dependencies]
+gray_matter = "0.2"
+serde_json = "1"
+serde_yaml = "0.9"
+toml = "0.8"

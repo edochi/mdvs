@@ -7,9 +7,10 @@ mod types;
 use std::path::Path;
 
 use anyhow::Result;
+use mdvs_schema::FieldInfo;
 use walkdir::WalkDir;
 
-use types::{FieldInfo, NoteData};
+use types::NoteData;
 
 const MODEL_ID: &str = "minishlab/potion-base-8M";
 const CHUNK_MAX_CHARS: usize = 1000;
@@ -33,9 +34,11 @@ fn main() -> Result<()> {
 
     // 2. Discover fields
     println!("[2/6] Discovering frontmatter fields...");
-    let mut fields = frontmatter::discover_fields(&notes);
+    let frontmatters: Vec<Option<&serde_json::Value>> =
+        notes.iter().map(|n| n.frontmatter.as_ref()).collect();
+    let mut fields = mdvs_schema::discover_fields(&frontmatters);
     let total = notes.len();
-    frontmatter::auto_promote(&mut fields, total, PROMOTION_THRESHOLD);
+    mdvs_schema::auto_promote(&mut fields, total, PROMOTION_THRESHOLD);
     print_field_table(&fields, total);
 
     // 3. Load model
@@ -159,7 +162,7 @@ fn scan_directory(dir: &Path) -> Result<Vec<NoteData>> {
                 .to_string();
 
             let content_hash = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(content.as_bytes()));
-            let (fm, body) = frontmatter::extract_frontmatter(&content);
+            let (fm, body) = mfv::extract_frontmatter(&content);
 
             notes.push(NoteData {
                 filename,
