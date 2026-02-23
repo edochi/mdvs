@@ -4,11 +4,16 @@ use serde_json::Value;
 
 use crate::FieldType;
 
+/// A field discovered by scanning frontmatter across files.
 #[derive(Debug, Clone)]
 pub struct FieldInfo {
+    /// Field name as it appears in frontmatter.
     pub name: String,
+    /// Inferred type based on the most common value type seen.
     pub field_type: FieldType,
+    /// Number of files containing this field.
     pub count: usize,
+    /// Whether this field was auto-promoted (set by [`auto_promote`]).
     pub promoted: bool,
 }
 

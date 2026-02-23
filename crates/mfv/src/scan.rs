@@ -7,12 +7,12 @@ use walkdir::WalkDir;
 
 use crate::extract::extract_frontmatter;
 
-/// A scanned markdown file with extracted frontmatter.
+/// A scanned markdown file with its extracted frontmatter.
 #[derive(Debug)]
 pub struct ScannedFile {
-    /// Relative path from the root directory.
+    /// Relative path from the scanned directory root.
     pub rel_path: String,
-    /// Extracted frontmatter as JSON, or None if absent/unparseable.
+    /// Extracted frontmatter as JSON, or `None` if absent or unparseable.
     pub frontmatter: Option<Value>,
 }
 

@@ -3,8 +3,11 @@ use crate::diagnostic::Diagnostic;
 /// Output format for diagnostics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum OutputFormat {
+    /// Human-readable text grouped by file.
     Human,
+    /// JSON array of `{file, field, message}` objects.
     Json,
+    /// GitHub Actions `::error` annotations for CI integration.
     Github,
 }
 

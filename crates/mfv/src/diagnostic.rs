@@ -5,12 +5,27 @@ use std::fmt;
 pub enum DiagnosticKind {
     /// A required field is missing.
     MissingRequired,
-    /// Field value has the wrong type (expected, got).
-    WrongType { expected: String, got: String },
+    /// Field value has the wrong type.
+    WrongType {
+        /// Type name from the schema.
+        expected: String,
+        /// Type name inferred from the actual value.
+        got: String,
+    },
     /// Field value doesn't match the required pattern.
-    PatternMismatch { pattern: String, value: String },
+    PatternMismatch {
+        /// Regex pattern from the schema.
+        pattern: String,
+        /// Actual value that failed to match.
+        value: String,
+    },
     /// Field value is not in the allowed enum values.
-    InvalidEnum { value: String, allowed: Vec<String> },
+    InvalidEnum {
+        /// Actual value found.
+        value: String,
+        /// List of allowed values from the schema.
+        allowed: Vec<String>,
+    },
 }
 
 impl fmt::Display for DiagnosticKind {

@@ -1,3 +1,5 @@
+//! mfv CLI — markdown frontmatter validator.
+
 use std::path::{Path, PathBuf};
 use std::process;
 

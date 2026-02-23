@@ -1,6 +1,11 @@
+//! Field definitions, type system, TOML schema parsing, and frontmatter field discovery for mdvs.
+#![warn(missing_docs)]
+
 mod discovery;
+/// Field definition types and TOML deserialization.
 pub mod field_def;
 mod field_type;
+/// Lock file types for capturing discovery snapshots.
 pub mod lock;
 mod schema;
 

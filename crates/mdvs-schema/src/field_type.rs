@@ -2,16 +2,24 @@ use std::fmt;
 
 use serde::Deserialize;
 
+/// The type of a frontmatter field, used for validation and SQL column mapping.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum FieldType {
+    /// Plain text value.
     String,
+    /// List of strings (e.g. tags).
     #[serde(rename = "string[]")]
     StringArray,
+    /// Date in `YYYY-MM-DD` format, optionally with time.
     Date,
+    /// True/false value.
     Boolean,
+    /// Whole number (i64/u64).
     Integer,
+    /// Floating-point number.
     Float,
+    /// Constrained string with an explicit list of allowed values.
     Enum,
 }
 
@@ -30,6 +38,7 @@ impl fmt::Display for FieldType {
 }
 
 impl FieldType {
+    /// Return the DuckDB SQL type corresponding to this field type.
     pub fn sql_type(&self) -> &'static str {
         match self {
             FieldType::String => "VARCHAR",

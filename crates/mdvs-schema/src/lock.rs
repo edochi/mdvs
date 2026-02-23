@@ -1,26 +1,40 @@
 use crate::FieldType;
 use crate::discovery::FieldInfo;
 
+/// A discovery snapshot written as `mfv.lock` or `mdvs.lock`.
 #[derive(Debug)]
 pub struct LockFile {
+    /// Metadata about the discovery run.
     pub discovery: LockDiscovery,
+    /// Every field found during discovery.
     pub fields: Vec<LockField>,
 }
 
+/// Metadata captured during a discovery run.
 #[derive(Debug)]
 pub struct LockDiscovery {
+    /// Total markdown files matched by the glob.
     pub total_files: usize,
+    /// Files that had parseable frontmatter.
     pub files_with_frontmatter: usize,
+    /// Glob pattern used for file matching.
     pub glob: String,
+    /// Auto-promote threshold that was applied.
     pub threshold: f64,
+    /// ISO 8601 timestamp of when the lock was generated.
     pub generated_at: String,
 }
 
+/// A single field entry in the lock file.
 #[derive(Debug)]
 pub struct LockField {
+    /// Field name as it appears in frontmatter.
     pub name: String,
+    /// Inferred type.
     pub field_type: FieldType,
+    /// Number of files containing this field.
     pub count: usize,
+    /// Whether this field was promoted.
     pub promoted: bool,
 }
 

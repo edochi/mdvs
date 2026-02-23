@@ -10,9 +10,13 @@ use crate::field_def::{FieldDef, RawFieldDef};
 /// Errors that can occur when loading or using a schema.
 #[derive(Debug)]
 pub enum SchemaError {
+    /// File I/O error.
     Io(std::io::Error),
+    /// TOML deserialization error.
     Parse(toml::de::Error),
+    /// Semantic validation error (e.g. duplicate field names, enum without values).
     Validation(String),
+    /// Invalid glob pattern.
     Glob(globset::Error),
 }
 
@@ -70,8 +74,11 @@ struct RawFieldsSection {
 /// A parsed and validated schema.
 #[derive(Debug)]
 pub struct Schema {
+    /// Glob pattern for matching markdown files.
     pub glob: String,
+    /// Field definitions loaded from the TOML config.
     pub fields: Vec<FieldDef>,
+    /// Auto-promote threshold from the `[fields]` section.
     pub promote_threshold: Option<f64>,
 }
 

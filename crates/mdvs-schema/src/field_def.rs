@@ -2,11 +2,14 @@ use serde::Deserialize;
 
 use crate::FieldType;
 
-/// A field definition from `frontmatter.toml`.
+/// A validated field definition from the TOML config.
 #[derive(Debug, Clone)]
 pub struct FieldDef {
+    /// Field name as it appears in frontmatter.
     pub name: String,
+    /// Expected value type.
     pub field_type: FieldType,
+    /// Whether this field must be present.
     pub required: bool,
     /// Glob patterns restricting which paths this rule applies to.
     /// Empty means applies to all files.
@@ -15,7 +18,7 @@ pub struct FieldDef {
     pub pattern: Option<String>,
     /// Allowed values (enum fields).
     pub values: Vec<String>,
-    /// Whether this field is promoted to a SQL column.
+    /// Whether this field is promoted to a SQL column in mdvs.
     pub promoted: bool,
 }
 
