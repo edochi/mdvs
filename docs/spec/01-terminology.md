@@ -52,13 +52,25 @@ A hash (xxhash or blake3) of the full file content (frontmatter + body). Stored 
 
 ## Models and Embeddings
 
+### Static Embedding Model
+
+A model that embeds text by tokenizing, looking up pre-computed token vectors in a matrix, and mean-pooling. No transformer forward pass, no GPU required, no context window. Inference is O(tokens) lookups. mdvs supports two formats — Model2Vec and Sentence Transformers StaticEmbedding — via a universal loader. See [Workflow: Model Loading](30-workflows/model-loading.md).
+
 ### Model2Vec
 
-A family of static embedding models that tokenize input, look up pre-computed token embeddings, and mean-pool. No transformer forward pass, no GPU required. Inference is effectively instant. The `model2vec-rs` Rust crate handles download, caching, and inference.
+The static embedding format used by MinishLab's POTION models. Files: `embeddings.safetensors` (tensor key `"embeddings"`), `tokenizer.json`, `config.json`.
+
+### Sentence Transformers StaticEmbedding
+
+The static embedding format used by Sentence Transformers. Files: `model.safetensors` (tensor key `"embedding.weight"`), `tokenizer.json`, plus ST pipeline configs (ignored by mdvs). Some ST models support Matryoshka truncation.
 
 ### POTION Model
 
-A specific family of Model2Vec models from `minishlab`. The default model is `minishlab/potion-multilingual-128M` (256-dimensional, ~30MB, 101 languages).
+A specific family of Model2Vec models from `minishlab`. Available in various sizes: `potion-base-2M` (64-dim), `potion-base-32M`, `potion-retrieval-32M` (512-dim), `potion-multilingual-128M`.
+
+### Matryoshka Truncation
+
+A training technique (Matryoshka Representation Learning) where embeddings can be truncated to smaller dimensions with minimal quality loss. For example, a 1024-dim model truncated to 256-dim. Supported by some ST StaticEmbedding models. Configured via `truncate_dim` in `.mdvs.toml`.
 
 ### Model Identity
 
@@ -147,6 +159,7 @@ Search ranking strategy that groups chunk-level results by file. A file's score 
 - [Database Schema](20-database/schema.md)
 - [Configuration: frontmatter.toml](40-configuration/frontmatter-toml.md)
 - [Configuration: .mdvs.toml](40-configuration/mdvs-toml.md)
+- [Workflow: Model Loading](30-workflows/model-loading.md)
 - [Workflow: Model Mismatch](30-workflows/model-mismatch.md)
 - [Crate: mdvs-schema](10-crates/mdvs-schema/spec.md)
 - [Crate: mfv](10-crates/mfv/spec.md)

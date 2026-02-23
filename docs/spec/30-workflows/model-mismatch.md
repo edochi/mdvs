@@ -2,7 +2,7 @@
 
 **Status: DRAFT**
 
-**Cross-references:** [Terminology](../01-terminology.md) | [Crate: mdvs](../10-crates/mdvs/spec.md) | [Database Schema](../20-database/schema.md)
+**Cross-references:** [Terminology](../01-terminology.md) | [Crate: mdvs](../10-crates/mdvs/spec.md) | [Database Schema](../20-database/schema.md) | [Model Loading](model-loading.md)
 
 ---
 
@@ -22,7 +22,9 @@ Three values stored in `vault_meta`:
 | `model_dimension` | Output vector size | `256` |
 | `model_revision` | Git commit SHA of downloaded snapshot | `a1b2c3d4e5f6` |
 
-The revision is resolved from the HuggingFace cache directory structure (`~/.cache/huggingface/hub/models--org--name/snapshots/<sha>/`), or directly from `model2vec-rs` if it exposes the commit SHA.
+The revision is resolved from the HuggingFace cache directory structure (`~/.cache/huggingface/hub/models--org--name/snapshots/<sha>/`). See [Model Loading](model-loading.md) for format details.
+
+**Note:** When Matryoshka truncation is configured, `model_dimension` reflects the truncated dimension (e.g., 256), not the model's native dimension (e.g., 1024).
 
 ---
 
@@ -146,6 +148,7 @@ When `revision` is omitted, the latest available revision is downloaded. Its SHA
 
 ## Related Documents
 
+- [Workflow: Model Loading](model-loading.md) — format detection, universal loader, inference pipeline
 - [Terminology](../01-terminology.md) — definitions for model identity, reindex
 - [Crate: mdvs](../10-crates/mdvs/spec.md) — `model` module
 - [Database Schema](../20-database/schema.md) — `vault_meta` keys

@@ -20,6 +20,7 @@ Search-specific settings file used only by `mdvs`. Not read by `mfv`. Generated 
 [model]
 name = "minishlab/potion-multilingual-128M"
 # revision = "a1b2c3d4e5f6"
+# truncate_dim = 256
 
 [chunking]
 max_chunk_size = 1000
@@ -43,8 +44,9 @@ snippet_length = 120
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `name` | string | `"minishlab/potion-multilingual-128M"` | HuggingFace model ID |
+| `name` | string | `"minishlab/potion-multilingual-128M"` | HuggingFace model ID. Supports both Model2Vec and ST StaticEmbedding formats. |
 | `revision` | string | (latest) | Pin to a specific Git commit SHA. If omitted, the latest revision is downloaded and its SHA recorded in `vault_meta`. |
+| `truncate_dim` | integer | (none) | Matryoshka dimension truncation. Only effective with models trained with MRL (e.g., `static-retrieval-mrl-en-v1`). Must be ≤ native dimension. |
 
 **Revision pinning:** Setting `revision` prevents silent model updates from causing revision mismatch warnings. Recommended for reproducibility. See [Workflow: Model Mismatch](../30-workflows/model-mismatch.md).
 
@@ -102,6 +104,7 @@ If `.mdvs.toml` already exists when `mdvs init` runs: error. The database and co
 
 - [Terminology](../01-terminology.md)
 - [Crate: mdvs](../10-crates/mdvs/spec.md) — reads this configuration
+- [Workflow: Model Loading](../30-workflows/model-loading.md) — format support, Matryoshka truncation
 - [Workflow: Model Mismatch](../30-workflows/model-mismatch.md) — revision pinning
 - [Workflow: Search](../30-workflows/search.md) — staleness behavior, defaults
 - [Configuration: frontmatter.toml](frontmatter-toml.md) — companion config file

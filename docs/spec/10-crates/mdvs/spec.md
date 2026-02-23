@@ -186,10 +186,13 @@ struct Chunk {
 
 ```rust
 mod embed {
-    /// Load a Model2Vec model, returning model + resolved identity
+    /// Load a static embedding model (Model2Vec or ST format), returning model + resolved identity.
+    /// v0.1: delegates to model2vec-rs. v0.3+: universal loader with direct safetensors + tokenizers.
+    /// See Workflow: Model Loading for format detection and inference pipeline.
     fn load_model(
         model_id: &str,
         revision: Option<&str>,
+        truncate_dim: Option<usize>,
     ) -> Result<(Model, ModelIdentity)>
 
     /// Embed a batch of plain text strings
@@ -200,7 +203,7 @@ mod embed {
 
     struct ModelIdentity {
         model_id: String,
-        dimension: usize,
+        dimension: usize,   // reflects truncated dim if truncate_dim is set
         revision: String,
     }
 }
@@ -290,7 +293,7 @@ In `auto` mode, `mdvs search` transparently runs the equivalent of `mdvs index` 
 | `mdvs-schema` | Field definitions, type system, TOML parsing |
 | `mfv` | Validation engine (library dependency) |
 | `duckdb` (bundled) | Database, SQL, vector search host |
-| `model2vec-rs` | Static embedding inference |
+| `model2vec-rs` | Static embedding inference (v0.1; replaced by direct safetensors + tokenizers in v0.3+) |
 | `gray_matter` | Frontmatter extraction |
 | `text-splitter` (markdown) | Semantic chunking |
 | `pulldown-cmark` | Markdown → plain text |
@@ -310,6 +313,7 @@ In `auto` mode, `mdvs search` transparently runs the equivalent of `mdvs index` 
 - [Workflow: Init](../../30-workflows/init.md) — full init flow
 - [Workflow: Index](../../30-workflows/index.md) — incremental indexing pipeline
 - [Workflow: Search](../../30-workflows/search.md) — query, rank, display
+- [Workflow: Model Loading](../../30-workflows/model-loading.md) — format detection, universal loader, Matryoshka truncation
 - [Workflow: Model Mismatch](../../30-workflows/model-mismatch.md) — identity checks
 - [Configuration: frontmatter.toml](../../40-configuration/frontmatter-toml.md)
 - [Configuration: .mdvs.toml](../../40-configuration/mdvs-toml.md)
