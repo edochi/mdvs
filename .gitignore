@@ -24,5 +24,8 @@ target
 .obsidian/
 **/.obsidian/
 
+# Jupyter
+.ipynb_checkpoints/
+
 # macOS
 .DS_Store
