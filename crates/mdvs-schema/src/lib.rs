@@ -72,15 +72,8 @@ pub fn infer_type(value: &Value) -> FieldType {
 
 /// Check if a string looks like a date (YYYY-MM-DD with optional time).
 pub fn is_date_string(s: &str) -> bool {
-    if s.len() < 10 {
-        return false;
-    }
-    let bytes = s.as_bytes();
-    bytes[4] == b'-'
-        && bytes[7] == b'-'
-        && bytes[0..4].iter().all(u8::is_ascii_digit)
-        && bytes[5..7].iter().all(u8::is_ascii_digit)
-        && bytes[8..10].iter().all(u8::is_ascii_digit)
+    s.len() >= 10
+        && chrono::NaiveDate::parse_from_str(&s[..10], "%Y-%m-%d").is_ok()
 }
 
 /// Scan frontmatter values and discover fields with type inference.
