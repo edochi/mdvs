@@ -225,7 +225,7 @@ pub fn search(
 
 fn read_column_as_json(row: &duckdb::Row<'_>, idx: usize, field_type: &FieldType) -> Value {
     match field_type {
-        FieldType::String | FieldType::Date => row
+        FieldType::String | FieldType::Date | FieldType::Enum => row
             .get::<_, Option<String>>(idx)
             .ok()
             .flatten()
@@ -263,7 +263,7 @@ fn read_column_as_json(row: &duckdb::Row<'_>, idx: usize, field_type: &FieldType
 
 fn value_to_sql_literal(val: &Value, field_type: &FieldType) -> String {
     match field_type {
-        FieldType::String => match val {
+        FieldType::String | FieldType::Enum => match val {
             Value::String(s) => format!("'{}'", escape_sql(s)),
             other => format!("'{}'", escape_sql(&other.to_string())),
         },

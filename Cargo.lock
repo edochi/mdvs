@@ -380,6 +380,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "bstr"
+version = "1.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "63044e1ae8e69f3b5a92c736ca6269b8d12fa7efe39bf34ddb06d102cf0e2cab"
+dependencies = [
+ "memchr",
+ "serde",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -964,6 +974,19 @@ dependencies = [
  "r-efi",
  "wasip2",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "globset"
+version = "0.4.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "52dfc19153a48bde0cbd630453615c8151bce3a5adfac7a0aebfbf0a1e1f57e3"
+dependencies = [
+ "aho-corasick",
+ "bstr",
+ "log",
+ "regex-automata",
+ "regex-syntax",
 ]
 
 [[package]]
@@ -1557,7 +1580,11 @@ name = "mdvs-schema"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "globset",
+ "regex",
+ "serde",
  "serde_json",
+ "toml 0.8.23",
 ]
 
 [[package]]
@@ -1570,10 +1597,16 @@ checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 name = "mfv"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "clap",
+ "globset",
  "gray_matter",
+ "mdvs-schema",
+ "regex",
  "serde_json",
  "serde_yaml",
  "toml 0.8.23",
+ "walkdir",
 ]
 
 [[package]]

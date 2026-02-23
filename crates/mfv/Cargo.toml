@@ -2,10 +2,24 @@
 name = "mfv"
 version = "0.1.0"
 edition = "2024"
-description = "Markdown frontmatter extraction library for mdvs"
+description = "Markdown frontmatter validator"
+
+[lib]
+name = "mfv"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mfv"
+path = "src/main.rs"
 
 [dependencies]
+mdvs-schema = { path = "../mdvs-schema" }
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+globset = "0.4"
 gray_matter = "0.2"
+regex = "1"
 serde_json = "1"
 serde_yaml = "0.9"
 toml = "0.8"
+walkdir = "2"
