@@ -22,6 +22,7 @@ pub struct FieldDef {
 /// Raw serde struct for deserializing a field entry from TOML.
 #[derive(Debug, Deserialize)]
 pub(crate) struct RawFieldDef {
+    pub name: String,
     #[serde(rename = "type")]
     pub field_type: Option<FieldType>,
     #[serde(default)]
@@ -36,10 +37,10 @@ pub(crate) struct RawFieldDef {
 }
 
 impl RawFieldDef {
-    pub(crate) fn into_field_def(self, name: String) -> FieldDef {
+    pub(crate) fn into_field_def(self) -> FieldDef {
         let field_type = self.field_type.unwrap_or(FieldType::String);
         FieldDef {
-            name,
+            name: self.name,
             field_type,
             required: self.required,
             paths: self.paths,

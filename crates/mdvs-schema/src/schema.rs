@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::path::Path;
 
 use globset::{Glob, GlobMatcher};
@@ -51,8 +51,7 @@ impl From<globset::Error> for SchemaError {
 #[derive(Debug, Deserialize)]
 struct RawSchema {
     directory: Option<DirectoryConfig>,
-    #[serde(default)]
-    fields: HashMap<String, RawFieldDef>,
+    fields: Option<RawFieldsSection>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -61,11 +60,19 @@ struct DirectoryConfig {
     glob: Option<String>,
 }
 
-/// A parsed and validated `frontmatter.toml` schema.
+#[derive(Debug, Deserialize)]
+struct RawFieldsSection {
+    promote_threshold: Option<f64>,
+    #[serde(default)]
+    field: Vec<RawFieldDef>,
+}
+
+/// A parsed and validated schema.
 #[derive(Debug)]
 pub struct Schema {
     pub glob: String,
     pub fields: Vec<FieldDef>,
+    pub promote_threshold: Option<f64>,
 }
 
 impl Schema {
@@ -95,14 +102,21 @@ impl Schema {
 
     /// Generate TOML string representation of this schema.
     pub fn to_toml_string(&self) -> String {
-        let mut out = std::string::String::new();
+        let mut out = String::new();
 
         out.push_str("[directory]\n");
         out.push_str(&format!("glob = {:?}\n", self.glob));
         out.push('\n');
 
+        out.push_str("[fields]\n");
+        if let Some(threshold) = self.promote_threshold {
+            out.push_str(&format!("promote_threshold = {threshold}\n"));
+        }
+        out.push('\n');
+
         for field in &self.fields {
-            out.push_str(&format!("[fields.{}]\n", field.name));
+            out.push_str("[[fields.field]]\n");
+            out.push_str(&format!("name = {:?}\n", field.name));
             out.push_str(&format!("type = {:?}\n", field.field_type.to_string()));
 
             if field.required {
@@ -145,11 +159,26 @@ impl std::str::FromStr for Schema {
             .and_then(|d| d.glob)
             .unwrap_or_else(|| "**/*.md".to_string());
 
-        let mut fields: Vec<FieldDef> = raw
-            .fields
+        let (promote_threshold, raw_fields) = match raw.fields {
+            Some(section) => (section.promote_threshold, section.field),
+            None => (None, Vec::new()),
+        };
+
+        // Check for duplicate field names
+        let mut seen = HashSet::new();
+        for raw_def in &raw_fields {
+            if !seen.insert(&raw_def.name) {
+                return Err(SchemaError::Validation(format!(
+                    "duplicate field name '{}'",
+                    raw_def.name
+                )));
+            }
+        }
+
+        let mut fields: Vec<FieldDef> = raw_fields
             .into_iter()
-            .map(|(name, raw_def)| {
-                let def = raw_def.into_field_def(name);
+            .map(|raw_def| {
+                let def = raw_def.into_field_def();
                 validate_field_def(&def)?;
                 Ok(def)
             })
@@ -157,7 +186,11 @@ impl std::str::FromStr for Schema {
 
         fields.sort_by(|a, b| a.name.cmp(&b.name));
 
-        Ok(Schema { glob, fields })
+        Ok(Schema {
+            glob,
+            fields,
+            promote_threshold,
+        })
     }
 }
 
@@ -211,13 +244,16 @@ mod tests {
 [directory]
 glob = "**/*.md"
 
-[fields.title]
+[[fields.field]]
+name = "title"
 type = "string"
 
-[fields.tags]
+[[fields.field]]
+name = "tags"
 type = "string[]"
 
-[fields.date]
+[[fields.field]]
+name = "date"
 type = "date"
 required = true
 "#;
@@ -233,7 +269,8 @@ required = true
     #[test]
     fn parse_enum_field() {
         let toml = r#"
-[fields.status]
+[[fields.field]]
+name = "status"
 type = "enum"
 values = ["draft", "review", "published"]
 required = true
@@ -250,7 +287,8 @@ paths = ["blog/**"]
     #[test]
     fn enum_without_values_fails() {
         let toml = r#"
-[fields.status]
+[[fields.field]]
+name = "status"
 type = "enum"
 "#;
         let err = toml.parse::<Schema>().unwrap_err();
@@ -260,10 +298,12 @@ type = "enum"
     #[test]
     fn rules_for_path_filters() {
         let toml = r#"
-[fields.title]
+[[fields.field]]
+name = "title"
 type = "string"
 
-[fields.doi]
+[[fields.field]]
+name = "doi"
 type = "string"
 paths = ["papers/**"]
 "#;
@@ -280,7 +320,8 @@ paths = ["papers/**"]
     #[test]
     fn default_type_is_string() {
         let toml = r#"
-[fields.title]
+[[fields.field]]
+name = "title"
 "#;
         let schema = toml.parse::<Schema>().unwrap();
         assert_eq!(schema.fields[0].field_type, FieldType::String);
@@ -289,11 +330,13 @@ paths = ["papers/**"]
     #[test]
     fn roundtrip_toml() {
         let toml = r#"
-[fields.title]
+[[fields.field]]
+name = "title"
 type = "string"
 required = true
 
-[fields.tags]
+[[fields.field]]
+name = "tags"
 type = "string[]"
 "#;
         let schema = toml.parse::<Schema>().unwrap();
@@ -302,5 +345,54 @@ type = "string[]"
         // Should be re-parseable
         let schema2 = output.parse::<Schema>().unwrap();
         assert_eq!(schema2.fields.len(), 2);
+    }
+
+    #[test]
+    fn duplicate_field_names_fails() {
+        let toml = r#"
+[[fields.field]]
+name = "title"
+type = "string"
+
+[[fields.field]]
+name = "title"
+type = "integer"
+"#;
+        let err = toml.parse::<Schema>().unwrap_err();
+        assert!(err.to_string().contains("duplicate field name 'title'"));
+    }
+
+    #[test]
+    fn promote_threshold_parsed() {
+        let toml = r#"
+[fields]
+promote_threshold = 0.75
+
+[[fields.field]]
+name = "title"
+type = "string"
+"#;
+        let schema = toml.parse::<Schema>().unwrap();
+        assert_eq!(schema.promote_threshold, Some(0.75));
+        assert_eq!(schema.fields.len(), 1);
+    }
+
+    #[test]
+    fn unknown_sections_ignored() {
+        let toml = r#"
+[model]
+name = "some-model"
+dimensions = 256
+
+[search]
+top_k = 10
+
+[[fields.field]]
+name = "title"
+type = "string"
+"#;
+        let schema = toml.parse::<Schema>().unwrap();
+        assert_eq!(schema.fields.len(), 1);
+        assert_eq!(schema.fields[0].name, "title");
     }
 }

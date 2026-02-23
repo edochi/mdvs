@@ -124,7 +124,8 @@ mod tests {
     fn missing_required_field() {
         let schema = parse_schema(
             r#"
-[fields.title]
+[[fields.field]]
+name = "title"
 type = "string"
 required = true
 "#,
@@ -140,7 +141,8 @@ required = true
     fn wrong_type() {
         let schema = parse_schema(
             r#"
-[fields.title]
+[[fields.field]]
+name = "title"
 type = "string"
 "#,
         );
@@ -155,7 +157,8 @@ type = "string"
     fn pattern_mismatch() {
         let schema = parse_schema(
             r#"
-[fields.doi]
+[[fields.field]]
+name = "doi"
 type = "string"
 pattern = "^10\\.\\d{4,9}/.*"
 "#,
@@ -174,7 +177,8 @@ pattern = "^10\\.\\d{4,9}/.*"
     fn invalid_enum() {
         let schema = parse_schema(
             r#"
-[fields.status]
+[[fields.field]]
+name = "status"
 type = "enum"
 values = ["draft", "published"]
 "#,
@@ -190,11 +194,13 @@ values = ["draft", "published"]
     fn valid_file_no_diagnostics() {
         let schema = parse_schema(
             r#"
-[fields.title]
+[[fields.field]]
+name = "title"
 type = "string"
 required = true
 
-[fields.date]
+[[fields.field]]
+name = "date"
 type = "date"
 "#,
         );
@@ -211,7 +217,8 @@ type = "date"
     fn no_frontmatter_skips_non_required() {
         let schema = parse_schema(
             r#"
-[fields.title]
+[[fields.field]]
+name = "title"
 type = "string"
 "#,
         );
