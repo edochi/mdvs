@@ -50,3 +50,45 @@ impl fmt::Display for Diagnostic {
         write!(f, "{}: field '{}': {}", self.file, self.field, self.kind)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_missing_required() {
+        let kind = DiagnosticKind::MissingRequired;
+        assert_eq!(kind.to_string(), "required field missing");
+    }
+
+    #[test]
+    fn display_wrong_type() {
+        let kind = DiagnosticKind::WrongType {
+            expected: "string".to_string(),
+            got: "integer".to_string(),
+        };
+        assert_eq!(kind.to_string(), "expected type 'string', got 'integer'");
+    }
+
+    #[test]
+    fn display_pattern_mismatch() {
+        let kind = DiagnosticKind::PatternMismatch {
+            pattern: r"^\d{4}-\d{2}-\d{2}$".to_string(),
+            value: "not-a-date".to_string(),
+        };
+        let s = kind.to_string();
+        assert!(s.contains(r"^\d{4}-\d{2}-\d{2}$"));
+        assert!(s.contains("not-a-date"));
+    }
+
+    #[test]
+    fn display_invalid_enum() {
+        let kind = DiagnosticKind::InvalidEnum {
+            value: "archived".to_string(),
+            allowed: vec!["draft".to_string(), "published".to_string()],
+        };
+        let s = kind.to_string();
+        assert!(s.contains("archived"));
+        assert!(s.contains("draft, published"));
+    }
+}

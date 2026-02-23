@@ -99,3 +99,108 @@ fn yaml_to_json(val: &serde_yaml::Value) -> Value {
         serde_yaml::Value::Tagged(tagged) => yaml_to_json(&tagged.value),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn yaml_basic() {
+        let content = "---\ntitle: Hello\ntags:\n  - rust\n---\nBody text here.";
+        let (fm, body) = extract_frontmatter(content);
+        let fm = fm.expect("should parse YAML frontmatter");
+        assert_eq!(fm["title"], json!("Hello"));
+        assert_eq!(fm["tags"], json!(["rust"]));
+        assert_eq!(body, "Body text here.");
+    }
+
+    #[test]
+    fn toml_basic() {
+        let content = "+++\ntitle = \"Hello\"\ndraft = true\n+++\nBody text here.";
+        let (fm, body) = extract_frontmatter(content);
+        let fm = fm.expect("should parse TOML frontmatter");
+        assert_eq!(fm["title"], json!("Hello"));
+        assert_eq!(fm["draft"], json!(true));
+        assert_eq!(body, "Body text here.");
+    }
+
+    #[test]
+    fn no_frontmatter() {
+        let content = "Just some plain text.\nNo delimiters here.";
+        let (fm, body) = extract_frontmatter(content);
+        assert!(fm.is_none());
+        assert_eq!(body, content);
+    }
+
+    #[test]
+    fn yaml_empty_block() {
+        let content = "---\n---\nbody here";
+        let (fm, body) = extract_frontmatter(content);
+        assert!(fm.is_none());
+        assert_eq!(body, "body here");
+    }
+
+    #[test]
+    fn toml_unclosed_delimiter() {
+        let content = "+++\ntitle = \"Hello\"\nNo closing delimiter.";
+        let (fm, body) = extract_frontmatter(content);
+        assert!(fm.is_none());
+        assert_eq!(body, content);
+    }
+
+    #[test]
+    fn toml_malformed() {
+        let content = "+++\n[invalid toml = = =\n+++\nbody";
+        let (fm, body) = extract_frontmatter(content);
+        assert!(fm.is_none());
+        assert_eq!(body, content);
+    }
+
+    #[test]
+    fn yaml_non_object() {
+        let content = "---\njust a string\n---\nbody";
+        let (fm, _body) = extract_frontmatter(content);
+        assert!(
+            fm.is_none(),
+            "scalar YAML should be filtered by is_object() check"
+        );
+    }
+
+    #[test]
+    fn yaml_types_preserved() {
+        let content = "---\nbool_val: true\nint_val: 42\nfloat_val: 3.14\narr_val:\n  - one\n  - two\nnested:\n  key: value\n---\n";
+        let (fm, _body) = extract_frontmatter(content);
+        let fm = fm.expect("should parse");
+        assert_eq!(fm["bool_val"], json!(true));
+        assert_eq!(fm["int_val"], json!(42));
+        assert_eq!(fm["float_val"], json!(3.14));
+        assert_eq!(fm["arr_val"], json!(["one", "two"]));
+        assert_eq!(fm["nested"]["key"], json!("value"));
+    }
+
+    #[test]
+    fn toml_types_preserved() {
+        let content = "+++\nbool_val = true\nint_val = 42\nfloat_val = 3.14\narr_val = [\"one\", \"two\"]\ndt = 2025-06-12T10:00:00\n+++\n";
+        let (fm, _body) = extract_frontmatter(content);
+        let fm = fm.expect("should parse");
+        assert_eq!(fm["bool_val"], json!(true));
+        assert_eq!(fm["int_val"], json!(42));
+        assert_eq!(fm["float_val"], json!(3.14));
+        assert_eq!(fm["arr_val"], json!(["one", "two"]));
+        // TOML datetime becomes string
+        assert!(fm["dt"].is_string());
+    }
+
+    #[test]
+    fn toml_nan_becomes_null() {
+        let content = "+++\nval = nan\n+++\n";
+        let (fm, _body) = extract_frontmatter(content);
+        let fm = fm.expect("should parse");
+        assert_eq!(
+            fm["val"],
+            json!(null),
+            "NaN should become null via from_f64"
+        );
+    }
+}

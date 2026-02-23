@@ -230,4 +230,89 @@ type = "string"
         let diags = validate(&files, &schema);
         assert!(diags.is_empty());
     }
+
+    #[test]
+    fn no_frontmatter_required_field() {
+        let schema = parse_schema(
+            r#"
+[[fields.field]]
+name = "title"
+type = "string"
+required = true
+"#,
+        );
+
+        let files = vec![ScannedFile {
+            rel_path: "test.md".to_string(),
+            frontmatter: None,
+        }];
+        let diags = validate(&files, &schema);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].kind, DiagnosticKind::MissingRequired);
+    }
+
+    #[test]
+    fn path_scoped_rule() {
+        let schema = parse_schema(
+            r#"
+[[fields.field]]
+name = "doi"
+type = "string"
+required = true
+paths = ["papers/**"]
+"#,
+        );
+
+        // File outside "papers/" — scoped rule should not apply
+        let files = vec![make_file("blog/post.md", json!({"title": "Hello"}))];
+        let diags = validate(&files, &schema);
+        assert!(diags.is_empty(), "scoped rule should not apply to blog/");
+
+        // File inside "papers/" — rule applies, doi is missing
+        let files = vec![make_file("papers/study.md", json!({"title": "Study"}))];
+        let diags = validate(&files, &schema);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].kind, DiagnosticKind::MissingRequired);
+    }
+
+    #[test]
+    fn multiple_violations_same_file() {
+        let schema = parse_schema(
+            r#"
+[[fields.field]]
+name = "title"
+type = "string"
+required = true
+
+[[fields.field]]
+name = "date"
+type = "date"
+required = true
+"#,
+        );
+
+        let files = vec![make_file("test.md", json!({"other": "stuff"}))];
+        let diags = validate(&files, &schema);
+        assert_eq!(diags.len(), 2);
+        assert!(diags.iter().any(|d| d.field == "title"));
+        assert!(diags.iter().any(|d| d.field == "date"));
+    }
+
+    #[test]
+    fn integer_rejects_float() {
+        let schema = parse_schema(
+            r#"
+[[fields.field]]
+name = "count"
+type = "integer"
+"#,
+        );
+
+        let files = vec![make_file("test.md", json!({"count": 3.14}))];
+        let diags = validate(&files, &schema);
+        assert_eq!(diags.len(), 1);
+        assert!(
+            matches!(&diags[0].kind, DiagnosticKind::WrongType { expected, .. } if expected == "integer")
+        );
+    }
 }
