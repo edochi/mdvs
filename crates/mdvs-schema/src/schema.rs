@@ -59,8 +59,8 @@ struct RawSchema {
 
 #[derive(Debug, Deserialize)]
 struct DirectoryConfig {
-    #[allow(dead_code)]
     glob: Option<String>,
+    ignore_bare_files: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -74,6 +74,8 @@ struct RawFieldsSection {
 pub struct Schema {
     /// Glob pattern for matching markdown files.
     pub glob: String,
+    /// Whether to exclude files without frontmatter from analysis.
+    pub ignore_bare_files: bool,
     /// Field definitions loaded from the TOML config.
     pub fields: Vec<FieldDef>,
 }
@@ -99,6 +101,9 @@ impl Schema {
 
         out.push_str("[directory]\n");
         out.push_str(&format!("glob = {:?}\n", self.glob));
+        if self.ignore_bare_files {
+            out.push_str("ignore_bare_files = true\n");
+        }
         out.push('\n');
 
         out.push_str("[fields]\n\n");
@@ -142,10 +147,13 @@ impl std::str::FromStr for Schema {
     fn from_str(s: &str) -> Result<Self, SchemaError> {
         let raw: RawSchema = toml::from_str(s)?;
 
-        let glob = raw
-            .directory
-            .and_then(|d| d.glob)
-            .unwrap_or_else(|| "**".to_string());
+        let (glob, ignore_bare_files) = match raw.directory {
+            Some(d) => (
+                d.glob.unwrap_or_else(|| "**".to_string()),
+                d.ignore_bare_files.unwrap_or(false),
+            ),
+            None => ("**".to_string(), false),
+        };
 
         let raw_fields = match raw.fields {
             Some(section) => section.field,
@@ -174,7 +182,11 @@ impl std::str::FromStr for Schema {
 
         fields.sort_by(|a, b| a.name.cmp(&b.name));
 
-        Ok(Schema { glob, fields })
+        Ok(Schema {
+            glob,
+            ignore_bare_files,
+            fields,
+        })
     }
 }
 

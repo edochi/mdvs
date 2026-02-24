@@ -106,7 +106,7 @@ type = "string"
         .arg(tmp.path())
         .assert()
         .success()
-        .stderr(predicate::str::contains("Found 1 markdown files"));
+        .stderr(predicate::str::contains("1 markdown files considered"));
 
     let lock_path = tmp.path().join("mfv.lock");
     let lock_content = fs::read_to_string(&lock_path).unwrap();

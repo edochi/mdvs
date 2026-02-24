@@ -43,6 +43,10 @@ enum Command {
         /// Print discovery table only, write nothing
         #[arg(long)]
         dry_run: bool,
+
+        /// Exclude files without frontmatter from analysis
+        #[arg(long)]
+        ignore_bare_files: bool,
     },
 
     /// Refresh lock file by re-scanning markdown files
@@ -82,7 +86,8 @@ fn main() {
             config,
             force,
             dry_run,
-        } => cmd_init(&dir, &glob, &config, force, dry_run),
+            ignore_bare_files,
+        } => cmd_init(&dir, &glob, &config, force, dry_run, ignore_bare_files),
         Command::Update { dir, config } => cmd_update(&dir, config.as_deref()),
         Command::Check {
             dir,
@@ -103,6 +108,7 @@ fn cmd_init(
     config_path: &Path,
     force: bool,
     dry_run: bool,
+    ignore_bare_files: bool,
 ) -> Result<()> {
     if !dir.is_dir() {
         bail!("{} is not a directory", dir.display());
@@ -116,12 +122,25 @@ fn cmd_init(
     }
 
     eprintln!("Scanning {}...", dir.display());
-    let files = scan_directory(dir, glob)?;
+    let all_files = scan_directory(dir, glob)?;
+
+    if all_files.is_empty() {
+        bail!("no markdown files found matching '{glob}'");
+    }
+
+    let files: Vec<_> = if ignore_bare_files {
+        all_files
+            .into_iter()
+            .filter(|f| f.frontmatter.is_some())
+            .collect()
+    } else {
+        all_files
+    };
     let total = files.len();
-    eprintln!("Found {} markdown files\n", total);
+    eprintln!("{} markdown files considered\n", total);
 
     if total == 0 {
-        bail!("no markdown files found matching '{glob}'");
+        bail!("no files with frontmatter found (all files are bare)");
     }
 
     // Build inputs for discover_fields: (path, frontmatter) pairs
@@ -135,19 +154,19 @@ fn cmd_init(
         .count();
     let field_infos = discover_fields(&file_frontmatters);
 
-    // Build observations for inference: (path, set_of_fields) for files with frontmatter
+    // Build observations for inference: all considered files.
+    // Bare files (when included) get an empty field set, which correctly
+    // prevents fields from being inferred as required at their paths.
     let observations: Vec<(PathBuf, HashSet<String>)> = files
         .iter()
-        .filter_map(|f| {
-            let fm = f.frontmatter.as_ref()?;
-            let field_names: HashSet<String> = fm
-                .as_object()
+        .map(|f| {
+            let field_names: HashSet<String> = f
+                .frontmatter
+                .as_ref()
+                .and_then(|fm| fm.as_object())
                 .map(|obj| obj.keys().cloned().collect())
                 .unwrap_or_default();
-            if field_names.is_empty() {
-                return None;
-            }
-            Some((PathBuf::from(&f.rel_path), field_names))
+            (PathBuf::from(&f.rel_path), field_names)
         })
         .collect();
     let inferred = infer_field_paths(&observations);
@@ -176,6 +195,7 @@ fn cmd_init(
 
     let schema = Schema {
         glob: glob.to_string(),
+        ignore_bare_files,
         fields: field_defs,
     };
 
@@ -213,12 +233,25 @@ fn cmd_update(dir: &Path, config_arg: Option<&Path>) -> Result<()> {
     let glob = &schema.glob;
 
     eprintln!("Scanning {} with glob '{}'...", dir.display(), glob);
-    let files = scan_directory(dir, glob)?;
+    let all_files = scan_directory(dir, glob)?;
+
+    if all_files.is_empty() {
+        bail!("no markdown files found matching '{glob}'");
+    }
+
+    let files: Vec<_> = if schema.ignore_bare_files {
+        all_files
+            .into_iter()
+            .filter(|f| f.frontmatter.is_some())
+            .collect()
+    } else {
+        all_files
+    };
     let total = files.len();
-    eprintln!("Found {} markdown files\n", total);
+    eprintln!("{} markdown files considered\n", total);
 
     if total == 0 {
-        bail!("no markdown files found matching '{glob}'");
+        bail!("no files with frontmatter found (all files are bare)");
     }
 
     // Build inputs for discover_fields: (path, frontmatter) pairs
@@ -232,19 +265,17 @@ fn cmd_update(dir: &Path, config_arg: Option<&Path>) -> Result<()> {
         .count();
     let field_infos = discover_fields(&file_frontmatters);
 
-    // Build observations for inference (unused for now, but keeps lock consistent with init)
+    // Build observations for inference
     let observations: Vec<(PathBuf, HashSet<String>)> = files
         .iter()
-        .filter_map(|f| {
-            let fm = f.frontmatter.as_ref()?;
-            let field_names: HashSet<String> = fm
-                .as_object()
+        .map(|f| {
+            let field_names: HashSet<String> = f
+                .frontmatter
+                .as_ref()
+                .and_then(|fm| fm.as_object())
                 .map(|obj| obj.keys().cloned().collect())
                 .unwrap_or_default();
-            if field_names.is_empty() {
-                return None;
-            }
-            Some((PathBuf::from(&f.rel_path), field_names))
+            (PathBuf::from(&f.rel_path), field_names)
         })
         .collect();
     let _inferred = infer_field_paths(&observations);
@@ -332,7 +363,15 @@ fn cmd_check(dir: &Path, schema_arg: Option<&Path>, format: OutputFormat) -> Res
     let schema = Schema::from_file(&schema_path)
         .with_context(|| format!("failed to load schema from {}", schema_path.display()))?;
 
-    let files = scan_directory(dir, &schema.glob)?;
+    let all_files = scan_directory(dir, &schema.glob)?;
+    let files: Vec<_> = if schema.ignore_bare_files {
+        all_files
+            .into_iter()
+            .filter(|f| f.frontmatter.is_some())
+            .collect()
+    } else {
+        all_files
+    };
     eprintln!(
         "Checking {} files against {}\n",
         files.len(),

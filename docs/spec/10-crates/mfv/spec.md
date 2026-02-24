@@ -55,10 +55,11 @@ Scans markdown files, discovers frontmatter fields, infers types and allowed/req
 | `--config <path>` | `mfv.toml` | Output config file path |
 | `--force` | off | Overwrite existing config and lock |
 | `--dry-run` | off | Print discovery table only, write nothing |
+| `--ignore-bare-files` | off | Exclude files without frontmatter from analysis |
 
 **Flow:**
 
-1. Walk directory with glob filter (only `.md` files are processed — the glob scopes which directories to scan, not which file extensions)
+1. Walk directory with glob filter (only `.md` files are processed — the glob scopes which directories to scan, not which file extensions). When `--ignore-bare-files` is set, files without frontmatter are excluded before inference.
 2. Extract frontmatter from each file via `gray_matter`
 3. Discover fields and infer types via `mdvs_schema::discover_fields`
 4. Build per-file field observations and run `mdvs_schema::infer_field_paths` (tree inference)

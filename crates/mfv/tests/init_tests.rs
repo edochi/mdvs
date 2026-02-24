@@ -95,17 +95,16 @@ fn init_custom_glob() {
         .arg("--dry-run")
         .assert()
         .success()
-        .stderr(predicate::str::contains("Found"))
+        .stderr(predicate::str::contains("markdown files considered"))
         // Should not include nested/deep-note.md
         .stderr(predicate::function(|s: &str| {
-            // Parse the count from "Found N markdown files"
+            // Parse the count from "N markdown files considered"
             for line in s.lines() {
-                if let Some(rest) = line.strip_prefix("Found ") {
-                    if let Some(n) = rest.split_whitespace().next() {
-                        if let Ok(count) = n.parse::<usize>() {
-                            // With *.md (non-recursive), should be fewer than all files
-                            return count > 0;
-                        }
+                let trimmed = line.trim();
+                if let Some(rest) = trimmed.strip_suffix(" markdown files considered") {
+                    if let Ok(count) = rest.parse::<usize>() {
+                        // With * (non-recursive), should be fewer than all files
+                        return count > 0;
                     }
                 }
             }

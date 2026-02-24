@@ -93,7 +93,7 @@ Printed to stderr:
 
 ```
 Scanning .
-Found 42 markdown files
+42 markdown files considered
 
  Field       Type       Count
  title       string     38/42
