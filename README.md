@@ -19,7 +19,8 @@ mdvs/
 │   │       ├── lib.rs             # re-exports
 │   │       ├── field_type.rs      # FieldType enum (String, Date, Boolean, etc.)
 │   │       ├── field_def.rs       # FieldDef struct, RawFieldDef serde intermediate
-│   │       ├── discovery.rs       # discover_fields(), auto_promote(), infer_type()
+│   │       ├── discovery.rs       # discover_fields(), infer_type()
+│   │       ├── inference.rs      # infer_field_paths() — tree inference for allowed/required
 │   │       ├── lock.rs           # LockFile — discovery snapshot (mfv.lock / mdvs.lock)
 │   │       └── schema.rs         # Schema parsing, rules_for_path(), TOML roundtrip
 │   ├── mfv/                       # library + binary: Markdown Frontmatter Validator
@@ -184,24 +185,23 @@ Note: `N` in `FLOAT[N]` is determined at init time based on the chosen model's o
 
 Not all notes have frontmatter, and those that do may have wildly different fields depending on the user's workflow (Obsidian, Zettelkasten, blog, research notes, etc.). Rather than hardcoding assumptions about which fields matter, `mdvs` discovers them from the config file.
 
-**Field discovery** is done via `mfv init`, which walks the directory, extracts frontmatter from all matching files, and produces a frequency table. It writes both a config file (`mfv.toml`) and a lock file (`mfv.lock`) that captures the full discovery snapshot. Fields are auto-promoted based on a configurable threshold (fraction of files a field must appear in). The user can then edit the config to adjust types, add validation rules, and toggle `promoted` flags.
+**Field discovery** is done via `mfv init`, which walks the directory, extracts frontmatter from all matching files, and produces a frequency table. It writes both a config file (`mfv.toml`) and a lock file (`mfv.lock`) that captures the full discovery snapshot. Tree inference automatically generates `allowed` and `required` glob patterns for each field based on where it appears in the directory tree. The user can then edit the config to adjust types, add validation rules, and refine scope patterns.
 
-Field definitions (including `promoted = true`) are stored in `mdvs.toml`, and the promoted list is also stored in `vault_meta` for runtime validation. No interactive prompts — everything is config-driven.
+Field definitions (with `allowed`/`required` patterns) are stored in the config file. No interactive prompts — everything is config-driven.
 
-**Type inference** for promoted fields:
+**Type inference**:
 
-- If values are consistently YAML lists → `VARCHAR[]`
-- If values parse as dates → `DATE`
-- If values are booleans → `BOOLEAN`
-- Everything else → `VARCHAR`
+- If values are consistently YAML lists → `string[]`
+- If values parse as dates → `date`
+- If values are booleans → `boolean`
+- If values are numbers → `integer` or `float`
+- Everything else → `string`
 
 The user can override inferred types in config if needed, but the defaults should be right for 95% of cases.
 
-**Non-promoted fields** are still captured in the `metadata` JSON column, fully queryable via DuckDB's JSON functions (e.g., `metadata->>'author'`, `json_extract(metadata, '$.custom_field')`).
+**No frontmatter at all**: the note still gets indexed. The `ignore_bare_files` config option controls whether files without frontmatter are included in inference and validation (default: include them).
 
-**No frontmatter at all**: the note still gets indexed — promoted columns are NULL, metadata is `{}`, and the full content is still chunked and embedded.
-
-**Config-driven**: field promotion is controlled entirely by the config file. There are no interactive prompts — `mfv init` generates the initial config, and the user edits it from there.
+**Config-driven**: field scoping is controlled entirely by the config file via `allowed`/`required` glob patterns. There are no interactive prompts — `mfv init` generates the initial config, and the user edits it from there.
 
 #### Chunking Strategy
 
@@ -332,7 +332,7 @@ Options:
     --chunk-size   Maximum chunk size in characters (default: 1000)
 ```
 
-Creates the .duckdb file, installs/loads the DuckDB vss extension, creates the schema with promoted columns from `mdvs.toml` (generates a default config if missing), downloads and caches the embedding model. Stores all configuration in `vault_meta`. No interactive prompts — field promotion is driven entirely by the config file.
+Creates the .duckdb file, installs/loads the DuckDB vss extension, creates the schema with field columns based on the schema in `mdvs.toml` (generates a default config if missing), downloads and caches the embedding model. Stores all configuration in `vault_meta`. No interactive prompts — field schema is driven entirely by the config file.
 
 If `--revision` is omitted, the latest available revision is downloaded and its SHA is recorded. If specified, that exact revision is fetched from HuggingFace. Pinning a revision is recommended for reproducibility — it prevents silent model updates from causing revision mismatch warnings.
 
@@ -493,46 +493,60 @@ mfv <command> [options]
 
 COMMANDS:
     init      Discover frontmatter fields, write config + lock file
+    update    Re-scan and refresh lock file
     check     Validate files against schema
 ```
 
 ### `mfv init`
 
 ```
-mfv init [--dir <path>] [--glob <pattern>] [--threshold <f64>] [--config <path>] [--force] [--dry-run]
+mfv init [--dir <path>] [--glob <pattern>] [--config <path>] [--force] [--dry-run] [--ignore-bare-files]
 
 Options:
-    --dir         Directory to scan (default: .)
-    --glob        File glob pattern (default: **)
-    --threshold   Auto-promote threshold — fraction of files a field must appear in (default: 0.5)
-    --config      Config file path to write (default: mfv.toml)
-    --force       Overwrite existing config
-    --dry-run     Print discovery table only, write nothing
+    --dir                Directory to scan (default: .)
+    --glob               File glob pattern (default: **)
+    --config             Config file path to write (default: mfv.toml)
+    --force              Overwrite existing config
+    --dry-run            Print discovery table only, write nothing
+    --ignore-bare-files  Exclude files without frontmatter from inference
 ```
 
-Scans markdown files, discovers frontmatter fields via type inference, and prints a frequency table to stderr. Fields appearing in at least `--threshold` fraction of files are marked as promoted. Writes both a config file (`mfv.toml`) and a lock file (`mfv.lock`) that captures the full discovery snapshot.
+Scans markdown files, discovers frontmatter fields via type inference, and prints a frequency table to stderr. Tree inference automatically generates `allowed` and `required` glob patterns for each field based on where it appears in the directory tree. Writes both a config file (`mfv.toml`) and a lock file (`mfv.lock`) that captures the full discovery snapshot.
 
 ```
 $ mfv init --dry-run
+12 markdown files considered
 
-Field                Type          Count/Total Promoted
---------------------------------------------------------
-title                string          11/12     Y
-tags                 string[]        10/12     Y
-date                 date             9/12     Y
-draft                boolean          4/12
-rating               float            1/12
+ Field             Type      Count
+ ──────────────────────────────────
+ title             string       11
+ tags              string[]     10
+ date              date          9
+ draft             boolean       4
+ rating            float         1
 ```
 
-Refuses if the config file already exists — use `--force` to overwrite. The `--dry-run` flag prints the table without writing any files. The discovered schema is the starting point for building a validation schema — the user edits the generated config to add `required`, `pattern`, and `values` rules.
+Refuses if the config file already exists — use `--force` to overwrite. The `--dry-run` flag prints the table without writing any files. The discovered schema is the starting point for building a validation schema — the user edits the generated config to adjust `allowed`/`required` patterns, add `pattern`, and `values` rules.
+
+### `mfv update`
+
+```
+mfv update [--dir <path>] [--config <path>]
+
+Options:
+    --dir       Directory to scan (default: .)
+    --config    Config file path (default: auto-discover mfv.toml / mdvs.toml)
+```
+
+Re-scans the directory and refreshes the lock file with current observations. Reads the glob pattern from the existing config. The lock captures raw facts (which fields exist in which files); the config captures policy (what's allowed). `update` doesn't consult the config — it just records what's there. Use `check` to compare reality against boundaries.
 
 ### Lock File (`mfv.lock`)
 
-The lock file captures the full discovery snapshot at `init` time — every field found, its inferred type, count, and promoted status. It sits next to the config file and follows the Cargo analogy:
+The lock file captures the full discovery snapshot — every field found, its inferred type, and which files contain it. It sits next to the config file and follows the Cargo analogy:
 
 ```
 mfv.toml       ↔  Cargo.toml     (config — what you want)
-mfv.lock       ↔  Cargo.lock     (resolved state — what was actually used)
+mfv.lock       ↔  Cargo.lock     (resolved state — what's actually there)
 ```
 
 Format:
@@ -545,20 +559,17 @@ Format:
 total_files = 12
 files_with_frontmatter = 10
 glob = "**"
-threshold = 0.5
 generated_at = "2025-06-12T10:00:00"
 
 [[field]]
 name = "title"
 type = "string"
-count = 11
-promoted = true
+files = ["blog/post-1.md", "blog/post-2.md", "notes/idea.md"]
 
 [[field]]
 name = "tags"
 type = "string[]"
-count = 10
-promoted = true
+files = ["blog/post-1.md", "blog/post-2.md"]
 ```
 
 ### `mfv check`
@@ -607,57 +618,56 @@ Standalone `mfv` users get `mfv.toml` (generated by `mfv init`). Users of both t
 ### Field Schema
 
 ```toml
+[directory]
 glob = "**"
+ignore_bare_files = false
 
 [fields]
-promote_threshold = 0.5         # auto-promote fields appearing in ≥50% of files
 
 [[fields.field]]
 name = "title"
 type = "string"
-promoted = true                 # becomes a typed column in mdvs's mdfiles table
+allowed = ["**"]               # may appear anywhere
 
 [[fields.field]]
 name = "tags"
 type = "string[]"
-promoted = true
+allowed = ["**"]
 
 [[fields.field]]
 name = "date"
 type = "date"
-promoted = true
+allowed = ["**"]
 
 [[fields.field]]
 name = "status"
 type = "enum"
 values = ["draft", "review", "published"]
-required = true
-paths = ["blog/**"]             # only required in files matching this glob
+allowed = ["blog/**"]          # may only appear in blog/
+required = ["blog/**"]         # must appear in blog/
 
 [[fields.field]]
 name = "doi"
 type = "string"
-required = true
-paths = ["papers/**"]
+allowed = ["papers/**"]
+required = ["papers/**"]
 pattern = "^10\\.\\d{4,9}/.*"  # regex validation
-promoted = true
 ```
 
 **Supported types**: `string`, `string[]`, `date`, `boolean`, `integer`, `float`, `enum`
 
-**Validation rules** (all opt-in, all ignored if absent):
+**Scoping rules** (all opt-in):
 
 | Rule | Type | Meaning |
 |---|---|---|
-| `required` | `bool` | Field must be present (in all files, or scoped by `paths`) |
-| `paths` | `string[]` | Glob patterns where the field's rules apply |
+| `allowed` | `string[]` | Glob patterns where the field may appear (`[]` = nowhere, `["**"]` = everywhere) |
+| `required` | `string[]` | Glob patterns where the field must be present (`[]` = not required, `["**"]` = required everywhere). Invariant: `required ⊆ allowed` |
 | `pattern` | `string` | Regex the value must match (strings only) |
 | `values` | `string[]` | Allowed values (enum type) |
-| `promoted` | `bool` | mdvs-specific: becomes a SQL column vs. staying in JSON metadata |
+
+Fields appearing outside their `allowed` patterns produce a `NotAllowed` validation error. Unknown fields (not in the schema at all) are also `NotAllowed`.
 
 Type inference (when `type` is not explicitly set): YAML lists → `string[]`, parseable dates → `date`, booleans → `boolean`, numbers → `integer`/`float`, everything else → `string`.
-
-Fields not listed in the config are auto-discovered, type-inferred, and promoted or not based on `promote_threshold`. A minimal config with just promoted fields and no validation rules is ~10 lines.
 
 ### Search Settings (mdvs only)
 
@@ -706,33 +716,35 @@ Goal: extract the schema and validation layers into their own crates. Ship `mfv`
 
 - [x] Restructure into Cargo workspace: `mdvs-schema`, `mfv`, `mdvs`
 - [x] `mdvs-schema`: field definition types, `[[fields.field]]` TOML parsing, type inference engine
-- [x] `mfv init`: discover frontmatter fields, print frequency table, auto-promote by threshold, write config + lock file
+- [x] `mfv init`: discover frontmatter fields, print frequency table, tree inference for `allowed`/`required` patterns, write config + lock file
+- [x] `mfv update`: re-scan and refresh lock file
 - [x] `mfv check`: validate files against schema, human/json/github output formats
 - [x] Schema resolution precedence: `--schema` → `mfv.toml` → `mdvs.toml` → error
-- [x] Validation rules: `required`, `paths` (glob-scoped via globset), `pattern` (regex), `values` (enum)
+- [x] Validation rules: `allowed`/`required` (glob-scoped via globset), `pattern` (regex), `values` (enum), `NotAllowed` enforcement
+- [x] `ignore_bare_files` config option for excluding files without frontmatter
 - [x] Exit codes: 0 = valid, 1 = errors, 2 = config error
-- [x] Comprehensive test suite: 39 unit tests + 22 integration tests (assert_cmd)
+- [x] Comprehensive test suite: 105 unit tests + 32 integration tests (assert_cmd)
 
 Deliverable: `mfv` is independently useful and publishable. Someone running a Hugo blog can `cargo install mfv` and use it in CI without pulling in DuckDB.
 
 ### v0.3 — Usable mdvs CLI
 
-Goal: something you can actually use daily for search.
+Goal: something you can actually use daily for search. Architecture overhaul: DataFusion replaces DuckDB, Parquet for persistence.
 
-- [ ] `init`, `index`, `search` subcommands via clap
-- [ ] `mdvs init` generates `mdvs.toml` (or uses existing), creates DB, downloads model
-- [ ] Config-driven field promotion (no interactive prompts — reads from `mdvs.toml`)
-- [ ] Dynamic mdfiles table schema based on promoted fields from `mdvs.toml`
+- [ ] Replace DuckDB with DataFusion (pure Rust SQL on Arrow) + Parquet persistence in `.mdvs/` directory
+- [ ] `mdvs init` generates `mdvs.toml` (or uses existing), downloads model, creates `.mdvs/` artifact directory
+- [ ] `mdvs build` creates/updates Parquet files from markdown directory (like `cargo build`)
+- [ ] `mdvs search` queries the Parquet index with cosine distance computed in Rust
+- [ ] `mdvs update` re-scans and refreshes the lock file
+- [ ] `mdvs check` validates frontmatter against schema (delegates to mfv engine)
+- [ ] `mdvs clean` removes `.mdvs/` artifact directory
+- [ ] `mdvs info` shows index status and statistics
+- [ ] Config-driven field schema (no interactive prompts — reads from `mdvs.toml`)
 - [ ] Incremental indexing with content hashing (per-file diffing, chunk rebuild on change)
-- [ ] `index --full` for full rebuild (replaces separate `reindex` command)
-- [ ] Model identity storage: model_id, model_dimension, model_revision in vault_meta
-- [ ] Model mismatch detection (hard error on ID/dimension mismatch, warning on revision mismatch for search, hard error on revision mismatch for index)
-- [ ] `--model` and `--revision` flags on init and as global overrides
-- [ ] Handle notes with no frontmatter gracefully
-- [ ] `--where` filter on search (SQL expression against promoted columns + metadata)
+- [ ] `build --full` for clean rebuild
+- [ ] Model identity storage and mismatch detection
+- [ ] `--where` filter on search (SQL expression via DataFusion)
 - [ ] Human-readable table output with chunk-level snippets and heading indicators
-- [ ] `mdvs validate` (delegates to mfv engine)
-- [ ] `info` command
 - [ ] Staleness behavior: `on_stale = "auto"` (incremental sync before search) and `"strict"` modes
 
 ### v0.4 — Polish
@@ -821,7 +833,7 @@ Pre-built binaries are the primary distribution path. Built in CI via `cargo-dis
 
 - **vss extension version compatibility**: does the vss community extension support the same DuckDB version that `duckdb-rs` bundles? Version skew could be a problem.
 - **text-splitter heading extraction**: `text-splitter` returns raw markdown chunks without structured heading metadata. Need to validate that a lightweight pulldown-cmark pass over each chunk reliably extracts the relevant heading for the `§ Heading` display. Edge cases: chunks that span across headings, chunks with no headings at all.
-- **Dynamic schema generation**: generating `CREATE TABLE mdfiles (...)` dynamically based on promoted field selection at init. Need to handle type inference carefully (especially detecting VARCHAR[] vs VARCHAR for list-valued fields). Also need to handle schema changes if the user re-inits with different promoted fields.
+- **Dynamic schema generation**: generating table schemas dynamically based on the field definitions in config. Need to handle type inference carefully (especially detecting list vs scalar fields). Also need to handle schema changes if the user re-inits with different field definitions.
 - **Model revision resolution**: need to verify whether `model2vec-rs` exposes the Git commit SHA of the loaded model. If not, fall back to reading it from the HuggingFace cache directory structure (`~/.cache/huggingface/hub/models--org--name/snapshots/<sha>/`).
 - **crates.io name availability**: verify that `mdvs` and `mfv` are available on crates.io before publishing.
 - **Enum type mapping**: how `enum` fields with `values` map to DuckDB — probably just `VARCHAR` with application-level validation, since DuckDB doesn't have native enum constraints on insert. Validation happens via `mfv check` / `mdvs validate`, not at the DB layer.
@@ -831,5 +843,5 @@ Pre-built binaries are the primary distribution path. Built in CI via `cargo-dis
 - **FLOAT[N] parameter binding**: resolved — embeddings are inserted as SQL literals `[...]::FLOAT[256]` (no `Vec<f32>` ToSql support in duckdb-rs).
 - **gray_matter edge cases**: resolved — tested against real vaults; unclosed delimiters and malformed YAML/TOML return `None` gracefully.
 - **Config file conflicts**: resolved — no shared `frontmatter.toml`. Each tool has its own file (`mfv.toml` / `mdvs.toml`) with fallback precedence.
-- **Promoted field separation**: resolved — `mfv` ignores `promoted` and unknown TOML sections via serde defaults.
+- **Config file sharing**: resolved — `mfv` ignores unknown TOML sections (e.g., `[model]`, `[search]`) via serde defaults.
 - **Path-scoped requirements**: resolved — using `globset` crate for glob matching on `paths` field in validation rules.
