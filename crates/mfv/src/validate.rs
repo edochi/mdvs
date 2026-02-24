@@ -76,6 +76,23 @@ pub fn validate(files: &[ScannedFile], schema: &Schema) -> Vec<Diagnostic> {
                 });
             }
         }
+
+        // Allowed enforcement: every frontmatter key must be allowed at this path
+        if let Some(Value::Object(map)) = fm {
+            for key in map.keys() {
+                let is_allowed = schema
+                    .fields
+                    .iter()
+                    .any(|f| f.name == *key && f.is_allowed_at(&file.rel_path));
+                if !is_allowed {
+                    diagnostics.push(Diagnostic {
+                        file: file.rel_path.clone(),
+                        field: key.clone(),
+                        kind: DiagnosticKind::NotAllowed,
+                    });
+                }
+            }
+        }
     }
 
     diagnostics
@@ -131,7 +148,7 @@ required = ["**"]
 "#,
         );
 
-        let files = vec![make_file("test.md", json!({"tags": ["a"]}))];
+        let files = vec![make_file("test.md", json!({}))];
         let diags = validate(&files, &schema);
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].kind, DiagnosticKind::MissingRequired);
@@ -264,12 +281,12 @@ required = ["papers/**"]
         );
 
         // File outside "papers/" — scoped rule should not apply
-        let files = vec![make_file("blog/post.md", json!({"title": "Hello"}))];
+        let files = vec![make_file("blog/post.md", json!({}))];
         let diags = validate(&files, &schema);
         assert!(diags.is_empty(), "scoped rule should not apply to blog/");
 
         // File inside "papers/" — rule applies, doi is missing
-        let files = vec![make_file("papers/study.md", json!({"title": "Study"}))];
+        let files = vec![make_file("papers/study.md", json!({}))];
         let diags = validate(&files, &schema);
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].kind, DiagnosticKind::MissingRequired);
@@ -291,7 +308,7 @@ required = ["**"]
 "#,
         );
 
-        let files = vec![make_file("test.md", json!({"other": "stuff"}))];
+        let files = vec![make_file("test.md", json!({}))];
         let diags = validate(&files, &schema);
         assert_eq!(diags.len(), 2);
         assert!(diags.iter().any(|d| d.field == "title"));
@@ -314,5 +331,97 @@ type = "integer"
         assert!(
             matches!(&diags[0].kind, DiagnosticKind::WrongType { expected, .. } if expected == "integer")
         );
+    }
+
+    #[test]
+    fn field_not_allowed_at_path() {
+        let schema = parse_schema(
+            r#"
+[[fields.field]]
+name = "doi"
+type = "string"
+allowed = ["blog/**"]
+"#,
+        );
+
+        let files = vec![make_file("notes/x.md", json!({"doi": "10.1234/test"}))];
+        let diags = validate(&files, &schema);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].field, "doi");
+        assert_eq!(diags[0].kind, DiagnosticKind::NotAllowed);
+    }
+
+    #[test]
+    fn field_allowed_at_path_no_error() {
+        let schema = parse_schema(
+            r#"
+[[fields.field]]
+name = "doi"
+type = "string"
+allowed = ["blog/**"]
+"#,
+        );
+
+        let files = vec![make_file("blog/x.md", json!({"doi": "10.1234/test"}))];
+        let diags = validate(&files, &schema);
+        assert!(diags.is_empty());
+    }
+
+    #[test]
+    fn unknown_field_not_in_schema() {
+        let schema = parse_schema(
+            r#"
+[[fields.field]]
+name = "title"
+type = "string"
+"#,
+        );
+
+        let files = vec![make_file("test.md", json!({"title": "Hi", "extra": "value"}))];
+        let diags = validate(&files, &schema);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].field, "extra");
+        assert_eq!(diags[0].kind, DiagnosticKind::NotAllowed);
+    }
+
+    #[test]
+    fn allowed_everywhere_no_error() {
+        let schema = parse_schema(
+            r#"
+[[fields.field]]
+name = "title"
+type = "string"
+allowed = ["**"]
+"#,
+        );
+
+        let files = vec![make_file("any/deep/path.md", json!({"title": "Hello"}))];
+        let diags = validate(&files, &schema);
+        assert!(diags.is_empty());
+    }
+
+    #[test]
+    fn multiple_not_allowed() {
+        let schema = parse_schema(
+            r#"
+[[fields.field]]
+name = "title"
+type = "string"
+allowed = ["blog/**"]
+"#,
+        );
+
+        let files = vec![make_file(
+            "notes/x.md",
+            json!({"title": "Hi", "extra": "value"}),
+        )];
+        let diags = validate(&files, &schema);
+        assert_eq!(diags.len(), 2);
+        assert!(diags
+            .iter()
+            .all(|d| d.kind == DiagnosticKind::NotAllowed));
+        let fields: Vec<&str> = diags.iter().map(|d| d.field.as_str()).collect();
+        assert!(fields.contains(&"title"));
+        assert!(fields.contains(&"extra"));
     }
 }

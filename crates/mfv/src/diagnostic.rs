@@ -26,6 +26,8 @@ pub enum DiagnosticKind {
         /// List of allowed values from the schema.
         allowed: Vec<String>,
     },
+    /// Field is present but not allowed at this file's path.
+    NotAllowed,
 }
 
 impl fmt::Display for DiagnosticKind {
@@ -45,6 +47,7 @@ impl fmt::Display for DiagnosticKind {
                     allowed.join(", ")
                 )
             }
+            DiagnosticKind::NotAllowed => write!(f, "field not allowed here"),
         }
     }
 }
@@ -94,6 +97,12 @@ mod tests {
         let s = kind.to_string();
         assert!(s.contains(r"^\d{4}-\d{2}-\d{2}$"));
         assert!(s.contains("not-a-date"));
+    }
+
+    #[test]
+    fn display_not_allowed() {
+        let kind = DiagnosticKind::NotAllowed;
+        assert_eq!(kind.to_string(), "field not allowed here");
     }
 
     #[test]

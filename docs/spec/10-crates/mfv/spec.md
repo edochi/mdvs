@@ -144,6 +144,8 @@ pub enum DiagnosticKind {
     PatternMismatch { pattern: String, value: String },
     /// Value not in allowed enum values
     InvalidEnum { value: String, allowed: Vec<String> },
+    /// Field is present but not allowed at this file's path
+    NotAllowed,
 }
 ```
 
@@ -163,6 +165,7 @@ For each file:
    b. If field is present, check type compatibility → `WrongType` if wrong.
    c. If `pattern` is set and value is a string, check regex → `PatternMismatch`.
    d. If `values` is set (enum), check membership → `InvalidEnum`.
+3. **Allowed enforcement:** For each key in the file's frontmatter, check that some schema field with that name has `is_allowed_at(rel_path)`. If no match → `NotAllowed`. This catches both fields with restricted `allowed` patterns appearing outside their scope and fields not defined in the schema at all.
 
 ### Path-Scoped Rules
 

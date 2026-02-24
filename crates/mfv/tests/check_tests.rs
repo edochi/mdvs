@@ -313,6 +313,53 @@ required = ["**"]
 }
 
 #[test]
+fn not_allowed_field_exit_1() {
+    let tmp = TempDir::new().unwrap();
+    write_schema(
+        tmp.path(),
+        "mfv.toml",
+        r#"
+[[fields.field]]
+name = "doi"
+type = "string"
+allowed = ["papers/**"]
+"#,
+    );
+    // File outside papers/ has doi — should be not allowed
+    fs::create_dir(tmp.path().join("blog")).unwrap();
+    write_md(tmp.path().join("blog").as_path(), "post.md", "doi: 10.1234/test\n", "Body");
+
+    mfv()
+        .args(["check", "--dir"])
+        .arg(tmp.path())
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("not allowed"));
+}
+
+#[test]
+fn unknown_field_exit_1() {
+    let tmp = TempDir::new().unwrap();
+    write_schema(
+        tmp.path(),
+        "mfv.toml",
+        r#"
+[[fields.field]]
+name = "title"
+type = "string"
+"#,
+    );
+    write_md(tmp.path(), "note.md", "title: Hello\nextra: oops\n", "Body");
+
+    mfv()
+        .args(["check", "--dir"])
+        .arg(tmp.path())
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains("not allowed"));
+}
+
+#[test]
 fn invalid_schema_exit_2() {
     let tmp = TempDir::new().unwrap();
     write_schema(tmp.path(), "mfv.toml", "this is not [valid toml = = =");
