@@ -2,13 +2,15 @@
 
 **Status: DRAFT**
 
-**Cross-references:** [Terminology](../01-terminology.md) | [Crate: mdvs](../10-crates/mdvs/spec.md) | [Crate: mfv](../10-crates/mfv/spec.md) | [Database Schema](../20-database/schema.md)
+**Cross-references:** [Terminology](../01-terminology.md) | [Crate: mfv](../10-crates/mfv/spec.md) | [Crate: mdvs-schema](../10-crates/mdvs-schema/spec.md) | [Workflow: Inference](inference.md)
 
 ---
 
 ## Overview
 
-The init workflow creates a new vault index. Two variants exist: `mfv init` (schema-only) and `mdvs init` (schema + database + model). They share the field discovery and type inference steps.
+The init workflow creates a new field schema and lock file by scanning markdown files, discovering fields, and inferring allowed/required patterns via tree inference.
+
+Currently implemented: `mfv init`. `mdvs init` is planned but not yet implemented.
 
 ---
 
@@ -16,18 +18,31 @@ The init workflow creates a new vault index. Two variants exist: `mfv init` (sch
 
 | Actor | Role |
 |---|---|
-| **User** | Invokes init, selects promoted fields (interactive) or provides `--promoted` |
+| **User** | Invokes init |
 | **CLI** | Orchestrates the workflow |
 | **Filesystem** | Source of `.md` files |
-| **mdvs-schema** | Field discovery, type inference, TOML generation |
 | **gray_matter** | Frontmatter extraction |
-| **DuckDB** | Database creation, extension install (mdvs only) |
-| **model2vec-rs** | Model download and caching (mdvs only) |
-| **HuggingFace** | Model weight hosting (mdvs only) |
+| **mdvs-schema** | Field discovery, type inference, tree inference, TOML generation |
 
 ---
 
 ## Sequence: `mfv init`
+
+```
+mfv init [--dir <path>] [--glob <pattern>] [--config <path>] [--force] [--dry-run]
+```
+
+### CLI Flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `--dir <path>` | `.` | Directory to scan |
+| `--glob <pattern>` | `**/*.md` | File matching glob |
+| `--config <path>` | `mfv.toml` | Output config file path |
+| `--force` | off | Overwrite existing config and lock |
+| `--dry-run` | off | Print table only, write nothing |
+
+### Flow
 
 ```mermaid
 sequenceDiagram
@@ -37,7 +52,12 @@ sequenceDiagram
     participant GM as gray_matter
     participant S as mdvs-schema
 
-    U->>CLI: mfv init [--dir <path>]
+    U->>CLI: mfv init [options]
+
+    alt config exists and no --force
+        CLI->>U: Error: config already exists (use --force)
+    end
+
     CLI->>FS: Walk directory (glob filter)
     FS-->>CLI: List of .md files
 
@@ -45,105 +65,65 @@ sequenceDiagram
         CLI->>FS: Read file content
         FS-->>CLI: Raw content
         CLI->>GM: Extract frontmatter
-        GM-->>CLI: YAML mapping (or None)
+        GM-->>CLI: JSON value (or None)
     end
 
-    CLI->>S: discover_fields(parsed frontmatter)
-    S-->>CLI: FieldStats[] (name, count, inferred type, samples)
+    CLI->>S: discover_fields(path + frontmatter pairs)
+    S-->>CLI: Vec<FieldInfo> (name, type, files)
 
-    CLI->>U: Display frequency table
-    Note over U,CLI: No promotion prompt (mfv has no DB)
+    CLI->>S: infer_field_paths(file → field-set observations)
+    S-->>CLI: BTreeMap<field_name, FieldPaths>
 
-    CLI->>S: Generate Schema (inferred types, no rules)
-    CLI->>FS: Write frontmatter.toml
+    CLI->>CLI: Combine: FieldDef = type from discovery + allowed/required from inference
+
+    CLI->>U: Display frequency table (stderr)
+
+    alt --dry-run
+        Note over CLI: Stop here, no files written
+    else
+        CLI->>FS: Write mfv.toml (Schema with inferred patterns)
+        CLI->>FS: Write mfv.lock (per-file observations)
+        CLI->>U: "Wrote mfv.toml and mfv.lock"
+    end
+```
+
+### Frequency Table Output
+
+Printed to stderr:
+
+```
+Scanning 42 files...
+Found 42 markdown files, 38 with frontmatter
+
+ Field       Type       Count
+ title       string     38/42
+ tags        string[]   35/42
+ date        date       30/42
+ draft       boolean     5/42
+ author      string      3/42
 ```
 
 ### End States
 
-| State | Condition |
-|---|---|
-| **Success** | `frontmatter.toml` written with inferred field types |
-| **No files found** | Error: no .md files match the glob pattern |
-| **No frontmatter** | Success: `frontmatter.toml` with empty `[fields]` section |
-| **File exists** | Error (unless `--force`): `frontmatter.toml` already exists |
+| State | Condition | Exit Code |
+|---|---|---|
+| **Success** | Config and lock written | 0 |
+| **Dry-run** | Table printed, no files written | 0 |
+| **Config exists** | Error: config already exists (suggest `--force`) | 2 |
+| **No files found** | Error: no markdown files match the glob | 2 |
+| **Dir not found** | Error: specified directory doesn't exist | 2 |
 
 ---
 
-## Sequence: `mdvs init`
+## Output Files
 
-```mermaid
-sequenceDiagram
-    participant U as User
-    participant CLI as mdvs CLI
-    participant FS as Filesystem
-    participant GM as gray_matter
-    participant S as mdvs-schema
-    participant DB as DuckDB
-    participant M as model2vec-rs
-    participant HF as HuggingFace
+### `mfv.toml`
 
-    U->>CLI: mdvs init [options]
+Contains `[directory]` section and `[[fields.field]]` entries. Each field has explicit `allowed` and `required` patterns from tree inference. See [Configuration](../40-configuration/frontmatter-toml.md).
 
-    %% Check preconditions
-    CLI->>FS: Check if .mdvs.duckdb exists
-    alt Database exists
-        CLI->>U: Error: database already exists
-    end
+### `mfv.lock`
 
-    %% Field discovery (shared with mfv)
-    CLI->>FS: Walk directory (glob filter)
-    FS-->>CLI: List of .md files
-
-    loop Each file (up to sample size)
-        CLI->>FS: Read file content
-        FS-->>CLI: Raw content
-        CLI->>GM: Extract frontmatter
-        GM-->>CLI: YAML mapping (or None)
-    end
-
-    CLI->>S: discover_fields(parsed frontmatter)
-    S-->>CLI: FieldStats[]
-
-    %% Promotion selection
-    alt --promoted flag given
-        CLI->>CLI: Use provided field list
-    else Interactive mode
-        CLI->>U: Display frequency table + promotion prompt
-        U-->>CLI: Selected fields
-    end
-
-    %% Write config files
-    CLI->>FS: Write frontmatter.toml (with promoted flags)
-    CLI->>FS: Write .mdvs.toml (model, chunking settings)
-
-    %% Model download
-    CLI->>M: Load model (model_id, revision)
-    M->>HF: Download weights (if not cached)
-    HF-->>M: Model weights (~30MB)
-    M-->>CLI: Model + ModelIdentity
-
-    Note over CLI: Show progress bar during download
-
-    %% Database setup
-    CLI->>DB: Create .mdvs.duckdb
-    CLI->>DB: INSTALL vss FROM community, LOAD vss
-    CLI->>DB: CREATE TABLE vault_meta (...)
-    CLI->>DB: INSERT vault_meta keys (model identity, promoted fields, etc.)
-    CLI->>DB: CREATE TABLE mdfiles (...dynamic promoted columns...)
-    CLI->>DB: CREATE TABLE chunks (...FLOAT[N]...)
-
-    CLI->>U: Init complete. Run `mdvs index` to build the index.
-```
-
-### End States
-
-| State | Condition |
-|---|---|
-| **Success** | Database created, config files written, model cached |
-| **DB exists** | Error: `.mdvs.duckdb` already exists at target path |
-| **No files found** | Error: no .md files match the glob pattern |
-| **Model download failed** | Error: network issue or invalid model ID |
-| **vss install failed** | Error: network issue or version incompatibility |
+Contains `[discovery]` metadata and `[[field]]` entries with per-file observation lists. See [Configuration: Lock File](../40-configuration/frontmatter-toml.md#lock-file-mfvlock).
 
 ---
 
@@ -151,20 +131,17 @@ sequenceDiagram
 
 | Case | Behavior |
 |---|---|
-| `frontmatter.toml` already exists | `mdvs init` reads it and uses existing field definitions (does not re-scan). Adds `promoted` flags for selected fields. |
-| All files lack frontmatter | Success. No promoted fields, empty `[fields]` section. `mdfiles` table has only fixed columns. |
-| Mixed frontmatter formats (YAML/TOML/JSON) | `gray_matter` handles all three. Type inference works across formats. |
-| Very large vault (>10k files) | Scan samples first 100 files for field discovery. `--promoted` bypasses scanning entirely. |
-| Interrupted download | Partial state: config files may exist but database may not. User re-runs `mdvs init --force` or deletes partial files. |
-| Invalid `--promoted` field name | Error: field "foo" not found in frontmatter of scanned files. |
+| Config already exists | Error with exit 2, suggests `--force`. With `--force`, overwrites both config and lock. |
+| All files lack frontmatter | Error: no markdown files found (only files with frontmatter count). |
+| Mixed frontmatter formats (YAML/TOML) | `gray_matter` handles both. Type inference works across formats. |
+| Single file | Tree inference still works; produces root-level `*` patterns. |
+| `--dry-run` with `--config` | Config path is accepted but no files are written. |
 
 ---
 
 ## Related Documents
 
-- [Crate: mdvs](../10-crates/mdvs/spec.md) — `init` command implementation
 - [Crate: mfv](../10-crates/mfv/spec.md) — `init` command implementation
-- [Crate: mdvs-schema](../10-crates/mdvs-schema/spec.md) — `discover_fields`, type inference
-- [Database Schema](../20-database/schema.md) — tables created during init
-- [Configuration: frontmatter.toml](../40-configuration/frontmatter-toml.md) — generated during init
-- [Configuration: .mdvs.toml](../40-configuration/mdvs-toml.md) — generated during init
+- [Crate: mdvs-schema](../10-crates/mdvs-schema/spec.md) — `discover_fields`, `infer_field_paths`
+- [Workflow: Inference](inference.md) — tree inference algorithm
+- [Configuration](../40-configuration/frontmatter-toml.md) — generated file formats

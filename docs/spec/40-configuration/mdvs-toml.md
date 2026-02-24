@@ -107,4 +107,4 @@ If `.mdvs.toml` already exists when `mdvs init` runs: error. The database and co
 - [Workflow: Model Loading](../30-workflows/model-loading.md) — format support, Matryoshka truncation
 - [Workflow: Model Mismatch](../30-workflows/model-mismatch.md) — revision pinning
 - [Workflow: Search](../30-workflows/search.md) — staleness behavior, defaults
-- [Configuration: frontmatter.toml](frontmatter-toml.md) — companion config file
+- [Configuration: Field Schema](frontmatter-toml.md) — companion config file

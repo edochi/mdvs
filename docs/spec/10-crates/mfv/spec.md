@@ -2,7 +2,7 @@
 
 **Status: DRAFT**
 
-**Cross-references:** [Terminology](../../01-terminology.md) | [Crate: mdvs-schema](../mdvs-schema/spec.md) | [Configuration: frontmatter.toml](../../40-configuration/frontmatter-toml.md)
+**Cross-references:** [Terminology](../../01-terminology.md) | [Crate: mdvs-schema](../mdvs-schema/spec.md) | [Configuration](../../40-configuration/frontmatter-toml.md)
 
 ---
 
@@ -15,15 +15,14 @@ Standalone frontmatter validation library and CLI binary (~2MB). No DuckDB, no e
 **Responsibilities:**
 
 - Scan markdown files and extract frontmatter via `gray_matter`
-- Validate frontmatter against a field schema (`frontmatter.toml`)
-- Generate a field schema by scanning and inferring types
+- Validate frontmatter against a field schema (`mfv.toml` / `mdvs.toml`)
+- Generate a field schema by scanning, inferring types, and inferring allowed/required patterns
 - Report diagnostics in human-readable, JSON, or GitHub Actions format
-- Provide a library API (`mfv::validate`) consumed by `mdvs validate`
+- Provide a library API (`mfv::validate`) consumed by `mdvs`
 
 **Not responsible for:**
 
 - Field type definitions or TOML parsing (delegated to `mdvs-schema`)
-- The `promoted` flag (ignored — that's an mdvs concern)
 - Database schema or embeddings
 
 ---
@@ -34,30 +33,39 @@ Standalone frontmatter validation library and CLI binary (~2MB). No DuckDB, no e
 mfv <command> [options]
 
 COMMANDS:
-    init      Scan frontmatter, generate schema file
+    init      Scan frontmatter, generate config + lock file
     check     Validate files against schema
-    inspect   Show frontmatter stats
 ```
 
 ### `mfv init`
 
 ```
-mfv init [--dir <path>] [--glob <pattern>]
+mfv init [--dir <path>] [--glob <pattern>] [--config <path>] [--force] [--dry-run]
 ```
 
-Scans markdown files, discovers frontmatter fields, and generates `frontmatter.toml` with inferred types and no validation rules. The user adds rules by editing the file afterward.
+Scans markdown files, discovers frontmatter fields, infers types and allowed/required patterns via tree inference, and writes `mfv.toml` (schema) and `mfv.lock` (per-file observations).
 
-**Behavior:**
+**Flags:**
 
-1. Walk directory with glob filter (default: `**/*.md`)
+| Flag | Default | Description |
+|---|---|---|
+| `--dir <path>` | `.` | Directory to scan |
+| `--glob <pattern>` | `**/*.md` | File matching glob |
+| `--config <path>` | `mfv.toml` | Output config file path |
+| `--force` | off | Overwrite existing config and lock |
+| `--dry-run` | off | Print discovery table only, write nothing |
+
+**Flow:**
+
+1. Walk directory with glob filter
 2. Extract frontmatter from each file via `gray_matter`
-3. Collect field statistics via `mdvs_schema::discover_fields`
-4. Display the interactive frequency table
-5. Write `frontmatter.toml` with inferred types, no validation rules, no `promoted` flags
+3. Discover fields and infer types via `mdvs_schema::discover_fields`
+4. Build per-file field observations and run `mdvs_schema::infer_field_paths` (tree inference)
+5. Combine: `FieldDef` = inferred type + inferred `allowed`/`required` patterns
+6. Display frequency table to stderr
+7. Write `mfv.toml` (schema with patterns) and `mfv.lock` (per-file observations)
 
-**Difference from `mdvs init`:** No promoted field selection (that concept belongs to mdvs). No `.mdvs.toml` generation. No model download.
-
-**If `frontmatter.toml` already exists:** Prompt for confirmation before overwriting. `--force` skips the prompt.
+**If config already exists:** Error with exit 2, suggests `--force`. With `--force`, overwrites both files.
 
 ### `mfv check`
 
@@ -66,11 +74,13 @@ mfv check [--dir <path>] [--schema <path>] [--format <fmt>]
 
 Options:
     --dir       Directory to scan (default: .)
-    --schema    Path to frontmatter.toml (default: ./frontmatter.toml)
+    --schema    Path to schema file (default: auto-discover)
     --format    Output format: human (default), json, github
 ```
 
 Validates all matching markdown files against the field schema.
+
+**Config discovery** (when `--schema` is not given): `mfv.toml` → `mdvs.toml` → error.
 
 **Exit codes:**
 
@@ -78,67 +88,62 @@ Validates all matching markdown files against the field schema.
 |---|---|
 | 0 | All files valid |
 | 1 | Validation errors found |
-| 2 | Schema/config error (bad frontmatter.toml, missing file, etc.) |
-
-### `mfv inspect`
-
-```
-mfv inspect [--dir <path>]
-```
-
-Read-only discovery. Shows field frequency, inferred types, and sample values. Same data as `init` but does not write any files.
+| 2 | Schema/config error (bad TOML, missing file, directory not found, etc.) |
 
 ---
 
 ## Library API
 
-The `mfv` crate exposes a library API so `mdvs validate` can delegate without spawning a subprocess.
+The `mfv` crate exposes a library API so `mdvs` can delegate validation without spawning a subprocess.
+
+### Modules
+
+- `scan` — file discovery and frontmatter extraction
+- `validate` — validation logic
+- `diagnostic` — diagnostic types
+- `output` — output formatting (human, JSON, GitHub Actions)
 
 ### `validate`
 
 ```rust
 pub fn validate(
-    dir: &Path,
+    files: &[ScannedFile],
     schema: &Schema,
-) -> Result<Vec<Diagnostic>>
+) -> Vec<Diagnostic>
 ```
 
-Scans all matching files in `dir`, validates each against `schema`, returns a list of diagnostics. Empty list means all valid.
+Validates scanned files against a schema. Returns a list of diagnostics (empty = all valid).
+
+### `ScannedFile`
+
+```rust
+pub struct ScannedFile {
+    pub rel_path: String,
+    pub frontmatter: Option<serde_json::Value>,
+}
+```
 
 ### `Diagnostic`
 
 ```rust
 pub struct Diagnostic {
-    /// Relative path to the file with the error
-    pub file: PathBuf,
-    /// The field that failed validation (if applicable)
-    pub field: Option<String>,
-    /// What went wrong
+    /// Relative path of the file
+    pub file: String,
+    /// Field name that has the problem
+    pub field: String,
+    /// What's wrong
     pub kind: DiagnosticKind,
-    /// Human-readable error message
-    pub message: String,
 }
 
 pub enum DiagnosticKind {
     /// Required field is missing
     MissingRequired,
-    /// Value doesn't match expected type
-    TypeMismatch {
-        expected: FieldType,
-        actual: String,
-    },
+    /// Value has the wrong type
+    WrongType { expected: String, got: String },
     /// Value doesn't match regex pattern
-    PatternMismatch {
-        pattern: String,
-        value: String,
-    },
+    PatternMismatch { pattern: String, value: String },
     /// Value not in allowed enum values
-    InvalidEnumValue {
-        allowed: Vec<String>,
-        actual: String,
-    },
-    /// Frontmatter parse error (malformed YAML, etc.)
-    ParseError,
+    InvalidEnum { value: String, allowed: Vec<String> },
 }
 ```
 
@@ -146,33 +151,32 @@ pub enum DiagnosticKind {
 
 ## Validation Rules
 
-All rules are defined in `frontmatter.toml` via `mdvs-schema`. The `mfv` crate executes them.
+All rules are defined in the TOML config via `mdvs-schema`. The `mfv` crate executes them.
 
 ### Rule Evaluation Order
 
 For each file:
 
-1. Parse frontmatter via `gray_matter`. If parsing fails → `ParseError` diagnostic, skip remaining rules for this file.
-2. For each field in the schema:
-   a. Check if the field's `paths` globs match this file. If `paths` is empty, the rule applies to all files.
-   b. If `required = true` and field is absent → `MissingRequired`.
-   c. If field is present, check type compatibility → `TypeMismatch` if wrong.
-   d. If `pattern` is set and field is a string, check regex → `PatternMismatch`.
-   e. If `values` is set (enum), check membership → `InvalidEnumValue`.
+1. Determine which fields apply to this file via `schema.rules_for_path(rel_path)` — filters by `allowed` patterns.
+2. For each applicable field:
+   a. If `rule.is_required_at(rel_path)` and field is absent → `MissingRequired`.
+   b. If field is present, check type compatibility → `WrongType` if wrong.
+   c. If `pattern` is set and value is a string, check regex → `PatternMismatch`.
+   d. If `values` is set (enum), check membership → `InvalidEnum`.
 
 ### Path-Scoped Rules
 
-The `paths` field in a field definition scopes when that field's rules apply. Paths are glob patterns relative to the vault root.
+The `allowed` and `required` patterns scope when a field's rules apply.
 
 ```toml
-[fields.status]
-required = true
-paths = ["blog/**"]  # only required in blog/ subtree
+[[fields.field]]
+name = "status"
+type = "string"
+allowed = ["blog/**"]
+required = ["blog/**"]
 ```
 
-A file at `blog/my-post.md` must have `status`. A file at `notes/random.md` is not checked for `status`.
-
-If `paths` is omitted or empty, the rule applies to all files.
+A file at `blog/my-post.md` must have `status` (it's both allowed and required there). A file at `notes/random.md` is not checked for `status` at all (not in `allowed`).
 
 ---
 
@@ -181,41 +185,29 @@ If `paths` is omitted or empty, the rule applies to all files.
 ### Human (default)
 
 ```
-Checking 1203 files against frontmatter.toml...
-
-  ✗ blog/half-finished-post.md
-      missing required field 'status' (required in blog/**)
-
-  ✗ papers/new-idea.md
-      field 'doi' value "not-a-doi" doesn't match pattern ^10\.\d{4,9}/.*
-
-  ✗ notes/quick-thought.md
-      field 'tags' expected string[], got string
-
-3 errors in 1203 files.
+  blog/half-finished-post.md: field 'status': required field missing
+  papers/new-idea.md: field 'doi': value "not-a-doi" does not match pattern /^10\.\d{4,9}/.*/
+  notes/quick-thought.md: field 'tags': expected type 'string[]', got 'string'
 ```
 
 ### JSON
 
 ```json
-{
-  "total_files": 1203,
-  "errors": [
-    {
-      "file": "blog/half-finished-post.md",
-      "field": "status",
-      "kind": "missing_required",
-      "message": "missing required field 'status' (required in blog/**)"
-    }
-  ]
-}
+[
+  {
+    "file": "blog/half-finished-post.md",
+    "field": "status",
+    "message": "required field missing"
+  }
+]
 ```
+
+Empty array `[]` when all files are valid.
 
 ### GitHub Actions (`--format github`)
 
 ```
-::error file=blog/half-finished-post.md::missing required field 'status' (required in blog/**)
-::error file=papers/new-idea.md::field 'doi' value "not-a-doi" doesn't match pattern ^10\.\d{4,9}/.*
+::error file=blog/half-finished-post.md::field 'status': required field missing
 ```
 
 Enables inline annotations in GitHub PR diffs.
@@ -226,20 +218,20 @@ Enables inline annotations in GitHub PR diffs.
 
 | Crate | Purpose |
 |---|---|
-| `mdvs-schema` | Field definitions, type system, TOML parsing |
+| `mdvs-schema` | Field definitions, type system, TOML parsing, discovery, inference |
 | `gray_matter` | Frontmatter extraction from markdown files |
-| `walkdir` | Filesystem traversal |
-| `globset` | Path matching for `paths` rules |
+| `glob` | Filesystem traversal with glob patterns |
 | `clap` | CLI argument parsing |
 | `anyhow` | Error handling |
 | `serde_json` | JSON output format |
+| `chrono` | Timestamp generation for lock file |
 
 ---
 
 ## Related Documents
 
-- [Terminology](../../01-terminology.md) — canonical definitions for frontmatter, field, field schema
+- [Terminology](../../01-terminology.md) — canonical definitions for frontmatter, field, field type
 - [Crate: mdvs-schema](../mdvs-schema/spec.md) — types and parsing consumed by this crate
-- [Crate: mdvs](../mdvs/spec.md) — consumes `mfv::validate` for its `validate` command
-- [Configuration: frontmatter.toml](../../40-configuration/frontmatter-toml.md) — schema format
-- [Workflow: Init](../../30-workflows/init.md) — init flow for both `mfv` and `mdvs`
+- [Configuration](../../40-configuration/frontmatter-toml.md) — schema file format
+- [Workflow: Init](../../30-workflows/init.md) — init flow
+- [Workflow: Inference](../../30-workflows/inference.md) — tree inference algorithm

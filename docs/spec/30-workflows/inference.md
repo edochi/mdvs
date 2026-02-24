@@ -2,7 +2,7 @@
 
 **Status: DRAFT**
 
-**Cross-references:** [Terminology](../01-terminology.md) | [Crate: mdvs-schema](../10-crates/mdvs-schema/spec.md) | [Configuration: frontmatter.toml](../40-configuration/frontmatter-toml.md) | [Workflow: Init](init.md)
+**Cross-references:** [Terminology](../01-terminology.md) | [Crate: mdvs-schema](../10-crates/mdvs-schema/spec.md) | [Configuration](../40-configuration/frontmatter-toml.md) | [Workflow: Init](init.md)
 
 ---
 
@@ -360,7 +360,7 @@ pub fn infer_field_paths(
 
 ### Implementation status
 
-The current implementation does not yet distinguish `*` vs `**` — all patterns are emitted as `**`. The leaf-sourced vs directory-sourced tracking described in Part 3 needs to be added. See the "Leaf next to subdirectory" examples in Part 2 for the cases this affects.
+Fully implemented in `crates/mdvs-schema/src/inference.rs` with `*` vs `**` glob depth tracking via `GlobDepth` enum. 38 inference tests (59 total in crate). Integrated into `mfv init` — scanned files are fed to `infer_field_paths()`, results populate `allowed`/`required` in generated `mfv.toml`.
 
 ---
 
@@ -368,5 +368,5 @@ The current implementation does not yet distinguish `*` vs `**` — all patterns
 
 - [Terminology](../01-terminology.md) — definitions for field, vault
 - [Workflow: Init](init.md) — inference runs during init
-- [Configuration: frontmatter.toml](../40-configuration/frontmatter-toml.md) — output format
+- [Configuration](../40-configuration/frontmatter-toml.md) — output format
 - [Crate: mdvs-schema](../10-crates/mdvs-schema/spec.md) — implementation home
