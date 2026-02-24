@@ -101,9 +101,10 @@ impl Schema {
 
         out.push_str("[directory]\n");
         out.push_str(&format!("glob = {:?}\n", self.glob));
-        if self.ignore_bare_files {
-            out.push_str("ignore_bare_files = true\n");
-        }
+        out.push_str(&format!(
+            "ignore_bare_files = {}\n",
+            self.ignore_bare_files
+        ));
         out.push('\n');
 
         out.push_str("[fields]\n\n");
