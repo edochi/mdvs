@@ -152,21 +152,7 @@ fn cmd_init(
         .collect();
     let inferred = infer_field_paths(&observations);
 
-    // Print field table to stderr
-    eprintln!(
-        "{:<20} {:<12} {:>5}/{:<5}",
-        "Field", "Type", "Count", "Total"
-    );
-    eprintln!("{}", "-".repeat(44));
-    for f in &field_infos {
-        eprintln!(
-            "{:<20} {:<12} {:>5}/{:<5}",
-            f.name,
-            f.field_type,
-            f.files.len(),
-            total,
-        );
-    }
+    print_field_table(&field_infos, total);
 
     if dry_run {
         return Ok(());
@@ -263,21 +249,7 @@ fn cmd_update(dir: &Path, config_arg: Option<&Path>) -> Result<()> {
         .collect();
     let _inferred = infer_field_paths(&observations);
 
-    // Print field table to stderr
-    eprintln!(
-        "{:<20} {:<12} {:>5}/{:<5}",
-        "Field", "Type", "Count", "Total"
-    );
-    eprintln!("{}", "-".repeat(44));
-    for f in &field_infos {
-        eprintln!(
-            "{:<20} {:<12} {:>5}/{:<5}",
-            f.name,
-            f.field_type,
-            f.files.len(),
-            total,
-        );
-    }
+    print_field_table(&field_infos, total);
 
     // Write lock file next to config
     let lock_path = lock_path_for(&config_path);
@@ -299,6 +271,29 @@ fn cmd_update(dir: &Path, config_arg: Option<&Path>) -> Result<()> {
 /// Derive the lock file path from a config path: `foo.toml` → `foo.lock`.
 fn lock_path_for(config_path: &Path) -> PathBuf {
     config_path.with_extension("lock")
+}
+
+fn print_field_table(field_infos: &[mdvs_schema::FieldInfo], total: usize) {
+    use comfy_table::{CellAlignment, Table};
+
+    let mut table = Table::new();
+    //                    LR TB .--. ....  ......
+    table.load_preset("     --            ");
+    table.set_header(vec!["Field", "Type", "Count"]);
+
+    if let Some(col) = table.column_mut(2) {
+        col.set_cell_alignment(CellAlignment::Right);
+    }
+
+    for f in field_infos {
+        table.add_row(vec![
+            f.name.clone(),
+            f.field_type.to_string(),
+            format!("{}/{}", f.files.len(), total),
+        ]);
+    }
+
+    eprintln!("{table}");
 }
 
 /// Resolve schema path by precedence:
