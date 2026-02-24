@@ -13,6 +13,19 @@ use std::path::{Path, PathBuf};
 
 use indextree::{Arena, NodeEdge, NodeId};
 
+/// Whether a glob pattern covers direct children only (`*`) or any depth (`**`).
+///
+/// Leaf nodes (file-set aggregates) produce `Shallow` patterns because they only
+/// observed direct files. Directory nodes produce `Recursive` patterns via collapse
+/// because they have aggregated evidence from the full subtree.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GlobDepth {
+    /// `*` — direct children only (from leaf initialization).
+    Shallow,
+    /// `**` — any depth (from directory collapse).
+    Recursive,
+}
+
 /// Per-field inferred glob patterns.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FieldPaths {
@@ -186,11 +199,12 @@ fn intersect_all<'a>(mut sets: impl Iterator<Item = &'a HashSet<String>>) -> Has
 
 /// Phase 3: Build the result map by initializing from leaves and collapsing bottom-up.
 fn collapse(arena: &Arena<NodeData>, root: NodeId) -> BTreeMap<String, FieldPaths> {
-    // Per-field tracking: sets of directory paths for allowed/required.
-    let mut allowed: HashMap<String, HashSet<PathBuf>> = HashMap::new();
-    let mut required: HashMap<String, HashSet<PathBuf>> = HashMap::new();
+    // Per-field tracking: directory paths with their glob depth for allowed/required.
+    let mut allowed: HashMap<String, HashMap<PathBuf, GlobDepth>> = HashMap::new();
+    let mut required: HashMap<String, HashMap<PathBuf, GlobDepth>> = HashMap::new();
 
-    // Initialize `allowed` from file-set leaf nodes.
+    // Initialize `allowed` from file-set leaf nodes with Shallow depth.
+    // Leaves only observed direct files, so `*` is the honest scope.
     // `required` is NOT initialized here — it comes from the collapse step only,
     // where directory `all` sets reflect the full subtree (file-set + subdirectories).
     for node_id in root.descendants(arena) {
@@ -202,11 +216,12 @@ fn collapse(arena: &Arena<NodeData>, root: NodeId) -> BTreeMap<String, FieldPath
             allowed
                 .entry(field.clone())
                 .or_default()
-                .insert(node.path.clone());
+                .insert(node.path.clone(), GlobDepth::Shallow);
         }
     }
 
     // Bottom-up collapse: process internal (directory) nodes only.
+    // Collapse replaces descendant entries with a single Recursive entry.
     let post_order: Vec<NodeId> = root
         .traverse(arena)
         .filter_map(|edge| match edge {
@@ -228,7 +243,6 @@ fn collapse(arena: &Arena<NodeData>, root: NodeId) -> BTreeMap<String, FieldPath
             collapse_paths(allowed.entry(field.clone()).or_default(), node_path);
             collapse_paths(required.entry(field.clone()).or_default(), node_path);
         }
-
 
         // Fields in `any \ all` → collapse only allowed.
         for field in node.any.difference(&node.all) {
@@ -253,24 +267,31 @@ fn collapse(arena: &Arena<NodeData>, root: NodeId) -> BTreeMap<String, FieldPath
     result
 }
 
-/// Remove descendant entries and add the ancestor path.
+/// Remove descendant entries and add the ancestor path as `Recursive`.
 ///
 /// "Descendant" = any path that starts with `ancestor_path` (using `Path::starts_with`,
-/// which operates component-by-component).
-fn collapse_paths(paths: &mut HashSet<PathBuf>, ancestor_path: &Path) {
-    paths.retain(|p| !p.starts_with(ancestor_path));
-    paths.insert(ancestor_path.to_path_buf());
+/// which operates component-by-component). This upgrades any `Shallow` leaf entries
+/// to the directory's `Recursive` scope when the directory has evidence for the field.
+fn collapse_paths(paths: &mut HashMap<PathBuf, GlobDepth>, ancestor_path: &Path) {
+    paths.retain(|p, _| !p.starts_with(ancestor_path));
+    paths.insert(ancestor_path.to_path_buf(), GlobDepth::Recursive);
 }
 
-/// Convert a set of directory paths to sorted glob strings.
-fn paths_to_globs(paths: &HashSet<PathBuf>) -> Vec<String> {
+/// Convert a map of directory paths + depths to sorted glob strings.
+///
+/// `Shallow` → `dir/*` (or `*` for root), `Recursive` → `dir/**` (or `**` for root).
+fn paths_to_globs(paths: &HashMap<PathBuf, GlobDepth>) -> Vec<String> {
     let mut globs: Vec<String> = paths
         .iter()
-        .map(|p| {
+        .map(|(p, depth)| {
+            let suffix = match depth {
+                GlobDepth::Shallow => "*",
+                GlobDepth::Recursive => "**",
+            };
             if p.as_os_str().is_empty() {
-                "**".to_string()
+                suffix.to_string()
             } else {
-                format!("{}/**", p.display())
+                format!("{}/{suffix}", p.display())
             }
         })
         .collect();
@@ -402,8 +423,8 @@ mod tests {
         // root dir: intersect(root-file-set, blog-dir) = all={title}, any={title}
         // title: in root.all → ["**"]/["**"]
         assert_eq!(result["title"], fp(&["**"], &["**"]));
-        // draft: in root-file-set any → allowed=["**"]. Not in any dir's all → required=[].
-        assert_eq!(result["draft"], fp(&["**"], &[]));
+        // draft: in root-file-set any → allowed=["*"] (leaf, shallow). Not in root.any → no collapse.
+        assert_eq!(result["draft"], fp(&["*"], &[]));
         // tags: not in root.any → stays at blog.
         assert_eq!(result["tags"], fp(&["blog/**"], &["blog/**"]));
     }
@@ -565,9 +586,65 @@ mod tests {
         // blog dir: all={title}, any={title,draft,tags}
         // root dir: all={title}, any={title,draft} (intersect {title,draft} ∩ {title,draft,tags})
         assert_eq!(result["title"], fp(&["**"], &["**"]));
-        // draft: in root.any \ root.all → allowed collapses to root, required=[]
+        // draft: in root.any \ root.all → allowed collapses to root (Recursive), required=[]
         assert_eq!(result["draft"], fp(&["**"], &[]));
         // tags: only in blog.any, not in root.any → stays at blog
         assert_eq!(result["tags"], fp(&["blog/**"], &[]));
+    }
+
+    // --- * vs ** depth tests ---
+
+    #[test]
+    fn leaf_next_to_subdirectory() {
+        // file4.md sits directly in a/b/ alongside subdirectory c/.
+        // deep is in the leaf but not in all of c/'s subtree → no collapse at b/.
+        // The leaf keeps its * pattern.
+        let result = infer_field_paths(&[
+            obs("a/b/file4.md", &["title", "deep"]),
+            obs("a/b/c/file3.md", &["title"]),
+            obs("a/b/c/d/file1.md", &["title", "deep"]),
+            obs("a/b/c/d/file2.md", &["title", "deep"]),
+            obs("x/file5.md", &["title"]),
+        ]);
+        assert_eq!(result["title"], fp(&["**"], &["**"]));
+        // a/b/* (leaf, shallow) + a/b/c/d/** (collapsed by d/)
+        assert_eq!(
+            result["deep"],
+            fp(&["a/b/*", "a/b/c/d/**"], &["a/b/c/d/**"])
+        );
+    }
+
+    #[test]
+    fn root_files_with_deep_subdirectory() {
+        // file6.md at root has deep, a/b/c/d/ has deep, nothing in between.
+        // Root leaf keeps * because root.any doesn't include deep.
+        let result = infer_field_paths(&[
+            obs("file6.md", &["title", "deep"]),
+            obs("a/b/c/d/file1.md", &["title", "deep"]),
+            obs("a/b/c/d/file2.md", &["title", "deep"]),
+            obs("a/b/c/file3.md", &["title"]),
+            obs("a/b/file4.md", &["title"]),
+            obs("x/file5.md", &["title"]),
+        ]);
+        assert_eq!(result["title"], fp(&["**"], &["**"]));
+        // * (root leaf, shallow) + a/b/c/d/** (collapsed by d/)
+        assert_eq!(
+            result["deep"],
+            fp(&["*", "a/b/c/d/**"], &["a/b/c/d/**"])
+        );
+    }
+
+    #[test]
+    fn leaf_alone_no_sibling_dirs() {
+        // When a leaf is the only child, its parent directory collapses it to **.
+        // This confirms * doesn't leak into output when collapse fires.
+        let result = infer_field_paths(&[
+            obs("notes/a.md", &["title", "tags"]),
+            obs("notes/b.md", &["title", "tags"]),
+            obs("blog/c.md", &["title"]),
+        ]);
+        // tags: notes leaf has tags in all. notes/ collapses → **.
+        // Not in root.any (blog doesn't have tags) → stays at notes.
+        assert_eq!(result["tags"], fp(&["notes/**"], &["notes/**"]));
     }
 }
