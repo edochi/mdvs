@@ -1,3 +1,4 @@
+use globset::Glob;
 use serde::Deserialize;
 
 use crate::FieldType;
@@ -9,17 +10,48 @@ pub struct FieldDef {
     pub name: String,
     /// Expected value type.
     pub field_type: FieldType,
-    /// Whether this field must be present.
-    pub required: bool,
-    /// Glob patterns restricting which paths this rule applies to.
-    /// Empty means applies to all files.
-    pub paths: Vec<String>,
+    /// Glob patterns where this field may appear.
+    /// `[]` = nowhere, `["**"]` = everywhere.
+    pub allowed: Vec<String>,
+    /// Glob patterns where this field must be present.
+    /// `[]` = not required anywhere, `["**"]` = required everywhere.
+    pub required: Vec<String>,
     /// Regex pattern the value must match (string/date fields).
     pub pattern: Option<String>,
     /// Allowed values (enum fields).
     pub values: Vec<String>,
-    /// Whether this field is promoted to a SQL column in mdvs.
-    pub promoted: bool,
+}
+
+impl FieldDef {
+    /// Check if this field is allowed at a given relative file path.
+    ///
+    /// Returns `true` if any `allowed` pattern matches the path.
+    /// Returns `false` if `allowed` is empty (field not allowed anywhere).
+    pub fn is_allowed_at(&self, path: &str) -> bool {
+        matches_any_pattern(&self.allowed, path)
+    }
+
+    /// Check if this field is required at a given relative file path.
+    ///
+    /// Returns `true` if any `required` pattern matches the path.
+    /// Returns `false` if `required` is empty (field not required anywhere).
+    pub fn is_required_at(&self, path: &str) -> bool {
+        matches_any_pattern(&self.required, path)
+    }
+}
+
+/// Check if a path matches any of the given glob patterns.
+fn matches_any_pattern(patterns: &[String], path: &str) -> bool {
+    patterns.iter().any(|pattern| {
+        Glob::new(pattern)
+            .ok()
+            .map(|g| g.compile_matcher())
+            .is_some_and(|m| m.is_match(path))
+    })
+}
+
+fn default_allowed() -> Vec<String> {
+    vec!["**".to_string()]
 }
 
 /// Raw serde struct for deserializing a field entry from TOML.
@@ -28,15 +60,13 @@ pub(crate) struct RawFieldDef {
     pub name: String,
     #[serde(rename = "type")]
     pub field_type: Option<FieldType>,
+    #[serde(default = "default_allowed")]
+    pub allowed: Vec<String>,
     #[serde(default)]
-    pub required: bool,
-    #[serde(default)]
-    pub paths: Vec<String>,
+    pub required: Vec<String>,
     pub pattern: Option<String>,
     #[serde(default)]
     pub values: Vec<String>,
-    #[serde(default)]
-    pub promoted: bool,
 }
 
 impl RawFieldDef {
@@ -45,11 +75,10 @@ impl RawFieldDef {
         FieldDef {
             name: self.name,
             field_type,
+            allowed: self.allowed,
             required: self.required,
-            paths: self.paths,
             pattern: self.pattern,
             values: self.values,
-            promoted: self.promoted,
         }
     }
 }

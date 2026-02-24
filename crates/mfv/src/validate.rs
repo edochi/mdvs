@@ -17,7 +17,7 @@ pub fn validate(files: &[ScannedFile], schema: &Schema) -> Vec<Diagnostic> {
             let value = fm.and_then(|v| v.get(&rule.name));
 
             // 1. Required check
-            if rule.required && value.is_none() {
+            if rule.is_required_at(&file.rel_path) && value.is_none() {
                 diagnostics.push(Diagnostic {
                     file: file.rel_path.clone(),
                     field: rule.name.clone(),
@@ -127,7 +127,7 @@ mod tests {
 [[fields.field]]
 name = "title"
 type = "string"
-required = true
+required = ["**"]
 "#,
         );
 
@@ -197,7 +197,7 @@ values = ["draft", "published"]
 [[fields.field]]
 name = "title"
 type = "string"
-required = true
+required = ["**"]
 
 [[fields.field]]
 name = "date"
@@ -238,7 +238,7 @@ type = "string"
 [[fields.field]]
 name = "title"
 type = "string"
-required = true
+required = ["**"]
 "#,
         );
 
@@ -258,8 +258,8 @@ required = true
 [[fields.field]]
 name = "doi"
 type = "string"
-required = true
-paths = ["papers/**"]
+allowed = ["papers/**"]
+required = ["papers/**"]
 "#,
         );
 
@@ -282,12 +282,12 @@ paths = ["papers/**"]
 [[fields.field]]
 name = "title"
 type = "string"
-required = true
+required = ["**"]
 
 [[fields.field]]
 name = "date"
 type = "date"
-required = true
+required = ["**"]
 "#,
         );
 

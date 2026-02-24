@@ -14,7 +14,6 @@ use types::NoteData;
 
 const MODEL_ID: &str = "minishlab/potion-base-8M";
 const CHUNK_MAX_CHARS: usize = 1000;
-const PROMOTION_THRESHOLD: f64 = 0.5;
 const SEARCH_LIMIT: usize = 5;
 
 fn main() -> Result<()> {
@@ -34,11 +33,12 @@ fn main() -> Result<()> {
 
     // 2. Discover fields
     println!("[2/6] Discovering frontmatter fields...");
-    let frontmatters: Vec<Option<&serde_json::Value>> =
-        notes.iter().map(|n| n.frontmatter.as_ref()).collect();
-    let mut fields = mdvs_schema::discover_fields(&frontmatters);
+    let file_frontmatters: Vec<(&str, Option<&serde_json::Value>)> = notes
+        .iter()
+        .map(|n| (n.filename.as_str(), n.frontmatter.as_ref()))
+        .collect();
     let total = notes.len();
-    mdvs_schema::auto_promote(&mut fields, total, PROMOTION_THRESHOLD);
+    let fields = mdvs_schema::discover_fields(&file_frontmatters);
     print_field_table(&fields, total);
 
     // 3. Load model
@@ -54,7 +54,7 @@ fn main() -> Result<()> {
     // 4. Create database
     println!("[4/6] Creating database at {db_path:?}...");
     let conn = db::open_db(&db_path)?;
-    let promoted: Vec<&FieldInfo> = fields.iter().filter(|f| f.promoted).collect();
+    let promoted: Vec<&FieldInfo> = fields.iter().collect();
     db::create_tables(&conn, &promoted, dim)?;
 
     // Store model metadata
@@ -178,17 +178,15 @@ fn scan_directory(dir: &Path) -> Result<Vec<NoteData>> {
 }
 
 fn print_field_table(fields: &[FieldInfo], total: usize) {
-    let header = "Promoted";
     println!(
-        "      {:<20} {:<12} {:>5}/{:<5} {}",
-        "Field", "Type", "Count", "Total", header
+        "      {:<20} {:<12} {:>5}/{:<5}",
+        "Field", "Type", "Count", "Total"
     );
-    println!("      {}", "-".repeat(60));
+    println!("      {}", "-".repeat(44));
     for f in fields {
-        let marker = if f.promoted { "✓" } else { "" };
         println!(
-            "      {:<20} {:<12} {:>5}/{:<5} {}",
-            f.name, f.field_type, f.count, total, marker
+            "      {:<20} {:<12} {:>5}/{:<5}",
+            f.name, f.field_type, f.files.len(), total,
         );
     }
     println!();

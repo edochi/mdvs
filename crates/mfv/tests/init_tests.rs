@@ -55,12 +55,16 @@ fn init_writes_config_and_lock() {
 
     let content = std::fs::read_to_string(&config_path).unwrap();
     assert!(content.contains("[[fields.field]]"));
+    // Config should have allowed/required patterns
+    assert!(content.contains("allowed = "));
 
     let lock_path = tmp.path().join("mfv.lock");
     assert!(lock_path.exists(), "lock file should be created");
     let lock_content = std::fs::read_to_string(&lock_path).unwrap();
     assert!(lock_content.contains("[discovery]"));
     assert!(lock_content.contains("[[field]]"));
+    // Lock should have per-file observation lists
+    assert!(lock_content.contains("files = ["));
 }
 
 #[test]
@@ -79,33 +83,6 @@ fn init_config_parseable() {
     let content = std::fs::read_to_string(&config_path).unwrap();
     let schema: Result<mdvs_schema::Schema, _> = content.parse();
     assert!(schema.is_ok(), "written file should parse as valid Schema");
-}
-
-#[test]
-fn init_threshold() {
-    // With threshold 1.0, no field is promoted (none at 100% frequency)
-    mfv()
-        .args(["init", "--dir"])
-        .arg(fixtures_dir())
-        .args(["--threshold", "1.0"])
-        .arg("--dry-run")
-        .assert()
-        .success()
-        // The "Promoted" column should have no "Y" markers
-        .stderr(predicate::str::contains("Promoted"))
-        .stderr(predicate::function(|output: &str| {
-            // Check that no line has a "Y" in the promoted column position
-            for line in output.lines().skip(2) {
-                // skip header and separator
-                if line.trim().is_empty() {
-                    continue;
-                }
-                if line.ends_with(" Y") || line.ends_with("\tY") {
-                    return false;
-                }
-            }
-            true
-        }));
 }
 
 #[test]
@@ -242,4 +219,6 @@ fn init_lock_contains_all_fields() {
 
     // Lock should contain title (present in most fixtures)
     assert!(lock_content.contains("\"title\""));
+    // Lock should have per-file observations
+    assert!(lock_content.contains("files = ["));
 }

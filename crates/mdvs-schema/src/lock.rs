@@ -6,7 +6,7 @@ use crate::discovery::FieldInfo;
 pub struct LockFile {
     /// Metadata about the discovery run.
     pub discovery: LockDiscovery,
-    /// Every field found during discovery.
+    /// Every field found during discovery, with per-file observations.
     pub fields: Vec<LockField>,
 }
 
@@ -19,8 +19,6 @@ pub struct LockDiscovery {
     pub files_with_frontmatter: usize,
     /// Glob pattern used for file matching.
     pub glob: String,
-    /// Auto-promote threshold that was applied.
-    pub threshold: f64,
     /// ISO 8601 timestamp of when the lock was generated.
     pub generated_at: String,
 }
@@ -32,10 +30,8 @@ pub struct LockField {
     pub name: String,
     /// Inferred type.
     pub field_type: FieldType,
-    /// Number of files containing this field.
-    pub count: usize,
-    /// Whether this field was promoted.
-    pub promoted: bool,
+    /// Relative paths of files containing this field.
+    pub files: Vec<String>,
 }
 
 impl LockFile {
@@ -45,7 +41,6 @@ impl LockFile {
         total_files: usize,
         files_with_frontmatter: usize,
         glob: &str,
-        threshold: f64,
         generated_at: &str,
     ) -> Self {
         let lock_fields = fields
@@ -53,8 +48,7 @@ impl LockFile {
             .map(|f| LockField {
                 name: f.name.clone(),
                 field_type: f.field_type.clone(),
-                count: f.count,
-                promoted: f.promoted,
+                files: f.files.clone(),
             })
             .collect();
 
@@ -63,7 +57,6 @@ impl LockFile {
                 total_files,
                 files_with_frontmatter,
                 glob: glob.to_string(),
-                threshold,
                 generated_at: generated_at.to_string(),
             },
             fields: lock_fields,
@@ -84,7 +77,6 @@ impl LockFile {
             self.discovery.files_with_frontmatter
         ));
         out.push_str(&format!("glob = {:?}\n", self.discovery.glob));
-        out.push_str(&format!("threshold = {}\n", self.discovery.threshold));
         out.push_str(&format!(
             "generated_at = {:?}\n",
             self.discovery.generated_at
@@ -95,8 +87,8 @@ impl LockFile {
             out.push_str("[[field]]\n");
             out.push_str(&format!("name = {:?}\n", field.name));
             out.push_str(&format!("type = {:?}\n", field.field_type.to_string()));
-            out.push_str(&format!("count = {}\n", field.count));
-            out.push_str(&format!("promoted = {}\n", field.promoted));
+            let files: Vec<String> = field.files.iter().map(|f| format!("{f:?}")).collect();
+            out.push_str(&format!("files = [{}]\n", files.join(", ")));
             out.push('\n');
         }
 
@@ -114,28 +106,26 @@ mod tests {
             FieldInfo {
                 name: "title".to_string(),
                 field_type: FieldType::String,
-                count: 10,
-                promoted: true,
+                files: vec!["blog/a.md".to_string(), "blog/b.md".to_string()],
             },
             FieldInfo {
                 name: "draft".to_string(),
                 field_type: FieldType::Boolean,
-                count: 3,
-                promoted: false,
+                files: vec!["blog/a.md".to_string()],
             },
         ];
 
-        let lock = LockFile::from_discovery(&fields, 12, 10, "**/*.md", 0.5, "2025-06-12T10:00:00");
+        let lock =
+            LockFile::from_discovery(&fields, 12, 10, "**/*.md", "2025-06-12T10:00:00");
 
         assert_eq!(lock.discovery.total_files, 12);
         assert_eq!(lock.discovery.files_with_frontmatter, 10);
         assert_eq!(lock.discovery.glob, "**/*.md");
-        assert_eq!(lock.discovery.threshold, 0.5);
         assert_eq!(lock.fields.len(), 2);
         assert_eq!(lock.fields[0].name, "title");
-        assert!(lock.fields[0].promoted);
+        assert_eq!(lock.fields[0].files.len(), 2);
         assert_eq!(lock.fields[1].name, "draft");
-        assert!(!lock.fields[1].promoted);
+        assert_eq!(lock.fields[1].files.len(), 1);
     }
 
     #[test]
@@ -145,21 +135,18 @@ mod tests {
                 total_files: 100,
                 files_with_frontmatter: 80,
                 glob: "**/*.md".to_string(),
-                threshold: 0.5,
                 generated_at: "2025-06-12T10:00:00".to_string(),
             },
             fields: vec![
                 LockField {
                     name: "title".to_string(),
                     field_type: FieldType::String,
-                    count: 80,
-                    promoted: true,
+                    files: vec!["a.md".to_string(), "b.md".to_string()],
                 },
                 LockField {
                     name: "tags".to_string(),
                     field_type: FieldType::StringArray,
-                    count: 60,
-                    promoted: true,
+                    files: vec!["a.md".to_string()],
                 },
             ],
         };
@@ -171,13 +158,11 @@ mod tests {
         assert!(toml.contains("total_files = 100"));
         assert!(toml.contains("files_with_frontmatter = 80"));
         assert!(toml.contains("glob = \"**/*.md\""));
-        assert!(toml.contains("threshold = 0.5"));
         assert!(toml.contains("generated_at = \"2025-06-12T10:00:00\""));
         assert!(toml.contains("[[field]]"));
         assert!(toml.contains("name = \"title\""));
         assert!(toml.contains("type = \"string\""));
-        assert!(toml.contains("count = 80"));
-        assert!(toml.contains("promoted = true"));
+        assert!(toml.contains("files = [\"a.md\", \"b.md\"]"));
         assert!(toml.contains("type = \"string[]\""));
     }
 
@@ -188,7 +173,6 @@ mod tests {
                 total_files: 5,
                 files_with_frontmatter: 0,
                 glob: "**/*.md".to_string(),
-                threshold: 0.5,
                 generated_at: "2025-06-12T10:00:00".to_string(),
             },
             fields: vec![],

@@ -11,10 +11,8 @@ pub struct FieldInfo {
     pub name: String,
     /// Inferred type based on the most common value type seen.
     pub field_type: FieldType,
-    /// Number of files containing this field.
-    pub count: usize,
-    /// Whether this field was auto-promoted (set by [`auto_promote`]).
-    pub promoted: bool,
+    /// Relative paths of files containing this field.
+    pub files: Vec<String>,
 }
 
 /// Infer the FieldType for a JSON value.
@@ -46,48 +44,46 @@ pub fn is_date_string(s: &str) -> bool {
 }
 
 /// Scan frontmatter values and discover fields with type inference.
-pub fn discover_fields(frontmatters: &[Option<&Value>]) -> Vec<FieldInfo> {
-    let mut field_counts: HashMap<String, HashMap<FieldType, usize>> = HashMap::new();
+///
+/// Takes `(relative_path, frontmatter)` pairs. Tracks which files contain each field.
+pub fn discover_fields(file_frontmatters: &[(&str, Option<&Value>)]) -> Vec<FieldInfo> {
+    let mut field_types: HashMap<String, HashMap<FieldType, usize>> = HashMap::new();
+    let mut field_files: HashMap<String, Vec<String>> = HashMap::new();
 
-    for fm in frontmatters {
+    for (path, fm) in file_frontmatters {
         let Some(Value::Object(map)) = fm else {
             continue;
         };
         for (key, val) in map {
             let ft = infer_type(val);
-            *field_counts
+            *field_types
                 .entry(key.clone())
                 .or_default()
                 .entry(ft)
                 .or_insert(0) += 1;
+            field_files
+                .entry(key.clone())
+                .or_default()
+                .push(path.to_string());
         }
     }
 
-    let mut fields: Vec<FieldInfo> = field_counts
+    let mut fields: Vec<FieldInfo> = field_types
         .into_iter()
         .map(|(name, type_counts)| {
             let (field_type, _) = type_counts.iter().max_by_key(|(_, count)| *count).unwrap();
-            let total_count: usize = type_counts.values().sum();
+            let files = field_files.remove(&name).unwrap_or_default();
 
             FieldInfo {
                 name,
                 field_type: field_type.clone(),
-                count: total_count,
-                promoted: false,
+                files,
             }
         })
         .collect();
 
-    fields.sort_by(|a, b| b.count.cmp(&a.count).then(a.name.cmp(&b.name)));
+    fields.sort_by(|a, b| b.files.len().cmp(&a.files.len()).then(a.name.cmp(&b.name)));
     fields
-}
-
-/// Mark fields appearing in more than `threshold` fraction of files as promoted.
-pub fn auto_promote(fields: &mut [FieldInfo], total_files: usize, threshold: f64) {
-    let min_count = (total_files as f64 * threshold).ceil() as usize;
-    for field in fields.iter_mut() {
-        field.promoted = field.count >= min_count;
-    }
 }
 
 #[cfg(test)]
@@ -114,24 +110,30 @@ mod tests {
     }
 
     #[test]
-    fn discover_and_promote() {
+    fn discover_with_file_paths() {
         let fm1 = json!({"title": "A", "tags": ["x"], "date": "2025-01-01"});
         let fm2 = json!({"title": "B", "date": "2025-01-02"});
         let fm3 = json!({"title": "C", "author": "me"});
 
-        let fms: Vec<Option<&serde_json::Value>> = vec![Some(&fm1), Some(&fm2), Some(&fm3)];
-        let mut fields = discover_fields(&fms);
+        let inputs: Vec<(&str, Option<&serde_json::Value>)> = vec![
+            ("blog/a.md", Some(&fm1)),
+            ("blog/b.md", Some(&fm2)),
+            ("notes/c.md", Some(&fm3)),
+        ];
+        let fields = discover_fields(&inputs);
 
         // title appears in all 3
         let title = fields.iter().find(|f| f.name == "title").unwrap();
-        assert_eq!(title.count, 3);
+        assert_eq!(title.files.len(), 3);
+        assert!(title.files.contains(&"blog/a.md".to_string()));
 
-        auto_promote(&mut fields, 3, 0.5);
-        let title = fields.iter().find(|f| f.name == "title").unwrap();
-        assert!(title.promoted);
+        // date appears in 2
         let date = fields.iter().find(|f| f.name == "date").unwrap();
-        assert!(date.promoted); // 2/3 >= 0.5
+        assert_eq!(date.files.len(), 2);
+
+        // author appears in 1
         let author = fields.iter().find(|f| f.name == "author").unwrap();
-        assert!(!author.promoted); // 1/3 < 0.5
+        assert_eq!(author.files.len(), 1);
+        assert_eq!(author.files[0], "notes/c.md");
     }
 }

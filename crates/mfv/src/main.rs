@@ -1,12 +1,13 @@
 //! mfv CLI — markdown frontmatter validator.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process;
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 
-use mdvs_schema::{FieldDef, LockFile, Schema, auto_promote, discover_fields};
+use mdvs_schema::{FieldDef, LockFile, Schema, discover_fields, infer_field_paths};
 use mfv::output::{OutputFormat, format_diagnostics};
 use mfv::scan::scan_directory;
 use mfv::validate::validate;
@@ -30,10 +31,6 @@ enum Command {
         /// Glob pattern for matching files
         #[arg(long, default_value = "**/*.md")]
         glob: String,
-
-        /// Auto-promote threshold (fraction of files a field must appear in)
-        #[arg(long, default_value = "0.5")]
-        threshold: f64,
 
         /// Config file path to write
         #[arg(long, default_value = "mfv.toml")]
@@ -71,11 +68,10 @@ fn main() {
         Command::Init {
             dir,
             glob,
-            threshold,
             config,
             force,
             dry_run,
-        } => cmd_init(&dir, &glob, threshold, &config, force, dry_run),
+        } => cmd_init(&dir, &glob, &config, force, dry_run),
         Command::Check {
             dir,
             schema,
@@ -92,7 +88,6 @@ fn main() {
 fn cmd_init(
     dir: &Path,
     glob: &str,
-    threshold: f64,
     config_path: &Path,
     force: bool,
     dry_run: bool,
@@ -117,23 +112,47 @@ fn cmd_init(
         bail!("no markdown files found matching '{glob}'");
     }
 
-    let frontmatters: Vec<Option<&serde_json::Value>> =
-        files.iter().map(|f| f.frontmatter.as_ref()).collect();
-    let files_with_frontmatter = frontmatters.iter().filter(|f| f.is_some()).count();
-    let mut fields = discover_fields(&frontmatters);
-    auto_promote(&mut fields, total, threshold);
+    // Build inputs for discover_fields: (path, frontmatter) pairs
+    let file_frontmatters: Vec<(&str, Option<&serde_json::Value>)> = files
+        .iter()
+        .map(|f| (f.rel_path.as_str(), f.frontmatter.as_ref()))
+        .collect();
+    let files_with_frontmatter = file_frontmatters
+        .iter()
+        .filter(|(_, fm)| fm.is_some())
+        .count();
+    let field_infos = discover_fields(&file_frontmatters);
+
+    // Build observations for inference: (path, set_of_fields) for files with frontmatter
+    let observations: Vec<(PathBuf, HashSet<String>)> = files
+        .iter()
+        .filter_map(|f| {
+            let fm = f.frontmatter.as_ref()?;
+            let field_names: HashSet<String> = fm
+                .as_object()
+                .map(|obj| obj.keys().cloned().collect())
+                .unwrap_or_default();
+            if field_names.is_empty() {
+                return None;
+            }
+            Some((PathBuf::from(&f.rel_path), field_names))
+        })
+        .collect();
+    let inferred = infer_field_paths(&observations);
 
     // Print field table to stderr
     eprintln!(
-        "{:<20} {:<12} {:>5}/{:<5} Promoted",
+        "{:<20} {:<12} {:>5}/{:<5}",
         "Field", "Type", "Count", "Total"
     );
-    eprintln!("{}", "-".repeat(56));
-    for f in &fields {
-        let marker = if f.promoted { "Y" } else { "" };
+    eprintln!("{}", "-".repeat(44));
+    for f in &field_infos {
         eprintln!(
-            "{:<20} {:<12} {:>5}/{:<5} {}",
-            f.name, f.field_type, f.count, total, marker
+            "{:<20} {:<12} {:>5}/{:<5}",
+            f.name,
+            f.field_type,
+            f.files.len(),
+            total,
         );
     }
 
@@ -141,24 +160,25 @@ fn cmd_init(
         return Ok(());
     }
 
-    // Build schema from discovered fields
-    let field_defs: Vec<FieldDef> = fields
+    // Build schema from discovery + inference
+    let field_defs: Vec<FieldDef> = field_infos
         .iter()
-        .map(|f| FieldDef {
-            name: f.name.clone(),
-            field_type: f.field_type.clone(),
-            required: false,
-            paths: vec![],
-            pattern: None,
-            values: vec![],
-            promoted: f.promoted,
+        .map(|f| {
+            let paths = inferred.get(&f.name);
+            FieldDef {
+                name: f.name.clone(),
+                field_type: f.field_type.clone(),
+                allowed: paths.map(|p| p.allowed.clone()).unwrap_or_default(),
+                required: paths.map(|p| p.required.clone()).unwrap_or_default(),
+                pattern: None,
+                values: vec![],
+            }
         })
         .collect();
 
     let schema = Schema {
         glob: glob.to_string(),
         fields: field_defs,
-        promote_threshold: Some(threshold),
     };
 
     let toml_str = schema.to_toml_string();
@@ -170,11 +190,10 @@ fn cmd_init(
     let lock_path = lock_path_for(config_path);
     let generated_at = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S").to_string();
     let lock = LockFile::from_discovery(
-        &fields,
+        &field_infos,
         total,
         files_with_frontmatter,
         glob,
-        threshold,
         &generated_at,
     );
     std::fs::write(&lock_path, lock.to_toml_string())

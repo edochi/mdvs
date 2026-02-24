@@ -55,7 +55,7 @@ fn invalid_files_exit_1() {
 [[fields.field]]
 name = "title"
 type = "string"
-required = true
+required = ["**"]
 "#,
     );
     write_md(tmp.path(), "note.md", "", "No frontmatter here.");
@@ -178,7 +178,7 @@ type = "string"
 [[fields.field]]
 name = "author"
 type = "string"
-required = true
+required = ["**"]
 "#,
     );
 
@@ -215,7 +215,7 @@ type = "string"
 [[fields.field]]
 name = "author"
 type = "string"
-required = true
+required = ["**"]
 "#,
     );
 
@@ -242,7 +242,7 @@ fn format_json() {
 [[fields.field]]
 name = "title"
 type = "string"
-required = true
+required = ["**"]
 "#,
     );
     write_md(tmp.path(), "note.md", "", "No frontmatter.");
@@ -298,7 +298,7 @@ fn format_github() {
 [[fields.field]]
 name = "title"
 type = "string"
-required = true
+required = ["**"]
 "#,
     );
     write_md(tmp.path(), "note.md", "", "No frontmatter.");
@@ -335,7 +335,7 @@ fn toml_frontmatter_validates() {
 [[fields.field]]
 name = "title"
 type = "string"
-required = true
+required = ["**"]
 "#,
     );
 

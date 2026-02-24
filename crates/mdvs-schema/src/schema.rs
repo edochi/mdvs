@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use globset::{Glob, GlobMatcher};
 use serde::Deserialize;
 
 use crate::FieldType;
@@ -66,7 +65,6 @@ struct DirectoryConfig {
 
 #[derive(Debug, Deserialize)]
 struct RawFieldsSection {
-    promote_threshold: Option<f64>,
     #[serde(default)]
     field: Vec<RawFieldDef>,
 }
@@ -78,8 +76,6 @@ pub struct Schema {
     pub glob: String,
     /// Field definitions loaded from the TOML config.
     pub fields: Vec<FieldDef>,
-    /// Auto-promote threshold from the `[fields]` section.
-    pub promote_threshold: Option<f64>,
 }
 
 impl Schema {
@@ -89,21 +85,11 @@ impl Schema {
         content.parse()
     }
 
-    /// Return field definitions that apply to a given relative file path.
+    /// Return field definitions that are allowed at a given relative file path.
     pub fn rules_for_path(&self, rel_path: &str) -> Vec<&FieldDef> {
         self.fields
             .iter()
-            .filter(|f| {
-                if f.paths.is_empty() {
-                    return true;
-                }
-                f.paths.iter().any(|pattern| {
-                    Glob::new(pattern)
-                        .ok()
-                        .map(|g| g.compile_matcher())
-                        .is_some_and(|m: GlobMatcher| m.is_match(rel_path))
-                })
-            })
+            .filter(|f| f.is_allowed_at(rel_path))
             .collect()
     }
 
@@ -115,24 +101,23 @@ impl Schema {
         out.push_str(&format!("glob = {:?}\n", self.glob));
         out.push('\n');
 
-        out.push_str("[fields]\n");
-        if let Some(threshold) = self.promote_threshold {
-            out.push_str(&format!("promote_threshold = {threshold}\n"));
-        }
-        out.push('\n');
+        out.push_str("[fields]\n\n");
 
         for field in &self.fields {
             out.push_str("[[fields.field]]\n");
             out.push_str(&format!("name = {:?}\n", field.name));
             out.push_str(&format!("type = {:?}\n", field.field_type.to_string()));
 
-            if field.required {
-                out.push_str("required = true\n");
+            if !field.allowed.is_empty() {
+                let patterns: Vec<String> =
+                    field.allowed.iter().map(|p| format!("{p:?}")).collect();
+                out.push_str(&format!("allowed = [{}]\n", patterns.join(", ")));
             }
 
-            if !field.paths.is_empty() {
-                let paths: Vec<String> = field.paths.iter().map(|p| format!("{p:?}")).collect();
-                out.push_str(&format!("paths = [{}]\n", paths.join(", ")));
+            if !field.required.is_empty() {
+                let patterns: Vec<String> =
+                    field.required.iter().map(|p| format!("{p:?}")).collect();
+                out.push_str(&format!("required = [{}]\n", patterns.join(", ")));
             }
 
             if let Some(pattern) = &field.pattern {
@@ -142,10 +127,6 @@ impl Schema {
             if !field.values.is_empty() {
                 let vals: Vec<String> = field.values.iter().map(|v| format!("{v:?}")).collect();
                 out.push_str(&format!("values = [{}]\n", vals.join(", ")));
-            }
-
-            if field.promoted {
-                out.push_str("promoted = true\n");
             }
 
             out.push('\n');
@@ -166,9 +147,9 @@ impl std::str::FromStr for Schema {
             .and_then(|d| d.glob)
             .unwrap_or_else(|| "**/*.md".to_string());
 
-        let (promote_threshold, raw_fields) = match raw.fields {
-            Some(section) => (section.promote_threshold, section.field),
-            None => (None, Vec::new()),
+        let raw_fields = match raw.fields {
+            Some(section) => section.field,
+            None => Vec::new(),
         };
 
         // Check for duplicate field names
@@ -193,11 +174,7 @@ impl std::str::FromStr for Schema {
 
         fields.sort_by(|a, b| a.name.cmp(&b.name));
 
-        Ok(Schema {
-            glob,
-            fields,
-            promote_threshold,
-        })
+        Ok(Schema { glob, fields })
     }
 }
 
@@ -218,11 +195,29 @@ fn validate_field_def(def: &FieldDef) -> Result<(), SchemaError> {
         )));
     }
 
-    // validate glob patterns
-    for pattern in &def.paths {
-        Glob::new(pattern).map_err(|e| {
+    // required ⊆ allowed: can't require a field that's not allowed anywhere
+    if !def.required.is_empty() && def.allowed.is_empty() {
+        return Err(SchemaError::Validation(format!(
+            "field '{}': has required patterns but allowed is empty (required ⊆ allowed)",
+            def.name
+        )));
+    }
+
+    // validate allowed glob patterns
+    for pattern in &def.allowed {
+        globset::Glob::new(pattern).map_err(|e| {
             SchemaError::Validation(format!(
-                "field '{}': invalid glob '{}': {}",
+                "field '{}': invalid allowed glob '{}': {}",
+                def.name, pattern, e
+            ))
+        })?;
+    }
+
+    // validate required glob patterns
+    for pattern in &def.required {
+        globset::Glob::new(pattern).map_err(|e| {
+            SchemaError::Validation(format!(
+                "field '{}': invalid required glob '{}': {}",
                 def.name, pattern, e
             ))
         })?;
@@ -262,14 +257,14 @@ type = "string[]"
 [[fields.field]]
 name = "date"
 type = "date"
-required = true
+required = ["**"]
 "#;
         let schema = toml.parse::<Schema>().unwrap();
         assert_eq!(schema.glob, "**/*.md");
         assert_eq!(schema.fields.len(), 3);
 
         let date = schema.fields.iter().find(|f| f.name == "date").unwrap();
-        assert!(date.required);
+        assert!(date.is_required_at("any/path.md"));
         assert_eq!(date.field_type, FieldType::Date);
     }
 
@@ -280,15 +275,16 @@ required = true
 name = "status"
 type = "enum"
 values = ["draft", "review", "published"]
-required = true
-paths = ["blog/**"]
+required = ["blog/**"]
+allowed = ["blog/**"]
 "#;
         let schema = toml.parse::<Schema>().unwrap();
         let status = &schema.fields[0];
         assert_eq!(status.field_type, FieldType::Enum);
         assert_eq!(status.values, vec!["draft", "review", "published"]);
-        assert!(status.required);
-        assert_eq!(status.paths, vec!["blog/**"]);
+        assert!(status.is_required_at("blog/post.md"));
+        assert!(!status.is_required_at("notes/idea.md"));
+        assert_eq!(status.allowed, vec!["blog/**"]);
     }
 
     #[test]
@@ -312,7 +308,7 @@ type = "string"
 [[fields.field]]
 name = "doi"
 type = "string"
-paths = ["papers/**"]
+allowed = ["papers/**"]
 "#;
         let schema = toml.parse::<Schema>().unwrap();
 
@@ -340,7 +336,7 @@ name = "title"
 [[fields.field]]
 name = "title"
 type = "string"
-required = true
+required = ["**"]
 
 [[fields.field]]
 name = "tags"
@@ -370,21 +366,6 @@ type = "integer"
     }
 
     #[test]
-    fn promote_threshold_parsed() {
-        let toml = r#"
-[fields]
-promote_threshold = 0.75
-
-[[fields.field]]
-name = "title"
-type = "string"
-"#;
-        let schema = toml.parse::<Schema>().unwrap();
-        assert_eq!(schema.promote_threshold, Some(0.75));
-        assert_eq!(schema.fields.len(), 1);
-    }
-
-    #[test]
     fn unknown_sections_ignored() {
         let toml = r#"
 [model]
@@ -401,5 +382,30 @@ type = "string"
         let schema = toml.parse::<Schema>().unwrap();
         assert_eq!(schema.fields.len(), 1);
         assert_eq!(schema.fields[0].name, "title");
+    }
+
+    #[test]
+    fn default_allowed_is_everywhere() {
+        let toml = r#"
+[[fields.field]]
+name = "title"
+type = "string"
+"#;
+        let schema = toml.parse::<Schema>().unwrap();
+        assert_eq!(schema.fields[0].allowed, vec!["**"]);
+        assert!(schema.fields[0].required.is_empty());
+    }
+
+    #[test]
+    fn required_without_allowed_fails() {
+        let toml = r#"
+[[fields.field]]
+name = "title"
+type = "string"
+allowed = []
+required = ["**"]
+"#;
+        let err = toml.parse::<Schema>().unwrap_err();
+        assert!(err.to_string().contains("required ⊆ allowed"));
     }
 }

@@ -14,7 +14,6 @@ pub fn split_frontmatter(fm: &Value, fields: &[FieldInfo]) -> (HashMap<String, V
 
     let promoted_fields: HashMap<&str, &FieldInfo> = fields
         .iter()
-        .filter(|f| f.promoted)
         .map(|f| (f.name.as_str(), f))
         .collect();
 
