@@ -58,7 +58,7 @@ Scans markdown files, discovers frontmatter fields, infers types and allowed/req
 
 **Flow:**
 
-1. Walk directory with glob filter
+1. Walk directory with glob filter (only `.md` files are processed — the glob scopes which directories to scan, not which file extensions)
 2. Extract frontmatter from each file via `gray_matter`
 3. Discover fields and infer types via `mdvs_schema::discover_fields`
 4. Build per-file field observations and run `mdvs_schema::infer_field_paths` (tree inference)
@@ -66,7 +66,12 @@ Scans markdown files, discovers frontmatter fields, infers types and allowed/req
 6. Display frequency table to stderr
 7. Write `mfv.toml` (schema with patterns) and `mfv.lock` (per-file observations)
 
-**If config already exists:** Error with exit 2, suggests `--force`. With `--force`, overwrites both files.
+**Exit codes:**
+
+| Code | Meaning |
+|---|---|
+| 0 | Config and lock written (or dry-run completed) |
+| 2 | Config/IO error (config exists without `--force`, directory not found, no files found, etc.) |
 
 ### `mfv update`
 
@@ -87,7 +92,7 @@ Re-scans the directory, discovers fields, and refreshes the lock file. Does not 
 
 1. Find existing config (`--config` or auto-discover `mfv.toml` → `mdvs.toml`)
 2. Load config to extract glob pattern
-3. Scan directory, discover fields, infer patterns (identical to init steps 1-4)
+3. Scan directory, discover fields, infer patterns (identical to init steps 1-4; only `.md` files are processed)
 4. Display frequency table to stderr
 5. Write lock file (overwrites existing)
 
@@ -125,6 +130,7 @@ The `mfv` crate exposes a library API so `mdvs` can delegate validation without 
 ### Modules
 
 - `scan` — file discovery and frontmatter extraction
+- `extract` — frontmatter extraction from YAML and TOML delimited blocks
 - `validate` — validation logic
 - `diagnostic` — diagnostic types
 - `output` — output formatting (human, JSON, GitHub Actions)
@@ -249,7 +255,9 @@ Enables inline annotations in GitHub PR diffs.
 |---|---|
 | `mdvs-schema` | Field definitions, type system, TOML parsing, discovery, inference |
 | `gray_matter` | Frontmatter extraction from markdown files |
-| `glob` | Filesystem traversal with glob patterns |
+| `walkdir` | Recursive directory traversal |
+| `globset` | Glob pattern matching |
+| `regex` | Regex validation for `pattern` rules |
 | `clap` | CLI argument parsing |
 | `anyhow` | Error handling |
 | `serde_json` | JSON output format |

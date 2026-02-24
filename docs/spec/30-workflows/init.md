@@ -58,7 +58,7 @@ sequenceDiagram
         CLI->>U: Error: config already exists (use --force)
     end
 
-    CLI->>FS: Walk directory (glob filter)
+    CLI->>FS: Walk directory (glob as path scope, .md hardcoded)
     FS-->>CLI: List of .md files
 
     loop Each file
@@ -92,8 +92,8 @@ sequenceDiagram
 Printed to stderr:
 
 ```
-Scanning 42 files...
-Found 42 markdown files, 38 with frontmatter
+Scanning .
+Found 42 markdown files
 
  Field       Type       Count
  title       string     38/42
