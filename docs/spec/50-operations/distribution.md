@@ -18,7 +18,8 @@ Everything compiled from Rust crates is baked in at build time:
 
 | Component | Included via |
 |---|---|
-| DuckDB engine | `duckdb` crate with `bundled` feature |
+| SQL query engine | `datafusion` crate |
+| Parquet I/O | `parquet` + `arrow` crates |
 | Model2Vec inference | `model2vec-rs` crate |
 | Frontmatter parser | `gray_matter` crate |
 | Markdown chunker | `text-splitter` crate |
@@ -31,16 +32,15 @@ No shared libraries, no runtime interpreters, no system dependencies.
 
 ## What Downloads on First Run
 
-`mdvs init` requires network access for two things:
+`mdvs init` requires network access for one thing:
 
 | Download | Size | Cached At | Required For |
 |---|---|---|---|
-| DuckDB `vss` extension | ~few MB | `~/.duckdb/extensions/` | HNSW index, `array_cosine_distance()` |
-| Embedding model weights | ~30MB (default) | `~/.cache/mdvs/models/` | Embedding inference |
+| Embedding model weights | ~30MB (default) | `~/.cache/huggingface/hub/` | Embedding inference |
 
-After `init` completes, all subsequent operations are fully offline.
+After `init` completes, all subsequent operations (`build`, `search`, etc.) are fully offline.
 
-Progress bars (via `indicatif`) are shown during both downloads.
+A progress bar (via `indicatif`) is shown during model download.
 
 `mfv` has no first-run downloads — it works entirely offline from install.
 
@@ -79,7 +79,7 @@ Each release is a single compressed binary — download, extract, put in PATH.
 
 | Tool | Install requires | Runtime requires |
 |---|---|---|
-| **mdvs** | Download one binary | First-run network for vss + model |
+| **mdvs** | Download one binary | First-run network for model download |
 | **mfv** | Download one binary | Nothing |
 | qmd | Node.js/Bun + npm | Ollama running |
 | obsidian-note-taking-assistant | Python + pip/uv | Python runtime |

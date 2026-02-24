@@ -8,7 +8,7 @@
 
 ## Overview
 
-Standalone frontmatter validation library and CLI binary (~2MB). No DuckDB, no embeddings, no search. Independently publishable on crates.io as `mfv`.
+Standalone frontmatter validation library and CLI binary (~2MB). No embeddings, no search. Independently publishable on crates.io as `mfv`.
 
 **Target users:** bloggers, documentation maintainers, CI pipelines — anyone with markdown + frontmatter who wants linting.
 

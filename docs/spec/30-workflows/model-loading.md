@@ -2,7 +2,7 @@
 
 **Status: DRAFT**
 
-**Cross-references:** [Terminology](../01-terminology.md) | [Crate: mdvs](../10-crates/mdvs/spec.md) | [Model Mismatch](model-mismatch.md) | [Configuration: .mdvs.toml](../40-configuration/mdvs-toml.md)
+**Cross-references:** [Terminology](../01-terminology.md) | [Crate: mdvs](../10-crates/mdvs/spec.md) | [Model Mismatch](model-mismatch.md) | [Configuration: mdvs.toml](../40-configuration/mdvs-toml.md)
 
 ---
 
@@ -126,7 +126,7 @@ ST's `static-retrieval-mrl-en-v1` is trained with Matryoshka Representation Lear
 | 1024 | 512 | Good balance of quality and storage |
 | 1024 | 256 | Compact, fast search, slight quality reduction |
 
-Configured in `.mdvs.toml`:
+Configured in `mdvs.toml`:
 
 ```toml
 [model]
@@ -179,7 +179,7 @@ Properties relevant to mdvs, validated in spike notebooks:
 | Embedding dilution | Similarity drops to ~0 at 5:1 noise:signal ratio | Chunking is about semantic quality, not model limits |
 | Inference speed | O(tokens) lookups + mean | Effectively instant, no GPU |
 | Unicode handling | Tokenizer handles all scripts | No special treatment needed |
-| Output | `Vec<f32>` of fixed `embedding_dim` | Stored as `FLOAT[N]` in DuckDB |
+| Output | `Vec<f32>` of fixed `embedding_dim` | Stored as `FixedSizeList<Float32>(N)` in Parquet |
 
 ---
 
@@ -188,5 +188,5 @@ Properties relevant to mdvs, validated in spike notebooks:
 - [Terminology](../01-terminology.md) — definitions for Model2Vec, POTION Model, Model Identity
 - [Crate: mdvs](../10-crates/mdvs/spec.md) — `embed` module
 - [Workflow: Model Mismatch](model-mismatch.md) — identity checks and reindex
-- [Configuration: .mdvs.toml](../40-configuration/mdvs-toml.md) — `[model]` section
-- [Database Schema](../20-database/schema.md) — `FLOAT[N]` column, `vault_meta` model keys
+- [Configuration: mdvs.toml](../40-configuration/mdvs-toml.md) — `[model]` section
+- [Storage Schema](../20-storage/schema.md) — embedding column, type mappings

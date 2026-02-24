@@ -2,7 +2,7 @@
 
 **Status: DRAFT**
 
-**Cross-references:** [Terminology](../01-terminology.md) | [Crate: mdvs](../10-crates/mdvs/spec.md) | [Database Schema](../20-database/schema.md) | [Model Loading](model-loading.md)
+**Cross-references:** [Terminology](../01-terminology.md) | [Crate: mdvs](../10-crates/mdvs/spec.md) | [Storage Schema](../20-storage/schema.md) | [Model Loading](model-loading.md)
 
 ---
 
@@ -93,7 +93,7 @@ Error: Model revision mismatch.
 
 Cannot add new embeddings with a different model revision.
 Options:
-  • Pin revision:  set revision = "a1b2c3d" in .mdvs.toml
+  • Pin revision:  set revision = "a1b2c3d" in mdvs.toml
   • Reindex all:   mdvs reindex
 ```
 
@@ -120,7 +120,7 @@ Because `plain_text` is stored per-chunk, no filesystem access or re-parsing is 
 
 ## Revision Pinning
 
-Users can pin a specific model revision in `.mdvs.toml`:
+Users can pin a specific model revision in `mdvs.toml`:
 
 ```toml
 [model]
@@ -151,7 +151,7 @@ When `revision` is omitted, the latest available revision is downloaded. Its SHA
 - [Workflow: Model Loading](model-loading.md) — format detection, universal loader, inference pipeline
 - [Terminology](../01-terminology.md) — definitions for model identity, reindex
 - [Crate: mdvs](../10-crates/mdvs/spec.md) — `model` module
-- [Database Schema](../20-database/schema.md) — `vault_meta` keys
-- [Configuration: .mdvs.toml](../40-configuration/mdvs-toml.md) — model and revision settings
-- [Workflow: Index](index.md) — hard error on revision mismatch during index
+- [Storage Schema](../20-storage/schema.md) — `vault_meta` keys
+- [Configuration: mdvs.toml](../40-configuration/mdvs-toml.md) — model and revision settings
+- [Workflow: Build](build.md) — hard error on revision mismatch during build
 - [Workflow: Search](search.md) — warning on revision mismatch during search
