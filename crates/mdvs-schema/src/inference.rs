@@ -647,4 +647,324 @@ mod tests {
         // Not in root.any (blog doesn't have tags) → stays at notes.
         assert_eq!(result["tags"], fp(&["notes/**"], &["notes/**"]));
     }
+
+    // --- Complex scenarios ---
+
+    #[test]
+    fn star_patterns_at_multiple_levels() {
+        // x appears at root leaf, at a/ leaf, and deep in a/b/c/d/e/.
+        // Intermediate levels (a/b/, a/b/c/, a/b/c/d/) don't have x.
+        // Should produce * at two levels and ** at the deepest.
+        let result = infer_field_paths(&[
+            obs("root.md", &["title", "x"]),
+            obs("a/file.md", &["title", "x"]),
+            obs("a/b/file.md", &["title"]),
+            obs("a/b/c/d/e/f1.md", &["title", "x"]),
+            obs("a/b/c/d/e/f2.md", &["title", "x"]),
+            obs("other/f.md", &["title"]),
+        ]);
+        // Tree after merge:
+        //   root:   any={title} (root-leaf.any ∩ a/.any ∩ other/.any = {t,x}∩{t}∩{t})
+        //   a/:     any={title} (a-leaf.any ∩ b/.any = {t,x}∩{t})
+        //   b/:     any={title} (b-leaf.any ∩ c/.any = {t}∩{t,x} = {t})
+        //   c/→d/→e/: single-child chain, all have all={t,x}. Collapse absorbs up to c/.
+        // Root leaf and a/ leaf keep * (uncollapsed).
+        assert_eq!(result["title"], fp(&["**"], &["**"]));
+        assert_eq!(
+            result["x"],
+            fp(&["*", "a/*", "a/b/c/**"], &["a/b/c/**"])
+        );
+    }
+
+    #[test]
+    fn alternating_presence_across_five_levels() {
+        // x appears at levels 1, 3, 5 but NOT at levels 2, 4.
+        // Each appearance is separated by a gap, preventing any collapse
+        // except at the deepest single-child chain (level 5).
+        let result = infer_field_paths(&[
+            obs("a/f1.md", &["title", "x"]),
+            obs("a/b/f2.md", &["title"]),
+            obs("a/b/c/f3.md", &["title", "x"]),
+            obs("a/b/c/d/f4.md", &["title"]),
+            obs("a/b/c/d/e/f5.md", &["title", "x"]),
+        ]);
+        // e/: single child leaf with x in all → collapse to **
+        // d/: children = d-leaf(no x) + e/(x in any). d.any = {t}∩{t,x} = {t}. No collapse.
+        // c/: children = c-leaf(x) + d/(no x in any). c.any = {t,x}∩{t} = {t}. No collapse.
+        // b/: children = b-leaf(no x) + c/(no x in any). No collapse.
+        // a/: children = a-leaf(x) + b/(no x). a.any = {t,x}∩{t} = {t}. No collapse.
+        // root: single child a/. root.any = {t}. No collapse.
+        assert_eq!(result["title"], fp(&["**"], &["**"]));
+        assert_eq!(
+            result["x"],
+            fp(&["a/*", "a/b/c/*", "a/b/c/d/e/**"], &["a/b/c/d/e/**"])
+        );
+    }
+
+    #[test]
+    fn leaf_and_subtree_both_have_field_everywhere() {
+        // Files directly in dir/ AND in dir/sub/ ALL have x.
+        // dir.all includes x → collapses leaf * and sub ** into dir/**.
+        let result = infer_field_paths(&[
+            obs("dir/a.md", &["title", "x"]),
+            obs("dir/b.md", &["title", "x"]),
+            obs("dir/sub/c.md", &["title", "x"]),
+            obs("dir/sub/d.md", &["title", "x"]),
+            obs("other/e.md", &["title"]),
+        ]);
+        // dir leaf: all={t,x}. dir/sub leaf: all={t,x}. sub/: all={t,x}.
+        // dir/: all = {t,x}∩{t,x} = {t,x}. x in dir.all → collapse both.
+        // root.any = {t,x}∩{t} = {t}. No further collapse.
+        assert_eq!(result["x"], fp(&["dir/**"], &["dir/**"]));
+    }
+
+    #[test]
+    fn leaf_and_subtree_partially_share_field() {
+        // Files directly in dir/ ALL have x, but dir/sub/ only partially has x.
+        // dir.any has x (both children have at least one) → collapse allowed to **.
+        // dir.all doesn't have x (sub.all lacks x) → required stays empty.
+        let result = infer_field_paths(&[
+            obs("dir/a.md", &["title", "x"]),
+            obs("dir/b.md", &["title", "x"]),
+            obs("dir/sub/c.md", &["title", "x"]),
+            obs("dir/sub/d.md", &["title"]),
+            obs("other/e.md", &["title"]),
+        ]);
+        // dir leaf: all={t,x}, any={t,x}.
+        // sub leaf: all={t}, any={t,x}. sub/: all={t}, any={t,x}.
+        // dir/: all = {t,x}∩{t} = {t}. any = {t,x}∩{t,x} = {t,x}.
+        // x in dir.any \ dir.all → collapse allowed only → Recursive.
+        assert_eq!(result["x"], fp(&["dir/**"], &[]));
+    }
+
+    #[test]
+    fn required_blocked_by_subdirectory() {
+        // Leaf has x in ALL its files, but a sibling subdirectory doesn't.
+        // dir.all won't have x → no required, even though the leaf's all has it.
+        // Allowed stays as * (leaf uncollapsed) since dir.any also lacks x.
+        let result = infer_field_paths(&[
+            obs("dir/a.md", &["title", "x"]),
+            obs("dir/b.md", &["title", "x"]),
+            obs("dir/sub/c.md", &["title"]),
+        ]);
+        // dir leaf: all={t,x}, any={t,x}. sub leaf: all={t}, any={t}.
+        // sub/: all={t}, any={t}. dir/: all={t}, any={t,x}∩{t} = {t}.
+        // x NOT in dir.any → no collapse. Leaf keeps *.
+        // root: single child → same as dir.
+        assert_eq!(result["x"], fp(&["dir/*"], &[]));
+    }
+
+    #[test]
+    fn parallel_subtrees_different_collapse_depths() {
+        // Same field x, but different structure in two branches.
+        // Left: x in one sub-branch (a/) but not the other (b/) → stays at left/a/**
+        // Right: x in both sub-branches (one fully, one partially) → collapses to right/**
+        // Tests that allowed and required can reach different depths independently.
+        let result = infer_field_paths(&[
+            obs("left/a/f1.md", &["title", "x"]),
+            obs("left/a/f2.md", &["title", "x"]),
+            obs("left/b/f3.md", &["title"]),
+            obs("right/c/f4.md", &["title", "x"]),
+            obs("right/c/f5.md", &["title"]),
+            obs("right/d/f6.md", &["title", "x"]),
+            obs("right/d/f7.md", &["title", "x"]),
+        ]);
+        // left: a/.all={t,x}, b/.all={t}. left.any = {t,x}∩{t} = {t}. No collapse at left.
+        // right: c/.all={t}, c/.any={t,x}. d/.all={t,x}, d/.any={t,x}.
+        //   right.any = {t,x}∩{t,x} = {t,x}. right.all = {t}∩{t,x} = {t}.
+        //   x in right.any \ right.all → collapse allowed only at right/.
+        // required: left/a/** (from a/.all), right/d/** (from d/.all). right/ collapse
+        //   for allowed doesn't touch required.
+        assert_eq!(
+            result["x"],
+            fp(&["left/a/**", "right/**"], &["left/a/**", "right/d/**"])
+        );
+    }
+
+    #[test]
+    fn wide_fan_field_in_most_not_all() {
+        // 5 sibling directories, x in 4 out of 5.
+        // root.any = intersection of all 5 → lacks x because e/ doesn't have it.
+        // Each dir with x collapses independently.
+        let result = infer_field_paths(&[
+            obs("a/f.md", &["title", "x"]),
+            obs("b/f.md", &["title", "x"]),
+            obs("c/f.md", &["title", "x"]),
+            obs("d/f.md", &["title", "x"]),
+            obs("e/f.md", &["title"]),
+        ]);
+        assert_eq!(
+            result["x"],
+            fp(
+                &["a/**", "b/**", "c/**", "d/**"],
+                &["a/**", "b/**", "c/**", "d/**"]
+            )
+        );
+    }
+
+    #[test]
+    fn asymmetric_tree_depth() {
+        // One branch is 1 level deep, the other is 5 levels deep.
+        // x appears in both endpoints. Tests collapse across very different depths.
+        let result = infer_field_paths(&[
+            obs("shallow/f.md", &["title", "x"]),
+            obs("deep/a/b/c/d/f.md", &["title", "x"]),
+            obs("deep/a/b/c/g.md", &["title"]),
+            obs("other/f.md", &["title"]),
+        ]);
+        // shallow/: all={t,x}. Collapse → Recursive.
+        // deep/a/b/c/d/: all={t,x}. Collapse → Recursive.
+        // deep/a/b/c/: c-leaf any={t}, d/ any={t,x}. c.any = {t}. No collapse.
+        // Chain up: b/, a/, deep/ all have .any={t}. No collapse.
+        // root.any = {t,x}∩{t}∩{t} = {t}. No collapse.
+        assert_eq!(
+            result["x"],
+            fp(&["deep/a/b/c/d/**", "shallow/**"], &["deep/a/b/c/d/**", "shallow/**"])
+        );
+    }
+
+    #[test]
+    fn root_leaf_with_mixed_subtree_coverage() {
+        // Root file + 4 subdirectories: field x in root + 2 subtrees, not in other 2.
+        // Root leaf keeps * (root.any lacks x). Two subtrees get **.
+        let result = infer_field_paths(&[
+            obs("readme.md", &["title", "featured"]),
+            obs("blog/a.md", &["title", "featured"]),
+            obs("blog/b.md", &["title"]),
+            obs("docs/c.md", &["title"]),
+            obs("projects/d.md", &["title", "featured"]),
+            obs("projects/e.md", &["title", "featured"]),
+        ]);
+        // root leaf: any={t,featured}. blog: any={t,featured}. docs: any={t}. projects: any={t,featured}.
+        // root.any = {t,featured}∩{t,featured}∩{t}∩{t,featured} = {t}. No collapse at root.
+        // blog/: featured in blog.any \ blog.all → collapse allowed only → Recursive.
+        // projects/: featured in projects.all → collapse both → Recursive.
+        // Root leaf stays Shallow (*).
+        assert_eq!(
+            result["featured"],
+            fp(&["*", "blog/**", "projects/**"], &["projects/**"])
+        );
+    }
+
+    #[test]
+    fn many_fields_different_collapse_depths() {
+        // 4 fields, each naturally collapses to a different level.
+        // Tests that independent fields don't interfere with each other.
+        let result = infer_field_paths(&[
+            obs("a/b/c/f1.md", &["title", "everywhere", "mid", "deep", "deepest"]),
+            obs("a/b/c/f2.md", &["title", "everywhere", "mid", "deep", "deepest"]),
+            obs("a/b/f3.md", &["title", "everywhere", "mid"]),
+            obs("a/f4.md", &["title", "everywhere"]),
+            obs("x/f5.md", &["title", "everywhere"]),
+        ]);
+        // everywhere: in every file → root.all → ["**"]/["**"]
+        assert_eq!(result["everywhere"], fp(&["**"], &["**"]));
+        // mid: in a/b/c/ and a/b/ but not a/ (a-leaf lacks it) and not x/.
+        //   a/b/ leaf: all={t,everywhere,mid}. a/b/c/ leaf: all has mid.
+        //   b/: children = b-leaf + c/. b.all has mid? b-leaf.all has mid, c/.all has mid.
+        //   b.all = {t,everywhere,mid,...} ∩ {t,everywhere,mid,...} → includes mid.
+        //   a/: children = a-leaf(no mid) + b/(mid in all). a.any has mid? a-leaf.any ∩ b.any.
+        //   a-leaf has {t,everywhere} only. a.any = {t,everywhere}∩{...} = {t,everywhere}. No mid.
+        //   So mid stays at b/ level. b/.all has mid → collapse both.
+        assert_eq!(result["mid"], fp(&["a/b/**"], &["a/b/**"]));
+        // deep: only in a/b/c/. c/ is single child → collapses.
+        //   b/: b-leaf lacks deep. b.any = {t,e,mid}∩{t,e,mid,deep,deepest} = {t,e,mid}. No.
+        assert_eq!(result["deep"], fp(&["a/b/c/**"], &["a/b/c/**"]));
+        // deepest: same as deep — only in a/b/c/, same collapse path.
+        assert_eq!(result["deepest"], fp(&["a/b/c/**"], &["a/b/c/**"]));
+    }
+
+    #[test]
+    fn diamond_like_convergence() {
+        // Two branches share a field, converge at a common ancestor.
+        // shared/ has files + two sub-branches, both with x.
+        // The leaf and both sub-branches have x → shared.all includes x → **.
+        let result = infer_field_paths(&[
+            obs("shared/readme.md", &["title", "x"]),
+            obs("shared/left/a.md", &["title", "x"]),
+            obs("shared/left/b.md", &["title", "x"]),
+            obs("shared/right/c.md", &["title", "x"]),
+            obs("shared/right/d.md", &["title", "x"]),
+            obs("other/e.md", &["title"]),
+        ]);
+        // shared leaf: all={t,x}. left/: all={t,x}. right/: all={t,x}.
+        // shared/: all = {t,x}∩{t,x}∩{t,x} = {t,x}. Collapse both.
+        // root.any = {t,x}∩{t} = {t}. No further collapse.
+        assert_eq!(result["x"], fp(&["shared/**"], &["shared/**"]));
+    }
+
+    #[test]
+    fn diamond_broken_by_one_branch() {
+        // Same as above but one sub-branch only partially has x.
+        // shared.all loses x, but shared.any keeps it.
+        let result = infer_field_paths(&[
+            obs("shared/readme.md", &["title", "x"]),
+            obs("shared/left/a.md", &["title", "x"]),
+            obs("shared/left/b.md", &["title", "x"]),
+            obs("shared/right/c.md", &["title", "x"]),
+            obs("shared/right/d.md", &["title"]),
+            obs("other/e.md", &["title"]),
+        ]);
+        // shared leaf: all={t,x}. left/: all={t,x}. right/: all={t}, any={t,x}.
+        // shared/: all = {t,x}∩{t,x}∩{t} = {t}. any = {t,x}∩{t,x}∩{t,x} = {t,x}.
+        // x in shared.any \ shared.all → collapse allowed only.
+        // required: left/ has x in all → left/**. shared leaf has x but only leaf-level.
+        // shared collapse for allowed swallows the leaf's * and left's ** and right's **.
+        assert_eq!(result["x"], fp(&["shared/**"], &["shared/left/**"]));
+    }
+
+    #[test]
+    fn deeply_nested_single_child_chain() {
+        // a/b/c/d/e/f/g/h.md — 8 levels deep, single file.
+        // Everything collapses all the way to root.
+        let result = infer_field_paths(&[obs("a/b/c/d/e/f/g/h.md", &["title", "x"])]);
+        assert_eq!(result["x"], fp(&["**"], &["**"]));
+    }
+
+    #[test]
+    fn three_fields_three_behaviors_same_subtree() {
+        // In left/: alpha in all, beta in any\all, gamma absent.
+        // In right/: all three present in all files.
+        // Tests that the three collapse categories work independently per subtree.
+        let result = infer_field_paths(&[
+            obs("left/a.md", &["title", "alpha", "beta"]),
+            obs("left/b.md", &["title", "alpha"]),
+            obs("right/c.md", &["title", "alpha", "beta", "gamma"]),
+            obs("right/d.md", &["title", "alpha", "beta", "gamma"]),
+        ]);
+        // left: all={t,alpha}, any={t,alpha,beta}. right: all={t,alpha,beta,gamma}, any=same.
+        // root: all = {t,alpha}∩{t,alpha,beta,gamma} = {t,alpha}.
+        //       any = {t,alpha,beta}∩{t,alpha,beta,gamma} = {t,alpha,beta}.
+        // alpha: in root.all → collapse both → **/**
+        assert_eq!(result["alpha"], fp(&["**"], &["**"]));
+        // beta: in root.any \ root.all → collapse allowed only.
+        //   required: right/ has beta in all → right/**. left/ doesn't.
+        assert_eq!(result["beta"], fp(&["**"], &["right/**"]));
+        // gamma: not in root.any (left doesn't have it) → stays at right.
+        //   right.all has gamma → collapse both at right.
+        assert_eq!(result["gamma"], fp(&["right/**"], &["right/**"]));
+    }
+
+    #[test]
+    fn multiple_files_same_dir_with_varied_field_subsets() {
+        // 6 files in one directory with overlapping but varied field sets.
+        // Tests the all/any computation with many files.
+        let result = infer_field_paths(&[
+            obs("vault/f1.md", &["title", "tags", "date"]),
+            obs("vault/f2.md", &["title", "tags"]),
+            obs("vault/f3.md", &["title", "date", "draft"]),
+            obs("vault/f4.md", &["title", "tags", "draft"]),
+            obs("vault/f5.md", &["title"]),
+            obs("vault/f6.md", &["title", "tags", "date", "draft"]),
+        ]);
+        // vault leaf: all = {title} (f5 has only title).
+        //   any = {title, tags, date, draft} (union of all).
+        // vault/ → root collapses.
+        // title: in all → **/**
+        assert_eq!(result["title"], fp(&["**"], &["**"]));
+        // tags (4/6), date (3/6), draft (3/6): in any \ all → **/[]
+        assert_eq!(result["tags"], fp(&["**"], &[]));
+        assert_eq!(result["date"], fp(&["**"], &[]));
+        assert_eq!(result["draft"], fp(&["**"], &[]));
+    }
 }
