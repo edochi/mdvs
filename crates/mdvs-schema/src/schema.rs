@@ -145,7 +145,7 @@ impl std::str::FromStr for Schema {
         let glob = raw
             .directory
             .and_then(|d| d.glob)
-            .unwrap_or_else(|| "**/*.md".to_string());
+            .unwrap_or_else(|| "**".to_string());
 
         let raw_fields = match raw.fields {
             Some(section) => section.field,
@@ -244,7 +244,7 @@ mod tests {
     fn parse_basic_schema() {
         let toml = r#"
 [directory]
-glob = "**/*.md"
+glob = "**"
 
 [[fields.field]]
 name = "title"
@@ -260,7 +260,7 @@ type = "date"
 required = ["**"]
 "#;
         let schema = toml.parse::<Schema>().unwrap();
-        assert_eq!(schema.glob, "**/*.md");
+        assert_eq!(schema.glob, "**");
         assert_eq!(schema.fields.len(), 3);
 
         let date = schema.fields.iter().find(|f| f.name == "date").unwrap();

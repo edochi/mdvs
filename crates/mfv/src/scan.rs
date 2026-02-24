@@ -33,6 +33,10 @@ pub fn scan_directory(dir: &Path, glob_pattern: &str) -> Result<Vec<ScannedFile>
             .to_string_lossy()
             .to_string();
 
+        if path.extension().and_then(|e| e.to_str()) != Some("md") {
+            continue;
+        }
+
         if !matcher.is_match(&rel) {
             continue;
         }
@@ -71,7 +75,7 @@ mod tests {
         write_file(tmp.path(), "b.md", "# B");
         write_file(tmp.path(), "c.md", "# C");
 
-        let files = scan_directory(tmp.path(), "**/*.md").unwrap();
+        let files = scan_directory(tmp.path(), "**").unwrap();
         assert_eq!(files.len(), 3);
     }
 
@@ -81,7 +85,7 @@ mod tests {
         write_file(tmp.path(), "note.md", "# Note");
         write_file(tmp.path(), "readme.txt", "text");
 
-        let files = scan_directory(tmp.path(), "**/*.md").unwrap();
+        let files = scan_directory(tmp.path(), "**").unwrap();
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].rel_path, "note.md");
     }
@@ -92,7 +96,7 @@ mod tests {
         write_file(tmp.path(), "blog/post.md", "# Post");
         write_file(tmp.path(), "docs/guide.md", "# Guide");
 
-        let files = scan_directory(tmp.path(), "blog/*.md").unwrap();
+        let files = scan_directory(tmp.path(), "blog/*").unwrap();
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].rel_path, "blog/post.md");
     }
@@ -102,7 +106,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         write_file(tmp.path(), "sub/deep/file.md", "# Deep");
 
-        let files = scan_directory(tmp.path(), "**/*.md").unwrap();
+        let files = scan_directory(tmp.path(), "**").unwrap();
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].rel_path, "sub/deep/file.md");
     }
@@ -110,7 +114,7 @@ mod tests {
     #[test]
     fn empty_directory() {
         let tmp = TempDir::new().unwrap();
-        let files = scan_directory(tmp.path(), "**/*.md").unwrap();
+        let files = scan_directory(tmp.path(), "**").unwrap();
         assert!(files.is_empty());
     }
 
@@ -119,7 +123,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         write_file(tmp.path(), "note.md", "---\ntitle: Hello\n---\nBody");
 
-        let files = scan_directory(tmp.path(), "**/*.md").unwrap();
+        let files = scan_directory(tmp.path(), "**").unwrap();
         assert_eq!(files.len(), 1);
         let fm = files[0]
             .frontmatter
@@ -129,11 +133,23 @@ mod tests {
     }
 
     #[test]
+    fn filters_non_md_files() {
+        let tmp = TempDir::new().unwrap();
+        write_file(tmp.path(), "note.md", "---\ntitle: Hello\n---\nBody");
+        write_file(tmp.path(), "readme.txt", "text");
+        write_file(tmp.path(), "data.json", "{}");
+
+        let files = scan_directory(tmp.path(), "**").unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].rel_path, "note.md");
+    }
+
+    #[test]
     fn no_frontmatter_is_none() {
         let tmp = TempDir::new().unwrap();
         write_file(tmp.path(), "plain.md", "Just some text, no delimiters.");
 
-        let files = scan_directory(tmp.path(), "**/*.md").unwrap();
+        let files = scan_directory(tmp.path(), "**").unwrap();
         assert_eq!(files.len(), 1);
         assert!(files[0].frontmatter.is_none());
     }

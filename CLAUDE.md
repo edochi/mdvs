@@ -56,7 +56,7 @@ Both tools share the same TOML schema structure (`[[fields.field]]` array-of-tab
 ### mfv Commands
 
 - `init` — discover fields, write config (`mfv.toml`) + lock (`mfv.lock`), print frequency table to stderr
-  - `--dir <path>` (default `.`), `--glob <pattern>` (default `**/*.md`), `--threshold <f64>` (default `0.5`)
+  - `--dir <path>` (default `.`), `--glob <pattern>` (default `**`), `--threshold <f64>` (default `0.5`)
   - `--config <path>` (default `mfv.toml`), `--force` (overwrite existing), `--dry-run` (print table only)
 - `check` — validate files against schema (unchanged)
 

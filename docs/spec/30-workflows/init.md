@@ -37,7 +37,7 @@ mfv init [--dir <path>] [--glob <pattern>] [--config <path>] [--force] [--dry-ru
 | Flag | Default | Description |
 |---|---|---|
 | `--dir <path>` | `.` | Directory to scan |
-| `--glob <pattern>` | `**/*.md` | File matching glob |
+| `--glob <pattern>` | `**` | File matching glob |
 | `--config <path>` | `mfv.toml` | Output config file path |
 | `--force` | off | Overwrite existing config and lock |
 | `--dry-run` | off | Print table only, write nothing |

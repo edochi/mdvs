@@ -34,6 +34,7 @@ mfv <command> [options]
 
 COMMANDS:
     init      Scan frontmatter, generate config + lock file
+    update    Refresh lock file by re-scanning markdown files
     check     Validate files against schema
 ```
 
@@ -50,7 +51,7 @@ Scans markdown files, discovers frontmatter fields, infers types and allowed/req
 | Flag | Default | Description |
 |---|---|---|
 | `--dir <path>` | `.` | Directory to scan |
-| `--glob <pattern>` | `**/*.md` | File matching glob |
+| `--glob <pattern>` | `**` | File matching glob |
 | `--config <path>` | `mfv.toml` | Output config file path |
 | `--force` | off | Overwrite existing config and lock |
 | `--dry-run` | off | Print discovery table only, write nothing |
@@ -66,6 +67,31 @@ Scans markdown files, discovers frontmatter fields, infers types and allowed/req
 7. Write `mfv.toml` (schema with patterns) and `mfv.lock` (per-file observations)
 
 **If config already exists:** Error with exit 2, suggests `--force`. With `--force`, overwrites both files.
+
+### `mfv update`
+
+```
+mfv update [--dir <path>] [--config <path>]
+```
+
+Re-scans the directory, discovers fields, and refreshes the lock file. Does not modify config. Analogous to `cargo update`.
+
+**Flags:**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--dir <path>` | `.` | Directory to scan |
+| `--config <path>` | auto | Path to config file (auto-discover `mfv.toml` / `mdvs.toml`) |
+
+**Flow:**
+
+1. Find existing config (`--config` or auto-discover `mfv.toml` → `mdvs.toml`)
+2. Load config to extract glob pattern
+3. Scan directory, discover fields, infer patterns (identical to init steps 1-4)
+4. Display frequency table to stderr
+5. Write lock file (overwrites existing)
+
+**Exit codes:** 0 = success, 2 = config/IO error (missing config, bad directory, etc.)
 
 ### `mfv check`
 

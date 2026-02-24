@@ -91,7 +91,7 @@ fn init_custom_glob() {
     mfv()
         .args(["init", "--dir"])
         .arg(fixtures_dir())
-        .args(["--glob", "*.md"])
+        .args(["--glob", "*"])
         .arg("--dry-run")
         .assert()
         .success()

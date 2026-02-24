@@ -116,11 +116,11 @@ mod tests {
         ];
 
         let lock =
-            LockFile::from_discovery(&fields, 12, 10, "**/*.md", "2025-06-12T10:00:00");
+            LockFile::from_discovery(&fields, 12, 10, "**", "2025-06-12T10:00:00");
 
         assert_eq!(lock.discovery.total_files, 12);
         assert_eq!(lock.discovery.files_with_frontmatter, 10);
-        assert_eq!(lock.discovery.glob, "**/*.md");
+        assert_eq!(lock.discovery.glob, "**");
         assert_eq!(lock.fields.len(), 2);
         assert_eq!(lock.fields[0].name, "title");
         assert_eq!(lock.fields[0].files.len(), 2);
@@ -134,7 +134,7 @@ mod tests {
             discovery: LockDiscovery {
                 total_files: 100,
                 files_with_frontmatter: 80,
-                glob: "**/*.md".to_string(),
+                glob: "**".to_string(),
                 generated_at: "2025-06-12T10:00:00".to_string(),
             },
             fields: vec![
@@ -157,7 +157,7 @@ mod tests {
         assert!(toml.contains("[discovery]"));
         assert!(toml.contains("total_files = 100"));
         assert!(toml.contains("files_with_frontmatter = 80"));
-        assert!(toml.contains("glob = \"**/*.md\""));
+        assert!(toml.contains("glob = \"**\""));
         assert!(toml.contains("generated_at = \"2025-06-12T10:00:00\""));
         assert!(toml.contains("[[field]]"));
         assert!(toml.contains("name = \"title\""));
@@ -172,7 +172,7 @@ mod tests {
             discovery: LockDiscovery {
                 total_files: 5,
                 files_with_frontmatter: 0,
-                glob: "**/*.md".to_string(),
+                glob: "**".to_string(),
                 generated_at: "2025-06-12T10:00:00".to_string(),
             },
             fields: vec![],

@@ -29,7 +29,7 @@ enum Command {
         dir: PathBuf,
 
         /// Glob pattern for matching files
-        #[arg(long, default_value = "**/*.md")]
+        #[arg(long, default_value = "**")]
         glob: String,
 
         /// Config file path to write
@@ -43,6 +43,17 @@ enum Command {
         /// Print discovery table only, write nothing
         #[arg(long)]
         dry_run: bool,
+    },
+
+    /// Refresh lock file by re-scanning markdown files
+    Update {
+        /// Directory to scan
+        #[arg(long, default_value = ".")]
+        dir: PathBuf,
+
+        /// Path to config file (default: auto-discover mfv.toml or mdvs.toml)
+        #[arg(long)]
+        config: Option<PathBuf>,
     },
 
     /// Validate frontmatter against schema
@@ -72,6 +83,7 @@ fn main() {
             force,
             dry_run,
         } => cmd_init(&dir, &glob, &config, force, dry_run),
+        Command::Update { dir, config } => cmd_update(&dir, config.as_deref()),
         Command::Check {
             dir,
             schema,
@@ -199,6 +211,87 @@ fn cmd_init(
     std::fs::write(&lock_path, lock.to_toml_string())
         .with_context(|| format!("failed to write {}", lock_path.display()))?;
     eprintln!("Wrote {}", lock_path.display());
+
+    Ok(())
+}
+
+fn cmd_update(dir: &Path, config_arg: Option<&Path>) -> Result<()> {
+    if !dir.is_dir() {
+        bail!("{} is not a directory", dir.display());
+    }
+
+    let config_path = resolve_schema_path(dir, config_arg)?;
+
+    let schema = Schema::from_file(&config_path)
+        .with_context(|| format!("failed to load config from {}", config_path.display()))?;
+    let glob = &schema.glob;
+
+    eprintln!("Scanning {} with glob '{}'...", dir.display(), glob);
+    let files = scan_directory(dir, glob)?;
+    let total = files.len();
+    eprintln!("Found {} markdown files\n", total);
+
+    if total == 0 {
+        bail!("no markdown files found matching '{glob}'");
+    }
+
+    // Build inputs for discover_fields: (path, frontmatter) pairs
+    let file_frontmatters: Vec<(&str, Option<&serde_json::Value>)> = files
+        .iter()
+        .map(|f| (f.rel_path.as_str(), f.frontmatter.as_ref()))
+        .collect();
+    let files_with_frontmatter = file_frontmatters
+        .iter()
+        .filter(|(_, fm)| fm.is_some())
+        .count();
+    let field_infos = discover_fields(&file_frontmatters);
+
+    // Build observations for inference (unused for now, but keeps lock consistent with init)
+    let observations: Vec<(PathBuf, HashSet<String>)> = files
+        .iter()
+        .filter_map(|f| {
+            let fm = f.frontmatter.as_ref()?;
+            let field_names: HashSet<String> = fm
+                .as_object()
+                .map(|obj| obj.keys().cloned().collect())
+                .unwrap_or_default();
+            if field_names.is_empty() {
+                return None;
+            }
+            Some((PathBuf::from(&f.rel_path), field_names))
+        })
+        .collect();
+    let _inferred = infer_field_paths(&observations);
+
+    // Print field table to stderr
+    eprintln!(
+        "{:<20} {:<12} {:>5}/{:<5}",
+        "Field", "Type", "Count", "Total"
+    );
+    eprintln!("{}", "-".repeat(44));
+    for f in &field_infos {
+        eprintln!(
+            "{:<20} {:<12} {:>5}/{:<5}",
+            f.name,
+            f.field_type,
+            f.files.len(),
+            total,
+        );
+    }
+
+    // Write lock file next to config
+    let lock_path = lock_path_for(&config_path);
+    let generated_at = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S").to_string();
+    let lock = LockFile::from_discovery(
+        &field_infos,
+        total,
+        files_with_frontmatter,
+        glob,
+        &generated_at,
+    );
+    std::fs::write(&lock_path, lock.to_toml_string())
+        .with_context(|| format!("failed to write {}", lock_path.display()))?;
+    eprintln!("\nWrote {}", lock_path.display());
 
     Ok(())
 }

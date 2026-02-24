@@ -37,7 +37,7 @@ CREATE TABLE vault_meta (
 | `promoted_fields` | `["title","tags","date"]` | JSON array of promoted field names |
 | `max_chunk_size` | `1000` | Maximum chunk size in characters |
 | `vault_path` | `/home/user/notes` | Absolute path to vault root at index time |
-| `glob_pattern` | `**/*.md` | File glob used for indexing |
+| `glob_pattern` | `**` | File glob used for indexing |
 | `created_at` | `2025-06-15T10:30:00Z` | When the index was first created |
 | `last_indexed_at` | `2025-06-16T14:22:00Z` | When the last index/reindex completed |
 
