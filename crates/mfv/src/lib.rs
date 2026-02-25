@@ -2,6 +2,8 @@
 //! on frontmatter fields in markdown files.
 #![warn(missing_docs)]
 
+/// Lock file diffing: compare current state against saved snapshot.
+pub mod diff;
 /// Validation diagnostic types.
 pub mod diagnostic;
 /// Frontmatter extraction from YAML (`---`) and TOML (`+++`) delimited blocks.

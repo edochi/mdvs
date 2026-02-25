@@ -347,7 +347,8 @@ allowed = ["papers/**"]
 }
 
 #[test]
-fn unknown_field_exit_1() {
+fn unlisted_field_passes() {
+    // Fields not in schema have no constraints — should pass validation
     let tmp = TempDir::new().unwrap();
     write_schema(
         tmp.path(),
@@ -364,8 +365,8 @@ type = "string"
         .args(["check", "--dir"])
         .arg(tmp.path())
         .assert()
-        .code(1)
-        .stdout(predicate::str::contains("not allowed"));
+        .success()
+        .stdout(predicate::str::contains("All files valid."));
 }
 
 #[test]

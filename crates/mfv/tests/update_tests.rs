@@ -1,13 +1,9 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use assert_cmd::cargo::cargo_bin_cmd;
 use assert_fs::TempDir;
 use predicates::prelude::*;
-
-fn fixtures_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures")
-}
 
 fn mfv() -> assert_cmd::Command {
     cargo_bin_cmd!("mfv").into()
@@ -31,12 +27,17 @@ fn write_md(dir: &Path, name: &str, frontmatter: &str, body: &str) {
 #[test]
 fn update_refreshes_lock() {
     let tmp = TempDir::new().unwrap();
+
+    // Create consistent test data (no type conflicts)
+    write_md(tmp.path(), "note1.md", "title: Hello\ntags: [a]\n", "Body");
+    write_md(tmp.path(), "note2.md", "title: World\ntags: [b]\n", "Body");
+
     let config_path = tmp.path().join("mfv.toml");
 
     // Init first to create config + lock
     mfv()
         .args(["init", "--dir"])
-        .arg(fixtures_dir())
+        .arg(tmp.path())
         .arg("--config")
         .arg(&config_path)
         .assert()
@@ -52,7 +53,7 @@ fn update_refreshes_lock() {
     // Update to refresh lock
     mfv()
         .args(["update", "--dir"])
-        .arg(fixtures_dir())
+        .arg(tmp.path())
         .arg("--config")
         .arg(&config_path)
         .assert()
@@ -133,6 +134,40 @@ fn update_missing_dir_exit_2() {
         .assert()
         .code(2)
         .stderr(predicate::str::contains("is not a directory"));
+}
+
+#[test]
+fn update_fails_on_invalid() {
+    let tmp = TempDir::new().unwrap();
+
+    // Schema requires "title", but the file doesn't have it
+    write_schema(
+        tmp.path(),
+        "mfv.toml",
+        r#"
+[[fields.field]]
+name = "title"
+type = "string"
+required = ["**"]
+"#,
+    );
+    write_md(tmp.path(), "note.md", "tags: [a]\n", "Body");
+
+    // Create a lock file so we can verify it doesn't get updated
+    let lock_path = tmp.path().join("mfv.lock");
+    fs::write(&lock_path, "# old lock").unwrap();
+    let old_content = fs::read_to_string(&lock_path).unwrap();
+
+    mfv()
+        .args(["update", "--dir"])
+        .arg(tmp.path())
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("validation error"));
+
+    // Lock should NOT have been updated
+    let new_content = fs::read_to_string(&lock_path).unwrap();
+    assert_eq!(old_content, new_content, "lock should not be updated on validation failure");
 }
 
 #[test]

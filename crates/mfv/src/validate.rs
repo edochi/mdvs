@@ -77,14 +77,13 @@ pub fn validate(files: &[ScannedFile], schema: &Schema) -> Vec<Diagnostic> {
             }
         }
 
-        // Allowed enforcement: every frontmatter key must be allowed at this path
+        // Allowed enforcement: fields listed in schema must be allowed at this path.
+        // Fields NOT in the schema at all have no constraints (silently skipped).
         if let Some(Value::Object(map)) = fm {
             for key in map.keys() {
-                let is_allowed = schema
-                    .fields
-                    .iter()
-                    .any(|f| f.name == *key && f.is_allowed_at(&file.rel_path));
-                if !is_allowed {
+                if let Some(f) = schema.fields.iter().find(|f| f.name == *key)
+                    && !f.is_allowed_at(&file.rel_path)
+                {
                     diagnostics.push(Diagnostic {
                         file: file.rel_path.clone(),
                         field: key.clone(),
@@ -368,7 +367,8 @@ allowed = ["blog/**"]
     }
 
     #[test]
-    fn unknown_field_not_in_schema() {
+    fn unlisted_field_no_constraint() {
+        // Fields not in the schema have no constraints — no diagnostic produced
         let schema = parse_schema(
             r#"
 [[fields.field]]
@@ -379,9 +379,7 @@ type = "string"
 
         let files = vec![make_file("test.md", json!({"title": "Hi", "extra": "value"}))];
         let diags = validate(&files, &schema);
-        assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].field, "extra");
-        assert_eq!(diags[0].kind, DiagnosticKind::NotAllowed);
+        assert!(diags.is_empty());
     }
 
     #[test]
@@ -401,7 +399,9 @@ allowed = ["**"]
     }
 
     #[test]
-    fn multiple_not_allowed() {
+    fn not_allowed_but_unlisted_field_passes() {
+        // "title" is in schema with allowed = ["blog/**"] → not allowed at notes/
+        // "extra" is NOT in schema → no constraints, passes
         let schema = parse_schema(
             r#"
 [[fields.field]]
@@ -416,12 +416,8 @@ allowed = ["blog/**"]
             json!({"title": "Hi", "extra": "value"}),
         )];
         let diags = validate(&files, &schema);
-        assert_eq!(diags.len(), 2);
-        assert!(diags
-            .iter()
-            .all(|d| d.kind == DiagnosticKind::NotAllowed));
-        let fields: Vec<&str> = diags.iter().map(|d| d.field.as_str()).collect();
-        assert!(fields.contains(&"title"));
-        assert!(fields.contains(&"extra"));
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].field, "title");
+        assert_eq!(diags[0].kind, DiagnosticKind::NotAllowed);
     }
 }

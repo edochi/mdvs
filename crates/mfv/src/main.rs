@@ -8,6 +8,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 
 use mdvs_schema::{FieldDef, LockFile, Schema, discover_fields, infer_field_paths};
+use mfv::diff::{diff_locks, format_diff};
 use mfv::output::{OutputFormat, format_diagnostics};
 use mfv::scan::scan_directory;
 use mfv::validate::validate;
@@ -47,6 +48,10 @@ enum Command {
         /// Include files without frontmatter in analysis
         #[arg(long)]
         include_bare_files: bool,
+
+        /// Omit unconstrained fields from generated config
+        #[arg(long)]
+        minimal: bool,
     },
 
     /// Refresh lock file by re-scanning markdown files
@@ -74,6 +79,21 @@ enum Command {
         #[arg(long, default_value = "human")]
         format: OutputFormat,
     },
+
+    /// Compare current directory state against the lock file
+    Diff {
+        /// Directory to scan
+        #[arg(long, default_value = ".")]
+        dir: PathBuf,
+
+        /// Path to config file (default: auto-discover mfv.toml or mdvs.toml)
+        #[arg(long)]
+        config: Option<PathBuf>,
+
+        /// Run diff even if validation fails
+        #[arg(long)]
+        ignore_errors: bool,
+    },
 }
 
 fn main() {
@@ -87,13 +107,19 @@ fn main() {
             force,
             dry_run,
             include_bare_files,
-        } => cmd_init(&dir, &glob, &config, force, dry_run, include_bare_files),
+            minimal,
+        } => cmd_init(&dir, &glob, &config, force, dry_run, include_bare_files, minimal),
         Command::Update { dir, config } => cmd_update(&dir, config.as_deref()),
         Command::Check {
             dir,
             schema,
             format,
         } => cmd_check(&dir, schema.as_deref(), format),
+        Command::Diff {
+            dir,
+            config,
+            ignore_errors,
+        } => cmd_diff(&dir, config.as_deref(), ignore_errors),
     };
 
     if let Err(e) = result {
@@ -109,6 +135,7 @@ fn cmd_init(
     force: bool,
     dry_run: bool,
     include_bare_files: bool,
+    minimal: bool,
 ) -> Result<()> {
     if !dir.is_dir() {
         bail!("{} is not a directory", dir.display());
@@ -178,7 +205,7 @@ fn cmd_init(
     }
 
     // Build schema from discovery + inference
-    let field_defs: Vec<FieldDef> = field_infos
+    let mut field_defs: Vec<FieldDef> = field_infos
         .iter()
         .map(|f| {
             let paths = inferred.get(&f.name);
@@ -192,6 +219,15 @@ fn cmd_init(
             }
         })
         .collect();
+
+    if minimal {
+        field_defs.retain(|f| {
+            !(f.allowed == vec!["**".to_string()]
+                && f.required.is_empty()
+                && f.pattern.is_none()
+                && f.values.is_empty())
+        });
+    }
 
     let schema = Schema {
         glob: glob.to_string(),
@@ -252,6 +288,19 @@ fn cmd_update(dir: &Path, config_arg: Option<&Path>) -> Result<()> {
 
     if total == 0 {
         bail!("no files with frontmatter found (all files are bare)");
+    }
+
+    // Validate before updating lock — refuse to snapshot an invalid state
+    let diagnostics = validate(&files, &schema);
+    if !diagnostics.is_empty() {
+        eprint!(
+            "{}",
+            format_diagnostics(&diagnostics, OutputFormat::Human)
+        );
+        bail!(
+            "{} validation error(s) — lock not updated",
+            diagnostics.len()
+        );
     }
 
     // Build inputs for discover_fields: (path, frontmatter) pairs
@@ -390,5 +439,91 @@ fn cmd_check(dir: &Path, schema_arg: Option<&Path>, format: OutputFormat) -> Res
     }
 
     print!("{}", format_diagnostics(&diagnostics, format));
+    process::exit(1);
+}
+
+fn cmd_diff(dir: &Path, config_arg: Option<&Path>, ignore_errors: bool) -> Result<()> {
+    if !dir.is_dir() {
+        bail!("{} is not a directory", dir.display());
+    }
+
+    let config_path = resolve_schema_path(dir, config_arg)?;
+
+    let schema = Schema::from_file(&config_path)
+        .with_context(|| format!("failed to load config from {}", config_path.display()))?;
+
+    let lock_path = lock_path_for(&config_path);
+    if !lock_path.exists() {
+        bail!(
+            "no lock file found at {} — run `mfv init` or `mfv update` first",
+            lock_path.display()
+        );
+    }
+
+    let old_lock = LockFile::from_file(&lock_path)
+        .with_context(|| format!("failed to load lock from {}", lock_path.display()))?;
+
+    eprintln!("Scanning {} with glob '{}'...", dir.display(), &schema.glob);
+    let all_files = scan_directory(dir, &schema.glob)?;
+
+    if all_files.is_empty() {
+        bail!("no markdown files found matching '{}'", &schema.glob);
+    }
+
+    let files: Vec<_> = if !schema.include_bare_files {
+        all_files
+            .into_iter()
+            .filter(|f| f.frontmatter.is_some())
+            .collect()
+    } else {
+        all_files
+    };
+    let total = files.len();
+    eprintln!("{} markdown files considered\n", total);
+
+    // Validation gate
+    let diagnostics = validate(&files, &schema);
+    if !diagnostics.is_empty() {
+        eprint!(
+            "{}",
+            format_diagnostics(&diagnostics, OutputFormat::Human)
+        );
+        if !ignore_errors {
+            bail!(
+                "{} validation error(s) — use --ignore-errors to diff anyway",
+                diagnostics.len()
+            );
+        }
+        eprintln!("Ignoring {} validation error(s), continuing diff...\n", diagnostics.len());
+    }
+
+    // Build new lock from current state
+    let file_frontmatters: Vec<(&str, Option<&serde_json::Value>)> = files
+        .iter()
+        .map(|f| (f.rel_path.as_str(), f.frontmatter.as_ref()))
+        .collect();
+    let files_with_frontmatter = file_frontmatters
+        .iter()
+        .filter(|(_, fm)| fm.is_some())
+        .count();
+    let field_infos = discover_fields(&file_frontmatters);
+
+    let generated_at = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S").to_string();
+    let new_lock = LockFile::from_discovery(
+        &field_infos,
+        total,
+        files_with_frontmatter,
+        &schema.glob,
+        &generated_at,
+    );
+
+    let diff = diff_locks(&old_lock, &new_lock);
+
+    if diff.is_empty() {
+        println!("No changes detected.");
+        process::exit(0);
+    }
+
+    print!("{}", format_diff(&diff, &old_lock, &new_lock));
     process::exit(1);
 }

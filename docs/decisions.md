@@ -8,53 +8,6 @@ Once a decision is implemented and reflected in the specs, remove it from this f
 
 ## mfv
 
-### `mfv update` semantics
-
-Update the lock file to match current directory state.
-**Fail if check doesn't pass** — you can't snapshot an invalid state.
-
-### `mfv check --format`
-
-Let the user choose output format:
-- `text` (default): human-readable report
-- `json`: machine-parseable, good for CI/CD pipelines
-
-### Missing rules = no constraints
-
-**Core semantic change**: if a field is not listed in the TOML, it means no rules apply.
-Equivalent to `allowed = ["**"]`, `required = []`, no type enforcement.
-
-The TOML is a restrictions file — only list what you want to restrict.
-Fields not listed are unrestricted. Type info for unlisted fields is still captured in the lock.
-
-Example of an entry that could be omitted (no actual constraint):
-```toml
-[[fields.field]]
-name = "name"
-type = "integer"
-allowed = ["**"]
-required = []
-```
-
-#### `--minimal` flag on `mfv init`
-
-Two modes for generating the TOML:
-- **Default (complete)**: all fields listed, including unconstrained ones. More self-documenting.
-- **`--minimal`**: omit entries where `allowed = ["**"]` AND `required = []` AND no other constraints (`pattern`, `values`). Produces the smallest valid TOML.
-
-Both produce functionally equivalent validation behavior.
-
-### `mfv diff` command
-
-Compare current directory state vs the lock file snapshot. Shows:
-- New fields, removed fields
-- Type changes
-- Files that gained/lost fields
-
-Flags:
-- Default: fail if check doesn't pass
-- `--force` (or `--ignore-errors`): run diff anyway, skipping files that don't pass validation
-
 ### Future validation features (post-v0.3)
 
 Additional optional constraints on `[[fields.field]]`:

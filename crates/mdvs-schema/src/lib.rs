@@ -14,5 +14,5 @@ pub use discovery::{FieldInfo, discover_fields, infer_type, is_date_string};
 pub use field_def::FieldDef;
 pub use field_type::FieldType;
 pub use inference::{FieldPaths, infer_field_paths};
-pub use lock::LockFile;
+pub use lock::{LockError, LockFile};
 pub use schema::{Schema, SchemaError};

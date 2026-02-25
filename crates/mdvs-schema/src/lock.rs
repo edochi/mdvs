@@ -1,3 +1,7 @@
+use std::path::Path;
+
+use serde::Deserialize;
+
 use crate::FieldType;
 use crate::discovery::FieldInfo;
 
@@ -94,6 +98,94 @@ impl LockFile {
 
         out
     }
+
+    /// Load a lock file from a file path.
+    pub fn from_file(path: &Path) -> Result<Self, LockError> {
+        let content = std::fs::read_to_string(path)?;
+        content.parse()
+    }
+}
+
+/// Errors that can occur when loading a lock file.
+#[derive(Debug)]
+pub enum LockError {
+    /// File I/O error.
+    Io(std::io::Error),
+    /// TOML deserialization error.
+    Parse(toml::de::Error),
+}
+
+impl std::fmt::Display for LockError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LockError::Io(e) => write!(f, "IO error: {e}"),
+            LockError::Parse(e) => write!(f, "TOML parse error: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for LockError {}
+
+impl From<std::io::Error> for LockError {
+    fn from(e: std::io::Error) -> Self {
+        LockError::Io(e)
+    }
+}
+
+impl From<toml::de::Error> for LockError {
+    fn from(e: toml::de::Error) -> Self {
+        LockError::Parse(e)
+    }
+}
+
+#[derive(Deserialize)]
+struct RawLockFile {
+    discovery: RawLockDiscovery,
+    #[serde(default)]
+    field: Vec<RawLockField>,
+}
+
+#[derive(Deserialize)]
+struct RawLockDiscovery {
+    total_files: usize,
+    files_with_frontmatter: usize,
+    glob: String,
+    generated_at: String,
+}
+
+#[derive(Deserialize)]
+struct RawLockField {
+    name: String,
+    #[serde(rename = "type")]
+    field_type: FieldType,
+    #[serde(default)]
+    files: Vec<String>,
+}
+
+impl std::str::FromStr for LockFile {
+    type Err = LockError;
+
+    fn from_str(s: &str) -> Result<Self, LockError> {
+        let raw: RawLockFile = toml::from_str(s)?;
+
+        Ok(LockFile {
+            discovery: LockDiscovery {
+                total_files: raw.discovery.total_files,
+                files_with_frontmatter: raw.discovery.files_with_frontmatter,
+                glob: raw.discovery.glob,
+                generated_at: raw.discovery.generated_at,
+            },
+            fields: raw
+                .field
+                .into_iter()
+                .map(|f| LockField {
+                    name: f.name,
+                    field_type: f.field_type,
+                    files: f.files,
+                })
+                .collect(),
+        })
+    }
 }
 
 #[cfg(test)]
@@ -164,6 +256,43 @@ mod tests {
         assert!(toml.contains("type = \"string\""));
         assert!(toml.contains("files = [\"a.md\", \"b.md\"]"));
         assert!(toml.contains("type = \"string[]\""));
+    }
+
+    #[test]
+    fn roundtrip_toml() {
+        let lock = LockFile {
+            discovery: LockDiscovery {
+                total_files: 10,
+                files_with_frontmatter: 8,
+                glob: "**".to_string(),
+                generated_at: "2025-06-12T10:00:00".to_string(),
+            },
+            fields: vec![
+                LockField {
+                    name: "title".to_string(),
+                    field_type: FieldType::String,
+                    files: vec!["a.md".to_string(), "b.md".to_string()],
+                },
+                LockField {
+                    name: "count".to_string(),
+                    field_type: FieldType::Integer,
+                    files: vec!["a.md".to_string()],
+                },
+            ],
+        };
+
+        let toml = lock.to_toml_string();
+        let parsed: LockFile = toml.parse().expect("should roundtrip");
+
+        assert_eq!(parsed.discovery.total_files, 10);
+        assert_eq!(parsed.discovery.files_with_frontmatter, 8);
+        assert_eq!(parsed.discovery.glob, "**");
+        assert_eq!(parsed.fields.len(), 2);
+        assert_eq!(parsed.fields[0].name, "title");
+        assert_eq!(parsed.fields[0].field_type, FieldType::String);
+        assert_eq!(parsed.fields[0].files, vec!["a.md", "b.md"]);
+        assert_eq!(parsed.fields[1].name, "count");
+        assert_eq!(parsed.fields[1].field_type, FieldType::Integer);
     }
 
     #[test]

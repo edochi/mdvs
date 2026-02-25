@@ -128,6 +128,8 @@ fn init_empty_dir_exit_2() {
     mfv()
         .args(["init", "--dir"])
         .arg(tmp.path())
+        .arg("--config")
+        .arg(tmp.path().join("mfv.toml"))
         .assert()
         .code(2)
         .stderr(predicate::str::contains("no markdown files found"));
@@ -193,6 +195,55 @@ fn init_dry_run_no_files_written() {
         !lock_path.exists(),
         "lock should not be written in dry-run mode"
     );
+}
+
+#[test]
+fn init_minimal_omits_unconstrained() {
+    let tmp = TempDir::new().unwrap();
+
+    // "tags" and "title" are spread across directories but not in all files,
+    // so inference gives allowed=["**"], required=[] → unconstrained.
+    // "doi" is only in papers/ → scoped allowed=["papers/**"], constrained.
+    let blog = tmp.path().join("blog");
+    let papers = tmp.path().join("papers");
+    std::fs::create_dir(&blog).unwrap();
+    std::fs::create_dir(&papers).unwrap();
+
+    std::fs::write(blog.join("post1.md"), "---\ntags: [a]\n---\nBody").unwrap();
+    std::fs::write(blog.join("post2.md"), "---\ntitle: Hello\n---\nBody").unwrap();
+    std::fs::write(papers.join("paper.md"), "---\ntags: [b]\ndoi: 10.1234/test\n---\nBody").unwrap();
+    std::fs::write(papers.join("paper2.md"), "---\ntitle: X\n---\nBody").unwrap();
+
+    let config_path = tmp.path().join("mfv.toml");
+
+    // Without --minimal: all fields should appear
+    mfv()
+        .args(["init", "--dir"])
+        .arg(tmp.path())
+        .arg("--config")
+        .arg(&config_path)
+        .assert()
+        .success();
+
+    let content = std::fs::read_to_string(&config_path).unwrap();
+    assert!(content.contains("name = \"tags\""), "full mode should include tags");
+    assert!(content.contains("name = \"doi\""), "full mode should include doi");
+
+    // With --minimal: only constrained fields should appear
+    mfv()
+        .args(["init", "--dir"])
+        .arg(tmp.path())
+        .arg("--config")
+        .arg(&config_path)
+        .arg("--force")
+        .arg("--minimal")
+        .assert()
+        .success();
+
+    let content = std::fs::read_to_string(&config_path).unwrap();
+    assert!(!content.contains("name = \"tags\""), "minimal should omit unconstrained tags");
+    assert!(!content.contains("name = \"title\""), "minimal should omit unconstrained title");
+    assert!(content.contains("name = \"doi\""), "minimal should keep scoped doi");
 }
 
 #[test]
