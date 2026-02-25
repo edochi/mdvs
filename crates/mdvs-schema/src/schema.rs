@@ -50,6 +50,51 @@ impl From<globset::Error> for SchemaError {
     }
 }
 
+/// Which frontmatter delimiter formats to recognize.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FrontmatterFormat {
+    /// Recognize both YAML (`---`) and TOML (`+++`) delimiters.
+    #[default]
+    Both,
+    /// Only recognize YAML (`---`) delimiters.
+    Yaml,
+    /// Only recognize TOML (`+++`) delimiters.
+    Toml,
+}
+
+impl std::fmt::Display for FrontmatterFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FrontmatterFormat::Both => write!(f, "both"),
+            FrontmatterFormat::Yaml => write!(f, "yaml"),
+            FrontmatterFormat::Toml => write!(f, "toml"),
+        }
+    }
+}
+
+impl std::str::FromStr for FrontmatterFormat {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "both" => Ok(FrontmatterFormat::Both),
+            "yaml" => Ok(FrontmatterFormat::Yaml),
+            "toml" => Ok(FrontmatterFormat::Toml),
+            _ => Err(format!("unknown frontmatter format '{s}', expected 'both', 'yaml', or 'toml'")),
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for FrontmatterFormat {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        s.parse().map_err(serde::de::Error::custom)
+    }
+}
+
 /// Raw TOML structure for deserialization.
 #[derive(Debug, Deserialize)]
 struct RawSchema {
@@ -61,6 +106,7 @@ struct RawSchema {
 struct DirectoryConfig {
     glob: Option<String>,
     include_bare_files: Option<bool>,
+    frontmatter_format: Option<FrontmatterFormat>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -76,6 +122,8 @@ pub struct Schema {
     pub glob: String,
     /// Whether to include files without frontmatter in analysis.
     pub include_bare_files: bool,
+    /// Which frontmatter formats to recognize.
+    pub frontmatter_format: FrontmatterFormat,
     /// Field definitions loaded from the TOML config.
     pub fields: Vec<FieldDef>,
 }
@@ -104,6 +152,10 @@ impl Schema {
         out.push_str(&format!(
             "include_bare_files = {}\n",
             self.include_bare_files
+        ));
+        out.push_str(&format!(
+            "frontmatter_format = {:?}\n",
+            self.frontmatter_format.to_string()
         ));
         out.push('\n');
 
@@ -148,12 +200,13 @@ impl std::str::FromStr for Schema {
     fn from_str(s: &str) -> Result<Self, SchemaError> {
         let raw: RawSchema = toml::from_str(s)?;
 
-        let (glob, include_bare_files) = match raw.directory {
+        let (glob, include_bare_files, frontmatter_format) = match raw.directory {
             Some(d) => (
                 d.glob.unwrap_or_else(|| "**".to_string()),
                 d.include_bare_files.unwrap_or(false),
+                d.frontmatter_format.unwrap_or_default(),
             ),
-            None => ("**".to_string(), false),
+            None => ("**".to_string(), false, FrontmatterFormat::default()),
         };
 
         let raw_fields = match raw.fields {
@@ -186,6 +239,7 @@ impl std::str::FromStr for Schema {
         Ok(Schema {
             glob,
             include_bare_files,
+            frontmatter_format,
             fields,
         })
     }
@@ -420,5 +474,48 @@ required = ["**"]
 "#;
         let err = toml.parse::<Schema>().unwrap_err();
         assert!(err.to_string().contains("required ⊆ allowed"));
+    }
+
+    #[test]
+    fn frontmatter_format_defaults_to_both() {
+        let toml = r#"
+[[fields.field]]
+name = "title"
+type = "string"
+"#;
+        let schema = toml.parse::<Schema>().unwrap();
+        assert_eq!(schema.frontmatter_format, FrontmatterFormat::Both);
+    }
+
+    #[test]
+    fn frontmatter_format_parsed_from_toml() {
+        let toml = r#"
+[directory]
+frontmatter_format = "yaml"
+
+[[fields.field]]
+name = "title"
+type = "string"
+"#;
+        let schema = toml.parse::<Schema>().unwrap();
+        assert_eq!(schema.frontmatter_format, FrontmatterFormat::Yaml);
+    }
+
+    #[test]
+    fn frontmatter_format_roundtrip() {
+        let toml = r#"
+[directory]
+frontmatter_format = "toml"
+
+[[fields.field]]
+name = "title"
+type = "string"
+"#;
+        let schema = toml.parse::<Schema>().unwrap();
+        assert_eq!(schema.frontmatter_format, FrontmatterFormat::Toml);
+
+        let output = schema.to_toml_string();
+        let schema2 = output.parse::<Schema>().unwrap();
+        assert_eq!(schema2.frontmatter_format, FrontmatterFormat::Toml);
     }
 }

@@ -225,7 +225,7 @@ required = ["**"]
     mfv()
         .args(["diff", "--dir"])
         .arg(tmp.path())
-        .arg("--ignore-errors")
+        .arg("--ignore-validation-errors")
         .assert()
         // Should not exit 2 (validation error), should complete the diff
         .stdout(predicate::str::contains("No changes").or(predicate::str::contains("Summary")));

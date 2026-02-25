@@ -7,7 +7,7 @@ use std::process;
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 
-use mdvs_schema::{FieldDef, LockFile, Schema, discover_fields, infer_field_paths};
+use mdvs_schema::{FieldDef, FrontmatterFormat, LockFile, Schema, discover_fields, infer_field_paths};
 use mfv::diff::{diff_locks, format_diff};
 use mfv::output::{OutputFormat, format_diagnostics};
 use mfv::scan::scan_directory;
@@ -52,6 +52,10 @@ enum Command {
         /// Omit unconstrained fields from generated config
         #[arg(long)]
         minimal: bool,
+
+        /// Frontmatter format to recognize (yaml, toml, both)
+        #[arg(long, default_value = "both")]
+        frontmatter_format: FrontmatterFormat,
     },
 
     /// Refresh lock file by re-scanning markdown files
@@ -92,7 +96,7 @@ enum Command {
 
         /// Run diff even if validation fails
         #[arg(long)]
-        ignore_errors: bool,
+        ignore_validation_errors: bool,
     },
 }
 
@@ -108,7 +112,17 @@ fn main() {
             dry_run,
             include_bare_files,
             minimal,
-        } => cmd_init(&dir, &glob, &config, force, dry_run, include_bare_files, minimal),
+            frontmatter_format,
+        } => cmd_init(
+            &dir,
+            &glob,
+            &config,
+            force,
+            dry_run,
+            include_bare_files,
+            minimal,
+            frontmatter_format,
+        ),
         Command::Update { dir, config } => cmd_update(&dir, config.as_deref()),
         Command::Check {
             dir,
@@ -118,8 +132,8 @@ fn main() {
         Command::Diff {
             dir,
             config,
-            ignore_errors,
-        } => cmd_diff(&dir, config.as_deref(), ignore_errors),
+            ignore_validation_errors,
+        } => cmd_diff(&dir, config.as_deref(), ignore_validation_errors),
     };
 
     if let Err(e) = result {
@@ -128,6 +142,7 @@ fn main() {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_init(
     dir: &Path,
     glob: &str,
@@ -136,6 +151,7 @@ fn cmd_init(
     dry_run: bool,
     include_bare_files: bool,
     minimal: bool,
+    frontmatter_format: FrontmatterFormat,
 ) -> Result<()> {
     if !dir.is_dir() {
         bail!("{} is not a directory", dir.display());
@@ -149,7 +165,7 @@ fn cmd_init(
     }
 
     eprintln!("Scanning {}...", dir.display());
-    let all_files = scan_directory(dir, glob)?;
+    let all_files = scan_directory(dir, glob, frontmatter_format)?;
 
     if all_files.is_empty() {
         bail!("no markdown files found matching '{glob}'");
@@ -232,6 +248,7 @@ fn cmd_init(
     let schema = Schema {
         glob: glob.to_string(),
         include_bare_files,
+        frontmatter_format,
         fields: field_defs,
     };
 
@@ -269,7 +286,7 @@ fn cmd_update(dir: &Path, config_arg: Option<&Path>) -> Result<()> {
     let glob = &schema.glob;
 
     eprintln!("Scanning {} with glob '{}'...", dir.display(), glob);
-    let all_files = scan_directory(dir, glob)?;
+    let all_files = scan_directory(dir, glob, schema.frontmatter_format)?;
 
     if all_files.is_empty() {
         bail!("no markdown files found matching '{glob}'");
@@ -412,7 +429,7 @@ fn cmd_check(dir: &Path, schema_arg: Option<&Path>, format: OutputFormat) -> Res
     let schema = Schema::from_file(&schema_path)
         .with_context(|| format!("failed to load schema from {}", schema_path.display()))?;
 
-    let all_files = scan_directory(dir, &schema.glob)?;
+    let all_files = scan_directory(dir, &schema.glob, schema.frontmatter_format)?;
     let files: Vec<_> = if !schema.include_bare_files {
         all_files
             .into_iter()
@@ -442,7 +459,7 @@ fn cmd_check(dir: &Path, schema_arg: Option<&Path>, format: OutputFormat) -> Res
     process::exit(1);
 }
 
-fn cmd_diff(dir: &Path, config_arg: Option<&Path>, ignore_errors: bool) -> Result<()> {
+fn cmd_diff(dir: &Path, config_arg: Option<&Path>, ignore_validation_errors: bool) -> Result<()> {
     if !dir.is_dir() {
         bail!("{} is not a directory", dir.display());
     }
@@ -464,7 +481,7 @@ fn cmd_diff(dir: &Path, config_arg: Option<&Path>, ignore_errors: bool) -> Resul
         .with_context(|| format!("failed to load lock from {}", lock_path.display()))?;
 
     eprintln!("Scanning {} with glob '{}'...", dir.display(), &schema.glob);
-    let all_files = scan_directory(dir, &schema.glob)?;
+    let all_files = scan_directory(dir, &schema.glob, schema.frontmatter_format)?;
 
     if all_files.is_empty() {
         bail!("no markdown files found matching '{}'", &schema.glob);
@@ -488,9 +505,9 @@ fn cmd_diff(dir: &Path, config_arg: Option<&Path>, ignore_errors: bool) -> Resul
             "{}",
             format_diagnostics(&diagnostics, OutputFormat::Human)
         );
-        if !ignore_errors {
+        if !ignore_validation_errors {
             bail!(
-                "{} validation error(s) — use --ignore-errors to diff anyway",
+                "{} validation error(s) — use --ignore-validation-errors to diff anyway",
                 diagnostics.len()
             );
         }

@@ -2,6 +2,7 @@ use std::path::Path;
 
 use anyhow::Result;
 use globset::{Glob, GlobMatcher};
+use mdvs_schema::FrontmatterFormat;
 use serde_json::Value;
 use walkdir::WalkDir;
 
@@ -17,7 +18,11 @@ pub struct ScannedFile {
 }
 
 /// Walk a directory, extract frontmatter from all matching markdown files.
-pub fn scan_directory(dir: &Path, glob_pattern: &str) -> Result<Vec<ScannedFile>> {
+pub fn scan_directory(
+    dir: &Path,
+    glob_pattern: &str,
+    format: FrontmatterFormat,
+) -> Result<Vec<ScannedFile>> {
     let matcher: GlobMatcher = Glob::new(glob_pattern)?.compile_matcher();
     let mut files = Vec::new();
 
@@ -42,7 +47,7 @@ pub fn scan_directory(dir: &Path, glob_pattern: &str) -> Result<Vec<ScannedFile>
         }
 
         let content = std::fs::read_to_string(path)?;
-        let (frontmatter, _body) = extract_frontmatter(&content);
+        let (frontmatter, _body) = extract_frontmatter(&content, format);
 
         files.push(ScannedFile {
             rel_path: rel,
@@ -75,7 +80,7 @@ mod tests {
         write_file(tmp.path(), "b.md", "# B");
         write_file(tmp.path(), "c.md", "# C");
 
-        let files = scan_directory(tmp.path(), "**").unwrap();
+        let files = scan_directory(tmp.path(), "**", FrontmatterFormat::Both).unwrap();
         assert_eq!(files.len(), 3);
     }
 
@@ -85,7 +90,7 @@ mod tests {
         write_file(tmp.path(), "note.md", "# Note");
         write_file(tmp.path(), "readme.txt", "text");
 
-        let files = scan_directory(tmp.path(), "**").unwrap();
+        let files = scan_directory(tmp.path(), "**", FrontmatterFormat::Both).unwrap();
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].rel_path, "note.md");
     }
@@ -96,7 +101,7 @@ mod tests {
         write_file(tmp.path(), "blog/post.md", "# Post");
         write_file(tmp.path(), "docs/guide.md", "# Guide");
 
-        let files = scan_directory(tmp.path(), "blog/*").unwrap();
+        let files = scan_directory(tmp.path(), "blog/*", FrontmatterFormat::Both).unwrap();
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].rel_path, "blog/post.md");
     }
@@ -106,7 +111,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         write_file(tmp.path(), "sub/deep/file.md", "# Deep");
 
-        let files = scan_directory(tmp.path(), "**").unwrap();
+        let files = scan_directory(tmp.path(), "**", FrontmatterFormat::Both).unwrap();
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].rel_path, "sub/deep/file.md");
     }
@@ -114,7 +119,7 @@ mod tests {
     #[test]
     fn empty_directory() {
         let tmp = TempDir::new().unwrap();
-        let files = scan_directory(tmp.path(), "**").unwrap();
+        let files = scan_directory(tmp.path(), "**", FrontmatterFormat::Both).unwrap();
         assert!(files.is_empty());
     }
 
@@ -123,7 +128,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         write_file(tmp.path(), "note.md", "---\ntitle: Hello\n---\nBody");
 
-        let files = scan_directory(tmp.path(), "**").unwrap();
+        let files = scan_directory(tmp.path(), "**", FrontmatterFormat::Both).unwrap();
         assert_eq!(files.len(), 1);
         let fm = files[0]
             .frontmatter
@@ -139,7 +144,7 @@ mod tests {
         write_file(tmp.path(), "readme.txt", "text");
         write_file(tmp.path(), "data.json", "{}");
 
-        let files = scan_directory(tmp.path(), "**").unwrap();
+        let files = scan_directory(tmp.path(), "**", FrontmatterFormat::Both).unwrap();
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].rel_path, "note.md");
     }
@@ -149,8 +154,33 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         write_file(tmp.path(), "plain.md", "Just some text, no delimiters.");
 
-        let files = scan_directory(tmp.path(), "**").unwrap();
+        let files = scan_directory(tmp.path(), "**", FrontmatterFormat::Both).unwrap();
         assert_eq!(files.len(), 1);
         assert!(files[0].frontmatter.is_none());
+    }
+
+    #[test]
+    fn frontmatter_format_filters() {
+        let tmp = TempDir::new().unwrap();
+        write_file(tmp.path(), "yaml.md", "---\ntitle: Hello\n---\nBody");
+        write_file(
+            tmp.path(),
+            "toml.md",
+            "+++\ntitle = \"Hello\"\n+++\nBody",
+        );
+
+        // Yaml-only: TOML file treated as bare
+        let files = scan_directory(tmp.path(), "**", FrontmatterFormat::Yaml).unwrap();
+        let yaml_file = files.iter().find(|f| f.rel_path == "yaml.md").unwrap();
+        let toml_file = files.iter().find(|f| f.rel_path == "toml.md").unwrap();
+        assert!(yaml_file.frontmatter.is_some());
+        assert!(toml_file.frontmatter.is_none());
+
+        // Toml-only: YAML file treated as bare
+        let files = scan_directory(tmp.path(), "**", FrontmatterFormat::Toml).unwrap();
+        let yaml_file = files.iter().find(|f| f.rel_path == "yaml.md").unwrap();
+        let toml_file = files.iter().find(|f| f.rel_path == "toml.md").unwrap();
+        assert!(yaml_file.frontmatter.is_none());
+        assert!(toml_file.frontmatter.is_some());
     }
 }

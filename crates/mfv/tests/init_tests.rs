@@ -272,3 +272,48 @@ fn init_lock_contains_all_fields() {
     // Lock should have per-file observations
     assert!(lock_content.contains("files = ["));
 }
+
+#[test]
+fn init_frontmatter_format_yaml_only() {
+    let tmp = TempDir::new().unwrap();
+
+    // Create files with YAML and TOML frontmatter
+    std::fs::write(
+        tmp.path().join("yaml.md"),
+        "---\ntitle: Hello\n---\nBody",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join("toml.md"),
+        "+++\ncategory = \"tech\"\n+++\nBody",
+    )
+    .unwrap();
+
+    let config_path = tmp.path().join("mfv.toml");
+
+    // With --frontmatter-format yaml: TOML file should be treated as bare
+    mfv()
+        .args(["init", "--dir"])
+        .arg(tmp.path())
+        .arg("--config")
+        .arg(&config_path)
+        .args(["--frontmatter-format", "yaml"])
+        .assert()
+        .success();
+
+    let content = std::fs::read_to_string(&config_path).unwrap();
+    // Should discover "title" (from YAML file) but NOT "category" (from TOML file)
+    assert!(
+        content.contains("name = \"title\""),
+        "should discover YAML field"
+    );
+    assert!(
+        !content.contains("name = \"category\""),
+        "should not discover TOML field"
+    );
+    // Config should record the format setting
+    assert!(
+        content.contains("frontmatter_format = \"yaml\""),
+        "should record frontmatter format"
+    );
+}

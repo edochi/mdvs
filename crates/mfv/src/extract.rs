@@ -1,16 +1,40 @@
 use gray_matter::Matter;
 use gray_matter::engine::YAML;
+use mdvs_schema::FrontmatterFormat;
 use serde_json::Value;
 
 /// Extract frontmatter and body from markdown content.
-/// Detects TOML (`+++`) vs YAML (`---`) delimiters.
-pub fn extract_frontmatter(content: &str) -> (Option<Value>, String) {
+///
+/// The `format` parameter controls which delimiter types are recognized:
+/// - `Both`: detect TOML (`+++`) vs YAML (`---`) automatically (default)
+/// - `Yaml`: only recognize YAML (`---`); TOML-delimited files treated as bare
+/// - `Toml`: only recognize TOML (`+++`); YAML-delimited files treated as bare
+pub fn extract_frontmatter(content: &str, format: FrontmatterFormat) -> (Option<Value>, String) {
     let trimmed = content.trim_start();
+    let is_toml = trimmed.starts_with("+++");
 
-    if trimmed.starts_with("+++") {
-        extract_toml_frontmatter(content)
-    } else {
-        extract_yaml_frontmatter(content)
+    match format {
+        FrontmatterFormat::Both => {
+            if is_toml {
+                extract_toml_frontmatter(content)
+            } else {
+                extract_yaml_frontmatter(content)
+            }
+        }
+        FrontmatterFormat::Yaml => {
+            if is_toml {
+                (None, content.to_string())
+            } else {
+                extract_yaml_frontmatter(content)
+            }
+        }
+        FrontmatterFormat::Toml => {
+            if is_toml {
+                extract_toml_frontmatter(content)
+            } else {
+                (None, content.to_string())
+            }
+        }
     }
 }
 
@@ -108,7 +132,7 @@ mod tests {
     #[test]
     fn yaml_basic() {
         let content = "---\ntitle: Hello\ntags:\n  - rust\n---\nBody text here.";
-        let (fm, body) = extract_frontmatter(content);
+        let (fm, body) = extract_frontmatter(content, FrontmatterFormat::Both);
         let fm = fm.expect("should parse YAML frontmatter");
         assert_eq!(fm["title"], json!("Hello"));
         assert_eq!(fm["tags"], json!(["rust"]));
@@ -118,7 +142,7 @@ mod tests {
     #[test]
     fn toml_basic() {
         let content = "+++\ntitle = \"Hello\"\ndraft = true\n+++\nBody text here.";
-        let (fm, body) = extract_frontmatter(content);
+        let (fm, body) = extract_frontmatter(content, FrontmatterFormat::Both);
         let fm = fm.expect("should parse TOML frontmatter");
         assert_eq!(fm["title"], json!("Hello"));
         assert_eq!(fm["draft"], json!(true));
@@ -128,7 +152,7 @@ mod tests {
     #[test]
     fn no_frontmatter() {
         let content = "Just some plain text.\nNo delimiters here.";
-        let (fm, body) = extract_frontmatter(content);
+        let (fm, body) = extract_frontmatter(content, FrontmatterFormat::Both);
         assert!(fm.is_none());
         assert_eq!(body, content);
     }
@@ -136,7 +160,7 @@ mod tests {
     #[test]
     fn yaml_empty_block() {
         let content = "---\n---\nbody here";
-        let (fm, body) = extract_frontmatter(content);
+        let (fm, body) = extract_frontmatter(content, FrontmatterFormat::Both);
         assert!(fm.is_none());
         assert_eq!(body, "body here");
     }
@@ -144,7 +168,7 @@ mod tests {
     #[test]
     fn toml_unclosed_delimiter() {
         let content = "+++\ntitle = \"Hello\"\nNo closing delimiter.";
-        let (fm, body) = extract_frontmatter(content);
+        let (fm, body) = extract_frontmatter(content, FrontmatterFormat::Both);
         assert!(fm.is_none());
         assert_eq!(body, content);
     }
@@ -152,7 +176,7 @@ mod tests {
     #[test]
     fn toml_malformed() {
         let content = "+++\n[invalid toml = = =\n+++\nbody";
-        let (fm, body) = extract_frontmatter(content);
+        let (fm, body) = extract_frontmatter(content, FrontmatterFormat::Both);
         assert!(fm.is_none());
         assert_eq!(body, content);
     }
@@ -160,7 +184,7 @@ mod tests {
     #[test]
     fn yaml_non_object() {
         let content = "---\njust a string\n---\nbody";
-        let (fm, _body) = extract_frontmatter(content);
+        let (fm, _body) = extract_frontmatter(content, FrontmatterFormat::Both);
         assert!(
             fm.is_none(),
             "scalar YAML should be filtered by is_object() check"
@@ -170,7 +194,7 @@ mod tests {
     #[test]
     fn yaml_types_preserved() {
         let content = "---\nbool_val: true\nint_val: 42\nfloat_val: 3.14\narr_val:\n  - one\n  - two\nnested:\n  key: value\n---\n";
-        let (fm, _body) = extract_frontmatter(content);
+        let (fm, _body) = extract_frontmatter(content, FrontmatterFormat::Both);
         let fm = fm.expect("should parse");
         assert_eq!(fm["bool_val"], json!(true));
         assert_eq!(fm["int_val"], json!(42));
@@ -182,7 +206,7 @@ mod tests {
     #[test]
     fn toml_types_preserved() {
         let content = "+++\nbool_val = true\nint_val = 42\nfloat_val = 3.14\narr_val = [\"one\", \"two\"]\ndt = 2025-06-12T10:00:00\n+++\n";
-        let (fm, _body) = extract_frontmatter(content);
+        let (fm, _body) = extract_frontmatter(content, FrontmatterFormat::Both);
         let fm = fm.expect("should parse");
         assert_eq!(fm["bool_val"], json!(true));
         assert_eq!(fm["int_val"], json!(42));
@@ -195,12 +219,28 @@ mod tests {
     #[test]
     fn toml_nan_becomes_null() {
         let content = "+++\nval = nan\n+++\n";
-        let (fm, _body) = extract_frontmatter(content);
+        let (fm, _body) = extract_frontmatter(content, FrontmatterFormat::Both);
         let fm = fm.expect("should parse");
         assert_eq!(
             fm["val"],
             json!(null),
             "NaN should become null via from_f64"
         );
+    }
+
+    #[test]
+    fn yaml_skipped_when_toml_only() {
+        let content = "---\ntitle: Hello\n---\nBody";
+        let (fm, body) = extract_frontmatter(content, FrontmatterFormat::Toml);
+        assert!(fm.is_none(), "YAML frontmatter should be skipped in Toml mode");
+        assert_eq!(body, content);
+    }
+
+    #[test]
+    fn toml_skipped_when_yaml_only() {
+        let content = "+++\ntitle = \"Hello\"\n+++\nBody";
+        let (fm, body) = extract_frontmatter(content, FrontmatterFormat::Yaml);
+        assert!(fm.is_none(), "TOML frontmatter should be skipped in Yaml mode");
+        assert_eq!(body, content);
     }
 }

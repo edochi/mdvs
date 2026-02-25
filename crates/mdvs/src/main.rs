@@ -162,7 +162,7 @@ fn scan_directory(dir: &Path) -> Result<Vec<NoteData>> {
                 .to_string();
 
             let content_hash = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(content.as_bytes()));
-            let (fm, body) = mfv::extract_frontmatter(&content);
+            let (fm, body) = mfv::extract_frontmatter(&content, mdvs_schema::FrontmatterFormat::Both);
 
             notes.push(NoteData {
                 filename,

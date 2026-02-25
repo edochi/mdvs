@@ -15,4 +15,4 @@ pub use field_def::FieldDef;
 pub use field_type::FieldType;
 pub use inference::{FieldPaths, infer_field_paths};
 pub use lock::{LockError, LockFile};
-pub use schema::{Schema, SchemaError};
+pub use schema::{FrontmatterFormat, Schema, SchemaError};
