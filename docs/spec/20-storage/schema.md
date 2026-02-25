@@ -32,30 +32,21 @@ vault/
 
 ### `files.parquet`
 
-One row per markdown file. The schema is generated dynamically at build time based on the field definitions in `mdvs.toml`.
-
-**Fixed columns:**
+One row per markdown file. Fixed schema — all frontmatter is stored as a single JSON column.
 
 | Column | Arrow Type | Description |
 |---|---|---|
-| `filename` | `Utf8` | Relative path from vault root (primary key) |
-| `metadata` | `Utf8` | JSON string of all frontmatter fields not in the schema |
-| `content_hash` | `Utf8` | Hash of full file content |
+| `file_id` | `Utf8` | UUID v4 (primary key) |
+| `filename` | `Utf8` | Relative path from vault root |
+| `frontmatter` | `Utf8` | Full frontmatter as JSON string |
+| `content_hash` | `Utf8` | xxh3 hash of full file content |
 | `built_at` | `Timestamp(Microsecond, None)` | When this file was last processed |
 
-**Dynamic field columns** are inserted between `filename` and `metadata` based on the field schema. Example with `title`, `tags`, `date` in the schema:
+**`file_id`:** UUID v4, generated at build time. Decouples identity from path — enables future rename detection without orphaning chunks.
 
-| Column | Arrow Type |
-|---|---|
-| `filename` | `Utf8` |
-| `title` | `Utf8` |
-| `tags` | `List<Utf8>` |
-| `date` | `Date32` |
-| `metadata` | `Utf8` |
-| `content_hash` | `Utf8` |
-| `built_at` | `Timestamp(Microsecond, None)` |
+**`frontmatter`:** JSON string containing all frontmatter fields. Files without frontmatter get NULL. Frontmatter filtering (e.g., `WHERE tags LIKE '%rust%'`) uses JSON extraction functions in DataFusion.
 
-**NULL handling:** All field columns are nullable. Files without frontmatter, or with frontmatter missing a schema field, get NULL for that column.
+**`content_hash`:** Used for incremental builds. Compare against `mdvs.lock` `[[file]]` entries to detect changes.
 
 ### `chunks.parquet`
 
@@ -63,37 +54,22 @@ One row per semantic chunk of a note.
 
 | Column | Arrow Type | Description |
 |---|---|---|
-| `chunk_id` | `Utf8` | `"{filename}#{chunk_index}"` (e.g., `"notes/idea.md#0"`) |
-| `filename` | `Utf8` | Parent file (FK to `files.parquet`) |
-| `chunk_index` | `Int32` | 0-based position within the note |
-| `heading` | `Utf8` (nullable) | Nearest heading ancestor in the chunk's markdown |
-| `plain_text` | `Utf8` | Markdown-stripped text content |
+| `chunk_id` | `Utf8` | UUID v4 |
+| `file_id` | `Utf8` | FK to `files.parquet` |
+| `chunk_index` | `Int32` | 0-based position within the file |
+| `start_line` | `Int32` | Start line number in file (1-based) |
+| `end_line` | `Int32` | End line number in file (1-based) |
 | `embedding` | `FixedSizeList<Float32>(N)` | N = model dimension (e.g., 256) |
-| `char_count` | `Int32` | Character count of `plain_text` |
 
-**`chunk_id` format:** `"path/to/note.md#0"`, `"path/to/note.md#1"`, etc. Deterministic, human-readable.
+**`chunk_id`:** UUID v4. Stable identity that survives re-chunking — in future chunk-level hashing (v0.4+), unchanged chunks keep their ID and embedding even if their position shifts.
 
-**`heading`:** Used for the `§ Section Title` indicator in search results. NULL for chunks with no heading.
+**`chunk_index`:** Positional ordering within the file. Recomputed on every rebuild. Not an identity — use `chunk_id` for stable references.
 
-**`plain_text`:** Stored so that rebuilding (after a model change) can recompute embeddings without re-reading files from disk.
+**`start_line` / `end_line`:** 1-based line numbers matching editor display. Used by `--snippets` to read chunk text directly from the original file. In rare cases where the splitter falls back to character-level splitting mid-line, two consecutive chunks may share a line number — this is acceptable.
 
-**`embedding`:** `FixedSizeList<Float32>(N)` where N is determined at init from the model's output dimension.
+**`embedding`:** `FixedSizeList<Float32>(N)` where N is determined at build time from the model's output dimension.
 
----
-
-## Type Mapping
-
-Field types from `mdvs-schema` map to Arrow types:
-
-| `FieldType` | Arrow Type | Notes |
-|---|---|---|
-| `String` | `Utf8` | |
-| `StringArray` | `List<Utf8>` | |
-| `Date` | `Date32` | |
-| `Boolean` | `Boolean` | |
-| `Integer` | `Int64` | |
-| `Float` | `Float64` | |
-| `Enum` | `Utf8` | No Arrow-level constraint; validated by `mfv`/`mdvs check` |
+No `plain_text` stored — model changes require re-reading files from disk to re-chunk and re-embed. This keeps the artifact lightweight.
 
 ---
 
@@ -129,30 +105,30 @@ This avoids the complexity of DataFusion UDFs while keeping the hot path (distan
 ```sql
 SELECT
     f.filename,
-    -- [dynamic field columns]
-    MIN(c.distance) AS distance,
-    FIRST_VALUE(c.heading ORDER BY c.distance) AS best_heading,
-    FIRST_VALUE(c.snippet ORDER BY c.distance) AS snippet
+    MIN(c.distance) AS distance
 FROM chunks_with_distance c
-JOIN files f ON c.filename = f.filename
--- [optional: WHERE {user_provided_clause}]
-GROUP BY f.filename -- [, dynamic field columns]
+JOIN files f ON c.file_id = f.file_id
+-- [optional: WHERE {user_provided_clause on f.frontmatter}]
+GROUP BY f.filename
 ORDER BY distance
 LIMIT ?;
 ```
+
+Default search output is ranked file paths only. With `--snippets`, the best-matching chunk's `start_line`/`end_line` are used to read text from the original file.
 
 ### Chunk-Level Search
 
 ```sql
 SELECT
     c.chunk_id,
-    c.filename,
-    c.heading,
-    c.snippet,
+    f.filename,
+    c.chunk_index,
+    c.start_line,
+    c.end_line,
     c.distance
 FROM chunks_with_distance c
-JOIN files f ON c.filename = f.filename
--- [optional: WHERE {user_provided_clause}]
+JOIN files f ON c.file_id = f.file_id
+-- [optional: WHERE {user_provided_clause on f.frontmatter}]
 ORDER BY c.distance
 LIMIT ?;
 ```
@@ -173,6 +149,5 @@ No ANN index initially — search performs brute-force cosine distance over all 
 
 - [Terminology](../01-terminology.md) — definitions for artifact, chunk, embedding, build
 - [Crate: mdvs](../10-crates/mdvs/spec.md) — `storage` module that implements Parquet I/O
-- [Crate: mdvs-schema](../10-crates/mdvs-schema/spec.md) — type mapping from `FieldType` to Arrow types
 - [Workflow: Build](../30-workflows/build.md) — how data flows into these files
 - [Workflow: Search](../30-workflows/search.md) — how queries execute against these files

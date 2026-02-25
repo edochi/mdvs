@@ -46,17 +46,23 @@ No `--group-by` for now.
 ### Storage: `.mdvs/` directory with two Parquet files
 
 The artifact is the `.mdvs/` directory (like `target/` in cargo). Contains:
-- `files.parquet` — one row per file: path, content_hash, frontmatter columns
-- `chunks.parquet` — one row per chunk: file_id, chunk_index, chunk_hash, byte_offset_start, byte_offset_end, embedding
+- `files.parquet` — one row per file: `file_id` (UUID), `filename`, `frontmatter` (JSON), `content_hash`, `built_at`
+- `chunks.parquet` — one row per chunk: `chunk_id` (UUID), `file_id` (FK), `chunk_index`, `start_line`, `end_line`, `embedding`
+
+No dynamic field columns — all frontmatter lives in a single JSON column.
+Simpler schema, no rebuild when field config changes.
 
 No bundling/compression of multiple Parquets together. Parquet already compresses
 well internally (zstd per column chunk). Any archive format would kill random access
 and memory-mapping, defeating columnar scanning.
 
 No raw markdown text stored in either file — keep it lightweight. Search results
-show file path + score + frontmatter fields. User opens the original file for content.
+show file path + score. User opens the original file for content. `--snippets` flag
+reads chunk text from file using line offsets.
 
-### Chunk hashing for incremental re-embedding
+Model change requires re-reading all files from disk (no cached plain_text).
+
+### Chunk hashing for incremental re-embedding (deferred to v0.4+)
 
 Each chunk gets a content hash. On rebuild:
 1. Re-chunk the file (fast, pure text processing)
@@ -66,10 +72,27 @@ Each chunk gets a content hash. On rebuild:
 5. Reuse existing embeddings for unchanged chunks
 
 Benefit: adding a paragraph to a long document re-embeds only 1-2 chunks instead of all.
-Requires deterministic chunking (`text-splitter` is algorithmic, not stochastic).
+Requires deterministic chunking — `text-splitter` MarkdownSplitter splits on structural
+boundaries (headers, paragraphs), so unchanged sections produce identical chunks even
+with mid-file edits.
 
-### Chunk byte offsets
+v0.3: file-level hashes only (in `mdvs.lock`). File changed → full re-chunk + re-embed.
 
-Store `byte_offset_start` and `byte_offset_end` in `chunks.parquet`.
-Enables extracting the matching section from the original file at display time.
-Cheap to store, useful for v0.4 polish (showing which part of a file matched).
+### `describe` command (post-v0.3)
+
+A command that, given a subpath, shows the shape of the data:
+- For each meaningful subpath (only those carrying information, not redundant subpaths):
+  which fields are allowed and required
+- For each field: useful characteristics for query planning — upper/lower bounds,
+  statistical metrics (mean, variance, etc.)
+- Distinction between validation boundaries (configured constraints like "no values < 0")
+  and observed boundaries (actual data extremes like "smallest value is 1")
+- Only meaningful subpaths shown (same logic as inference.rs tree — if field is required
+  in `folder/**`, don't repeat it for `folder/subfolder/**`)
+
+Split between mfv and mdvs:
+- mfv: schema view (allowed/required per subpath, configured constraints)
+- mdvs: adds data statistics on top (observed ranges, means, etc.)
+
+Requires setters/getters for validation boundaries per field (min/max, after/before, etc.)
+— ties into "Future validation features" above.
