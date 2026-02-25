@@ -31,5 +31,9 @@ target
 *.duckdb
 *.duckdb.wal
 
+# mfv test artifacts
+mfv.toml
+mfv.lock
+
 # macOS
 .DS_Store
