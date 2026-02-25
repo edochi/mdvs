@@ -2504,6 +2504,7 @@ dependencies = [
  "pulldown-cmark",
  "serde",
  "serde_json",
+ "tempfile",
  "text-splitter",
  "tokio",
  "uuid",
