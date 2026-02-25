@@ -1,4 +1,4 @@
-use crate::diagnostic::Diagnostic;
+use super::diagnostic::Diagnostic;
 
 /// Output format for diagnostics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
@@ -81,7 +81,7 @@ fn format_github(diagnostics: &[Diagnostic]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::diagnostic::DiagnosticKind;
+    use super::super::diagnostic::DiagnosticKind;
 
     fn diag(file: &str, field: &str, kind: DiagnosticKind) -> Diagnostic {
         Diagnostic {

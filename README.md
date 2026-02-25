@@ -25,13 +25,20 @@ mdvs/
 │   │       └── schema.rs         # Schema parsing, rules_for_path(), TOML roundtrip
 │   ├── mfv/                       # library + binary: Markdown Frontmatter Validator
 │   │   ├── src/
-│   │   │   ├── lib.rs             # module re-exports
-│   │   │   ├── main.rs            # CLI: init + check subcommands
-│   │   │   ├── extract.rs         # YAML/TOML frontmatter extraction → JSON
-│   │   │   ├── scan.rs            # directory walking + glob filtering
-│   │   │   ├── validate.rs        # validate(files, schema) → Vec<Diagnostic>
-│   │   │   ├── diagnostic.rs      # Diagnostic + DiagnosticKind types
-│   │   │   └── output.rs          # human / json / github formatters
+│   │   │   ├── lib.rs             # module re-exports (cmd, scan, report)
+│   │   │   ├── main.rs            # CLI parsing (clap) + dispatch to cmd::*
+│   │   │   ├── cmd/               # one file per command
+│   │   │   │   ├── init.rs        # cmd_init — discover fields, write config + lock
+│   │   │   │   ├── update.rs      # cmd_update — re-scan, refresh lock
+│   │   │   │   ├── check.rs       # cmd_check — validate against schema
+│   │   │   │   └── diff.rs        # cmd_diff — compare against lock + diff logic
+│   │   │   ├── scan/              # reading files from disk
+│   │   │   │   ├── extract.rs     # YAML/TOML frontmatter extraction → JSON
+│   │   │   │   └── walk.rs        # directory walking + glob filtering
+│   │   │   └── report/            # validation results + formatting
+│   │   │       ├── diagnostic.rs  # Diagnostic + DiagnosticKind types
+│   │   │       ├── output.rs      # human / json / github formatters
+│   │   │       └── validate.rs    # validate(files, schema) → Vec<Diagnostic>
 │   │   └── tests/                 # integration tests (assert_cmd)
 │   └── mdvs/                      # binary: full semantic search tool
 │       └── src/main.rs            # depends on mdvs-schema + mfv

@@ -185,7 +185,7 @@ No `plain_text` stored — model change requires re-reading files from disk. No 
 
 ## Module Structure
 
-### `crates/mfv/src/` (restructure from flat layout)
+### `crates/mfv/src/`
 
 ```
 crates/mfv/src/

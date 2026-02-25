@@ -6,7 +6,7 @@ use mdvs_schema::FrontmatterFormat;
 use serde_json::Value;
 use walkdir::WalkDir;
 
-use crate::extract::extract_frontmatter;
+use super::extract::extract_frontmatter;
 
 /// A scanned markdown file with its extracted frontmatter.
 #[derive(Debug)]

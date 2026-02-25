@@ -1,48 +1,143 @@
-//! Diff logic: compare current discovery state against a saved lock file.
-
 use std::collections::{BTreeSet, HashMap};
+use std::path::Path;
+use std::process;
 
-use mdvs_schema::FieldType;
+use anyhow::{Context, Result, bail};
+
 use mdvs_schema::lock::LockField;
+use mdvs_schema::{FieldType, LockFile, Schema, discover_fields};
+use crate::report::{OutputFormat, format_diagnostics, validate};
+use crate::scan::scan_directory;
+
+use super::{lock_path_for, resolve_schema_path};
+
+/// Compare current directory state against the lock file and report changes.
+pub fn cmd_diff(dir: &Path, config_arg: Option<&Path>, ignore_validation_errors: bool) -> Result<()> {
+    if !dir.is_dir() {
+        bail!("{} is not a directory", dir.display());
+    }
+
+    let config_path = resolve_schema_path(dir, config_arg)?;
+
+    let schema = Schema::from_file(&config_path)
+        .with_context(|| format!("failed to load config from {}", config_path.display()))?;
+
+    let lock_path = lock_path_for(&config_path);
+    if !lock_path.exists() {
+        bail!(
+            "no lock file found at {} — run `mfv init` or `mfv update` first",
+            lock_path.display()
+        );
+    }
+
+    let old_lock = LockFile::from_file(&lock_path)
+        .with_context(|| format!("failed to load lock from {}", lock_path.display()))?;
+
+    eprintln!("Scanning {} with glob '{}'...", dir.display(), &schema.glob);
+    let all_files = scan_directory(dir, &schema.glob, schema.frontmatter_format)?;
+
+    if all_files.is_empty() {
+        bail!("no markdown files found matching '{}'", &schema.glob);
+    }
+
+    let files: Vec<_> = if !schema.include_bare_files {
+        all_files
+            .into_iter()
+            .filter(|f| f.frontmatter.is_some())
+            .collect()
+    } else {
+        all_files
+    };
+    let total = files.len();
+    eprintln!("{} markdown files considered\n", total);
+
+    // Validation gate
+    let diagnostics = validate(&files, &schema);
+    if !diagnostics.is_empty() {
+        eprint!(
+            "{}",
+            format_diagnostics(&diagnostics, OutputFormat::Human)
+        );
+        if !ignore_validation_errors {
+            bail!(
+                "{} validation error(s) — use --ignore-validation-errors to diff anyway",
+                diagnostics.len()
+            );
+        }
+        eprintln!("Ignoring {} validation error(s), continuing diff...\n", diagnostics.len());
+    }
+
+    // Build new lock from current state
+    let file_frontmatters: Vec<(&str, Option<&serde_json::Value>)> = files
+        .iter()
+        .map(|f| (f.rel_path.as_str(), f.frontmatter.as_ref()))
+        .collect();
+    let files_with_frontmatter = file_frontmatters
+        .iter()
+        .filter(|(_, fm)| fm.is_some())
+        .count();
+    let field_infos = discover_fields(&file_frontmatters);
+
+    let generated_at = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S").to_string();
+    let new_lock = LockFile::from_discovery(
+        &field_infos,
+        total,
+        files_with_frontmatter,
+        &schema.glob,
+        &generated_at,
+    );
+
+    let diff = diff_locks(&old_lock, &new_lock);
+
+    if diff.is_empty() {
+        println!("No changes detected.");
+        process::exit(0);
+    }
+
+    print!("{}", format_diff(&diff, &old_lock, &new_lock));
+    process::exit(1);
+}
+
+// --- Lock diffing logic (absorbed from src/diff.rs) ---
 
 /// A type change between old and new lock.
 #[derive(Debug)]
-pub struct TypeChange {
+struct TypeChange {
     /// Field name.
-    pub name: String,
+    name: String,
     /// Type in the old lock.
-    pub old_type: FieldType,
+    old_type: FieldType,
     /// Type in the new lock.
-    pub new_type: FieldType,
+    new_type: FieldType,
 }
 
 /// A file coverage change for a field.
 #[derive(Debug)]
-pub struct CoverageChange {
+struct CoverageChange {
     /// Field name.
-    pub name: String,
+    name: String,
     /// Files that gained this field.
-    pub added_files: Vec<String>,
+    added_files: Vec<String>,
     /// Files that lost this field.
-    pub removed_files: Vec<String>,
+    removed_files: Vec<String>,
 }
 
 /// The result of comparing two lock files.
 #[derive(Debug)]
-pub struct LockDiff {
+struct LockDiff {
     /// Fields present in new but not old.
-    pub added: Vec<LockField>,
+    added: Vec<LockField>,
     /// Fields present in old but not new.
-    pub removed: Vec<LockField>,
+    removed: Vec<LockField>,
     /// Fields with a different inferred type.
-    pub type_changed: Vec<TypeChange>,
+    type_changed: Vec<TypeChange>,
     /// Fields with changed file coverage (same type).
-    pub coverage_changed: Vec<CoverageChange>,
+    coverage_changed: Vec<CoverageChange>,
 }
 
 impl LockDiff {
     /// Returns true if there are no changes.
-    pub fn is_empty(&self) -> bool {
+    fn is_empty(&self) -> bool {
         self.added.is_empty()
             && self.removed.is_empty()
             && self.type_changed.is_empty()
@@ -51,9 +146,9 @@ impl LockDiff {
 }
 
 /// Compare two lock files and return the differences.
-pub fn diff_locks(
-    old: &mdvs_schema::LockFile,
-    new: &mdvs_schema::LockFile,
+fn diff_locks(
+    old: &LockFile,
+    new: &LockFile,
 ) -> LockDiff {
     let old_map: HashMap<&str, &LockField> =
         old.fields.iter().map(|f| (f.name.as_str(), f)).collect();
@@ -131,10 +226,10 @@ pub fn diff_locks(
 }
 
 /// Format a diff as a human-readable report.
-pub fn format_diff(
+fn format_diff(
     diff: &LockDiff,
-    old: &mdvs_schema::LockFile,
-    new: &mdvs_schema::LockFile,
+    old: &LockFile,
+    new: &LockFile,
 ) -> String {
     let mut out = String::new();
 

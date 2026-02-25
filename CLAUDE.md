@@ -23,7 +23,7 @@ cargo fmt                    # format
 Cargo workspace with three crates:
 
 - **`crates/mdvs-schema/`** — library: field definitions, type system, TOML parsing. Shared by both binaries.
-- **`crates/mfv/`** — library + binary (~2MB): standalone frontmatter validator. No DuckDB, no embeddings. Independently publishable.
+- **`crates/mfv/`** — library + binary (~2MB): standalone frontmatter validator. No DuckDB, no embeddings. Independently publishable. Modules: `cmd/` (init, update, check, diff), `scan/` (extract, walk), `report/` (diagnostic, output, validate).
 - **`crates/mdvs/`** — binary (~20MB): full semantic search. Depends on both crates above.
 
 ### Data Pipeline
@@ -56,9 +56,12 @@ Both tools share the same TOML schema structure (`[[fields.field]]` array-of-tab
 ### mfv Commands
 
 - `init` — discover fields, write config (`mfv.toml`) + lock (`mfv.lock`), print frequency table to stderr
-  - `--dir <path>` (default `.`), `--glob <pattern>` (default `**`), `--threshold <f64>` (default `0.5`)
-  - `--config <path>` (default `mfv.toml`), `--force` (overwrite existing), `--dry-run` (print table only)
-- `check` — validate files against schema (unchanged)
+  - `--dir <path>` (default `.`), `--glob <pattern>` (default `**`), `--config <path>` (default `mfv.toml`)
+  - `--force` (overwrite existing), `--dry-run` (print table only), `--minimal`, `--include-bare-files`
+  - `--frontmatter-format` (`both`/`yaml`/`toml`, default `both`)
+- `update` — re-scan and refresh lock file (fails if validation doesn't pass)
+- `check` — validate files against schema, exit 0 (valid) / 1 (errors) / 2 (runtime error)
+- `diff` — compare current state against lock file, `--ignore-validation-errors`
 
 ## Key Dependencies
 

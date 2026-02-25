@@ -130,11 +130,14 @@ The `mfv` crate exposes a library API so `mdvs` can delegate validation without 
 
 ### Modules
 
+- `cmd` — command implementations (init, update, check, diff)
 - `scan` — file discovery and frontmatter extraction
-- `extract` — frontmatter extraction from YAML and TOML delimited blocks
-- `validate` — validation logic
-- `diagnostic` — diagnostic types
-- `output` — output formatting (human, JSON, GitHub Actions)
+  - `scan::extract` — frontmatter extraction from YAML and TOML delimited blocks
+  - `scan::walk` — directory walking + glob filtering
+- `report` — validation results and output formatting
+  - `report::diagnostic` — diagnostic types
+  - `report::validate` — validation logic
+  - `report::output` — output formatting (human, JSON, GitHub Actions)
 
 ### `validate`
 

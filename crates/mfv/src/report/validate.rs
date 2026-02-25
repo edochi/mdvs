@@ -2,7 +2,7 @@ use mdvs_schema::{FieldType, Schema, infer_type, is_date_string};
 use regex::Regex;
 use serde_json::Value;
 
-use crate::diagnostic::{Diagnostic, DiagnosticKind};
+use super::diagnostic::{Diagnostic, DiagnosticKind};
 use crate::scan::ScannedFile;
 
 /// Validate scanned files against a schema. Returns diagnostics for all violations.
