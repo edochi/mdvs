@@ -52,6 +52,9 @@ fn invalid_files_exit_1() {
         tmp.path(),
         "mfv.toml",
         r#"
+[directory]
+include_bare_files = true
+
 [[fields.field]]
 name = "title"
 type = "string"
@@ -239,6 +242,9 @@ fn format_json() {
         tmp.path(),
         "mfv.toml",
         r#"
+[directory]
+include_bare_files = true
+
 [[fields.field]]
 name = "title"
 type = "string"
@@ -295,6 +301,9 @@ fn format_github() {
         tmp.path(),
         "mfv.toml",
         r#"
+[directory]
+include_bare_files = true
+
 [[fields.field]]
 name = "title"
 type = "string"

@@ -44,9 +44,9 @@ enum Command {
         #[arg(long)]
         dry_run: bool,
 
-        /// Exclude files without frontmatter from analysis
+        /// Include files without frontmatter in analysis
         #[arg(long)]
-        ignore_bare_files: bool,
+        include_bare_files: bool,
     },
 
     /// Refresh lock file by re-scanning markdown files
@@ -86,8 +86,8 @@ fn main() {
             config,
             force,
             dry_run,
-            ignore_bare_files,
-        } => cmd_init(&dir, &glob, &config, force, dry_run, ignore_bare_files),
+            include_bare_files,
+        } => cmd_init(&dir, &glob, &config, force, dry_run, include_bare_files),
         Command::Update { dir, config } => cmd_update(&dir, config.as_deref()),
         Command::Check {
             dir,
@@ -108,7 +108,7 @@ fn cmd_init(
     config_path: &Path,
     force: bool,
     dry_run: bool,
-    ignore_bare_files: bool,
+    include_bare_files: bool,
 ) -> Result<()> {
     if !dir.is_dir() {
         bail!("{} is not a directory", dir.display());
@@ -128,7 +128,7 @@ fn cmd_init(
         bail!("no markdown files found matching '{glob}'");
     }
 
-    let files: Vec<_> = if ignore_bare_files {
+    let files: Vec<_> = if !include_bare_files {
         all_files
             .into_iter()
             .filter(|f| f.frontmatter.is_some())
@@ -195,7 +195,7 @@ fn cmd_init(
 
     let schema = Schema {
         glob: glob.to_string(),
-        ignore_bare_files,
+        include_bare_files,
         fields: field_defs,
     };
 
@@ -239,7 +239,7 @@ fn cmd_update(dir: &Path, config_arg: Option<&Path>) -> Result<()> {
         bail!("no markdown files found matching '{glob}'");
     }
 
-    let files: Vec<_> = if schema.ignore_bare_files {
+    let files: Vec<_> = if !schema.include_bare_files {
         all_files
             .into_iter()
             .filter(|f| f.frontmatter.is_some())
@@ -364,7 +364,7 @@ fn cmd_check(dir: &Path, schema_arg: Option<&Path>, format: OutputFormat) -> Res
         .with_context(|| format!("failed to load schema from {}", schema_path.display()))?;
 
     let all_files = scan_directory(dir, &schema.glob)?;
-    let files: Vec<_> = if schema.ignore_bare_files {
+    let files: Vec<_> = if !schema.include_bare_files {
         all_files
             .into_iter()
             .filter(|f| f.frontmatter.is_some())

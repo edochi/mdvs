@@ -38,7 +38,7 @@ type = "string"
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `glob` | string | `"**"` | File glob pattern for discovery and validation |
-| `ignore_bare_files` | boolean | `false` | When `true`, files without frontmatter are excluded from inference and validation |
+| `include_bare_files` | boolean | `false` | When `true`, files without frontmatter are included in inference and validation |
 
 ### `[[fields.field]]` Array of Tables
 

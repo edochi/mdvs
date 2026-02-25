@@ -22,7 +22,7 @@ The search-specific sections are shown below. These appear alongside the `[direc
 # --- field schema sections (see frontmatter-toml.md) ---
 [directory]
 glob = "**"
-ignore_bare_files = false
+include_bare_files = false
 
 [[fields.field]]
 name = "title"

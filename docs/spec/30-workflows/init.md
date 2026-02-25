@@ -131,7 +131,7 @@ Contains `[discovery]` metadata and `[[field]]` entries with per-file observatio
 
 ```
 mdvs init [path] [--model <id>] [--glob <pattern>] [--config <path>]
-                  [--force] [--dry-run] [--ignore-bare-files]
+                  [--force] [--dry-run] [--include-bare-files]
 ```
 
 `mdvs init` subsumes `mfv init`. It performs all the same field discovery and inference steps, then adds model setup.
@@ -203,7 +203,7 @@ Contains everything `mfv.toml` has (`[directory]` + `[[fields.field]]` entries) 
 ```toml
 [directory]
 glob = "**"
-ignore_bare_files = false
+include_bare_files = false
 
 [[fields.field]]
 name = "title"
