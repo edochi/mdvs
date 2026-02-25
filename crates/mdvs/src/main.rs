@@ -1,193 +1,141 @@
-mod chunk;
-mod db;
-mod embed;
-mod frontmatter;
-mod types;
-
-use std::path::Path;
+use std::path::PathBuf;
 
 use anyhow::Result;
-use mdvs_schema::FieldInfo;
-use walkdir::WalkDir;
+use clap::{Parser, Subcommand};
 
-use types::NoteData;
-
-const MODEL_ID: &str = "minishlab/potion-base-8M";
-const CHUNK_MAX_CHARS: usize = 1000;
-const SEARCH_LIMIT: usize = 5;
-
-fn main() -> Result<()> {
-    let target_dir = Path::new("tests/fixtures");
-    let db_path = target_dir.join(".mdvs.duckdb");
-
-    // Clean up any previous run
-    let _ = std::fs::remove_file(&db_path);
-    let _ = std::fs::remove_file(target_dir.join(".mdvs.duckdb.wal"));
-
-    println!("=== mdvs v0.1 MVP ===\n");
-
-    // 1. Scan directory
-    println!("[1/6] Scanning {target_dir:?}...");
-    let notes = scan_directory(target_dir)?;
-    println!("      Found {} markdown files\n", notes.len());
-
-    // 2. Discover fields
-    println!("[2/6] Discovering frontmatter fields...");
-    let file_frontmatters: Vec<(&str, Option<&serde_json::Value>)> = notes
-        .iter()
-        .map(|n| (n.filename.as_str(), n.frontmatter.as_ref()))
-        .collect();
-    let total = notes.len();
-    let fields = mdvs_schema::discover_fields(&file_frontmatters);
-    print_field_table(&fields, total);
-
-    // 3. Load model
-    println!("[3/6] Loading model {MODEL_ID}...");
-    let model = embed::load_model(MODEL_ID)?;
-    let dim = embed::get_dimension(&model);
-    println!("      Dimension: {dim}");
-    if let Some(rev) = embed::resolve_revision(MODEL_ID) {
-        println!("      Revision: {rev}");
-    }
-    println!();
-
-    // 4. Create database
-    println!("[4/6] Creating database at {db_path:?}...");
-    let conn = db::open_db(&db_path)?;
-    let promoted: Vec<&FieldInfo> = fields.iter().collect();
-    db::create_tables(&conn, &promoted, dim)?;
-
-    // Store model metadata
-    db::store_meta(&conn, "model_id", MODEL_ID)?;
-    db::store_meta(&conn, "dimension", &dim.to_string())?;
-    if let Some(rev) = embed::resolve_revision(MODEL_ID) {
-        db::store_meta(&conn, "model_revision", &rev)?;
-    }
-    println!();
-
-    // 5. Process and embed each file
-    println!("[5/6] Processing files...");
-    for note in &notes {
-        // Split frontmatter
-        let (promoted_values, metadata) = if let Some(fm) = &note.frontmatter {
-            frontmatter::split_frontmatter(fm, &fields)
-        } else {
-            (std::collections::HashMap::new(), serde_json::json!({}))
-        };
-
-        // Insert file record
-        db::insert_file(
-            &conn,
-            &note.filename,
-            &promoted,
-            &promoted_values,
-            &metadata,
-            &note.content_hash,
-        )?;
-
-        // Chunk
-        let chunks = chunk::chunk_note(&note.filename, &note.body, CHUNK_MAX_CHARS);
-
-        // Embed
-        let texts: Vec<String> = chunks.iter().map(|c| c.plain_text.clone()).collect();
-        let embeddings = if texts.is_empty() {
-            vec![]
-        } else {
-            embed::encode_batch(&model, &texts)
-        };
-
-        // Insert chunks
-        db::insert_chunks(&conn, &chunks, &embeddings, dim)?;
-
-        println!(
-            "      {} — {} chunk(s), hash={}",
-            note.filename,
-            chunks.len(),
-            &note.content_hash[..12]
-        );
-    }
-    println!();
-
-    // 6. Search
-    let queries = [
-        "how does CRDT conflict resolution work",
-        "Nix flakes",
-        "API design pagination",
-    ];
-
-    println!("[6/6] Running search queries...\n");
-    for query in &queries {
-        println!("--- Query: \"{query}\" ---");
-        let query_emb = embed::encode_query(&model, query);
-        let results = db::search(&conn, &query_emb, &promoted, dim, SEARCH_LIMIT)?;
-
-        for (i, r) in results.iter().enumerate() {
-            let heading = r.best_heading.as_deref().unwrap_or("-");
-            let promoted_str: Vec<String> =
-                r.promoted.iter().map(|(k, v)| format!("{k}={v}")).collect();
-            let meta = if promoted_str.is_empty() {
-                String::new()
-            } else {
-                format!(" [{}]", promoted_str.join(", "))
-            };
-
-            println!(
-                "  {}. {} (dist={:.4}) §{}{}\n     {}",
-                i + 1,
-                r.filename,
-                r.distance,
-                heading,
-                meta,
-                r.snippet,
-            );
-        }
-        println!();
-    }
-
-    println!("Done. Database at: {db_path:?}");
-    Ok(())
+#[derive(Parser)]
+#[command(name = "mdvs", about = "Semantic search over directories of markdown files")]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
 }
 
-fn scan_directory(dir: &Path) -> Result<Vec<NoteData>> {
-    let mut notes = Vec::new();
+#[derive(Subcommand)]
+enum Command {
+    /// Discover fields, configure model, write mdvs.toml + mdvs.lock
+    Init {
+        /// Target directory (default: current directory)
+        #[arg(default_value = ".")]
+        path: PathBuf,
 
-    for entry in WalkDir::new(dir).into_iter().filter_map(|e| e.ok()) {
-        let path = entry.path();
-        if path.extension().is_some_and(|ext| ext == "md") {
-            let content = std::fs::read_to_string(path)?;
-            let filename = path
-                .strip_prefix(dir)
-                .unwrap_or(path)
-                .to_string_lossy()
-                .to_string();
+        /// Model identifier (e.g. "minishlab/potion-base-8M")
+        #[arg(long)]
+        model: Option<String>,
 
-            let content_hash = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(content.as_bytes()));
-            let (fm, body) = mfv::extract_frontmatter(&content, mdvs_schema::FrontmatterFormat::Both);
+        /// Glob pattern for file selection
+        #[arg(long, default_value = "**")]
+        glob: String,
 
-            notes.push(NoteData {
-                filename,
-                frontmatter: fm,
-                body,
-                content_hash,
-            });
-        }
-    }
+        /// Config file path
+        #[arg(long)]
+        config: Option<PathBuf>,
 
-    notes.sort_by(|a, b| a.filename.cmp(&b.filename));
-    Ok(notes)
+        /// Overwrite existing config and lock files
+        #[arg(long)]
+        force: bool,
+
+        /// Print discovery table only, don't write files
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Include files without frontmatter
+        #[arg(long)]
+        include_bare_files: bool,
+
+        /// Minimal config (skip optional fields)
+        #[arg(long)]
+        minimal: bool,
+
+        /// Frontmatter format to accept
+        #[arg(long, default_value = "both")]
+        frontmatter_format: String,
+    },
+
+    /// Build or rebuild the search index
+    Build {
+        /// Force full rebuild (ignore content hashes)
+        #[arg(long)]
+        full: bool,
+    },
+
+    /// Search the index
+    Search {
+        /// Search query
+        query: String,
+
+        /// SQL WHERE clause for filtering
+        #[arg(long, name = "where")]
+        where_clause: Option<String>,
+
+        /// Maximum number of results
+        #[arg(short = 'n', long = "limit")]
+        limit: Option<usize>,
+
+        /// Output format
+        #[arg(long, default_value = "text")]
+        format: String,
+
+        /// Show individual chunks instead of files
+        #[arg(long)]
+        chunks: bool,
+
+        /// Show text snippets from matching chunks
+        #[arg(long)]
+        snippets: bool,
+
+        /// Build before searching (overrides on_stale config)
+        #[arg(long, conflicts_with = "no_build")]
+        build: bool,
+
+        /// Skip auto-build even if index is stale
+        #[arg(long, conflicts_with = "build")]
+        no_build: bool,
+    },
+
+    /// Validate files against schema
+    Check {
+        /// Target directory
+        #[arg(long)]
+        dir: Option<PathBuf>,
+
+        /// Schema file path
+        #[arg(long)]
+        schema: Option<PathBuf>,
+
+        /// Output format
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+
+    /// Re-scan and refresh lock file
+    Update {
+        /// Target directory
+        #[arg(long)]
+        dir: Option<PathBuf>,
+
+        /// Config file path
+        #[arg(long)]
+        config: Option<PathBuf>,
+    },
+
+    /// Remove the .mdvs/ directory
+    Clean,
+
+    /// Show index info (model, file count, staleness)
+    Info,
 }
 
-fn print_field_table(fields: &[FieldInfo], total: usize) {
-    println!(
-        "      {:<20} {:<12} {:>5}/{:<5}",
-        "Field", "Type", "Count", "Total"
-    );
-    println!("      {}", "-".repeat(44));
-    for f in fields {
-        println!(
-            "      {:<20} {:<12} {:>5}/{:<5}",
-            f.name, f.field_type, f.files.len(), total,
-        );
+#[tokio::main]
+async fn main() -> Result<()> {
+    let cli = Cli::parse();
+
+    match cli.command {
+        Command::Init { .. } => todo!("mdvs init"),
+        Command::Build { .. } => todo!("mdvs build"),
+        Command::Search { .. } => todo!("mdvs search"),
+        Command::Check { .. } => todo!("mdvs check"),
+        Command::Update { .. } => todo!("mdvs update"),
+        Command::Clean => todo!("mdvs clean"),
+        Command::Info => todo!("mdvs info"),
     }
-    println!();
 }

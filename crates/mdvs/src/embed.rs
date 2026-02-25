@@ -23,12 +23,6 @@ pub fn encode_query(model: &StaticModel, query: &str) -> Vec<f32> {
     model.encode_single(query)
 }
 
-/// Format an embedding as a DuckDB SQL literal: `[0.1,0.2,...]::FLOAT[N]`
-pub fn embedding_to_sql(embedding: &[f32], dim: usize) -> String {
-    let values: Vec<String> = embedding.iter().map(|f| f.to_string()).collect();
-    format!("[{}]::FLOAT[{dim}]", values.join(","))
-}
-
 /// Resolve the cached model revision by reading the HuggingFace cache directory.
 pub fn resolve_revision(model_id: &str) -> Option<String> {
     let cache_dir = dirs_cache_path(model_id)?;
