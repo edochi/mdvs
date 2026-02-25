@@ -180,3 +180,66 @@ No dynamic field columns — all frontmatter in a single JSON column. Simpler sc
 | `embedding` | `FixedSizeList<Float32>(N)` | Model output (N = model dimension) |
 
 No `plain_text` stored — model change requires re-reading files from disk. No `heading` — can be derived from file using line offsets. Line numbers are 1-based to match editor display.
+
+---
+
+## Module Structure
+
+### `crates/mfv/src/` (restructure from flat layout)
+
+```
+crates/mfv/src/
+├── main.rs              # CLI parsing (clap), dispatch
+├── lib.rs               # public API
+├── cmd/
+│   ├── mod.rs
+│   ├── init.rs          # cmd_init
+│   ├── update.rs        # cmd_update
+│   ├── check.rs         # cmd_check
+│   └── diff.rs          # cmd_diff
+├── scan/
+│   ├── mod.rs
+│   ├── extract.rs       # frontmatter extraction (yaml/toml)
+│   └── walk.rs          # directory walking + glob filtering
+└── report/
+    ├── mod.rs
+    ├── diagnostic.rs    # Diagnostic type, error formatting
+    ├── output.rs        # table printing, summary
+    └── validate.rs      # schema validation → produces diagnostics
+```
+
+- **`cmd/`** — one file per command, each is a self-contained workflow
+- **`scan/`** — reading files from disk: walking directories + extracting frontmatter
+- **`report/`** — validation results: diagnostic type, validation logic, output formatting
+
+### `crates/mdvs/src/` (new for v0.3)
+
+```
+crates/mdvs/src/
+├── main.rs              # CLI parsing (clap), dispatch
+├── lib.rs
+├── cmd/
+│   ├── mod.rs
+│   ├── init.rs          # subsumes mfv init + model + config
+│   ├── build.rs         # scan → diff → chunk → embed → write Parquet
+│   ├── search.rs        # load Parquet → distance → DataFusion → output
+│   ├── check.rs         # delegates to mfv
+│   ├── update.rs        # delegates to mfv
+│   ├── clean.rs
+│   └── info.rs
+├── storage/
+│   ├── mod.rs
+│   ├── parquet.rs       # read/write Parquet files
+│   └── lock.rs          # mdvs.lock (extends mdvs-schema lock)
+├── distance/
+│   ├── mod.rs
+│   └── cosine.rs        # cosine distance over Arrow arrays
+├── chunk.rs             # text-splitter + pulldown-cmark
+└── embed.rs             # model2vec loading + encoding
+```
+
+- **`cmd/`** — one file per command (mirrors mfv structure)
+- **`storage/`** — Parquet I/O + mdvs.lock management
+- **`distance/`** — vector distance computation (cosine now, extensible later)
+- **`chunk.rs`** — semantic chunking of markdown
+- **`embed.rs`** — model loading + batch encoding
