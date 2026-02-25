@@ -120,6 +120,63 @@ mod tests {
     }
 
     #[test]
+    fn chunk_body_empty() {
+        let chunks = chunk_body("", 1000);
+        assert!(chunks.is_empty());
+    }
+
+    #[test]
+    fn chunk_body_exact_line_offsets() {
+        // 7 lines, designed to split into 2 chunks at the heading boundary
+        let body = "# First\n\nLine two.\n\n# Second\n\nLine four.";
+        //          L1         L2          L3         L4          L5         L6          L7
+        let chunks = chunk_body(body, 25);
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].start_line, 1);
+        assert_eq!(chunks[0].end_line, 3); // "# First\n\nLine two."
+        assert_eq!(chunks[1].start_line, 5);
+        assert_eq!(chunks[1].end_line, 7); // "# Second\n\nLine four."
+    }
+
+    #[test]
+    fn chunk_body_sequential_indices() {
+        let body = "# A\n\nText.\n\n# B\n\nText.\n\n# C\n\nText.";
+        let chunks = chunk_body(body, 15);
+        for (i, chunk) in chunks.iter().enumerate() {
+            assert_eq!(chunk.chunk_index, i);
+        }
+    }
+
+    #[test]
+    fn chunk_body_contiguous_lines() {
+        let body = "# A\n\nText one.\n\n# B\n\nText two.\n\n# C\n\nText three.";
+        let chunks = chunk_body(body, 20);
+        assert!(chunks.len() >= 2);
+        for pair in chunks.windows(2) {
+            // Next chunk's start_line should be after previous chunk's end_line
+            assert!(
+                pair[1].start_line > pair[0].end_line,
+                "chunk {} ends at line {} but chunk {} starts at line {}",
+                pair[0].chunk_index,
+                pair[0].end_line,
+                pair[1].chunk_index,
+                pair[1].start_line,
+            );
+        }
+    }
+
+    #[test]
+    fn chunk_body_utf8() {
+        // Multi-byte chars: "é" is 2 bytes, "日" is 3 bytes
+        let body = "# Café\n\nLa résumé.\n\n# 日本語\n\nテキスト。";
+        let chunks = chunk_body(body, 25);
+        assert!(chunks.len() >= 2);
+        assert_eq!(chunks[0].start_line, 1);
+        let last = chunks.last().unwrap();
+        assert_eq!(last.end_line, 7);
+    }
+
+    #[test]
     fn chunk_body_line_offsets() {
         let body = "# Heading\n\nParagraph one.\n\n# Second\n\nParagraph two.";
         let chunks = chunk_body(body, 20);
@@ -141,6 +198,29 @@ mod tests {
     }
 
     #[test]
+    fn extract_plain_text_empty() {
+        assert_eq!(extract_plain_text(""), "");
+    }
+
+    #[test]
+    fn extract_plain_text_code_block() {
+        let md = "Before.\n\n```rust\nlet x = 1;\n```\n\nAfter.";
+        let text = extract_plain_text(md);
+        assert!(text.contains("Before."));
+        assert!(text.contains("After."));
+        // Code block content is emitted as Event::Code/Text by pulldown-cmark
+        assert!(text.contains("let x = 1;"));
+    }
+
+    #[test]
+    fn extract_plain_text_links() {
+        let md = "Click [here](https://example.com) for more.";
+        let text = extract_plain_text(md);
+        assert!(text.contains("here"));
+        assert!(!text.contains("https://example.com"));
+    }
+
+    #[test]
     fn extract_heading_finds_first() {
         let md = "# First\n\n## Second\n\nContent";
         assert_eq!(extract_heading(md), Some("First".to_string()));
@@ -150,5 +230,11 @@ mod tests {
     fn extract_heading_none_when_missing() {
         let md = "Just some text without headings.";
         assert_eq!(extract_heading(md), None);
+    }
+
+    #[test]
+    fn extract_heading_inline_formatting() {
+        let md = "# Hello **world**\n\nContent";
+        assert_eq!(extract_heading(md), Some("Hello world".to_string()));
     }
 }
