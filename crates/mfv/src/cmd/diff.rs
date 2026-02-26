@@ -5,7 +5,7 @@ use std::process;
 use anyhow::{Context, Result, bail};
 
 use mdvs_schema::lock::LockField;
-use mdvs_schema::{FieldType, LockFile, Schema, discover_fields};
+use mdvs_schema::{DEFAULT_DATE_FORMATS, FieldType, LockFile, Schema, discover_fields};
 use crate::report::{OutputFormat, format_diagnostics, validate};
 use crate::scan::scan_directory;
 
@@ -76,7 +76,15 @@ pub fn cmd_diff(dir: &Path, config_arg: Option<&Path>, ignore_validation_errors:
         .iter()
         .filter(|(_, fm)| fm.is_some())
         .count();
-    let field_infos = discover_fields(&file_frontmatters);
+    let mut date_fmts: Vec<&str> = DEFAULT_DATE_FORMATS.to_vec();
+    for field in &schema.fields {
+        if let Some(ref fmt) = field.date_format
+            && !date_fmts.contains(&fmt.as_str())
+        {
+            date_fmts.push(fmt);
+        }
+    }
+    let field_infos = discover_fields(&file_frontmatters, &date_fmts);
 
     let generated_at = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S").to_string();
     let new_lock = LockFile::from_discovery(
@@ -167,6 +175,7 @@ fn diff_locks(
                 name: field.name.clone(),
                 field_type: field.field_type.clone(),
                 files: field.files.clone(),
+                date_format: field.date_format.clone(),
             });
         }
     }
@@ -178,6 +187,7 @@ fn diff_locks(
                 name: field.name.clone(),
                 field_type: field.field_type.clone(),
                 files: field.files.clone(),
+                date_format: field.date_format.clone(),
             });
         }
     }
@@ -340,6 +350,7 @@ mod tests {
             name: name.to_string(),
             field_type: ft,
             files: files.iter().map(|s| s.to_string()).collect(),
+            date_format: None,
         }
     }
 

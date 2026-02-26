@@ -52,6 +52,10 @@ enum Command {
         /// Frontmatter format to recognize (yaml, toml, both)
         #[arg(long, default_value = "both")]
         frontmatter_format: FrontmatterFormat,
+
+        /// Date format for inference (chrono strftime syntax, e.g. "%d/%m/%Y")
+        #[arg(long)]
+        date_format: Option<String>,
     },
 
     /// Refresh lock file by re-scanning markdown files
@@ -109,6 +113,7 @@ fn main() {
             include_bare_files,
             minimal,
             frontmatter_format,
+            date_format,
         } => cmd_init(
             &dir,
             &glob,
@@ -118,6 +123,7 @@ fn main() {
             include_bare_files,
             minimal,
             frontmatter_format,
+            date_format.as_deref(),
         ),
         Command::Update { dir, config } => cmd_update(&dir, config.as_deref()),
         Command::Check {

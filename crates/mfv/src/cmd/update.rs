@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
-use mdvs_schema::{FieldInfo, LockFile, Schema, discover_fields, infer_field_paths};
+use mdvs_schema::{DEFAULT_DATE_FORMATS, FieldInfo, LockFile, Schema, discover_fields, infer_field_paths};
 use crate::report::{OutputFormat, format_diagnostics, validate};
 use crate::scan::scan_directory;
 
@@ -65,7 +65,15 @@ pub fn cmd_update(dir: &Path, config_arg: Option<&Path>) -> Result<()> {
         .iter()
         .filter(|(_, fm)| fm.is_some())
         .count();
-    let field_infos = discover_fields(&file_frontmatters);
+    let mut date_fmts: Vec<&str> = DEFAULT_DATE_FORMATS.to_vec();
+    for field in &schema.fields {
+        if let Some(ref fmt) = field.date_format
+            && !date_fmts.contains(&fmt.as_str())
+        {
+            date_fmts.push(fmt);
+        }
+    }
+    let field_infos = discover_fields(&file_frontmatters, &date_fmts);
 
     // Build observations for inference
     let observations: Vec<(PathBuf, HashSet<String>)> = files

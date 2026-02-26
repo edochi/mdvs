@@ -199,6 +199,8 @@ struct SerFieldDef<'a> {
     pattern: &'a Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     values: &'a Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    date_format: &'a Option<String>,
 }
 
 impl<'a> From<&'a FieldDef> for SerFieldDef<'a> {
@@ -210,6 +212,7 @@ impl<'a> From<&'a FieldDef> for SerFieldDef<'a> {
             required: &f.required,
             pattern: &f.pattern,
             values: &f.values,
+            date_format: &f.date_format,
         }
     }
 }
@@ -278,6 +281,14 @@ fn validate_field_def(def: &FieldDef) -> Result<(), SchemaError> {
     if def.pattern.is_some() && !matches!(def.field_type, FieldType::String | FieldType::Date) {
         return Err(SchemaError::Validation(format!(
             "field '{}': 'pattern' only valid for string or date types",
+            def.name
+        )));
+    }
+
+    // date_format only valid for date
+    if def.date_format.is_some() && def.field_type != FieldType::Date {
+        return Err(SchemaError::Validation(format!(
+            "field '{}': 'date_format' only valid for date type",
             def.name
         )));
     }
@@ -537,5 +548,60 @@ type = "string"
         let output = schema.to_toml_string();
         let schema2 = output.parse::<Schema>().unwrap();
         assert_eq!(schema2.frontmatter_format, FrontmatterFormat::Toml);
+    }
+
+    #[test]
+    fn parse_date_format() {
+        let toml = r#"
+[[fields.field]]
+name = "published"
+type = "date"
+date_format = "%d/%m/%Y"
+"#;
+        let schema = toml.parse::<Schema>().unwrap();
+        assert_eq!(
+            schema.fields[0].date_format,
+            Some("%d/%m/%Y".to_string())
+        );
+    }
+
+    #[test]
+    fn date_format_on_non_date_fails() {
+        let toml = r#"
+[[fields.field]]
+name = "title"
+type = "string"
+date_format = "%Y-%m-%d"
+"#;
+        let err = toml.parse::<Schema>().unwrap_err();
+        assert!(err.to_string().contains("'date_format' only valid for date type"));
+    }
+
+    #[test]
+    fn date_format_roundtrip() {
+        let toml = r#"
+[[fields.field]]
+name = "created"
+type = "date"
+date_format = "%d/%m/%Y"
+"#;
+        let schema = toml.parse::<Schema>().unwrap();
+        let output = schema.to_toml_string();
+        let schema2 = output.parse::<Schema>().unwrap();
+        assert_eq!(
+            schema2.fields[0].date_format,
+            Some("%d/%m/%Y".to_string())
+        );
+    }
+
+    #[test]
+    fn no_date_format_default() {
+        let toml = r#"
+[[fields.field]]
+name = "date"
+type = "date"
+"#;
+        let schema = toml.parse::<Schema>().unwrap();
+        assert_eq!(schema.fields[0].date_format, None);
     }
 }

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
-use mdvs_schema::{FieldDef, FieldInfo, FrontmatterFormat, LockFile, Schema, discover_fields, infer_field_paths};
+use mdvs_schema::{DEFAULT_DATE_FORMATS, FieldDef, FieldInfo, FrontmatterFormat, LockFile, Schema, discover_fields, infer_field_paths};
 use crate::scan::scan_directory;
 
 use super::lock_path_for;
@@ -19,6 +19,7 @@ pub fn cmd_init(
     include_bare_files: bool,
     minimal: bool,
     frontmatter_format: FrontmatterFormat,
+    date_format: Option<&str>,
 ) -> Result<()> {
     if !dir.is_dir() {
         bail!("{} is not a directory", dir.display());
@@ -62,7 +63,11 @@ pub fn cmd_init(
         .iter()
         .filter(|(_, fm)| fm.is_some())
         .count();
-    let field_infos = discover_fields(&file_frontmatters);
+    let mut date_fmts: Vec<&str> = DEFAULT_DATE_FORMATS.to_vec();
+    if let Some(fmt) = date_format {
+        date_fmts.insert(0, fmt);
+    }
+    let field_infos = discover_fields(&file_frontmatters, &date_fmts);
 
     // Build observations for inference: all considered files.
     // Bare files (when included) get an empty field set, which correctly
@@ -99,6 +104,7 @@ pub fn cmd_init(
                 required: paths.map(|p| p.required.clone()).unwrap_or_default(),
                 pattern: None,
                 values: vec![],
+                date_format: f.date_format.clone(),
             }
         })
         .collect();

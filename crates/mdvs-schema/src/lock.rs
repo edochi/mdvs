@@ -36,6 +36,8 @@ pub struct LockField {
     pub field_type: FieldType,
     /// Relative paths of files containing this field.
     pub files: Vec<String>,
+    /// Detected date format (only present for date fields).
+    pub date_format: Option<String>,
 }
 
 impl LockFile {
@@ -53,6 +55,7 @@ impl LockFile {
                 name: f.name.clone(),
                 field_type: f.field_type.clone(),
                 files: f.files.clone(),
+                date_format: f.date_format.clone(),
             })
             .collect();
 
@@ -83,6 +86,7 @@ impl LockFile {
                     name: &f.name,
                     field_type: &f.field_type,
                     files: &f.files,
+                    date_format: &f.date_format,
                 })
                 .collect(),
         };
@@ -149,6 +153,8 @@ struct SerLockField<'a> {
     #[serde(rename = "type")]
     field_type: &'a FieldType,
     files: &'a Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    date_format: &'a Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -173,6 +179,7 @@ struct RawLockField {
     field_type: FieldType,
     #[serde(default)]
     files: Vec<String>,
+    date_format: Option<String>,
 }
 
 impl std::str::FromStr for LockFile {
@@ -195,6 +202,7 @@ impl std::str::FromStr for LockFile {
                     name: f.name,
                     field_type: f.field_type,
                     files: f.files,
+                    date_format: f.date_format,
                 })
                 .collect(),
         })
@@ -212,11 +220,13 @@ mod tests {
                 name: "title".to_string(),
                 field_type: FieldType::String,
                 files: vec!["blog/a.md".to_string(), "blog/b.md".to_string()],
+                date_format: None,
             },
             FieldInfo {
                 name: "draft".to_string(),
                 field_type: FieldType::Boolean,
                 files: vec!["blog/a.md".to_string()],
+                date_format: None,
             },
         ];
 
@@ -247,11 +257,13 @@ mod tests {
                     name: "title".to_string(),
                     field_type: FieldType::String,
                     files: vec!["a.md".to_string(), "b.md".to_string()],
+                    date_format: None,
                 },
                 LockField {
                     name: "tags".to_string(),
                     field_type: FieldType::StringArray,
                     files: vec!["a.md".to_string()],
+                    date_format: None,
                 },
             ],
         };
@@ -270,6 +282,8 @@ mod tests {
         assert!(toml.contains("\"a.md\""));
         assert!(toml.contains("\"b.md\""));
         assert!(toml.contains("type = \"string[]\""));
+        // No date_format in output for non-date fields
+        assert!(!toml.contains("date_format"));
     }
 
     #[test]
@@ -286,11 +300,13 @@ mod tests {
                     name: "title".to_string(),
                     field_type: FieldType::String,
                     files: vec!["a.md".to_string(), "b.md".to_string()],
+                    date_format: None,
                 },
                 LockField {
                     name: "count".to_string(),
                     field_type: FieldType::Integer,
                     files: vec!["a.md".to_string()],
+                    date_format: None,
                 },
             ],
         };
@@ -307,6 +323,33 @@ mod tests {
         assert_eq!(parsed.fields[0].files, vec!["a.md", "b.md"]);
         assert_eq!(parsed.fields[1].name, "count");
         assert_eq!(parsed.fields[1].field_type, FieldType::Integer);
+    }
+
+    #[test]
+    fn roundtrip_date_format() {
+        let lock = LockFile {
+            discovery: LockDiscovery {
+                total_files: 5,
+                files_with_frontmatter: 5,
+                glob: "**".to_string(),
+                generated_at: "2025-06-12T10:00:00".to_string(),
+            },
+            fields: vec![LockField {
+                name: "published".to_string(),
+                field_type: FieldType::Date,
+                files: vec!["a.md".to_string()],
+                date_format: Some("%d/%m/%Y".to_string()),
+            }],
+        };
+
+        let toml = lock.to_toml_string();
+        assert!(toml.contains("date_format = \"%d/%m/%Y\""));
+
+        let parsed: LockFile = toml.parse().expect("should roundtrip");
+        assert_eq!(
+            parsed.fields[0].date_format,
+            Some("%d/%m/%Y".to_string())
+        );
     }
 
     #[test]

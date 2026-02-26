@@ -10,7 +10,10 @@ mod inference;
 pub mod lock;
 mod schema;
 
-pub use discovery::{FieldInfo, discover_fields, infer_type, is_date_string};
+pub use discovery::{
+    DEFAULT_DATE_FORMATS, FieldInfo, detect_date_format, discover_fields, infer_type,
+    is_date_string, parse_date,
+};
 pub use field_def::FieldDef;
 pub use field_type::FieldType;
 pub use inference::{FieldPaths, infer_field_paths};

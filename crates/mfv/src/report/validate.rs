@@ -1,4 +1,4 @@
-use mdvs_schema::{FieldType, Schema, infer_type, is_date_string};
+use mdvs_schema::{FieldType, Schema, infer_type, is_date_string, parse_date};
 use regex::Regex;
 use serde_json::Value;
 
@@ -30,8 +30,8 @@ pub fn validate(files: &[ScannedFile], schema: &Schema) -> Vec<Diagnostic> {
                 continue;
             };
 
-            // 2. Type check
-            if !type_matches(&rule.field_type, value) {
+            // 2. Type check (broad: accepts any recognized date format for Date fields)
+            if !type_matches(&rule.field_type, value, rule.date_format.as_deref()) {
                 let got = infer_type(value);
                 diagnostics.push(Diagnostic {
                     file: file.rel_path.clone(),
@@ -44,7 +44,23 @@ pub fn validate(files: &[ScannedFile], schema: &Schema) -> Vec<Diagnostic> {
                 continue;
             }
 
-            // 3. Pattern check (string/date fields)
+            // 3. Date format check (narrow: must match the field's specific format)
+            if rule.field_type == FieldType::Date
+                && let Some(fmt) = &rule.date_format
+                && let Some(Value::String(s)) = Some(value)
+                && !parse_date(s, fmt)
+            {
+                diagnostics.push(Diagnostic {
+                    file: file.rel_path.clone(),
+                    field: rule.name.clone(),
+                    kind: DiagnosticKind::DateFormatMismatch {
+                        format: fmt.clone(),
+                        value: s.clone(),
+                    },
+                });
+            }
+
+            // 4. Pattern check (string/date fields)
             if let Some(pattern) = &rule.pattern
                 && let Some(s) = value_as_string(value)
                 && let Ok(re) = Regex::new(pattern)
@@ -98,12 +114,20 @@ pub fn validate(files: &[ScannedFile], schema: &Schema) -> Vec<Diagnostic> {
 }
 
 /// Check if a JSON value matches the expected FieldType.
-fn type_matches(expected: &FieldType, value: &Value) -> bool {
+///
+/// For Date fields, uses broad detection: accepts the field's specific `date_format`
+/// (if set) OR any default format. This ensures that a value in the wrong format
+/// gets a `DateFormatMismatch` diagnostic rather than a confusing `WrongType`.
+fn type_matches(expected: &FieldType, value: &Value, date_format: Option<&str>) -> bool {
     match expected {
         FieldType::String => matches!(value, Value::String(_)),
         FieldType::StringArray => matches!(value, Value::Array(_)),
         FieldType::Date => {
-            matches!(value, Value::String(s) if is_date_string(s))
+            if let Value::String(s) = value {
+                is_date_string(s) || date_format.is_some_and(|fmt| parse_date(s, fmt))
+            } else {
+                false
+            }
         }
         FieldType::Boolean => matches!(value, Value::Bool(_)),
         FieldType::Integer => matches!(value, Value::Number(n) if n.is_i64() || n.is_u64()),
@@ -419,5 +443,77 @@ allowed = ["blog/**"]
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].field, "title");
         assert_eq!(diags[0].kind, DiagnosticKind::NotAllowed);
+    }
+
+    #[test]
+    fn date_format_match() {
+        let schema = parse_schema(
+            r#"
+[[fields.field]]
+name = "date"
+type = "date"
+date_format = "%d/%m/%Y"
+"#,
+        );
+
+        let files = vec![make_file("test.md", json!({"date": "31/12/2025"}))];
+        let diags = validate(&files, &schema);
+        assert!(diags.is_empty());
+    }
+
+    #[test]
+    fn date_format_mismatch() {
+        let schema = parse_schema(
+            r#"
+[[fields.field]]
+name = "date"
+type = "date"
+date_format = "%d/%m/%Y"
+"#,
+        );
+
+        // ISO date doesn't match the expected EU format
+        let files = vec![make_file("test.md", json!({"date": "2025-12-31"}))];
+        let diags = validate(&files, &schema);
+        assert_eq!(diags.len(), 1);
+        assert!(matches!(
+            &diags[0].kind,
+            DiagnosticKind::DateFormatMismatch { format, value }
+                if format == "%d/%m/%Y" && value == "2025-12-31"
+        ));
+    }
+
+    #[test]
+    fn date_no_format_backward_compat() {
+        // Without date_format, only ISO dates accepted (backward compat)
+        let schema = parse_schema(
+            r#"
+[[fields.field]]
+name = "date"
+type = "date"
+"#,
+        );
+
+        let files = vec![make_file("test.md", json!({"date": "2025-06-12"}))];
+        let diags = validate(&files, &schema);
+        assert!(diags.is_empty());
+    }
+
+    #[test]
+    fn date_not_a_date_wrong_type() {
+        // Non-date string with date_format → WrongType (not DateFormatMismatch)
+        let schema = parse_schema(
+            r#"
+[[fields.field]]
+name = "date"
+type = "date"
+date_format = "%d/%m/%Y"
+"#,
+        );
+
+        let files = vec![make_file("test.md", json!({"date": "not-a-date"}))];
+        let diags = validate(&files, &schema);
+        assert_eq!(diags.len(), 1);
+        assert!(matches!(&diags[0].kind, DiagnosticKind::WrongType { .. }));
     }
 }

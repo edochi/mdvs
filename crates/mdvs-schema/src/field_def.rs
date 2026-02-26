@@ -20,6 +20,8 @@ pub struct FieldDef {
     pub pattern: Option<String>,
     /// Allowed values (enum fields).
     pub values: Vec<String>,
+    /// Expected date format in chrono strftime syntax (date fields only).
+    pub date_format: Option<String>,
 }
 
 impl FieldDef {
@@ -67,6 +69,7 @@ pub(crate) struct RawFieldDef {
     pub pattern: Option<String>,
     #[serde(default)]
     pub values: Vec<String>,
+    pub date_format: Option<String>,
 }
 
 impl RawFieldDef {
@@ -79,6 +82,7 @@ impl RawFieldDef {
             required: self.required,
             pattern: self.pattern,
             values: self.values,
+            date_format: self.date_format,
         }
     }
 }

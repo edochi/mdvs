@@ -28,6 +28,13 @@ pub enum DiagnosticKind {
     },
     /// Field is present but not allowed at this file's path.
     NotAllowed,
+    /// Date value doesn't match the expected date format.
+    DateFormatMismatch {
+        /// Expected chrono format string from the schema.
+        format: String,
+        /// Actual value that failed to match.
+        value: String,
+    },
 }
 
 impl fmt::Display for DiagnosticKind {
@@ -48,6 +55,9 @@ impl fmt::Display for DiagnosticKind {
                 )
             }
             DiagnosticKind::NotAllowed => write!(f, "field not allowed here"),
+            DiagnosticKind::DateFormatMismatch { format, value } => {
+                write!(f, "value \"{value}\" does not match date format '{format}'")
+            }
         }
     }
 }
