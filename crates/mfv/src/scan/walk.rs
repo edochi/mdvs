@@ -163,11 +163,7 @@ mod tests {
     fn frontmatter_format_filters() {
         let tmp = TempDir::new().unwrap();
         write_file(tmp.path(), "yaml.md", "---\ntitle: Hello\n---\nBody");
-        write_file(
-            tmp.path(),
-            "toml.md",
-            "+++\ntitle = \"Hello\"\n+++\nBody",
-        );
+        write_file(tmp.path(), "toml.md", "+++\ntitle = \"Hello\"\n+++\nBody");
 
         // Yaml-only: TOML file treated as bare
         let files = scan_directory(tmp.path(), "**", FrontmatterFormat::Yaml).unwrap();

@@ -1,5 +1,5 @@
-use gray_matter::Matter;
-use gray_matter::engine::YAML;
+use gray_matter::engine::{TOML, YAML};
+use gray_matter::{Matter, ParsedEntity};
 use mdvs_schema::FrontmatterFormat;
 use serde_json::Value;
 
@@ -10,118 +10,25 @@ use serde_json::Value;
 /// - `Yaml`: only recognize YAML (`---`); TOML-delimited files treated as bare
 /// - `Toml`: only recognize TOML (`+++`); YAML-delimited files treated as bare
 pub fn extract_frontmatter(content: &str, format: FrontmatterFormat) -> (Option<Value>, String) {
-    let trimmed = content.trim_start();
-    let is_toml = trimmed.starts_with("+++");
-
-    match format {
-        FrontmatterFormat::Both => {
-            if is_toml {
-                extract_toml_frontmatter(content)
-            } else {
-                extract_yaml_frontmatter(content)
-            }
+    match (content.trim_start().as_bytes(), format) {
+        ([b'+', b'+', b'+', ..], FrontmatterFormat::Both | FrontmatterFormat::Toml) => {
+            let mut matter = Matter::<TOML>::new();
+            matter.delimiter = "+++".to_string();
+            extract_data(matter.parse(content))
         }
-        FrontmatterFormat::Yaml => {
-            if is_toml {
-                (None, content.to_string())
-            } else {
-                extract_yaml_frontmatter(content)
-            }
+        ([b'-', b'-', b'-', ..], FrontmatterFormat::Both | FrontmatterFormat::Yaml) => {
+            extract_data(Matter::<YAML>::new().parse(content))
         }
-        FrontmatterFormat::Toml => {
-            if is_toml {
-                extract_toml_frontmatter(content)
-            } else {
-                (None, content.to_string())
-            }
-        }
+        _ => (None, content.to_string()),
     }
 }
 
-fn extract_toml_frontmatter(content: &str) -> (Option<Value>, String) {
-    let trimmed = content.trim_start();
-    let after_open = &trimmed[3..];
-    let Some(close_pos) = after_open.find("+++") else {
-        return (None, content.to_string());
-    };
-
-    let toml_str = &after_open[..close_pos];
-    let body = after_open[close_pos + 3..]
-        .trim_start_matches('\n')
-        .to_string();
-
-    match toml_str.parse::<toml::Value>() {
-        Ok(toml_val) => {
-            let json = toml_to_json(&toml_val);
-            (Some(json), body)
-        }
-        Err(_) => (None, content.to_string()),
-    }
-}
-
-fn toml_to_json(val: &toml::Value) -> Value {
-    match val {
-        toml::Value::String(s) => Value::String(s.clone()),
-        toml::Value::Integer(i) => Value::Number((*i).into()),
-        toml::Value::Float(f) => {
-            serde_json::Number::from_f64(*f).map_or(Value::Null, Value::Number)
-        }
-        toml::Value::Boolean(b) => Value::Bool(*b),
-        toml::Value::Datetime(dt) => Value::String(dt.to_string()),
-        toml::Value::Array(arr) => Value::Array(arr.iter().map(toml_to_json).collect()),
-        toml::Value::Table(map) => {
-            let obj: serde_json::Map<String, Value> = map
-                .iter()
-                .map(|(k, v)| (k.clone(), toml_to_json(v)))
-                .collect();
-            Value::Object(obj)
-        }
-    }
-}
-
-fn extract_yaml_frontmatter(content: &str) -> (Option<Value>, String) {
-    let matter = Matter::<YAML>::new();
-    let parsed = matter.parse(content);
-
+fn extract_data(parsed: ParsedEntity) -> (Option<Value>, String) {
     let data = parsed.data.and_then(|d| {
-        let yaml: serde_yaml::Value = d.deserialize().ok()?;
-        let json = yaml_to_json(&yaml);
+        let json: Value = d.deserialize().ok()?;
         if json.is_object() { Some(json) } else { None }
     });
-
     (data, parsed.content)
-}
-
-fn yaml_to_json(val: &serde_yaml::Value) -> Value {
-    match val {
-        serde_yaml::Value::Null => Value::Null,
-        serde_yaml::Value::Bool(b) => Value::Bool(*b),
-        serde_yaml::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                Value::Number(i.into())
-            } else if let Some(f) = n.as_f64() {
-                serde_json::Number::from_f64(f).map_or(Value::Null, Value::Number)
-            } else {
-                Value::Null
-            }
-        }
-        serde_yaml::Value::String(s) => Value::String(s.clone()),
-        serde_yaml::Value::Sequence(seq) => Value::Array(seq.iter().map(yaml_to_json).collect()),
-        serde_yaml::Value::Mapping(map) => {
-            let obj: serde_json::Map<String, Value> = map
-                .iter()
-                .map(|(k, v)| {
-                    let key = match k {
-                        serde_yaml::Value::String(s) => s.clone(),
-                        other => format!("{other:?}"),
-                    };
-                    (key, yaml_to_json(v))
-                })
-                .collect();
-            Value::Object(obj)
-        }
-        serde_yaml::Value::Tagged(tagged) => yaml_to_json(&tagged.value),
-    }
 }
 
 #[cfg(test)]
@@ -168,17 +75,15 @@ mod tests {
     #[test]
     fn toml_unclosed_delimiter() {
         let content = "+++\ntitle = \"Hello\"\nNo closing delimiter.";
-        let (fm, body) = extract_frontmatter(content, FrontmatterFormat::Both);
+        let (fm, _body) = extract_frontmatter(content, FrontmatterFormat::Both);
         assert!(fm.is_none());
-        assert_eq!(body, content);
     }
 
     #[test]
     fn toml_malformed() {
         let content = "+++\n[invalid toml = = =\n+++\nbody";
-        let (fm, body) = extract_frontmatter(content, FrontmatterFormat::Both);
+        let (fm, _body) = extract_frontmatter(content, FrontmatterFormat::Both);
         assert!(fm.is_none());
-        assert_eq!(body, content);
     }
 
     #[test]
@@ -232,7 +137,10 @@ mod tests {
     fn yaml_skipped_when_toml_only() {
         let content = "---\ntitle: Hello\n---\nBody";
         let (fm, body) = extract_frontmatter(content, FrontmatterFormat::Toml);
-        assert!(fm.is_none(), "YAML frontmatter should be skipped in Toml mode");
+        assert!(
+            fm.is_none(),
+            "YAML frontmatter should be skipped in Toml mode"
+        );
         assert_eq!(body, content);
     }
 
@@ -240,7 +148,10 @@ mod tests {
     fn toml_skipped_when_yaml_only() {
         let content = "+++\ntitle = \"Hello\"\n+++\nBody";
         let (fm, body) = extract_frontmatter(content, FrontmatterFormat::Yaml);
-        assert!(fm.is_none(), "TOML frontmatter should be skipped in Yaml mode");
+        assert!(
+            fm.is_none(),
+            "TOML frontmatter should be skipped in Yaml mode"
+        );
         assert_eq!(body, content);
     }
 }

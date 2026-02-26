@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::FieldType;
 use crate::field_def::{FieldDef, RawFieldDef};
@@ -85,6 +85,15 @@ impl std::str::FromStr for FrontmatterFormat {
     }
 }
 
+impl serde::Serialize for FrontmatterFormat {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
 impl<'de> serde::Deserialize<'de> for FrontmatterFormat {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -145,52 +154,63 @@ impl Schema {
 
     /// Generate TOML string representation of this schema.
     pub fn to_toml_string(&self) -> String {
-        let mut out = String::new();
+        let ser = SerSchema {
+            directory: SerDirectory {
+                glob: &self.glob,
+                include_bare_files: self.include_bare_files,
+                frontmatter_format: &self.frontmatter_format,
+            },
+            fields: SerFields {
+                field: self.fields.iter().map(SerFieldDef::from).collect(),
+            },
+        };
+        toml::to_string_pretty(&ser).expect("schema serialization should not fail")
+    }
+}
 
-        out.push_str("[directory]\n");
-        out.push_str(&format!("glob = {:?}\n", self.glob));
-        out.push_str(&format!(
-            "include_bare_files = {}\n",
-            self.include_bare_files
-        ));
-        out.push_str(&format!(
-            "frontmatter_format = {:?}\n",
-            self.frontmatter_format.to_string()
-        ));
-        out.push('\n');
+#[derive(Serialize)]
+struct SerSchema<'a> {
+    directory: SerDirectory<'a>,
+    fields: SerFields<'a>,
+}
 
-        out.push_str("[fields]\n\n");
+#[derive(Serialize)]
+struct SerDirectory<'a> {
+    glob: &'a str,
+    include_bare_files: bool,
+    frontmatter_format: &'a FrontmatterFormat,
+}
 
-        for field in &self.fields {
-            out.push_str("[[fields.field]]\n");
-            out.push_str(&format!("name = {:?}\n", field.name));
-            out.push_str(&format!("type = {:?}\n", field.field_type.to_string()));
+#[derive(Serialize)]
+struct SerFields<'a> {
+    field: Vec<SerFieldDef<'a>>,
+}
 
-            if !field.allowed.is_empty() {
-                let patterns: Vec<String> =
-                    field.allowed.iter().map(|p| format!("{p:?}")).collect();
-                out.push_str(&format!("allowed = [{}]\n", patterns.join(", ")));
-            }
+#[derive(Serialize)]
+struct SerFieldDef<'a> {
+    name: &'a str,
+    #[serde(rename = "type")]
+    field_type: &'a FieldType,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    allowed: &'a Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    required: &'a Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pattern: &'a Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    values: &'a Vec<String>,
+}
 
-            if !field.required.is_empty() {
-                let patterns: Vec<String> =
-                    field.required.iter().map(|p| format!("{p:?}")).collect();
-                out.push_str(&format!("required = [{}]\n", patterns.join(", ")));
-            }
-
-            if let Some(pattern) = &field.pattern {
-                out.push_str(&format!("pattern = {:?}\n", pattern));
-            }
-
-            if !field.values.is_empty() {
-                let vals: Vec<String> = field.values.iter().map(|v| format!("{v:?}")).collect();
-                out.push_str(&format!("values = [{}]\n", vals.join(", ")));
-            }
-
-            out.push('\n');
+impl<'a> From<&'a FieldDef> for SerFieldDef<'a> {
+    fn from(f: &'a FieldDef) -> Self {
+        SerFieldDef {
+            name: &f.name,
+            field_type: &f.field_type,
+            allowed: &f.allowed,
+            required: &f.required,
+            pattern: &f.pattern,
+            values: &f.values,
         }
-
-        out
     }
 }
 
