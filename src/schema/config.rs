@@ -1,5 +1,5 @@
 use crate::discover::infer::InferredSchema;
-use crate::schema::shared::{FieldTypeSerde, ModelInfo, TomlConfig};
+use crate::schema::shared::{ChunkingConfig, FieldTypeSerde, ModelInfo, TomlConfig};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
@@ -17,6 +17,7 @@ pub struct TomlField {
 pub struct MdvsToml {
     pub config: TomlConfig,
     pub model: ModelInfo,
+    pub chunking: ChunkingConfig,
     pub fields: Vec<TomlField>,
 }
 
@@ -27,6 +28,7 @@ impl MdvsToml {
         include_bare_files: bool,
         model_name: &str,
         model_revision: Option<&str>,
+        max_chunk_size: usize,
     ) -> Self {
         MdvsToml {
             config: TomlConfig {
@@ -37,6 +39,7 @@ impl MdvsToml {
                 name: model_name.to_string(),
                 revision: model_revision.map(|s| s.to_string()),
             },
+            chunking: ChunkingConfig { max_chunk_size },
             fields: schema
                 .fields
                 .iter()
@@ -68,7 +71,7 @@ mod tests {
     use super::*;
     use crate::discover::field_type::FieldType;
     use crate::discover::infer::InferredField;
-    use crate::schema::shared::ModelInfo;
+    use crate::schema::shared::{ChunkingConfig, ModelInfo};
     use std::collections::BTreeMap;
     use std::path::PathBuf;
 
@@ -82,6 +85,9 @@ mod tests {
             model: ModelInfo {
                 name: "minishlab/potion-base-8M".into(),
                 revision: Some("abc123".into()),
+            },
+            chunking: ChunkingConfig {
+                max_chunk_size: 1024,
             },
             fields: vec![
                 TomlField {
@@ -132,6 +138,9 @@ include_bare_files = true
 
 [model]
 name = "minishlab/potion-base-8M"
+
+[chunking]
+max_chunk_size = 1024
 
 [[fields]]
 name = "title"
@@ -184,6 +193,9 @@ required = ["blog/**"]
                 name: "minishlab/potion-base-8M".into(),
                 revision: None,
             },
+            chunking: ChunkingConfig {
+                max_chunk_size: 1024,
+            },
             fields: vec![],
         };
         let toml_str = toml::to_string(&doc).unwrap();
@@ -223,12 +235,13 @@ required = ["blog/**"]
         };
 
         let toml_doc =
-            MdvsToml::from_inferred(&schema, "**", false, "minishlab/potion-base-8M", None);
+            MdvsToml::from_inferred(&schema, "**", false, "minishlab/potion-base-8M", None, 1024);
 
         assert_eq!(toml_doc.config.glob, "**");
         assert!(!toml_doc.config.include_bare_files);
         assert_eq!(toml_doc.model.name, "minishlab/potion-base-8M");
         assert_eq!(toml_doc.model.revision, None);
+        assert_eq!(toml_doc.chunking.max_chunk_size, 1024);
         assert_eq!(toml_doc.fields.len(), 3);
 
         assert_eq!(toml_doc.fields[0].name, "draft");
@@ -257,6 +270,7 @@ required = ["blog/**"]
             true,
             "minishlab/potion-base-8M",
             Some("rev123"),
+            512,
         );
         assert_eq!(toml_doc.config.glob, "docs/**");
         assert!(toml_doc.config.include_bare_files);
@@ -276,7 +290,7 @@ required = ["blog/**"]
             }],
         };
         let toml_doc =
-            MdvsToml::from_inferred(&schema, "**", false, "minishlab/potion-base-8M", None);
+            MdvsToml::from_inferred(&schema, "**", false, "minishlab/potion-base-8M", None, 1024);
 
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("mdvs.toml");

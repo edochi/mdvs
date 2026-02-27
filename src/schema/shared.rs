@@ -72,6 +72,11 @@ pub struct ModelInfo {
     pub revision: Option<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+pub struct ChunkingConfig {
+    pub max_chunk_size: usize,
+}
+
 impl fmt::Display for FieldTypeSerde {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

@@ -6,6 +6,7 @@ use crate::schema::lock::MdvsLock;
 use crate::schema::shared::FieldTypeSerde;
 use std::path::Path;
 
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     path: &Path,
     model_name: &str,
@@ -14,6 +15,7 @@ pub fn run(
     force: bool,
     dry_run: bool,
     ignore_bare_files: bool,
+    max_chunk_size: usize,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(path.is_dir(), "'{}' is not a directory", path.display());
 
@@ -60,6 +62,7 @@ pub fn run(
         include_bare_files,
         model_name,
         revision,
+        max_chunk_size,
     );
     toml_doc.write(&config_path)?;
 
@@ -70,6 +73,7 @@ pub fn run(
         include_bare_files,
         model_name,
         &model_revision,
+        max_chunk_size,
     );
     lock_doc.write(&lock_path)?;
 
@@ -165,6 +169,7 @@ mod tests {
             false,
             true, // dry_run
             true, // ignore_bare_files
+            1024,
         );
 
         assert!(result.is_ok());
@@ -187,6 +192,7 @@ mod tests {
             false, // no force
             true,
             true,
+            1024,
         );
 
         assert!(result.is_err());
@@ -210,6 +216,7 @@ mod tests {
             true, // force
             true, // dry_run
             true,
+            1024,
         );
 
         assert!(result.is_ok());
@@ -228,6 +235,7 @@ mod tests {
             false,
             true,
             true,
+            1024,
         );
 
         assert!(result.is_err());
@@ -249,6 +257,7 @@ mod tests {
             false,
             false, // not dry_run — full pipeline
             true,  // ignore bare files
+            1024,
         );
 
         assert!(result.is_ok(), "init failed: {:?}", result);

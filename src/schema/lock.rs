@@ -1,12 +1,12 @@
 use crate::discover::infer::InferredSchema;
 use crate::discover::scan::ScannedFiles;
-use crate::schema::shared::{FieldTypeSerde, ModelInfo, TomlConfig};
+use crate::schema::shared::{ChunkingConfig, FieldTypeSerde, ModelInfo, TomlConfig};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::hash::{DefaultHasher, Hasher};
 use std::path::Path;
 
-fn content_hash(content: &str) -> String {
+pub fn content_hash(content: &str) -> String {
     let mut hasher = DefaultHasher::new();
     hasher.write(content.as_bytes());
     format!("{:016x}", hasher.finish())
@@ -32,6 +32,7 @@ pub struct LockField {
 pub struct MdvsLock {
     pub config: TomlConfig,
     pub model: ModelInfo,
+    pub chunking: ChunkingConfig,
     pub files: Vec<LockFile>,
     pub fields: Vec<LockField>,
 }
@@ -44,6 +45,7 @@ impl MdvsLock {
         include_bare_files: bool,
         model_name: &str,
         model_revision: &str,
+        max_chunk_size: usize,
     ) -> Self {
         MdvsLock {
             config: TomlConfig {
@@ -54,6 +56,7 @@ impl MdvsLock {
                 name: model_name.to_string(),
                 revision: Some(model_revision.to_string()),
             },
+            chunking: ChunkingConfig { max_chunk_size },
             files: scanned
                 .files
                 .iter()
@@ -95,7 +98,7 @@ mod tests {
     use crate::discover::field_type::FieldType;
     use crate::discover::infer::InferredField;
     use crate::discover::scan::ScannedFile;
-    use crate::schema::shared::ModelInfo;
+    use crate::schema::shared::{ChunkingConfig, ModelInfo};
     use std::path::PathBuf;
 
     #[test]
@@ -108,6 +111,9 @@ mod tests {
             model: ModelInfo {
                 name: "minishlab/potion-base-8M".into(),
                 revision: Some("abc123".into()),
+            },
+            chunking: ChunkingConfig {
+                max_chunk_size: 1024,
             },
             files: vec![
                 LockFile {
@@ -162,6 +168,9 @@ include_bare_files = false
 [model]
 name = "minishlab/potion-base-8M"
 revision = "abc123"
+
+[chunking]
+max_chunk_size = 1024
 
 [[files]]
 path = "blog/hello.md"
@@ -235,12 +244,14 @@ required = ["blog/**"]
             false,
             "minishlab/potion-base-8M",
             "abc123",
+            1024,
         );
 
         assert_eq!(lock.config.glob, "**");
         assert!(!lock.config.include_bare_files);
         assert_eq!(lock.model.name, "minishlab/potion-base-8M");
         assert_eq!(lock.model.revision, Some("abc123".into()));
+        assert_eq!(lock.chunking.max_chunk_size, 1024);
 
         assert_eq!(lock.files.len(), 2);
         assert_eq!(lock.files[0].path, "blog/a.md");
@@ -265,7 +276,7 @@ required = ["blog/**"]
         let scanned = ScannedFiles { files: vec![] };
         let schema = InferredSchema { fields: vec![] };
         let lock =
-            MdvsLock::from_inferred(&schema, &scanned, "**", false, "test/model", "rev1");
+            MdvsLock::from_inferred(&schema, &scanned, "**", false, "test/model", "rev1", 1024);
         assert!(lock.files.is_empty());
         assert!(lock.fields.is_empty());
     }
@@ -301,7 +312,7 @@ required = ["blog/**"]
             }],
         };
         let lock =
-            MdvsLock::from_inferred(&schema, &scanned, "**", false, "test/model", "rev1");
+            MdvsLock::from_inferred(&schema, &scanned, "**", false, "test/model", "rev1", 1024);
 
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("mdvs.lock");

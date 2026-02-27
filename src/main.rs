@@ -33,9 +33,16 @@ enum Command {
         /// Exclude files without frontmatter
         #[arg(long)]
         ignore_bare_files: bool,
+        /// Maximum chunk size in characters
+        #[arg(long, default_value = "1024")]
+        chunk_size: usize,
     },
     /// Build or rebuild the search index
-    Build,
+    Build {
+        /// Directory containing mdvs.toml
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
     /// Semantic search across notes
     Search {
         /// Search query
@@ -63,6 +70,7 @@ async fn main() -> anyhow::Result<()> {
             force,
             dry_run,
             ignore_bare_files,
+            chunk_size,
         } => mdvs::cmd::init::run(
             &path,
             &model,
@@ -71,8 +79,9 @@ async fn main() -> anyhow::Result<()> {
             force,
             dry_run,
             ignore_bare_files,
+            chunk_size,
         ),
-        Command::Build => todo!("build"),
+        Command::Build { path } => mdvs::cmd::build::run(&path),
         Command::Search { query: _ } => todo!("search"),
         Command::Check => todo!("check"),
         Command::Update => todo!("update"),
