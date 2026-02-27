@@ -47,6 +47,15 @@ enum Command {
     Search {
         /// Search query
         query: String,
+        /// Directory containing mdvs.toml
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Maximum number of results
+        #[arg(long, short = 'n', default_value = "10")]
+        limit: usize,
+        /// SQL WHERE clause for filtering (e.g. "data['draft'] = false")
+        #[arg(long, name = "where")]
+        where_clause: Option<String>,
     },
     /// Validate frontmatter against schema
     Check,
@@ -82,7 +91,14 @@ async fn main() -> anyhow::Result<()> {
             chunk_size,
         ),
         Command::Build { path } => mdvs::cmd::build::run(&path),
-        Command::Search { query: _ } => todo!("search"),
+        Command::Search {
+            query,
+            path,
+            limit,
+            where_clause,
+        } => {
+            mdvs::cmd::search::run(&path, &query, limit, where_clause.as_deref()).await
+        }
         Command::Check => todo!("check"),
         Command::Update => todo!("update"),
         Command::Clean => todo!("clean"),
