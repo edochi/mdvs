@@ -1,6 +1,7 @@
 use crate::discover::field_type::FieldType;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::fmt;
 
 /// Serde-friendly representation of FieldType for TOML.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -62,6 +63,32 @@ impl TryFrom<&FieldTypeSerde> for FieldType {
 pub struct TomlConfig {
     pub glob: String,
     pub include_bare_files: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+pub struct ModelInfo {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revision: Option<String>,
+}
+
+impl fmt::Display for FieldTypeSerde {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            FieldTypeSerde::Scalar(name) => write!(f, "{name}"),
+            FieldTypeSerde::Array { array } => write!(f, "{array}[]"),
+            FieldTypeSerde::Object { object } => {
+                write!(f, "{{")?;
+                for (i, (k, v)) in object.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{k}: {v}")?;
+                }
+                write!(f, "}}")
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -156,6 +183,66 @@ mod tests {
         let result = FieldType::try_from(&bad);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("unknown type"));
+    }
+
+    #[test]
+    fn display_scalar() {
+        let ft = FieldTypeSerde::Scalar("String".into());
+        assert_eq!(ft.to_string(), "String");
+    }
+
+    #[test]
+    fn display_array() {
+        let ft = FieldTypeSerde::Array {
+            array: Box::new(FieldTypeSerde::Scalar("String".into())),
+        };
+        assert_eq!(ft.to_string(), "String[]");
+    }
+
+    #[test]
+    fn display_object() {
+        let ft = FieldTypeSerde::Object {
+            object: BTreeMap::from([
+                ("author".into(), FieldTypeSerde::Scalar("String".into())),
+                ("count".into(), FieldTypeSerde::Scalar("Integer".into())),
+            ]),
+        };
+        assert_eq!(ft.to_string(), "{author: String, count: Integer}");
+    }
+
+    #[test]
+    fn model_info_roundtrip() {
+        #[derive(Debug, Serialize, Deserialize, PartialEq)]
+        struct Wrapper {
+            model: ModelInfo,
+        }
+        let w = Wrapper {
+            model: ModelInfo {
+                name: "minishlab/potion-base-8M".into(),
+                revision: Some("abc123".into()),
+            },
+        };
+        let toml_str = toml::to_string(&w).unwrap();
+        let parsed: Wrapper = toml::from_str(&toml_str).unwrap();
+        assert_eq!(parsed, w);
+    }
+
+    #[test]
+    fn model_info_no_revision() {
+        #[derive(Debug, Serialize, Deserialize, PartialEq)]
+        struct Wrapper {
+            model: ModelInfo,
+        }
+        let w = Wrapper {
+            model: ModelInfo {
+                name: "minishlab/potion-base-8M".into(),
+                revision: None,
+            },
+        };
+        let toml_str = toml::to_string(&w).unwrap();
+        assert!(!toml_str.contains("revision"));
+        let parsed: Wrapper = toml::from_str(&toml_str).unwrap();
+        assert_eq!(parsed, w);
     }
 
     #[test]

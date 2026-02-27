@@ -1,5 +1,5 @@
 use crate::discover::infer::InferredSchema;
-use crate::schema::shared::{FieldTypeSerde, TomlConfig};
+use crate::schema::shared::{FieldTypeSerde, ModelInfo, TomlConfig};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
@@ -16,15 +16,26 @@ pub struct TomlField {
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct MdvsToml {
     pub config: TomlConfig,
+    pub model: ModelInfo,
     pub fields: Vec<TomlField>,
 }
 
 impl MdvsToml {
-    pub fn from_inferred(schema: &InferredSchema, glob: &str, include_bare_files: bool) -> Self {
+    pub fn from_inferred(
+        schema: &InferredSchema,
+        glob: &str,
+        include_bare_files: bool,
+        model_name: &str,
+        model_revision: Option<&str>,
+    ) -> Self {
         MdvsToml {
             config: TomlConfig {
                 glob: glob.to_string(),
                 include_bare_files,
+            },
+            model: ModelInfo {
+                name: model_name.to_string(),
+                revision: model_revision.map(|s| s.to_string()),
             },
             fields: schema
                 .fields
@@ -57,6 +68,7 @@ mod tests {
     use super::*;
     use crate::discover::field_type::FieldType;
     use crate::discover::infer::InferredField;
+    use crate::schema::shared::ModelInfo;
     use std::collections::BTreeMap;
     use std::path::PathBuf;
 
@@ -66,6 +78,10 @@ mod tests {
             config: TomlConfig {
                 glob: "**".into(),
                 include_bare_files: false,
+            },
+            model: ModelInfo {
+                name: "minishlab/potion-base-8M".into(),
+                revision: Some("abc123".into()),
             },
             fields: vec![
                 TomlField {
@@ -114,6 +130,9 @@ mod tests {
 glob = "blog/**"
 include_bare_files = true
 
+[model]
+name = "minishlab/potion-base-8M"
+
 [[fields]]
 name = "title"
 type = "String"
@@ -161,6 +180,10 @@ required = ["blog/**"]
                 glob: "**".into(),
                 include_bare_files: false,
             },
+            model: ModelInfo {
+                name: "minishlab/potion-base-8M".into(),
+                revision: None,
+            },
             fields: vec![],
         };
         let toml_str = toml::to_string(&doc).unwrap();
@@ -199,10 +222,13 @@ required = ["blog/**"]
             ],
         };
 
-        let toml_doc = MdvsToml::from_inferred(&schema, "**", false);
+        let toml_doc =
+            MdvsToml::from_inferred(&schema, "**", false, "minishlab/potion-base-8M", None);
 
         assert_eq!(toml_doc.config.glob, "**");
         assert!(!toml_doc.config.include_bare_files);
+        assert_eq!(toml_doc.model.name, "minishlab/potion-base-8M");
+        assert_eq!(toml_doc.model.revision, None);
         assert_eq!(toml_doc.fields.len(), 3);
 
         assert_eq!(toml_doc.fields[0].name, "draft");
@@ -225,9 +251,16 @@ required = ["blog/**"]
     #[test]
     fn from_inferred_empty() {
         let schema = InferredSchema { fields: vec![] };
-        let toml_doc = MdvsToml::from_inferred(&schema, "docs/**", true);
+        let toml_doc = MdvsToml::from_inferred(
+            &schema,
+            "docs/**",
+            true,
+            "minishlab/potion-base-8M",
+            Some("rev123"),
+        );
         assert_eq!(toml_doc.config.glob, "docs/**");
         assert!(toml_doc.config.include_bare_files);
+        assert_eq!(toml_doc.model.revision, Some("rev123".into()));
         assert!(toml_doc.fields.is_empty());
     }
 
@@ -242,7 +275,8 @@ required = ["blog/**"]
                 required: vec!["**".into()],
             }],
         };
-        let toml_doc = MdvsToml::from_inferred(&schema, "**", false);
+        let toml_doc =
+            MdvsToml::from_inferred(&schema, "**", false, "minishlab/potion-base-8M", None);
 
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("mdvs.toml");

@@ -1,6 +1,6 @@
 use crate::discover::infer::InferredSchema;
 use crate::discover::scan::ScannedFiles;
-use crate::schema::shared::{FieldTypeSerde, TomlConfig};
+use crate::schema::shared::{FieldTypeSerde, ModelInfo, TomlConfig};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::hash::{DefaultHasher, Hasher};
@@ -31,6 +31,7 @@ pub struct LockField {
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct MdvsLock {
     pub config: TomlConfig,
+    pub model: ModelInfo,
     pub files: Vec<LockFile>,
     pub fields: Vec<LockField>,
 }
@@ -41,11 +42,17 @@ impl MdvsLock {
         scanned: &ScannedFiles,
         glob: &str,
         include_bare_files: bool,
+        model_name: &str,
+        model_revision: &str,
     ) -> Self {
         MdvsLock {
             config: TomlConfig {
                 glob: glob.to_string(),
                 include_bare_files,
+            },
+            model: ModelInfo {
+                name: model_name.to_string(),
+                revision: Some(model_revision.to_string()),
             },
             files: scanned
                 .files
@@ -88,6 +95,7 @@ mod tests {
     use crate::discover::field_type::FieldType;
     use crate::discover::infer::InferredField;
     use crate::discover::scan::ScannedFile;
+    use crate::schema::shared::ModelInfo;
     use std::path::PathBuf;
 
     #[test]
@@ -96,6 +104,10 @@ mod tests {
             config: TomlConfig {
                 glob: "**".into(),
                 include_bare_files: false,
+            },
+            model: ModelInfo {
+                name: "minishlab/potion-base-8M".into(),
+                revision: Some("abc123".into()),
             },
             files: vec![
                 LockFile {
@@ -146,6 +158,10 @@ mod tests {
 [config]
 glob = "**"
 include_bare_files = false
+
+[model]
+name = "minishlab/potion-base-8M"
+revision = "abc123"
 
 [[files]]
 path = "blog/hello.md"
@@ -212,10 +228,19 @@ required = ["blog/**"]
             ],
         };
 
-        let lock = MdvsLock::from_inferred(&schema, &scanned, "**", false);
+        let lock = MdvsLock::from_inferred(
+            &schema,
+            &scanned,
+            "**",
+            false,
+            "minishlab/potion-base-8M",
+            "abc123",
+        );
 
         assert_eq!(lock.config.glob, "**");
         assert!(!lock.config.include_bare_files);
+        assert_eq!(lock.model.name, "minishlab/potion-base-8M");
+        assert_eq!(lock.model.revision, Some("abc123".into()));
 
         assert_eq!(lock.files.len(), 2);
         assert_eq!(lock.files[0].path, "blog/a.md");
@@ -239,7 +264,8 @@ required = ["blog/**"]
     fn from_inferred_empty() {
         let scanned = ScannedFiles { files: vec![] };
         let schema = InferredSchema { fields: vec![] };
-        let lock = MdvsLock::from_inferred(&schema, &scanned, "**", false);
+        let lock =
+            MdvsLock::from_inferred(&schema, &scanned, "**", false, "test/model", "rev1");
         assert!(lock.files.is_empty());
         assert!(lock.fields.is_empty());
     }
@@ -274,7 +300,8 @@ required = ["blog/**"]
                 required: vec!["**".into()],
             }],
         };
-        let lock = MdvsLock::from_inferred(&schema, &scanned, "**", false);
+        let lock =
+            MdvsLock::from_inferred(&schema, &scanned, "**", false, "test/model", "rev1");
 
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("mdvs.lock");
