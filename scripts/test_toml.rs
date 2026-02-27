@@ -23,8 +23,7 @@ enum FieldType {
     Object(BTreeMap<std::string::String, FieldType>),
 }
 
-/// TOML representation of FieldType.
-/// Scalars → string, Array → { array = <inner> }, Object → { object = { ... } }
+/// Serde-friendly representation of FieldType for TOML.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
 enum FieldTypeSerde {
