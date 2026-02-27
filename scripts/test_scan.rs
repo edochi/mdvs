@@ -1,7 +1,7 @@
 #!/usr/bin/env rust-script
 //! ```cargo
 //! [dependencies]
-//! gray_matter = "0.2"
+//! gray_matter = "0.3"
 //! serde_json = "1"
 //! walkdir = "2"
 //! globset = "0.4"
@@ -10,7 +10,7 @@
 
 use globset::Glob;
 use gray_matter::engine::YAML;
-use gray_matter::Matter;
+use gray_matter::{Matter, Pod};
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -57,9 +57,19 @@ impl ScannedFiles {
             }
 
             let raw = fs::read_to_string(abs_path).expect("failed to read file");
-            let parsed = matter.parse(&raw);
+            let Ok(parsed) = matter.parse(&raw) else {
+                if !include_bare_files {
+                    continue;
+                }
+                files.push(ScannedFile {
+                    path: rel_path,
+                    data: None,
+                    content: raw.trim().to_string(),
+                });
+                continue;
+            };
 
-            let data = parsed.data.and_then(|d| {
+            let data = parsed.data.and_then(|d: Pod| {
                 let json: Value = d.deserialize().ok()?;
                 if json.is_object() { Some(json) } else { None }
             });

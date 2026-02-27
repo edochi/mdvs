@@ -3,7 +3,7 @@
 //! [dependencies]
 //! serde = { version = "1", features = ["derive"] }
 //! serde_json = "1"
-//! toml = "0.8"
+//! toml = "1"
 //! ```
 
 use serde::{Deserialize, Serialize};

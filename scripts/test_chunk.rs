@@ -1,8 +1,8 @@
 #!/usr/bin/env rust-script
 //! ```cargo
 //! [dependencies]
-//! text-splitter = { version = "0.18", features = ["markdown"] }
-//! pulldown-cmark = "0.12"
+//! text-splitter = { version = "0.29", features = ["markdown"] }
+//! pulldown-cmark = "0.13"
 //! regex = "1"
 //! ```
 
@@ -34,18 +34,16 @@ impl std::ops::Deref for Chunks {
 impl Chunks {
     fn new(body: &str, max_chars: usize) -> Self {
         let splitter = MarkdownSplitter::new(max_chars);
-        let chunks: Vec<&str> = splitter.chunks(body).collect();
 
         // Pre-compute line start byte offsets for O(1) line lookups
         let line_starts: Vec<usize> = std::iter::once(0)
             .chain(body.match_indices('\n').map(|(i, _)| i + 1))
             .collect();
 
-        let inner = chunks
-            .iter()
+        let inner = splitter
+            .chunk_indices(body)
             .enumerate()
-            .map(|(i, chunk_md)| {
-                let byte_offset = chunk_byte_offset(body, chunk_md);
+            .map(|(i, (byte_offset, chunk_md))| {
                 let chunk_end_byte = byte_offset + chunk_md.len();
 
                 let start_line = byte_offset_to_line(&line_starts, byte_offset);
@@ -65,14 +63,6 @@ impl Chunks {
 
         Chunks(inner)
     }
-}
-
-/// MarkdownSplitter returns subslices of the input, so pointer arithmetic
-/// gives us the byte offset within the original body.
-fn chunk_byte_offset(body: &str, chunk: &str) -> usize {
-    let body_start = body.as_ptr() as usize;
-    let chunk_start = chunk.as_ptr() as usize;
-    chunk_start - body_start
 }
 
 /// Binary search over pre-computed line start offsets → 1-based line number.

@@ -58,14 +58,14 @@ tokio = { version = "1", features = ["full"] }
 datafusion = "52"
 
 # Frontmatter
-gray_matter = "0.2"
+gray_matter = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-toml = "0.8"
+toml = "1"
 
 # Chunking + text
-text-splitter = { version = "0.18", features = ["markdown"] }
-pulldown-cmark = "0.12"
+text-splitter = { version = "0.29", features = ["markdown"] }
+pulldown-cmark = "0.13"
 regex = "1"
 
 # Embedding
