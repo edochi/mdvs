@@ -9,22 +9,22 @@ mdvs (Markdown Directory Vector Search) is a Rust CLI for semantic search over d
 ## Build Commands
 
 ```bash
-cargo build                  # build all crates
-cargo run -p mdvs            # run the search tool
-cargo run -p mfv             # run the frontmatter validator
-cargo test                   # run all tests
-cargo test -p mdvs-schema    # run tests for a single crate
-cargo clippy                 # lint
-cargo fmt                    # format
+cargo build              # build
+cargo run                # run mdvs
+cargo test               # run all tests
+cargo clippy             # lint
+cargo fmt                # format
 ```
 
 ## Architecture
 
-Cargo workspace with three crates:
+Single crate at the repo root. Modules grouped by pipeline stage:
 
-- **`crates/mdvs-schema/`** — library: field definitions, type system, TOML parsing. Shared by both binaries.
-- **`crates/mfv/`** — library + binary (~2MB): standalone frontmatter validator. No embeddings, no storage. Independently publishable. Modules: `cmd/` (init, update, check, diff), `scan/` (extract, walk), `report/` (diagnostic, output, validate).
-- **`crates/mdvs/`** — library + binary: full semantic search. Depends on both crates above. Modules: `cmd/` (init, build, search, check, update, clean, info), `storage/` (parquet, lock), `distance/` (cosine), `chunk.rs`, `embed.rs`.
+- **`src/discover/`** — `scan.rs` (walk + parse YAML), `field_type.rs` (FieldType enum + widening), `infer.rs` (DirectoryTree + GlobMap + InferredSchema)
+- **`src/schema/`** — `shared.rs` (common types), `config.rs` (mdvs.toml), `lock.rs` (mdvs.lock)
+- **`src/index/`** — `chunk.rs` (semantic chunking), `embed.rs` (model2vec embeddings), `storage.rs` (Parquet I/O)
+- **`src/search.rs`** — cosine distance + DataFusion query
+- **`src/cmd/`** — `init`, `build`, `search`, `check`, `update`, `clean`, `info`
 
 ### Data Pipeline
 
@@ -32,7 +32,7 @@ Cargo workspace with three crates:
 
 ### Key Design Decisions
 
-- Config-driven frontmatter fields: all frontmatter stored as JSON column, no dynamic SQL columns. No interactive prompts.
+- Config-driven frontmatter fields: all frontmatter stored as native Arrow Struct column, no dynamic SQL columns. No interactive prompts.
 - Incremental indexing via content hashing in `mdvs.lock` (only re-process changed files)
 - Model identity tracking in `mdvs.lock [build]`: hard error on model ID/dimension mismatch, warning on revision mismatch for search, hard error for build
 - Note-level ranking uses max chunk similarity across chunks (not average)
@@ -47,23 +47,10 @@ Cargo workspace with three crates:
 
 ### Configuration Files
 
-Both tools share the same TOML schema structure (`[[fields.field]]` array-of-tables format). Each tool looks for its own config file first:
+- **`mdvs.toml`** — config (boundaries): field schema + search-specific sections (model, chunk size, storage, search defaults)
+- **`mdvs.lock`** — lock (observed state): raw file lists per field, content hashes, build metadata
 
-- **`mfv.toml`** — standalone mfv users; `mfv check` precedence: `--schema` → `mfv.toml` → `mdvs.toml`
-- **`mfv.lock`** — auto-generated discovery snapshot from `mfv init`. Captures all fields, types, counts.
-- **`mdvs.toml`** — used by mdvs (also found by mfv as fallback). Contains field schema + search-specific sections (model, chunk size, storage, search defaults). Unknown sections silently ignored.
-
-### mfv Commands
-
-- `init` — discover fields, write config (`mfv.toml`) + lock (`mfv.lock`), print frequency table to stderr
-  - `--dir <path>` (default `.`), `--glob <pattern>` (default `**`), `--config <path>` (default `mfv.toml`)
-  - `--force` (overwrite existing), `--dry-run` (print table only), `--minimal`, `--include-bare-files`
-  - `--frontmatter-format` (`both`/`yaml`/`toml`, default `both`)
-- `update` — re-scan and refresh lock file (fails if validation doesn't pass)
-- `check` — validate files against schema, exit 0 (valid) / 1 (errors) / 2 (runtime error)
-- `diff` — compare current state against lock file, `--ignore-validation-errors`
-
-### mdvs Commands
+### Commands
 
 - `init [path]` — discover fields, configure model, write `mdvs.toml` + `mdvs.lock`
 - `build` — build or rebuild the search index in `.mdvs/`
