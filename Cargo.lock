@@ -2468,6 +2468,7 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "tempfile",
  "text-splitter",
  "tokio",
  "toml",
