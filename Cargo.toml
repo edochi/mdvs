@@ -13,6 +13,9 @@ tokio = { version = "1", features = ["full"] }
 # Query engine (re-exports arrow 57 + parquet 57)
 datafusion = "52"
 
+# Error handling
+anyhow = "1"
+
 # Frontmatter
 gray_matter = "0.3"
 serde = { version = "1", features = ["derive"] }
