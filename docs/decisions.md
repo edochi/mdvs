@@ -6,6 +6,110 @@ Once a decision is implemented and reflected in the specs, remove it from this f
 
 ---
 
+## Command Design
+
+### The three artifacts (Cargo analogy)
+
+| mdvs | Cargo | Purpose | Git |
+|------|-------|---------|-----|
+| `mdvs.toml` | `Cargo.toml` | User-declared intent: schema, model, config | committed |
+| `mdvs.lock` | `Cargo.lock` | Resolved state: exact model revision, file hashes, inferred fields | committed |
+| `.mdvs/` | `target/` | Build artifacts (parquet files), regenerable from lock + source | gitignored |
+
+**Why the lock exists separately from the parquets:**
+The lock is the resolved inputs, like `Cargo.lock` pinning exact dependency versions.
+The parquets are derived build outputs. You can clone a repo, see the lock, and know
+exactly what should be indexed — without the parquet files. The lock is human-readable,
+git-diffable, and provides staleness detection without reading binary parquet.
+
+The information could technically live in parquet metadata, but:
+- Lock is cheap to parse (TOML) vs parquet
+- Lock is diffable in PRs ("these files changed, this field was added")
+- Lock exists before build (after init/update, before parquets are generated)
+
+### `init` — first-time setup (infer + update + build)
+
+The "set up everything from scratch" command. Does the full pipeline:
+1. Scan files
+2. Infer schema — discover field names, types, allowed/required patterns
+3. Download model
+4. Write `mdvs.toml` (inferred schema as starting point for user to edit)
+5. Write `mdvs.lock` (resolved state: exact model revision, file hashes, fields)
+6. Build parquets (chunk, embed, write `files.parquet` + `chunks.parquet`)
+
+`init` is an `update` with inference on top, followed by a `build`.
+
+### `build` — rebuild the search index (expensive)
+
+Read toml, scan files, chunk, embed, write parquets, update lock hashes. This is
+where the model loads and the real work happens.
+
+Use cases:
+- After manually editing `mdvs.toml` (changing field types, model, etc.)
+- After `update` to regenerate index with refreshed lock
+- Force rebuild
+
+### `update` — re-scan and refresh lock (cheap, no build)
+
+Like `cargo update` — re-scan files, update the lock with current state, but do NOT
+rebuild parquets. Fast operation. Lets you see what changed (via `git diff mdvs.lock`)
+before committing to an expensive build.
+
+Requires `mdvs.toml` to exist (reads config from it).
+
+Inference flag for handling new/changed fields:
+- `--infer new` (default?) — infer only fields not already in toml
+- `--infer all` — re-infer all fields (overwrite toml field definitions)
+- `--infer none` — no inference; new fields get type String, allowed everywhere,
+  required nowhere
+
+### `search` — query the index
+
+Load model, embed query, run note-level SQL (MAX chunk similarity grouped by file),
+print `score  filename` to stdout.
+
+Flags: `--limit` (default 10), `--path`, `--where` (SQL WHERE clause).
+Revision mismatch is a warning (not error).
+
+### `check` — validate frontmatter against schema
+
+**Open questions:**
+- Validate against `mdvs.toml` (user's declared contract) or `mdvs.lock` (observed state)?
+- What violations to report? Missing required fields, type mismatches, disallowed fields,
+  unknown/undeclared fields?
+- Output format: `file:field: message` lines? Exit 0 if clean, exit 1 if violations?
+- Type matching leniency: does Float accept integer values? (Probably yes, since widening
+  means some files had int and some had float.)
+
+### `clean` — remove `.mdvs/` directory
+
+Delete build artifacts. Like `cargo clean`.
+
+### `info` — show index status
+
+Display model name/revision, file count, chunk count, staleness (files changed since
+last build).
+
+### Typical workflows
+
+```
+# First time:
+mdvs init                          # scan, infer, download model, build
+
+# Files changed on disk:
+mdvs update                        # re-scan, refresh lock (cheap)
+# review lock diff in git
+mdvs build                         # rebuild index (expensive)
+
+# Edited toml manually:
+mdvs build                         # rebuild with new config
+
+# CI/validation:
+mdvs check                         # validate frontmatter against schema
+```
+
+---
+
 ## mfv
 
 ### Future validation features (post-v0.3)
