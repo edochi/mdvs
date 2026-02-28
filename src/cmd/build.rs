@@ -177,6 +177,7 @@ pub fn run(path: &Path) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schema::config::{OnError, WorkflowConfig};
     use crate::schema::shared::{ChunkingConfig, ModelInfo, TomlConfig};
     use std::fs;
 
@@ -209,6 +210,10 @@ mod tests {
             },
             chunking: ChunkingConfig {
                 max_chunk_size: 1024,
+            },
+            workflow: WorkflowConfig {
+                auto_build: true,
+                on_error: OnError::Fail,
             },
             fields: vec![],
         };
@@ -288,6 +293,7 @@ mod tests {
             false,
             true, // ignore bare files
             1024,
+            true,
         )
         .unwrap();
 
@@ -347,6 +353,7 @@ mod tests {
             false,
             true,
             1024,
+            true,
         )
         .unwrap();
         run(tmp.path()).unwrap();

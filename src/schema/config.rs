@@ -4,6 +4,19 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[serde(rename_all = "lowercase")]
+pub enum OnError {
+    Fail,
+    Skip,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+pub struct WorkflowConfig {
+    pub auto_build: bool,
+    pub on_error: OnError,
+}
+
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct TomlField {
     pub name: String,
@@ -18,6 +31,7 @@ pub struct MdvsToml {
     pub config: TomlConfig,
     pub model: ModelInfo,
     pub chunking: ChunkingConfig,
+    pub workflow: WorkflowConfig,
     pub fields: Vec<TomlField>,
 }
 
@@ -29,6 +43,7 @@ impl MdvsToml {
         model_name: &str,
         model_revision: Option<&str>,
         max_chunk_size: usize,
+        auto_build: bool,
     ) -> Self {
         MdvsToml {
             config: TomlConfig {
@@ -40,6 +55,10 @@ impl MdvsToml {
                 revision: model_revision.map(|s| s.to_string()),
             },
             chunking: ChunkingConfig { max_chunk_size },
+            workflow: WorkflowConfig {
+                auto_build,
+                on_error: OnError::Fail,
+            },
             fields: schema
                 .fields
                 .iter()
@@ -75,6 +94,13 @@ mod tests {
     use std::collections::BTreeMap;
     use std::path::PathBuf;
 
+    fn default_workflow() -> WorkflowConfig {
+        WorkflowConfig {
+            auto_build: true,
+            on_error: OnError::Fail,
+        }
+    }
+
     #[test]
     fn mdvs_toml_roundtrip() {
         let toml_doc = MdvsToml {
@@ -89,6 +115,7 @@ mod tests {
             chunking: ChunkingConfig {
                 max_chunk_size: 1024,
             },
+            workflow: default_workflow(),
             fields: vec![
                 TomlField {
                     name: "title".into(),
@@ -141,6 +168,10 @@ name = "minishlab/potion-base-8M"
 
 [chunking]
 max_chunk_size = 1024
+
+[workflow]
+auto_build = true
+on_error = "fail"
 
 [[fields]]
 name = "title"
@@ -196,6 +227,7 @@ required = ["blog/**"]
             chunking: ChunkingConfig {
                 max_chunk_size: 1024,
             },
+            workflow: default_workflow(),
             fields: vec![],
         };
         let toml_str = toml::to_string(&doc).unwrap();
@@ -235,7 +267,7 @@ required = ["blog/**"]
         };
 
         let toml_doc =
-            MdvsToml::from_inferred(&schema, "**", false, "minishlab/potion-base-8M", None, 1024);
+            MdvsToml::from_inferred(&schema, "**", false, "minishlab/potion-base-8M", None, 1024, true);
 
         assert_eq!(toml_doc.config.glob, "**");
         assert!(!toml_doc.config.include_bare_files);
@@ -271,6 +303,7 @@ required = ["blog/**"]
             "minishlab/potion-base-8M",
             Some("rev123"),
             512,
+            true,
         );
         assert_eq!(toml_doc.config.glob, "docs/**");
         assert!(toml_doc.config.include_bare_files);
@@ -290,7 +323,7 @@ required = ["blog/**"]
             }],
         };
         let toml_doc =
-            MdvsToml::from_inferred(&schema, "**", false, "minishlab/potion-base-8M", None, 1024);
+            MdvsToml::from_inferred(&schema, "**", false, "minishlab/potion-base-8M", None, 1024, true);
 
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("mdvs.toml");
@@ -298,5 +331,59 @@ required = ["blog/**"]
         toml_doc.write(&path).unwrap();
         let loaded = MdvsToml::read(&path).unwrap();
         assert_eq!(loaded, toml_doc);
+    }
+
+    #[test]
+    fn workflow_roundtrip() {
+        // Test OnError::Fail
+        let doc_fail = MdvsToml {
+            config: TomlConfig {
+                glob: "**".into(),
+                include_bare_files: false,
+            },
+            model: ModelInfo {
+                name: "test-model".into(),
+                revision: None,
+            },
+            chunking: ChunkingConfig {
+                max_chunk_size: 1024,
+            },
+            workflow: WorkflowConfig {
+                auto_build: true,
+                on_error: OnError::Fail,
+            },
+            fields: vec![],
+        };
+        let toml_str = toml::to_string(&doc_fail).unwrap();
+        assert!(toml_str.contains("on_error = \"fail\""));
+        let parsed: MdvsToml = toml::from_str(&toml_str).unwrap();
+        assert_eq!(parsed.workflow.on_error, OnError::Fail);
+        assert!(parsed.workflow.auto_build);
+
+        // Test OnError::Skip + auto_build false
+        let doc_skip = MdvsToml {
+            config: TomlConfig {
+                glob: "**".into(),
+                include_bare_files: false,
+            },
+            model: ModelInfo {
+                name: "test-model".into(),
+                revision: None,
+            },
+            chunking: ChunkingConfig {
+                max_chunk_size: 1024,
+            },
+            workflow: WorkflowConfig {
+                auto_build: false,
+                on_error: OnError::Skip,
+            },
+            fields: vec![],
+        };
+        let toml_str = toml::to_string(&doc_skip).unwrap();
+        assert!(toml_str.contains("on_error = \"skip\""));
+        assert!(toml_str.contains("auto_build = false"));
+        let parsed: MdvsToml = toml::from_str(&toml_str).unwrap();
+        assert_eq!(parsed.workflow.on_error, OnError::Skip);
+        assert!(!parsed.workflow.auto_build);
     }
 }

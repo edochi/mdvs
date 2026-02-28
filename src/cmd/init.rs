@@ -16,6 +16,7 @@ pub fn run(
     dry_run: bool,
     ignore_bare_files: bool,
     max_chunk_size: usize,
+    auto_build: bool,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(path.is_dir(), "'{}' is not a directory", path.display());
 
@@ -63,6 +64,7 @@ pub fn run(
         model_name,
         revision,
         max_chunk_size,
+        auto_build,
     );
     toml_doc.write(&config_path)?;
 
@@ -170,6 +172,7 @@ mod tests {
             true, // dry_run
             true, // ignore_bare_files
             1024,
+            true, // auto_build
         );
 
         assert!(result.is_ok());
@@ -193,6 +196,7 @@ mod tests {
             true,
             true,
             1024,
+            true,
         );
 
         assert!(result.is_err());
@@ -217,6 +221,7 @@ mod tests {
             true, // dry_run
             true,
             1024,
+            true,
         );
 
         assert!(result.is_ok());
@@ -236,6 +241,7 @@ mod tests {
             true,
             true,
             1024,
+            true,
         );
 
         assert!(result.is_err());
@@ -258,6 +264,7 @@ mod tests {
             false, // not dry_run — full pipeline
             true,  // ignore bare files
             1024,
+            true,
         );
 
         assert!(result.is_ok(), "init failed: {:?}", result);

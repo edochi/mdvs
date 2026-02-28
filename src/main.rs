@@ -36,6 +36,9 @@ enum Command {
         /// Maximum chunk size in characters
         #[arg(long, default_value = "1024")]
         chunk_size: usize,
+        /// Automatically build index after update
+        #[arg(long, default_value = "true")]
+        auto_build: bool,
     },
     /// Build or rebuild the search index
     Build {
@@ -80,6 +83,7 @@ async fn main() -> anyhow::Result<()> {
             dry_run,
             ignore_bare_files,
             chunk_size,
+            auto_build,
         } => mdvs::cmd::init::run(
             &path,
             &model,
@@ -89,6 +93,7 @@ async fn main() -> anyhow::Result<()> {
             dry_run,
             ignore_bare_files,
             chunk_size,
+            auto_build,
         ),
         Command::Build { path } => mdvs::cmd::build::run(&path),
         Command::Search {

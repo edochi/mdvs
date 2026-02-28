@@ -109,6 +109,7 @@ pub async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schema::config::{OnError, WorkflowConfig};
     use crate::schema::shared::{ChunkingConfig, ModelInfo, TomlConfig};
     use std::fs;
 
@@ -141,6 +142,10 @@ mod tests {
             },
             chunking: ChunkingConfig {
                 max_chunk_size: 1024,
+            },
+            workflow: WorkflowConfig {
+                auto_build: true,
+                on_error: OnError::Fail,
             },
             fields: vec![],
         };
@@ -176,6 +181,7 @@ mod tests {
             false,
             true,
             1024,
+            true,
         )
         .unwrap();
         crate::cmd::build::run(dir).unwrap();
