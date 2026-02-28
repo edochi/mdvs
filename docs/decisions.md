@@ -27,6 +27,26 @@ The information could technically live in parquet metadata, but:
 - Lock is diffable in PRs ("these files changed, this field was added")
 - Lock exists before build (after init/update, before parquets are generated)
 
+### Two layers
+
+The tool has two independent value propositions:
+
+1. **Validation layer** — frontmatter schema enforcement. Needs only `mdvs.toml` +
+   files on disk. No model, no embeddings, no parquets.
+2. **Search layer** — semantic search. Needs model + parquets on top of the validation
+   layer.
+
+Commands split cleanly between layers:
+
+| Layer | Commands |
+|-------|----------|
+| Validation | `init`, `update`, `check` |
+| Search | `build`, `search` |
+| Utility | `clean`, `info` |
+
+The search layer depends on the validation layer (build needs toml + lock), but the
+validation layer stands on its own.
+
 ### `init` — first-time setup (infer + update + build)
 
 The "set up everything from scratch" command. Does the full pipeline:
@@ -39,6 +59,57 @@ The "set up everything from scratch" command. Does the full pipeline:
 
 `init` is an `update` with inference on top, followed by a `build`.
 
+Flag: `--auto-build` (default true) — controls whether init triggers a build at
+the end. Written to `mdvs.toml` as `auto_build` so update inherits the preference.
+
+### `update` — re-scan, validate, refresh lock
+
+Like `cargo update` — re-scan files, validate against schema, update the lock.
+
+Requires `mdvs.toml` to exist (reads config from it).
+
+**Steps:**
+1. Scan files
+2. **Pre-check** — validate all files against toml schema (types + paths)
+3. Based on `on_error` behavior:
+   - `fail` (default): validation errors block the update. User must fix files first.
+   - `skip`: non-conforming files are excluded from the lock with a warning. Only
+     clean files enter the lock (and therefore the index).
+4. Update `mdvs.lock` with current file hashes and field metadata
+5. If `auto_build` is true: trigger `build`
+
+**Flags:**
+- `--build=true|false` — override `auto_build` from toml (always wins)
+- `--on-error=fail|skip` — override `on_error` from toml (always wins)
+- `--infer=new|all|none` — how to handle new/changed fields:
+  - `new` (default?) — infer only fields not already in toml
+  - `all` — re-infer all fields (overwrite toml field definitions)
+  - `none` — no inference; new fields get type String, allowed everywhere,
+    required nowhere
+
+**Toml config:**
+```toml
+[config]
+auto_build = true    # update triggers build by default
+on_error = "fail"    # validation errors block the update
+```
+
+### `check` — validate frontmatter against schema
+
+Validate files on disk against the declared schema in `mdvs.toml`. Independent from
+update — just scans files and reports violations. No side effects (doesn't modify
+lock or parquets).
+
+This is the same validation that `update` runs as a pre-check, but as a standalone
+command for CI or manual inspection.
+
+**Open questions:**
+- What violations to report? Missing required fields, type mismatches, disallowed fields,
+  unknown/undeclared fields?
+- Output format: `file:field: message` lines? Exit 0 if clean, exit 1 if violations?
+- Type matching leniency: does Float accept integer values? (Probably yes, since widening
+  means some files had int and some had float.)
+
 ### `build` — rebuild the search index (expensive)
 
 Read toml, scan files, chunk, embed, write parquets, update lock hashes. This is
@@ -46,22 +117,8 @@ where the model loads and the real work happens.
 
 Use cases:
 - After manually editing `mdvs.toml` (changing field types, model, etc.)
-- After `update` to regenerate index with refreshed lock
+- After `update --build=false` to rebuild with refreshed lock
 - Force rebuild
-
-### `update` — re-scan and refresh lock (cheap, no build)
-
-Like `cargo update` — re-scan files, update the lock with current state, but do NOT
-rebuild parquets. Fast operation. Lets you see what changed (via `git diff mdvs.lock`)
-before committing to an expensive build.
-
-Requires `mdvs.toml` to exist (reads config from it).
-
-Inference flag for handling new/changed fields:
-- `--infer new` (default?) — infer only fields not already in toml
-- `--infer all` — re-infer all fields (overwrite toml field definitions)
-- `--infer none` — no inference; new fields get type String, allowed everywhere,
-  required nowhere
 
 ### `search` — query the index
 
@@ -70,16 +127,6 @@ print `score  filename` to stdout.
 
 Flags: `--limit` (default 10), `--path`, `--where` (SQL WHERE clause).
 Revision mismatch is a warning (not error).
-
-### `check` — validate frontmatter against schema
-
-**Open questions:**
-- Validate against `mdvs.toml` (user's declared contract) or `mdvs.lock` (observed state)?
-- What violations to report? Missing required fields, type mismatches, disallowed fields,
-  unknown/undeclared fields?
-- Output format: `file:field: message` lines? Exit 0 if clean, exit 1 if violations?
-- Type matching leniency: does Float accept integer values? (Probably yes, since widening
-  means some files had int and some had float.)
 
 ### `clean` — remove `.mdvs/` directory
 
@@ -94,18 +141,20 @@ last build).
 
 ```
 # First time:
-mdvs init                          # scan, infer, download model, build
+mdvs init                          # scan, infer, build (auto_build=true)
 
 # Files changed on disk:
-mdvs update                        # re-scan, refresh lock (cheap)
-# review lock diff in git
-mdvs build                         # rebuild index (expensive)
+mdvs update                        # validate, refresh lock, auto-build
+mdvs update --build=false          # validate, refresh lock only (review diff first)
 
 # Edited toml manually:
 mdvs build                         # rebuild with new config
 
 # CI/validation:
-mdvs check                         # validate frontmatter against schema
+mdvs check                         # validate frontmatter, exit 1 on violations
+
+# Lenient update (skip broken files):
+mdvs update --on-error=skip        # warn about bad files, exclude them, build
 ```
 
 ---
