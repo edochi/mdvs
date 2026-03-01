@@ -5,46 +5,94 @@ description: Spec document conventions for writing and reviewing specification d
 
 # Spec Document Conventions
 
-If the project has an established spec directory structure (e.g., in CLAUDE.md or a README), follow that organization. The checklist below is general-purpose.
+## Directory Structure
 
-## Spec Definition Checklist
+```
+docs/spec/
+├── terminology.md        # Canonical definitions (single source of truth)
+├── storage.md            # .mdvs/, parquet schemas, mdvs.toml, mdvs.lock
+├── commands/             # One file per CLI command
+│   ├── init.md
+│   ├── build.md
+│   ├── search.md
+│   ├── check.md
+│   ├── update.md
+│   ├── clean.md
+│   └── info.md
+├── workflows/            # Cross-cutting logic shared across commands
+│   ├── inference.md
+│   ├── model-loading.md
+│   └── model-mismatch.md
+└── archive/              # Old specs, do not reference
+```
 
-### Phase 1: Classify the Document
+## Document Categories
 
-- [ ] Determine which category it belongs to:
-  - **Terminology** — Canonical definitions (single source of truth for terms)
-  - **Crate/module specs** — Per-component state, messages, constants
-  - **Workflows** — Cross-component flows and sequences
-  - **Security** — Authentication, encryption, authorization
-  - **Operations** — Telemetry, testing, persistence, versioning
-  - **Infrastructure** — Databases, deployment, networking
+- **Terminology** (`terminology.md`) — Canonical definitions, single source of truth for terms
+- **Storage** (`storage.md`) — Parquet schemas, config file formats, directory layout
+- **Command specs** (`commands/*.md`) — One per CLI command: inputs, behavior, output struct, errors
+- **Workflows** (`workflows/*.md`) — Cross-cutting logic used by multiple commands
 
-### Phase 2: Write the Document
+## Writing a Spec
 
-- [ ] Add status header: `**Status: DRAFT**` (or REVIEW, FINAL)
-- [ ] Add cross-reference links at the top to related specs
-- [ ] Use Mermaid for all diagrams — never ASCII art
-- [ ] Define new types in the appropriate component spec, not inline in workflows
-- [ ] Use consistent table format for message definitions, state transitions, constants
+### Header
 
-### Phase 3: Cross-Check for Consistency
+Every spec starts with:
 
-- [ ] **Terminology:** Are all terms used per their canonical definitions?
-- [ ] **Component specs:** Do referenced fields/messages actually exist in their spec?
-- [ ] **Workflows:** Does this flow contradict any existing workflow?
-- [ ] **Constants:** Are constant names and values consistent across documents?
-- [ ] **State transitions:** Are state machine transitions consistent with their spec?
+```markdown
+# <Title>
 
-### Phase 4: Finalize
+**Status: DRAFT** (or TODO, REVIEW, FINAL)
 
-- [ ] Extract any new data structures -> add to the appropriate component spec
-- [ ] Update terminology doc if new terms introduced
-- [ ] Add Related Documents section at the bottom with links to all referenced specs
-- [ ] If this is a workflow: add Actors table, End States table, Edge Cases section
+**See also:** [link1](path), [link2](path)
+```
 
-## Structural Rules
+### Command Spec Template
 
-- **Single source of truth:** each term/struct/message defined in ONE place only
+Command specs should include these sections:
+
+```markdown
+# `mdvs <command>`
+
+**Status: DRAFT**
+
+## Synopsis
+<usage line and flags>
+
+## Behavior
+<what the command does, step by step>
+
+## Output
+<output struct definition — every command collects results in a struct before display>
+
+## Errors
+<error conditions and messages>
+
+## Examples
+<CLI usage examples>
+```
+
+### Workflow Spec Template
+
+```markdown
+# Workflow: <Name>
+
+**Status: DRAFT**
+
+## Overview
+<what this workflow does and which commands use it>
+
+## Algorithm
+<step-by-step logic>
+
+## Edge Cases
+<boundary conditions>
+```
+
+## Rules
+
+- **Single source of truth:** each term/struct/concept defined in ONE place only
 - **Cross-references:** link, never duplicate definitions
-- **Component specs should mirror the code structure** (crate layout, module hierarchy)
-- **Workflow documents should include:** Overview, Actors, Sequence Diagram, POV sections (per actor), Edge Cases, Messages, Constants, Related Documents
+- **Output structs:** every command must define its result as a struct, separate from display formatting
+- **Mermaid for diagrams** — never ASCII art
+- **No stale references:** do not link to anything in `archive/`

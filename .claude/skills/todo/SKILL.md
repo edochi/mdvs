@@ -89,10 +89,10 @@ When a TODO is fully covered by another TODO's implementation:
 Only populated on completion:
 - `files_created`: New files created as part of the resolution
 - `files_updated`: Existing files modified as part of the resolution
-- Use spec-relative paths (e.g., `spec/30-workflows/session-close.md`)
+- Use spec-relative paths (e.g., `commands/check.md`, `workflows/inference.md`)
 
 ## Relative Links
 
 TODO files live at `docs/spec/todos/`. Adjust relative links accordingly:
-- To spec files: `../30-workflows/...`, `../10-crates/...`, `../01-terminology.md`
+- To spec files: `../terminology.md`, `../storage.md`, `../commands/check.md`, `../workflows/inference.md`
 - To other TODOs: `TODO-NNNN.md` (same directory)
