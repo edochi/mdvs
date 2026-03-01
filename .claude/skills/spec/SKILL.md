@@ -11,6 +11,7 @@ description: Spec document conventions for writing and reviewing specification d
 docs/spec/
 ├── terminology.md        # Canonical definitions (single source of truth)
 ├── storage.md            # .mdvs/, parquet schemas, mdvs.toml, mdvs.lock
+├── shared.md             # Shared output structs (DiscoveredField, etc.)
 ├── commands/             # One file per CLI command
 │   ├── init.md
 │   ├── build.md
@@ -30,6 +31,7 @@ docs/spec/
 
 - **Terminology** (`terminology.md`) — Canonical definitions, single source of truth for terms
 - **Storage** (`storage.md`) — Parquet schemas, config file formats, directory layout
+- **Shared types** (`shared.md`) — Output structs used by multiple commands
 - **Command specs** (`commands/*.md`) — One per CLI command: inputs, behavior, output struct, errors
 - **Workflows** (`workflows/*.md`) — Cross-cutting logic used by multiple commands
 
