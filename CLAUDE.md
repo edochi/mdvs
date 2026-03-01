@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-mdvs (Markdown Directory Vector Search) is a Rust CLI for semantic search over directories of markdown files. Single binary, no external services, instant embeddings via Model2Vec static models, DataFusion + Parquet for storage and vector search. v0.1 (MVP) and v0.2 (workspace + mfv) are complete. Currently implementing v0.3 (usable mdvs CLI). README.md is the full design spec.
+mdvs (Markdown Directory Vector Search) is a Rust CLI for semantic search over directories of markdown files. Single binary, no external services, instant embeddings via Model2Vec static models, DataFusion + Parquet for storage and vector search. Design specs live in `docs/spec/`.
 
 ## Build Commands
 
@@ -21,7 +21,7 @@ cargo fmt                # format
 Single crate at the repo root. Modules grouped by pipeline stage:
 
 - **`src/discover/`** — `scan.rs` (walk + parse YAML), `field_type.rs` (FieldType enum + widening), `infer.rs` (DirectoryTree + GlobMap + InferredSchema)
-- **`src/schema/`** — `shared.rs` (common types), `config.rs` (mdvs.toml), `lock.rs` (mdvs.lock)
+- **`src/schema/`** — `shared.rs` (common types), `config.rs` (mdvs.toml)
 - **`src/index/`** — `chunk.rs` (semantic chunking), `embed.rs` (model2vec embeddings), `storage.rs` (Parquet I/O)
 - **`src/search.rs`** — cosine distance + DataFusion query
 - **`src/cmd/`** — `init`, `build`, `search`, `check`, `update`, `clean`, `info`
@@ -32,33 +32,41 @@ Single crate at the repo root. Modules grouped by pipeline stage:
 
 ### Key Design Decisions
 
-- Config-driven frontmatter fields: all frontmatter stored as native Arrow Struct column, no dynamic SQL columns. No interactive prompts.
-- Incremental indexing via content hashing in `mdvs.lock` (only re-process changed files)
-- Model identity tracking in `mdvs.lock [build]`: hard error on model ID/dimension mismatch, warning on revision mismatch for search, hard error for build
+- Two layers: validation (init/update/check — no model needed) and search (build/search — model + parquets)
+- Config-driven frontmatter fields: all frontmatter stored as native Arrow Struct column (`data`), no dynamic SQL columns. No interactive prompts.
+- No lock file — `mdvs.toml` is the complete source of truth for validation. Build metadata stored in parquet native key-value metadata.
+- Build includes check internally — validates before embedding, aborts on violations
+- Model identity tracking in parquet metadata: hard error on model/revision mismatch for both search and build
 - Note-level ranking uses max chunk similarity across chunks (not average)
-- SQL WHERE clauses for metadata filtering (no custom filter syntax)
+- `--where` SQL clauses for metadata filtering (no custom filter syntax)
+- `--output` global flag (`human`/`json`) via `CommandOutput` trait
 - All text processing and vector math in Rust; DataFusion handles SQL query execution
 
 ### Storage
 
-- Directory: `.mdvs/` at root of target directory
-- Two Parquet files: `files.parquet` (file_id UUID, filename, frontmatter JSON, content_hash, built_at), `chunks.parquet` (chunk_id UUID, file_id FK, chunk_index, start_line, end_line, embedding FixedSizeList<Float32>)
-- Lock file: `mdvs.lock` (mirrors config + content hashes + build metadata)
+- Two artifacts: `mdvs.toml` (committed) + `.mdvs/` (gitignored)
+- `files.parquet`: file_id, filename, frontmatter as `data` Struct column, content_hash, built_at
+- `chunks.parquet`: chunk_id, file_id FK, chunk_index, start_line, end_line, embedding FixedSizeList<Float32>
+- Build metadata (model, revision, chunk_size, glob, built_at) stored as parquet native key-value metadata
 
-### Configuration Files
+### Configuration
 
-- **`mdvs.toml`** — config (boundaries): field schema + search-specific sections (model, chunk size, storage, search defaults)
-- **`mdvs.lock`** — lock (observed state): raw file lists per field, content hashes, build metadata
+`mdvs.toml` sections: `[scan]`, `[embedding_model]`, `[chunking]`, `[update]`, `[search]`, `[fields]` + `[[fields.field]]`
+
+- Validation sections (`[scan]`, `[update]`, `[fields]`): always present
+- Build sections (`[embedding_model]`, `[chunking]`, `[search]`): added by `init --auto-build` or by `build`
 
 ### Commands
 
-- `init [path]` — discover fields, configure model, write `mdvs.toml` + `mdvs.lock`
-- `build` — build or rebuild the search index in `.mdvs/`
-- `search <query>` — search the index
-- `check` — validate files against schema
-- `update` — re-scan and refresh lock file
-- `clean` — remove the `.mdvs/` directory
-- `info` — show index info (model, file count, staleness)
+- `init [path]` — scan, infer schema, write `mdvs.toml`, optionally build
+- `check [path]` — validate frontmatter against schema (read-only)
+- `update [path]` — re-scan, infer new fields, update `mdvs.toml`
+- `build [path]` — check + embed + write Parquets to `.mdvs/`
+- `search <query> [path]` — query the index
+- `info [path]` — show config and index status
+- `clean [path]` — delete `.mdvs/` (deferred)
+
+See `docs/spec/commands/` for detailed specs.
 
 ## Key Dependencies
 
@@ -67,12 +75,8 @@ Single crate at the repo root. Modules grouped by pipeline stage:
 | `datafusion` | SQL query engine on Arrow arrays |
 | `parquet` / `arrow` | Columnar storage and in-memory format |
 | `model2vec-rs` | Static embedding inference (POTION models, no GPU) |
-| `gray_matter` | YAML/TOML/JSON frontmatter extraction |
+| `gray_matter` | YAML frontmatter extraction |
 | `text-splitter` (markdown) | Semantic chunking |
 | `pulldown-cmark` | Markdown → plain text |
 | `clap` | CLI parsing |
 | `tokio` | Async runtime (required by DataFusion) |
-
-## Release Plan
-
-v0.1 (single-file MVP) ✅ → v0.2 (workspace + mfv standalone) ✅ → **v0.3 (usable mdvs CLI)** → v0.4 (polish: similar, query, export) → v0.5 (integration: JSON output, MCP server). See README.md for detailed task lists per version.
