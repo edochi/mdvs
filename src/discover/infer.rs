@@ -429,7 +429,7 @@ mod tests {
         let scanned = ScannedFiles {
             files: vec![
                 sf("a.md", Some(serde_json::json!({"val": 42})), ""),
-                sf("b.md", Some(serde_json::json!({"val": 3.14})), ""),
+                sf("b.md", Some(serde_json::json!({"val": 2.72})), ""),
             ],
         };
         let schema = InferredSchema::infer(&scanned);
@@ -674,7 +674,7 @@ mod tests {
         let scanned = ScannedFiles {
             files: vec![
                 sf("a.md", Some(serde_json::json!({"val": 42})), ""),
-                sf("b.md", Some(serde_json::json!({"val": 3.14})), ""),
+                sf("b.md", Some(serde_json::json!({"val": 2.72})), ""),
                 sf("c.md", Some(serde_json::json!({"val": "hello"})), ""),
             ],
         };
