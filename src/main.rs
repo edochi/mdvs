@@ -41,9 +41,9 @@ enum Command {
         /// Maximum chunk size in characters [default: 1024]
         #[arg(long)]
         chunk_size: Option<usize>,
-        /// Automatically build index after init
-        #[arg(long, default_value = "true")]
-        auto_build: bool,
+        /// Skip building the search index after init
+        #[arg(long)]
+        suppress_auto_build: bool,
         /// Do not read .gitignore patterns during scan
         #[arg(long)]
         skip_gitignore: bool,
@@ -111,7 +111,7 @@ async fn main() -> anyhow::Result<()> {
             dry_run,
             ignore_bare_files,
             chunk_size,
-            auto_build,
+            suppress_auto_build,
             skip_gitignore,
         } => {
             let result = mdvs::cmd::init::run(
@@ -123,7 +123,7 @@ async fn main() -> anyhow::Result<()> {
                 dry_run,
                 ignore_bare_files,
                 chunk_size,
-                auto_build,
+                !suppress_auto_build,
                 skip_gitignore,
             )?;
             result.print(&cli.output);
