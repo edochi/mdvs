@@ -60,13 +60,13 @@ impl TryFrom<&FieldTypeSerde> for FieldType {
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
-pub struct TomlConfig {
+pub struct ScanConfig {
     pub glob: String,
     pub include_bare_files: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
-pub struct ModelInfo {
+pub struct EmbeddingModelConfig {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub revision: Option<String>,
@@ -219,10 +219,10 @@ mod tests {
     fn model_info_roundtrip() {
         #[derive(Debug, Serialize, Deserialize, PartialEq)]
         struct Wrapper {
-            model: ModelInfo,
+            model: EmbeddingModelConfig,
         }
         let w = Wrapper {
-            model: ModelInfo {
+            model: EmbeddingModelConfig {
                 name: "minishlab/potion-base-8M".into(),
                 revision: Some("abc123".into()),
             },
@@ -236,10 +236,10 @@ mod tests {
     fn model_info_no_revision() {
         #[derive(Debug, Serialize, Deserialize, PartialEq)]
         struct Wrapper {
-            model: ModelInfo,
+            model: EmbeddingModelConfig,
         }
         let w = Wrapper {
-            model: ModelInfo {
+            model: EmbeddingModelConfig {
                 name: "minishlab/potion-base-8M".into(),
                 revision: None,
             },

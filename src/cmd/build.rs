@@ -1,3 +1,4 @@
+use anyhow::Context;
 use crate::discover::field_type::FieldType;
 use crate::discover::scan::ScannedFiles;
 use crate::index::chunk::{extract_plain_text, Chunks};
@@ -18,12 +19,16 @@ pub fn run(path: &Path) -> anyhow::Result<()> {
 
     // Read config
     let config = MdvsToml::read(&config_path)?;
+    let embedding = config.embedding_model.as_ref()
+        .context("missing [embedding_model] in mdvs.toml (run `mdvs init --auto-build` or add it manually)")?;
+    let chunking = config.chunking.as_ref()
+        .context("missing [chunking] in mdvs.toml (run `mdvs init --auto-build` or add it manually)")?;
 
     // Load model
-    eprintln!("Loading model {}...", config.model.name);
+    eprintln!("Loading model {}...", embedding.name);
     let model_config = ModelConfig::Model2Vec {
-        model_id: config.model.name.clone(),
-        revision: config.model.revision.clone(),
+        model_id: embedding.name.clone(),
+        revision: embedding.revision.clone(),
     };
     let embedder = Embedder::load(&model_config);
     let dimension = embedder.dimension();
@@ -46,6 +51,7 @@ pub fn run(path: &Path) -> anyhow::Result<()> {
     // Convert schema fields
     let schema_fields: Vec<(String, FieldType)> = config
         .fields
+        .field
         .iter()
         .map(|f| {
             let ft = FieldType::try_from(&f.field_type)
@@ -57,8 +63,8 @@ pub fn run(path: &Path) -> anyhow::Result<()> {
     // Scan files
     let scanned = ScannedFiles::scan(
         path,
-        &config.config.glob,
-        config.config.include_bare_files,
+        &config.scan.glob,
+        config.scan.include_bare_files,
     );
 
     anyhow::ensure!(
@@ -67,7 +73,7 @@ pub fn run(path: &Path) -> anyhow::Result<()> {
         path.display()
     );
 
-    let max_chunk_size = config.chunking.max_chunk_size;
+    let max_chunk_size = chunking.max_chunk_size;
     let built_at = chrono::Utc::now().timestamp_micros();
 
     let mut file_rows: Vec<FileRow> = Vec::new();

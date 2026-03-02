@@ -259,9 +259,9 @@ mod tests {
 
         // Verify config contents
         let toml_doc = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
-        assert_eq!(toml_doc.config.glob, "**");
-        assert!(!toml_doc.config.include_bare_files);
-        assert_eq!(toml_doc.model.name, model);
-        assert!(!toml_doc.fields.is_empty());
+        assert_eq!(toml_doc.scan.glob, "**");
+        assert!(!toml_doc.scan.include_bare_files);
+        assert_eq!(toml_doc.embedding_model.as_ref().unwrap().name, model);
+        assert!(!toml_doc.fields.field.is_empty());
     }
 }

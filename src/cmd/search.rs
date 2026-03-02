@@ -1,3 +1,4 @@
+use anyhow::Context;
 use crate::index::embed::{Embedder, ModelConfig};
 use crate::schema::config::MdvsToml;
 use crate::search::SearchContext;
@@ -16,6 +17,8 @@ pub async fn run(
 
     // Read config
     let config = MdvsToml::read(&config_path)?;
+    let embedding = config.embedding_model.as_ref()
+        .context("missing [embedding_model] in mdvs.toml (run `mdvs build` first)")?;
 
     // Index existence check (before loading model to fail fast)
     anyhow::ensure!(
@@ -30,10 +33,10 @@ pub async fn run(
     );
 
     // Load model
-    eprintln!("Loading model {}...", config.model.name);
+    eprintln!("Loading model {}...", embedding.name);
     let model_config = ModelConfig::Model2Vec {
-        model_id: config.model.name.clone(),
-        revision: config.model.revision.clone(),
+        model_id: embedding.name.clone(),
+        revision: embedding.revision.clone(),
     };
     let embedder = Embedder::load(&model_config);
 
@@ -87,8 +90,8 @@ pub async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::config::{OnError, WorkflowConfig};
-    use crate::schema::shared::{ChunkingConfig, ModelInfo, TomlConfig};
+    use crate::schema::config::{FieldsConfig, SearchConfig, UpdateConfig};
+    use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig, ScanConfig};
     use std::fs;
 
     fn create_test_vault(dir: &Path) {
@@ -110,22 +113,23 @@ mod tests {
 
     fn write_config(dir: &Path, model_name: &str) {
         let config = MdvsToml {
-            config: TomlConfig {
+            scan: ScanConfig {
                 glob: "**".into(),
                 include_bare_files: false,
             },
-            model: ModelInfo {
+            update: UpdateConfig { auto_build: true },
+            fields: FieldsConfig {
+                ignore: vec![],
+                field: vec![],
+            },
+            embedding_model: Some(EmbeddingModelConfig {
                 name: model_name.into(),
                 revision: None,
-            },
-            chunking: ChunkingConfig {
+            }),
+            chunking: Some(ChunkingConfig {
                 max_chunk_size: 1024,
-            },
-            workflow: WorkflowConfig {
-                auto_build: true,
-                on_error: OnError::Fail,
-            },
-            fields: vec![],
+            }),
+            search: Some(SearchConfig { default_limit: 10 }),
         };
         config.write(&dir.join("mdvs.toml")).unwrap();
     }
@@ -182,9 +186,10 @@ mod tests {
 
         // Capture output by running the SQL directly
         let config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
+        let embedding = config.embedding_model.as_ref().unwrap();
         let model_config = ModelConfig::Model2Vec {
-            model_id: config.model.name.clone(),
-            revision: config.model.revision.clone(),
+            model_id: embedding.name.clone(),
+            revision: embedding.revision.clone(),
         };
         let embedder = Embedder::load(&model_config);
         let query_embedding = embedder.embed("rust programming");
@@ -216,9 +221,10 @@ mod tests {
         init_and_build(tmp.path());
 
         let config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
+        let embedding = config.embedding_model.as_ref().unwrap();
         let model_config = ModelConfig::Model2Vec {
-            model_id: config.model.name.clone(),
-            revision: config.model.revision.clone(),
+            model_id: embedding.name.clone(),
+            revision: embedding.revision.clone(),
         };
         let embedder = Embedder::load(&model_config);
         let query_embedding = embedder.embed("cooking recipes");
