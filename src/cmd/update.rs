@@ -79,7 +79,7 @@ impl CommandOutput for UpdateResult {
     }
 }
 
-pub fn run(
+pub async fn run(
     path: &Path,
     reinfer: &[String],
     reinfer_all: bool,
@@ -203,7 +203,7 @@ pub fn run(
     config.write(&config_path)?;
 
     if should_build {
-        crate::cmd::build::run(path, None, None, None, false)?;
+        crate::cmd::build::run(path, None, None, None, false).await?;
     }
 
     Ok(result)
@@ -232,7 +232,7 @@ mod tests {
         .unwrap();
     }
 
-    fn init_no_build(dir: &Path) {
+    async fn init_no_build(dir: &Path) {
         crate::cmd::init::run(
             dir,
             None,
@@ -245,27 +245,28 @@ mod tests {
             false, // no auto_build
             false, // skip_gitignore
         )
+        .await
         .unwrap();
     }
 
-    #[test]
-    fn no_changes() {
+    #[tokio::test]
+    async fn no_changes() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
-        init_no_build(tmp.path());
+        init_no_build(tmp.path()).await;
 
-        let result = run(tmp.path(), &[], false, Some(false), false).unwrap();
+        let result = run(tmp.path(), &[], false, Some(false), false).await.unwrap();
 
         assert!(!result.has_changes());
         assert_eq!(result.files_scanned, 2);
         assert_eq!(result.unchanged, 3); // title, tags, draft
     }
 
-    #[test]
-    fn new_fields_discovered() {
+    #[tokio::test]
+    async fn new_fields_discovered() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
-        init_no_build(tmp.path());
+        init_no_build(tmp.path()).await;
 
         // Add a file with a new field
         fs::write(
@@ -274,7 +275,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = run(tmp.path(), &[], false, Some(false), false).unwrap();
+        let result = run(tmp.path(), &[], false, Some(false), false).await.unwrap();
 
         assert_eq!(result.added.len(), 1);
         assert_eq!(result.added[0].name, "author");
@@ -290,11 +291,11 @@ mod tests {
         assert!(toml.fields.field.iter().any(|f| f.name == "author"));
     }
 
-    #[test]
-    fn reinfer_changes_type() {
+    #[tokio::test]
+    async fn reinfer_changes_type() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
-        init_no_build(tmp.path());
+        init_no_build(tmp.path()).await;
 
         // Replace files so tags becomes a string instead of array
         fs::write(
@@ -310,6 +311,7 @@ mod tests {
             Some(false),
             false,
         )
+        .await
         .unwrap();
 
         assert_eq!(result.changed.len(), 1);
@@ -319,11 +321,11 @@ mod tests {
         assert!(result.removed.is_empty());
     }
 
-    #[test]
-    fn reinfer_removes_disappeared() {
+    #[tokio::test]
+    async fn reinfer_removes_disappeared() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
-        init_no_build(tmp.path());
+        init_no_build(tmp.path()).await;
 
         // Remove tags from all files
         fs::write(
@@ -339,6 +341,7 @@ mod tests {
             Some(false),
             false,
         )
+        .await
         .unwrap();
 
         assert_eq!(result.removed, vec!["tags"]);
@@ -350,11 +353,11 @@ mod tests {
         assert!(!toml.fields.field.iter().any(|f| f.name == "tags"));
     }
 
-    #[test]
-    fn reinfer_unknown_field_errors() {
+    #[tokio::test]
+    async fn reinfer_unknown_field_errors() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
-        init_no_build(tmp.path());
+        init_no_build(tmp.path()).await;
 
         let result = run(
             tmp.path(),
@@ -362,18 +365,19 @@ mod tests {
             false,
             Some(false),
             false,
-        );
+        )
+        .await;
 
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("field 'nonexistent' is not in mdvs.toml"));
     }
 
-    #[test]
-    fn reinfer_and_reinfer_all_conflict() {
+    #[tokio::test]
+    async fn reinfer_and_reinfer_all_conflict() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
-        init_no_build(tmp.path());
+        init_no_build(tmp.path()).await;
 
         let result = run(
             tmp.path(),
@@ -381,22 +385,23 @@ mod tests {
             true, // reinfer_all
             Some(false),
             false,
-        );
+        )
+        .await;
 
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("cannot use --reinfer and --reinfer-all together"));
     }
 
-    #[test]
-    fn reinfer_all_preserves_config() {
+    #[tokio::test]
+    async fn reinfer_all_preserves_config() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
-        init_no_build(tmp.path());
+        init_no_build(tmp.path()).await;
 
         let toml_before = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
 
-        let result = run(tmp.path(), &[], true, Some(false), false).unwrap();
+        let result = run(tmp.path(), &[], true, Some(false), false).await.unwrap();
 
         // All fields are re-inferred with same types → unchanged
         assert_eq!(result.unchanged, 3);
@@ -413,11 +418,11 @@ mod tests {
         assert_eq!(toml_before.search, toml_after.search);
     }
 
-    #[test]
-    fn dry_run_writes_nothing() {
+    #[tokio::test]
+    async fn dry_run_writes_nothing() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
-        init_no_build(tmp.path());
+        init_no_build(tmp.path()).await;
 
         // Add a new file
         fs::write(
@@ -428,7 +433,7 @@ mod tests {
 
         let toml_before = fs::read_to_string(tmp.path().join("mdvs.toml")).unwrap();
 
-        let result = run(tmp.path(), &[], false, Some(false), true).unwrap();
+        let result = run(tmp.path(), &[], false, Some(false), true).await.unwrap();
 
         assert!(result.dry_run);
         assert_eq!(result.added.len(), 1);
@@ -438,8 +443,8 @@ mod tests {
         assert_eq!(toml_before, toml_after);
     }
 
-    #[test]
-    fn build_override_false() {
+    #[tokio::test]
+    async fn build_override_false() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
@@ -456,6 +461,7 @@ mod tests {
             false, // no auto_build for init
             false, // skip_gitignore
         )
+        .await
         .unwrap();
 
         // Add a new field
@@ -466,17 +472,17 @@ mod tests {
         .unwrap();
 
         // --build false should skip build even if auto_build is true in toml
-        let result = run(tmp.path(), &[], false, Some(false), false).unwrap();
+        let result = run(tmp.path(), &[], false, Some(false), false).await.unwrap();
 
         assert!(!result.auto_build);
         assert!(!tmp.path().join(".mdvs").exists());
     }
 
-    #[test]
-    fn disappearing_field_stays_in_default_mode() {
+    #[tokio::test]
+    async fn disappearing_field_stays_in_default_mode() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
-        init_no_build(tmp.path());
+        init_no_build(tmp.path()).await;
 
         // Remove tags from all files
         fs::write(
@@ -486,7 +492,7 @@ mod tests {
         .unwrap();
 
         // Default mode: tags should stay in toml even though it disappeared
-        let result = run(tmp.path(), &[], false, Some(false), false).unwrap();
+        let result = run(tmp.path(), &[], false, Some(false), false).await.unwrap();
 
         assert!(!result.has_changes());
 

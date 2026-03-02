@@ -54,6 +54,10 @@ pub struct BuildMetadata {
 impl BuildMetadata {
     pub fn to_hash_map(&self) -> HashMap<String, String> {
         let mut m = HashMap::new();
+        m.insert(
+            "mdvs.provider".into(),
+            self.embedding_model.provider.clone(),
+        );
         m.insert("mdvs.model".into(), self.embedding_model.name.clone());
         if let Some(ref r) = self.embedding_model.revision {
             m.insert("mdvs.revision".into(), r.clone());
@@ -70,6 +74,10 @@ impl BuildMetadata {
     pub fn from_hash_map(meta: &HashMap<String, String>) -> Option<Self> {
         Some(Self {
             embedding_model: EmbeddingModelConfig {
+                provider: meta
+                    .get("mdvs.provider")
+                    .cloned()
+                    .unwrap_or_else(|| "model2vec".to_string()),
                 name: meta.get("mdvs.model")?.clone(),
                 revision: meta.get("mdvs.revision").cloned(),
             },
@@ -673,6 +681,7 @@ mod tests {
 
         let meta = BuildMetadata {
             embedding_model: EmbeddingModelConfig {
+                provider: "model2vec".into(),
                 name: "minishlab/potion-base-8M".into(),
                 revision: Some("abc123".into()),
             },
@@ -705,6 +714,7 @@ mod tests {
 
         let meta = BuildMetadata {
             embedding_model: EmbeddingModelConfig {
+                provider: "model2vec".into(),
                 name: "minishlab/potion-base-8M".into(),
                 revision: None,
             },

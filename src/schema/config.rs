@@ -56,6 +56,7 @@ impl MdvsToml {
         let (embedding_model, chunking, search) = if auto_build {
             (
                 Some(EmbeddingModelConfig {
+                    provider: "model2vec".to_string(),
                     name: model_name.to_string(),
                     revision: model_revision.map(|s| s.to_string()),
                 }),
@@ -127,6 +128,7 @@ mod tests {
                 field: fields,
             },
             embedding_model: Some(EmbeddingModelConfig {
+                provider: "model2vec".into(),
                 name: "minishlab/potion-base-8M".into(),
                 revision: None,
             }),
@@ -183,6 +185,7 @@ mod tests {
                 ],
             },
             embedding_model: Some(EmbeddingModelConfig {
+                provider: "model2vec".into(),
                 name: "minishlab/potion-base-8M".into(),
                 revision: Some("abc123".into()),
             }),

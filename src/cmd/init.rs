@@ -70,7 +70,7 @@ const DEFAULT_MODEL: &str = "minishlab/potion-base-8M";
 const DEFAULT_CHUNK_SIZE: usize = 1024;
 
 #[allow(clippy::too_many_arguments)]
-pub fn run(
+pub async fn run(
     path: &Path,
     model: Option<&str>,
     revision: Option<&str>,
@@ -158,7 +158,7 @@ pub fn run(
     toml_doc.write(&config_path)?;
 
     if auto_build {
-        crate::cmd::build::run(path, None, None, None, false)?;
+        crate::cmd::build::run(path, None, None, None, false).await?;
     }
 
     Ok(result)
@@ -192,8 +192,8 @@ mod tests {
         .unwrap();
     }
 
-    #[test]
-    fn dry_run_writes_nothing() {
+    #[tokio::test]
+    async fn dry_run_writes_nothing() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
@@ -208,7 +208,8 @@ mod tests {
             None,
             true,  // auto_build
             false, // skip_gitignore
-        );
+        )
+        .await;
 
         let result = result.unwrap();
         assert!(result.dry_run);
@@ -216,8 +217,8 @@ mod tests {
         assert!(!tmp.path().join(".mdvs").exists());
     }
 
-    #[test]
-    fn dry_run_result_fields() {
+    #[tokio::test]
+    async fn dry_run_result_fields() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
@@ -233,6 +234,7 @@ mod tests {
             false, // no auto_build
             false, // skip_gitignore
         )
+        .await
         .unwrap();
 
         assert_eq!(result.files_scanned, 2); // bare.md excluded
@@ -247,8 +249,8 @@ mod tests {
         assert_eq!(title.total_files, 2);
     }
 
-    #[test]
-    fn existing_config_no_force() {
+    #[tokio::test]
+    async fn existing_config_no_force() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
         fs::write(tmp.path().join("mdvs.toml"), "existing").unwrap();
@@ -264,7 +266,8 @@ mod tests {
             None,
             true,
             false, // skip_gitignore
-        );
+        )
+        .await;
 
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
@@ -272,8 +275,8 @@ mod tests {
         assert!(err.contains("--force"));
     }
 
-    #[test]
-    fn existing_config_with_force() {
+    #[tokio::test]
+    async fn existing_config_with_force() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
         fs::write(tmp.path().join("mdvs.toml"), "existing").unwrap();
@@ -290,13 +293,14 @@ mod tests {
             None,
             true,
             false, // skip_gitignore
-        );
+        )
+        .await;
 
         assert!(result.is_ok());
     }
 
-    #[test]
-    fn no_markdown_files() {
+    #[tokio::test]
+    async fn no_markdown_files() {
         let tmp = tempfile::tempdir().unwrap();
         // empty directory, no .md files
 
@@ -311,15 +315,16 @@ mod tests {
             None,
             true,
             false, // skip_gitignore
-        );
+        )
+        .await;
 
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("no markdown files"));
     }
 
-    #[test]
-    fn flag_validation_model_without_auto_build() {
+    #[tokio::test]
+    async fn flag_validation_model_without_auto_build() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
@@ -334,15 +339,16 @@ mod tests {
             None,
             false, // no auto_build
             false, // skip_gitignore
-        );
+        )
+        .await;
 
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("--model has no effect without --auto-build"));
     }
 
-    #[test]
-    fn flag_validation_revision_without_auto_build() {
+    #[tokio::test]
+    async fn flag_validation_revision_without_auto_build() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
@@ -357,15 +363,16 @@ mod tests {
             None,
             false,
             false, // skip_gitignore
-        );
+        )
+        .await;
 
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("--revision has no effect without --auto-build"));
     }
 
-    #[test]
-    fn flag_validation_chunk_size_without_auto_build() {
+    #[tokio::test]
+    async fn flag_validation_chunk_size_without_auto_build() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
@@ -380,15 +387,16 @@ mod tests {
             Some(512),
             false,
             false, // skip_gitignore
-        );
+        )
+        .await;
 
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("--chunk-size has no effect without --auto-build"));
     }
 
-    #[test]
-    fn no_auto_build_skips_build() {
+    #[tokio::test]
+    async fn no_auto_build_skips_build() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
@@ -404,6 +412,7 @@ mod tests {
             false, // no auto_build
             false, // skip_gitignore
         )
+        .await
         .unwrap();
 
         // Config written, but no .mdvs/ directory
@@ -418,8 +427,8 @@ mod tests {
         assert!(toml_doc.search.is_none());
     }
 
-    #[test]
-    fn end_to_end() {
+    #[tokio::test]
+    async fn end_to_end() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
@@ -435,7 +444,8 @@ mod tests {
             None,
             true,  // auto_build
             false, // skip_gitignore
-        );
+        )
+        .await;
 
         let result = result.unwrap();
         assert!(result.auto_build);

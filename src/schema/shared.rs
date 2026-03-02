@@ -69,9 +69,15 @@ pub struct ScanConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EmbeddingModelConfig {
+    #[serde(default = "default_provider")]
+    pub provider: String,
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub revision: Option<String>,
+}
+
+fn default_provider() -> String {
+    "model2vec".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -225,6 +231,7 @@ mod tests {
         }
         let w = Wrapper {
             model: EmbeddingModelConfig {
+                provider: "model2vec".into(),
                 name: "minishlab/potion-base-8M".into(),
                 revision: Some("abc123".into()),
             },
@@ -242,6 +249,7 @@ mod tests {
         }
         let w = Wrapper {
             model: EmbeddingModelConfig {
+                provider: "model2vec".into(),
                 name: "minishlab/potion-base-8M".into(),
                 revision: None,
             },

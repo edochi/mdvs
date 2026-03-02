@@ -145,7 +145,7 @@ async fn main() -> anyhow::Result<()> {
                 chunk_size,
                 !suppress_auto_build,
                 skip_gitignore,
-            )?;
+            ).await?;
             result.print(&cli.output);
             Ok(())
         }
@@ -161,7 +161,7 @@ async fn main() -> anyhow::Result<()> {
             set_revision.as_deref(),
             set_chunk_size,
             force,
-        ),
+        ).await,
         Command::Search {
             query,
             path,
@@ -186,7 +186,7 @@ async fn main() -> anyhow::Result<()> {
             dry_run,
         } => {
             let result =
-                mdvs::cmd::update::run(&path, &reinfer, reinfer_all, build, dry_run)?;
+                mdvs::cmd::update::run(&path, &reinfer, reinfer_all, build, dry_run).await?;
             result.print(&cli.output);
             Ok(())
         }

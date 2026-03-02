@@ -1,3 +1,4 @@
+use crate::schema::shared::EmbeddingModelConfig;
 use model2vec_rs::model::StaticModel;
 use std::fs;
 use std::path::PathBuf;
@@ -8,6 +9,20 @@ pub enum ModelConfig {
         model_id: String,
         revision: Option<String>,
     },
+}
+
+impl TryFrom<&EmbeddingModelConfig> for ModelConfig {
+    type Error = anyhow::Error;
+
+    fn try_from(config: &EmbeddingModelConfig) -> anyhow::Result<Self> {
+        match config.provider.as_str() {
+            "model2vec" => Ok(ModelConfig::Model2Vec {
+                model_id: config.name.clone(),
+                revision: config.revision.clone(),
+            }),
+            other => anyhow::bail!("unsupported embedding provider: '{other}'"),
+        }
+    }
 }
 
 pub enum Embedder {
@@ -36,13 +51,13 @@ impl Embedder {
         }
     }
 
-    pub fn embed(&self, text: &str) -> Vec<f32> {
+    pub async fn embed(&self, text: &str) -> Vec<f32> {
         match self {
             Embedder::Model2Vec(model) => model.encode_single(text),
         }
     }
 
-    pub fn embed_batch(&self, texts: &[&str]) -> Vec<Vec<f32>> {
+    pub async fn embed_batch(&self, texts: &[&str]) -> Vec<Vec<f32>> {
         match self {
             Embedder::Model2Vec(model) => {
                 let owned: Vec<String> = texts.iter().map(|s| s.to_string()).collect();
@@ -108,8 +123,8 @@ mod tests {
         assert!(!rev.unwrap().is_empty());
     }
 
-    #[test]
-    fn load_with_pinned_revision() {
+    #[tokio::test]
+    async fn load_with_pinned_revision() {
         let embedder = test_embedder();
         let rev = resolve_revision(TEST_MODEL).unwrap();
         let pinned_config = ModelConfig::Model2Vec {
@@ -117,8 +132,8 @@ mod tests {
             revision: Some(rev),
         };
         let pinned_embedder = Embedder::load(&pinned_config);
-        let a = embedder.embed("test");
-        let b = pinned_embedder.embed("test");
+        let a = embedder.embed("test").await;
+        let b = pinned_embedder.embed("test").await;
         assert_eq!(a, b);
     }
 
@@ -129,47 +144,47 @@ mod tests {
         assert!(dim > 0);
     }
 
-    #[test]
-    fn single_embedding() {
+    #[tokio::test]
+    async fn single_embedding() {
         let embedder = test_embedder();
-        let emb = embedder.embed("Hello world");
+        let emb = embedder.embed("Hello world").await;
         assert_eq!(emb.len(), embedder.dimension());
         assert!(emb.iter().any(|&v| v != 0.0));
     }
 
-    #[test]
-    fn batch_embedding() {
+    #[tokio::test]
+    async fn batch_embedding() {
         let embedder = test_embedder();
         let texts = &["First chunk", "Second chunk", "Third chunk"];
-        let embeddings = embedder.embed_batch(texts);
+        let embeddings = embedder.embed_batch(texts).await;
         assert_eq!(embeddings.len(), 3);
         for emb in &embeddings {
             assert_eq!(emb.len(), embedder.dimension());
         }
     }
 
-    #[test]
-    fn deterministic() {
+    #[tokio::test]
+    async fn deterministic() {
         let embedder = test_embedder();
-        let a = embedder.embed("same text");
-        let b = embedder.embed("same text");
+        let a = embedder.embed("same text").await;
+        let b = embedder.embed("same text").await;
         assert_eq!(a, b);
     }
 
-    #[test]
-    fn different_texts_different_embeddings() {
+    #[tokio::test]
+    async fn different_texts_different_embeddings() {
         let embedder = test_embedder();
-        let a = embedder.embed("cats are great");
-        let b = embedder.embed("quantum computing theory");
+        let a = embedder.embed("cats are great").await;
+        let b = embedder.embed("quantum computing theory").await;
         assert_ne!(a, b);
     }
 
-    #[test]
-    fn similar_texts_higher_cosine() {
+    #[tokio::test]
+    async fn similar_texts_higher_cosine() {
         let embedder = test_embedder();
-        let query = embedder.embed("rust programming language");
-        let similar = embedder.embed("writing code in rust");
-        let dissimilar = embedder.embed("chocolate cake recipe");
+        let query = embedder.embed("rust programming language").await;
+        let similar = embedder.embed("writing code in rust").await;
+        let dissimilar = embedder.embed("chocolate cake recipe").await;
 
         let sim_score = cosine_similarity(&query, &similar);
         let dis_score = cosine_similarity(&query, &dissimilar);
@@ -179,20 +194,20 @@ mod tests {
         );
     }
 
-    #[test]
-    fn empty_string_embedding() {
+    #[tokio::test]
+    async fn empty_string_embedding() {
         let embedder = test_embedder();
-        let emb = embedder.embed("");
+        let emb = embedder.embed("").await;
         assert_eq!(emb.len(), embedder.dimension());
     }
 
-    #[test]
-    fn batch_matches_individual() {
+    #[tokio::test]
+    async fn batch_matches_individual() {
         let embedder = test_embedder();
         let texts = &["alpha", "beta"];
-        let batch = embedder.embed_batch(texts);
-        let individual_a = embedder.embed("alpha");
-        let individual_b = embedder.embed("beta");
+        let batch = embedder.embed_batch(texts).await;
+        let individual_a = embedder.embed("alpha").await;
+        let individual_b = embedder.embed("beta").await;
         assert_eq!(batch[0], individual_a);
         assert_eq!(batch[1], individual_b);
     }
