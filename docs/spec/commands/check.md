@@ -108,7 +108,9 @@ Run 'mdvs update' to incorporate new fields.
 | WrongType        | Value type doesn't match declared type                       | `tags: type String[]`                             |
 | Disallowed       | File has the field but path doesn't match any `allowed` glob | `draft: allowed in ["blog/**"]`                   |
 
-**Type leniency:** an integer value in a float field is not a violation.
+**Type leniency rules:**
+- **String is the top type** — a String-typed field accepts any value (boolean, integer, array, object, etc.). This is consistent with the widening hierarchy where incompatible types collapse to String.
+- **Int-in-float** — an integer value in a Float field is not a violation.
 
 ---
 

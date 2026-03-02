@@ -144,7 +144,7 @@ This is a **settled decision** — no further format discussion needed.
 
 | Type name   | Example TOML                  | Matches                       |
 |-------------|-------------------------------|-------------------------------|
-| `String`    | `type = "String"`             | Any YAML string value         |
+| `String`    | `type = "String"`             | Any value (top type)          |
 | `Boolean`   | `type = "Boolean"`            | `true` / `false`              |
 | `Integer`   | `type = "Integer"`            | Whole numbers (i64/u64)       |
 | `Float`     | `type = "Float"`              | Any number (int-in-float OK)  |
@@ -205,7 +205,7 @@ A single field can appear in multiple `FieldViolation` entries if it violates di
 | Variant          | Meaning                                                        |
 |------------------|----------------------------------------------------------------|
 | MissingRequired  | File matches a `required` glob but doesn't have the field      |
-| WrongType        | Field value doesn't match declared type (int-in-float lenient) |
+| WrongType        | Field value doesn't match declared type (String accepts any value; int-in-float lenient) |
 | Disallowed       | File has the field but doesn't match any `allowed` glob        |
 
 ### ViolatingFile

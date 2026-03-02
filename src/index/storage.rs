@@ -112,7 +112,15 @@ fn build_array(values: &[Option<&Value>], ft: &FieldType) -> ArrayRef {
             Arc::new(arr)
         }
         FieldType::String => {
-            let arr: StringArray = values.iter().map(|v| v.and_then(|v| v.as_str())).collect();
+            let arr: StringArray = values
+                .iter()
+                .map(|v| {
+                    v.map(|v| match v {
+                        Value::String(s) => s.clone(),
+                        other => other.to_string(),
+                    })
+                })
+                .collect();
             Arc::new(arr)
         }
         FieldType::Array(inner) => {
@@ -409,6 +417,79 @@ mod tests {
         assert_eq!(row0_strs.value(0), "rust");
         assert_eq!(row0_strs.value(1), "arrow");
         assert!(tags.is_null(1));
+    }
+
+    #[test]
+    fn string_field_serializes_non_strings() {
+        let schema_fields = vec![("meta".into(), FieldType::String)];
+
+        let files = vec![
+            FileRow {
+                file_id: "id-1".into(),
+                filename: "a.md".into(),
+                frontmatter: Some(serde_json::json!({"meta": "plain text"})),
+                content_hash: "h1".into(),
+                built_at: 1_700_000_000_000_000,
+            },
+            FileRow {
+                file_id: "id-2".into(),
+                filename: "b.md".into(),
+                frontmatter: Some(serde_json::json!({"meta": ["a", "b"]})),
+                content_hash: "h2".into(),
+                built_at: 1_700_000_000_000_000,
+            },
+            FileRow {
+                file_id: "id-3".into(),
+                filename: "c.md".into(),
+                frontmatter: Some(serde_json::json!({"meta": {"k": "v"}})),
+                content_hash: "h3".into(),
+                built_at: 1_700_000_000_000_000,
+            },
+            FileRow {
+                file_id: "id-4".into(),
+                filename: "d.md".into(),
+                frontmatter: Some(serde_json::json!({"meta": true})),
+                content_hash: "h4".into(),
+                built_at: 1_700_000_000_000_000,
+            },
+            FileRow {
+                file_id: "id-5".into(),
+                filename: "e.md".into(),
+                frontmatter: Some(serde_json::json!({"meta": 42})),
+                content_hash: "h5".into(),
+                built_at: 1_700_000_000_000_000,
+            },
+        ];
+
+        let batch = build_files_batch(&schema_fields, &files);
+
+        let data = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+        let meta_col = data
+            .column_by_name("meta")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+
+        // Actual string preserved as-is
+        assert_eq!(meta_col.value(0), "plain text");
+        // Array serialized to JSON
+        assert_eq!(meta_col.value(1), r#"["a","b"]"#);
+        // Object serialized to JSON
+        assert_eq!(meta_col.value(2), r#"{"k":"v"}"#);
+        // Boolean serialized
+        assert_eq!(meta_col.value(3), "true");
+        // Number serialized
+        assert_eq!(meta_col.value(4), "42");
+
+        // No nulls — nothing dropped
+        for i in 0..5 {
+            assert!(!meta_col.is_null(i), "row {i} should not be null");
+        }
     }
 
     #[test]

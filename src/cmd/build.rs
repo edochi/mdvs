@@ -108,6 +108,29 @@ pub async fn run(
         }
     }
 
+    // Scan files
+    let scanned = ScannedFiles::scan(path, &config.scan);
+
+    anyhow::ensure!(
+        !scanned.files.is_empty(),
+        "no markdown files found in '{}'",
+        path.display()
+    );
+
+    // Validate frontmatter against schema (abort on violations)
+    let check_result = crate::cmd::check::validate(&scanned, &config)?;
+    if check_result.has_violations() {
+        let report = crate::output::CommandOutput::format_human(&check_result);
+        anyhow::bail!("{report}build aborted due to validation errors");
+    }
+    if !check_result.new_fields.is_empty() {
+        for nf in &check_result.new_fields {
+            let word = if nf.files_found == 1 { "file" } else { "files" };
+            eprintln!("  new field: {} ({} {word})", nf.name, nf.files_found);
+        }
+        eprintln!("Run 'mdvs update' to incorporate new fields.\n");
+    }
+
     // Load model
     eprintln!("Loading model {}...", embedding.name);
     let model_config = ModelConfig::try_from(embedding)?;
@@ -134,15 +157,6 @@ pub async fn run(
             Ok((f.name.clone(), ft))
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
-
-    // Scan files
-    let scanned = ScannedFiles::scan(path, &config.scan);
-
-    anyhow::ensure!(
-        !scanned.files.is_empty(),
-        "no markdown files found in '{}'",
-        path.display()
-    );
 
     let max_chunk_size = chunking.max_chunk_size;
     let built_at = chrono::Utc::now().timestamp_micros();
@@ -500,5 +514,168 @@ mod tests {
         // Build with --force should succeed
         let result = run(tmp.path(), None, None, None, true).await;
         assert!(result.is_ok(), "build with --force failed: {:?}", result);
+    }
+
+    #[tokio::test]
+    async fn build_aborts_on_wrong_type() {
+        let tmp = tempfile::tempdir().unwrap();
+        let blog_dir = tmp.path().join("blog");
+        fs::create_dir_all(&blog_dir).unwrap();
+
+        // draft is string "yes" in the file but declared as Boolean in toml
+        fs::write(
+            blog_dir.join("post1.md"),
+            "---\ntitle: Hello\ndraft: \"yes\"\n---\n# Hello\nBody.",
+        )
+        .unwrap();
+
+        let config = MdvsToml {
+            scan: crate::schema::shared::ScanConfig {
+                glob: "**".into(),
+                include_bare_files: false,
+                skip_gitignore: false,
+            },
+            update: crate::schema::config::UpdateConfig { auto_build: false },
+            fields: crate::schema::config::FieldsConfig {
+                ignore: vec![],
+                field: vec![
+                    crate::schema::config::TomlField {
+                        name: "title".into(),
+                        field_type: crate::schema::shared::FieldTypeSerde::Scalar("String".into()),
+                        allowed: vec!["**".into()],
+                        required: vec![],
+                    },
+                    crate::schema::config::TomlField {
+                        name: "draft".into(),
+                        // Declare as Boolean, but file has String → WrongType violation
+                        field_type: crate::schema::shared::FieldTypeSerde::Scalar("Boolean".into()),
+                        allowed: vec!["**".into()],
+                        required: vec![],
+                    },
+                ],
+            },
+            embedding_model: Some(EmbeddingModelConfig {
+                provider: "model2vec".into(),
+                name: "minishlab/potion-base-8M".into(),
+                revision: None,
+            }),
+            chunking: Some(ChunkingConfig { max_chunk_size: 1024 }),
+            search: Some(SearchConfig { default_limit: 10 }),
+        };
+        config.write(&tmp.path().join("mdvs.toml")).unwrap();
+
+        let result = run(tmp.path(), None, None, None, false).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("validation errors"), "expected validation abort, got: {err}");
+    }
+
+    #[tokio::test]
+    async fn build_aborts_on_missing_required() {
+        let tmp = tempfile::tempdir().unwrap();
+        let blog_dir = tmp.path().join("blog");
+        fs::create_dir_all(&blog_dir).unwrap();
+
+        // post1 has tags, post2 does not — tags required in blog/**
+        fs::write(
+            blog_dir.join("post1.md"),
+            "---\ntitle: Hello\ntags:\n  - rust\n---\n# Hello\nBody.",
+        )
+        .unwrap();
+        fs::write(
+            blog_dir.join("post2.md"),
+            "---\ntitle: World\n---\n# World\nBody.",
+        )
+        .unwrap();
+
+        let config = MdvsToml {
+            scan: crate::schema::shared::ScanConfig {
+                glob: "**".into(),
+                include_bare_files: false,
+                skip_gitignore: false,
+            },
+            update: crate::schema::config::UpdateConfig { auto_build: false },
+            fields: crate::schema::config::FieldsConfig {
+                ignore: vec![],
+                field: vec![
+                    crate::schema::config::TomlField {
+                        name: "title".into(),
+                        field_type: crate::schema::shared::FieldTypeSerde::Scalar("String".into()),
+                        allowed: vec!["**".into()],
+                        required: vec![],
+                    },
+                    crate::schema::config::TomlField {
+                        name: "tags".into(),
+                        field_type: crate::schema::shared::FieldTypeSerde::Array {
+                            array: Box::new(crate::schema::shared::FieldTypeSerde::Scalar("String".into())),
+                        },
+                        allowed: vec!["**".into()],
+                        required: vec!["blog/**".into()],
+                    },
+                ],
+            },
+            embedding_model: Some(EmbeddingModelConfig {
+                provider: "model2vec".into(),
+                name: "minishlab/potion-base-8M".into(),
+                revision: None,
+            }),
+            chunking: Some(ChunkingConfig { max_chunk_size: 1024 }),
+            search: Some(SearchConfig { default_limit: 10 }),
+        };
+        config.write(&tmp.path().join("mdvs.toml")).unwrap();
+
+        let result = run(tmp.path(), None, None, None, false).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("validation errors"), "expected validation abort, got: {err}");
+    }
+
+    #[tokio::test]
+    async fn build_succeeds_with_new_fields() {
+        let tmp = tempfile::tempdir().unwrap();
+        let blog_dir = tmp.path().join("blog");
+        fs::create_dir_all(&blog_dir).unwrap();
+
+        // File has title + author, but toml only declares title
+        // author is a "new field" — informational, should not block build
+        fs::write(
+            blog_dir.join("post1.md"),
+            "---\ntitle: Hello\nauthor: Alice\n---\n# Hello\nBody text.",
+        )
+        .unwrap();
+
+        let config = MdvsToml {
+            scan: crate::schema::shared::ScanConfig {
+                glob: "**".into(),
+                include_bare_files: false,
+                skip_gitignore: false,
+            },
+            update: crate::schema::config::UpdateConfig { auto_build: false },
+            fields: crate::schema::config::FieldsConfig {
+                ignore: vec![],
+                field: vec![crate::schema::config::TomlField {
+                    name: "title".into(),
+                    field_type: crate::schema::shared::FieldTypeSerde::Scalar("String".into()),
+                    allowed: vec!["**".into()],
+                    required: vec![],
+                }],
+            },
+            embedding_model: Some(EmbeddingModelConfig {
+                provider: "model2vec".into(),
+                name: "minishlab/potion-base-8M".into(),
+                revision: None,
+            }),
+            chunking: Some(ChunkingConfig { max_chunk_size: 1024 }),
+            search: Some(SearchConfig { default_limit: 10 }),
+        };
+        config.write(&tmp.path().join("mdvs.toml")).unwrap();
+
+        // Build should succeed despite unknown "author" field
+        let result = run(tmp.path(), None, None, None, false).await;
+        assert!(result.is_ok(), "build should succeed with new fields: {:?}", result);
+
+        // Verify index was created
+        assert!(tmp.path().join(".mdvs/files.parquet").exists());
+        assert!(tmp.path().join(".mdvs/chunks.parquet").exists());
     }
 }

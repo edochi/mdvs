@@ -99,6 +99,20 @@ Stored as native key-value metadata in parquet files (not a separate file).
 
 Field schema is not stored in key-value metadata — it is the Arrow schema of the `data` Struct column in `files.parquet`.
 
+### String field storage
+
+When a field is typed as `String` (the widening top type), non-string values are serialized to their JSON representation:
+
+| YAML value         | Stored as             |
+|--------------------|-----------------------|
+| `"hello"`          | `hello`               |
+| `["a", "b"]`       | `["a","b"]`           |
+| `{k: v}`           | `{"k":"v"}`           |
+| `true`             | `true`                |
+| `42`               | `42`                  |
+
+No data is ever dropped — values that don't match the declared type are converted, not discarded.
+
 ---
 
 ## Output

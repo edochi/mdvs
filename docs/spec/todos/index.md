@@ -20,3 +20,4 @@
 | [0016](TODO-0016.md) | LanceDB backend via compile-time feature flag | todo | medium | 2026-03-02 |
 | [0017](TODO-0017.md) | Ollama embedding provider | todo | medium | 2026-03-02 |
 | [0018](TODO-0018.md) | Cloud embedding providers (Azure, AWS Bedrock) | todo | low | 2026-03-02 |
+| [0019](TODO-0019.md) | Global --verbose flag | todo | medium | 2026-03-02 |

@@ -82,11 +82,12 @@ impl CommandOutput for CheckResult {
 }
 
 pub fn run(path: &Path) -> anyhow::Result<CheckResult> {
-    let config_path = path.join("mdvs.toml");
-    let config = MdvsToml::read(&config_path)?;
-
+    let config = MdvsToml::read(&path.join("mdvs.toml"))?;
     let scanned = ScannedFiles::scan(path, &config.scan);
+    validate(&scanned, &config)
+}
 
+pub fn validate(scanned: &ScannedFiles, config: &MdvsToml) -> anyhow::Result<CheckResult> {
     // Build lookups
     let field_map: HashMap<&str, _> = config
         .fields
@@ -164,15 +165,14 @@ pub fn run(path: &Path) -> anyhow::Result<CheckResult> {
                 continue;
             }
 
-            // File matches required glob — check if field is present (null = absent)
-            let has_field = file
-                .data
-                .as_ref()
-                .and_then(|v| v.as_object())
-                .is_some_and(|map| {
-                    map.get(&toml_field.name)
-                        .is_some_and(|v| !v.is_null())
-                });
+            // Bare files (no frontmatter) have no fields — skip required checks
+            let Some(map) = file.data.as_ref().and_then(|v| v.as_object()) else {
+                continue;
+            };
+
+            let has_field = map
+                .get(&toml_field.name)
+                .is_some_and(|v| !v.is_null());
 
             if !has_field {
                 let rule = format!("required in {:?}", toml_field.required);
@@ -220,7 +220,8 @@ pub fn run(path: &Path) -> anyhow::Result<CheckResult> {
 
 fn type_matches(expected: &FieldType, value: &Value) -> bool {
     match (expected, value) {
-        (FieldType::String, Value::String(_)) => true,
+        // String is the top type in the widening hierarchy — accepts any value
+        (FieldType::String, _) => true,
         (FieldType::Boolean, Value::Bool(_)) => true,
         (FieldType::Integer, Value::Number(n)) => n.is_i64() || n.is_u64(),
         (FieldType::Float, Value::Number(_)) => true, // lenient: accepts integers
@@ -373,16 +374,16 @@ mod tests {
         let blog_dir = tmp.path().join("blog");
         fs::create_dir_all(&blog_dir).unwrap();
 
-        // draft is declared as String but file has boolean
+        // draft is declared as Boolean but file has string value
         fs::write(
             blog_dir.join("post1.md"),
-            "---\ntitle: Hello\ndraft: false\n---\n# Hello\nBody.",
+            "---\ntitle: Hello\ndraft: \"yes\"\n---\n# Hello\nBody.",
         )
         .unwrap();
 
         write_toml(
             tmp.path(),
-            vec![string_field("title"), string_field("draft")],
+            vec![string_field("title"), bool_field("draft")],
             vec![],
         );
 
@@ -392,7 +393,7 @@ mod tests {
         let v = &result.field_violations[0];
         assert_eq!(v.field, "draft");
         assert!(matches!(v.kind, ViolationKind::WrongType));
-        assert_eq!(v.files[0].detail.as_deref(), Some("got Boolean"));
+        assert_eq!(v.files[0].detail.as_deref(), Some("got String"));
     }
 
     #[test]
@@ -473,11 +474,47 @@ mod tests {
     }
 
     #[test]
-    fn bare_files_violate_required() {
+    fn string_top_type_accepts_any_value() {
+        let tmp = tempfile::tempdir().unwrap();
+        let blog_dir = tmp.path().join("blog");
+        fs::create_dir_all(&blog_dir).unwrap();
+
+        // String field with boolean, integer, array, and object values
+        fs::write(
+            blog_dir.join("bool.md"),
+            "---\nfield: false\n---\n# Bool\nBody.",
+        )
+        .unwrap();
+        fs::write(
+            blog_dir.join("int.md"),
+            "---\nfield: 42\n---\n# Int\nBody.",
+        )
+        .unwrap();
+        fs::write(
+            blog_dir.join("array.md"),
+            "---\nfield:\n  - a\n  - b\n---\n# Array\nBody.",
+        )
+        .unwrap();
+        fs::write(
+            blog_dir.join("object.md"),
+            "---\nfield:\n  k: v\n---\n# Object\nBody.",
+        )
+        .unwrap();
+
+        write_toml(tmp.path(), vec![string_field("field")], vec![]);
+
+        let result = run(tmp.path()).unwrap();
+
+        assert!(!result.has_violations());
+        assert_eq!(result.files_checked, 4);
+    }
+
+    #[test]
+    fn bare_files_skip_required() {
         let tmp = tempfile::tempdir().unwrap();
         fs::create_dir_all(tmp.path().join("blog")).unwrap();
 
-        // A bare file (no frontmatter) in blog/
+        // A bare file (no frontmatter) in blog/ — should not violate required
         fs::write(
             tmp.path().join("blog/bare.md"),
             "# No frontmatter\nJust content.",
@@ -509,10 +546,8 @@ mod tests {
 
         let result = run(tmp.path()).unwrap();
 
-        assert!(result.has_violations());
-        let v = &result.field_violations[0];
-        assert_eq!(v.field, "title");
-        assert!(matches!(v.kind, ViolationKind::MissingRequired));
+        // Bare files have no fields — they don't violate required
+        assert!(!result.has_violations());
     }
 
     #[test]
@@ -541,10 +576,10 @@ mod tests {
         fs::create_dir_all(&blog_dir).unwrap();
         fs::create_dir_all(&notes_dir).unwrap();
 
-        // post1: title is integer (wrong type), missing tags
+        // post1: draft is string "yes" (wrong type for Boolean), missing tags
         fs::write(
             blog_dir.join("post1.md"),
-            "---\ntitle: 42\n---\n# Post\nBody.",
+            "---\ntitle: Hello\ndraft: \"yes\"\n---\n# Post\nBody.",
         )
         .unwrap();
 
@@ -585,7 +620,7 @@ mod tests {
         let result = run(tmp.path()).unwrap();
 
         assert!(result.has_violations());
-        // Should have: title wrong type, tags missing required, draft disallowed
+        // Should have: draft wrong type, tags missing required, draft disallowed
         assert!(result.field_violations.len() >= 3);
     }
 }
