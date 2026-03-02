@@ -22,17 +22,29 @@ pub fn infer_field_types(scanned: &ScannedFiles) -> BTreeMap<String, FieldTypeIn
     for file in &scanned.files {
         if let Some(Value::Object(map)) = &file.data {
             for (key, val) in map {
+                // Always track file presence
+                files
+                    .entry(key.clone())
+                    .or_default()
+                    .push(file.path.clone());
+
+                // Skip null — transparent in type inference
+                if val.is_null() {
+                    continue;
+                }
+
                 let ft = FieldType::from(val);
                 types
                     .entry(key.clone())
                     .and_modify(|existing| *existing = widen(existing.clone(), ft.clone()))
                     .or_insert(ft);
-                files
-                    .entry(key.clone())
-                    .or_default()
-                    .push(file.path.clone());
             }
         }
+    }
+
+    // Fields present only as null default to String
+    for key in files.keys() {
+        types.entry(key.clone()).or_insert(FieldType::String);
     }
 
     types
@@ -689,6 +701,42 @@ mod tests {
         };
         let schema = InferredSchema::infer(&scanned);
         assert_eq!(schema.field("val").unwrap().field_type, FieldType::String);
+    }
+
+    #[test]
+    fn null_transparent_in_widening() {
+        let scanned = ScannedFiles {
+            files: vec![
+                sf("a.md", Some(serde_json::json!({"projects": null})), ""),
+                sf(
+                    "b.md",
+                    Some(serde_json::json!({"projects": ["Foo"]})),
+                    "",
+                ),
+            ],
+        };
+        let schema = InferredSchema::infer(&scanned);
+        let projects = schema.field("projects").unwrap();
+        assert_eq!(
+            projects.field_type,
+            FieldType::Array(Box::new(FieldType::String))
+        );
+        assert_eq!(projects.files.len(), 2);
+    }
+
+    #[test]
+    fn null_plus_int_infers_int() {
+        let scanned = ScannedFiles {
+            files: vec![
+                sf("a.md", Some(serde_json::json!({"count": null})), ""),
+                sf("b.md", Some(serde_json::json!({"count": 42})), ""),
+            ],
+        };
+        let schema = InferredSchema::infer(&scanned);
+        assert_eq!(
+            schema.field("count").unwrap().field_type,
+            FieldType::Integer
+        );
     }
 
     #[test]

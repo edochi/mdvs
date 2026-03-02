@@ -116,6 +116,11 @@ pub fn run(path: &Path) -> anyhow::Result<CheckResult> {
                     continue;
                 }
 
+                // Null values (bare YAML keys like `field:`) are treated as absent
+                if value.is_null() {
+                    continue;
+                }
+
                 if let Some(toml_field) = field_map.get(field_name.as_str()) {
                     // Check type
                     let expected = FieldType::try_from(&toml_field.field_type)
@@ -159,12 +164,15 @@ pub fn run(path: &Path) -> anyhow::Result<CheckResult> {
                 continue;
             }
 
-            // File matches required glob — check if field is present
+            // File matches required glob — check if field is present (null = absent)
             let has_field = file
                 .data
                 .as_ref()
                 .and_then(|v| v.as_object())
-                .is_some_and(|map| map.contains_key(&toml_field.name));
+                .is_some_and(|map| {
+                    map.get(&toml_field.name)
+                        .is_some_and(|v| !v.is_null())
+                });
 
             if !has_field {
                 let rule = format!("required in {:?}", toml_field.required);
