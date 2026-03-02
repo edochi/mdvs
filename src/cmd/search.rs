@@ -1,6 +1,5 @@
-use crate::index::embed::{resolve_revision, Embedder, ModelConfig};
+use crate::index::embed::{Embedder, ModelConfig};
 use crate::schema::config::MdvsToml;
-use crate::schema::lock::MdvsLock;
 use crate::search::SearchContext;
 use datafusion::arrow::array::{Array, Float64Array, StringViewArray};
 use std::path::Path;
@@ -12,21 +11,11 @@ pub async fn run(
     where_clause: Option<&str>,
 ) -> anyhow::Result<()> {
     let config_path = path.join("mdvs.toml");
-    let lock_path = path.join("mdvs.lock");
     let files_parquet = path.join(".mdvs/files.parquet");
     let chunks_parquet = path.join(".mdvs/chunks.parquet");
 
-    // Read config and lock
+    // Read config
     let config = MdvsToml::read(&config_path)?;
-    let lock = MdvsLock::read(&lock_path)?;
-
-    // Model name check
-    anyhow::ensure!(
-        config.model.name == lock.model.name,
-        "model mismatch: config has '{}' but lock has '{}' (run `mdvs init --force` to reinitialize)",
-        config.model.name,
-        lock.model.name,
-    );
 
     // Index existence check (before loading model to fail fast)
     anyhow::ensure!(
@@ -47,17 +36,6 @@ pub async fn run(
         revision: config.model.revision.clone(),
     };
     let embedder = Embedder::load(&model_config);
-
-    // Post-load revision check (warning only for search)
-    if let (Some(resolved), Some(lock_rev)) =
-        (resolve_revision(&config.model.name), &lock.model.revision)
-        && &resolved != lock_rev
-    {
-        eprintln!(
-            "warning: model revision mismatch: downloaded '{}' but lock has '{}' (run `mdvs build` to rebuild)",
-            resolved, lock_rev,
-        );
-    }
 
     // Embed query
     let query_embedding = embedder.embed(query);
@@ -152,25 +130,6 @@ mod tests {
         config.write(&dir.join("mdvs.toml")).unwrap();
     }
 
-    fn write_lock(dir: &Path, model_name: &str) {
-        let lock = MdvsLock {
-            config: TomlConfig {
-                glob: "**".into(),
-                include_bare_files: false,
-            },
-            model: ModelInfo {
-                name: model_name.into(),
-                revision: None,
-            },
-            chunking: ChunkingConfig {
-                max_chunk_size: 1024,
-            },
-            files: vec![],
-            fields: vec![],
-        };
-        lock.write(&dir.join("mdvs.lock")).unwrap();
-    }
-
     fn init_and_build(dir: &Path) {
         crate::cmd::init::run(
             dir,
@@ -198,7 +157,6 @@ mod tests {
     async fn missing_index() {
         let tmp = tempfile::tempdir().unwrap();
         write_config(tmp.path(), "test-model");
-        write_lock(tmp.path(), "test-model");
 
         let result = run(tmp.path(), "test query", 10, None).await;
         assert!(result.is_err());

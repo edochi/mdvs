@@ -1,45 +1,23 @@
 use crate::discover::field_type::FieldType;
 use crate::discover::scan::ScannedFiles;
 use crate::index::chunk::{extract_plain_text, Chunks};
-use crate::index::embed::{resolve_revision, Embedder, ModelConfig};
+use crate::index::embed::{Embedder, ModelConfig};
 use crate::index::storage::{
-    build_chunks_batch, build_files_batch, read_parquet, write_parquet, ChunkRow, FileRow,
+    build_chunks_batch, build_files_batch, content_hash, read_parquet, write_parquet, ChunkRow,
+    FileRow,
 };
 use crate::schema::config::MdvsToml;
-use crate::schema::lock::{content_hash, LockFile, MdvsLock};
 use datafusion::arrow::datatypes::DataType;
 use std::path::Path;
 
 pub fn run(path: &Path) -> anyhow::Result<()> {
     let config_path = path.join("mdvs.toml");
-    let lock_path = path.join("mdvs.lock");
     let mdvs_dir = path.join(".mdvs");
     let files_parquet = mdvs_dir.join("files.parquet");
     let chunks_parquet = mdvs_dir.join("chunks.parquet");
 
-    // Read config and lock
+    // Read config
     let config = MdvsToml::read(&config_path)?;
-    let mut lock = MdvsLock::read(&lock_path)?;
-
-    // Model name check
-    anyhow::ensure!(
-        config.model.name == lock.model.name,
-        "model mismatch: config has '{}' but lock has '{}' (run `mdvs init --force` to reinitialize)",
-        config.model.name,
-        lock.model.name,
-    );
-
-    // Pre-load revision check (if config pins a revision)
-    if let (Some(config_rev), Some(lock_rev)) =
-        (&config.model.revision, &lock.model.revision)
-    {
-        anyhow::ensure!(
-            config_rev == lock_rev,
-            "model revision mismatch: config pins '{}' but lock has '{}' (run `mdvs init --force` to reinitialize)",
-            config_rev,
-            lock_rev,
-        );
-    }
 
     // Load model
     eprintln!("Loading model {}...", config.model.name);
@@ -49,18 +27,6 @@ pub fn run(path: &Path) -> anyhow::Result<()> {
     };
     let embedder = Embedder::load(&model_config);
     let dimension = embedder.dimension();
-
-    // Post-load revision check
-    if let (Some(resolved), Some(lock_rev)) =
-        (resolve_revision(&config.model.name), &lock.model.revision)
-    {
-        anyhow::ensure!(
-            &resolved == lock_rev,
-            "model revision mismatch: downloaded '{}' but lock has '{}' (run `mdvs init --force` to reinitialize)",
-            resolved,
-            lock_rev,
-        );
-    }
 
     // Dimension check against existing Parquet
     if chunks_parquet.exists() {
@@ -153,17 +119,6 @@ pub fn run(path: &Path) -> anyhow::Result<()> {
     let chunks_batch = build_chunks_batch(&chunk_rows, dimension as i32);
     write_parquet(&chunks_parquet, &chunks_batch)?;
 
-    // Update lock file hashes
-    lock.files = scanned
-        .files
-        .iter()
-        .map(|f| LockFile {
-            path: f.path.display().to_string(),
-            content_hash: content_hash(&f.content),
-        })
-        .collect();
-    lock.write(&lock_path)?;
-
     eprintln!(
         "Built index: {} files, {} chunks (dim={})",
         file_rows.len(),
@@ -177,8 +132,6 @@ pub fn run(path: &Path) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::config::{OnError, WorkflowConfig};
-    use crate::schema::shared::{ChunkingConfig, ModelInfo, TomlConfig};
     use std::fs;
 
     fn create_test_vault(dir: &Path) {
@@ -198,84 +151,11 @@ mod tests {
         .unwrap();
     }
 
-    fn write_config(dir: &Path, model_name: &str, revision: Option<&str>) {
-        let config = MdvsToml {
-            config: TomlConfig {
-                glob: "**".into(),
-                include_bare_files: false,
-            },
-            model: ModelInfo {
-                name: model_name.into(),
-                revision: revision.map(|s| s.into()),
-            },
-            chunking: ChunkingConfig {
-                max_chunk_size: 1024,
-            },
-            workflow: WorkflowConfig {
-                auto_build: true,
-                on_error: OnError::Fail,
-            },
-            fields: vec![],
-        };
-        config.write(&dir.join("mdvs.toml")).unwrap();
-    }
-
-    fn write_lock(dir: &Path, model_name: &str, revision: Option<&str>) {
-        let lock = MdvsLock {
-            config: TomlConfig {
-                glob: "**".into(),
-                include_bare_files: false,
-            },
-            model: ModelInfo {
-                name: model_name.into(),
-                revision: revision.map(|s| s.into()),
-            },
-            chunking: ChunkingConfig {
-                max_chunk_size: 1024,
-            },
-            files: vec![],
-            fields: vec![],
-        };
-        lock.write(&dir.join("mdvs.lock")).unwrap();
-    }
-
     #[test]
     fn missing_config() {
         let tmp = tempfile::tempdir().unwrap();
         let result = run(tmp.path());
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn missing_lock() {
-        let tmp = tempfile::tempdir().unwrap();
-        write_config(tmp.path(), "test-model", None);
-        let result = run(tmp.path());
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn model_name_mismatch() {
-        let tmp = tempfile::tempdir().unwrap();
-        write_config(tmp.path(), "model-a", None);
-        write_lock(tmp.path(), "model-b", None);
-
-        let result = run(tmp.path());
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("model mismatch"));
-    }
-
-    #[test]
-    fn pinned_revision_mismatch() {
-        let tmp = tempfile::tempdir().unwrap();
-        write_config(tmp.path(), "test-model", Some("rev-a"));
-        write_lock(tmp.path(), "test-model", Some("rev-b"));
-
-        let result = run(tmp.path());
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("revision mismatch"));
     }
 
     #[test]
@@ -326,13 +206,6 @@ mod tests {
             assert!(*dim > 0);
         } else {
             panic!("expected FixedSizeList for embedding column");
-        }
-
-        // Verify lock file was updated with file hashes
-        let lock = MdvsLock::read(&tmp.path().join("mdvs.lock")).unwrap();
-        assert_eq!(lock.files.len(), 2);
-        for f in &lock.files {
-            assert!(!f.content_hash.is_empty());
         }
     }
 

@@ -1,4 +1,6 @@
 use crate::discover::field_type::FieldType;
+use std::hash::{DefaultHasher, Hasher};
+
 use datafusion::arrow::array::{
     ArrayRef, BooleanArray, FixedSizeListArray, Float32Array, Float64Array, Int32Array,
     Int64Array, ListArray, StringArray, StructArray, TimestampMicrosecondArray,
@@ -14,6 +16,12 @@ use serde_json::Value;
 use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
+
+pub fn content_hash(content: &str) -> String {
+    let mut hasher = DefaultHasher::new();
+    hasher.write(content.as_bytes());
+    format!("{:016x}", hasher.finish())
+}
 
 pub struct FileRow {
     pub file_id: String,

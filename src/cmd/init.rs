@@ -1,8 +1,7 @@
 use crate::discover::infer::InferredSchema;
 use crate::discover::scan::ScannedFiles;
-use crate::index::embed::{resolve_revision, Embedder, ModelConfig};
+use crate::index::embed::{Embedder, ModelConfig};
 use crate::schema::config::MdvsToml;
-use crate::schema::lock::MdvsLock;
 use crate::schema::shared::FieldTypeSerde;
 use std::path::Path;
 
@@ -21,7 +20,6 @@ pub fn run(
     anyhow::ensure!(path.is_dir(), "'{}' is not a directory", path.display());
 
     let config_path = path.join("mdvs.toml");
-    let lock_path = path.join("mdvs.lock");
 
     if !force && config_path.exists() {
         anyhow::bail!(
@@ -54,8 +52,6 @@ pub fn run(
         revision: revision.map(|s| s.to_string()),
     };
     let _embedder = Embedder::load(&config);
-    let model_revision = resolve_revision(model_name)
-        .unwrap_or_else(|| "unknown".to_string());
 
     let toml_doc = MdvsToml::from_inferred(
         &schema,
@@ -67,17 +63,6 @@ pub fn run(
         auto_build,
     );
     toml_doc.write(&config_path)?;
-
-    let lock_doc = MdvsLock::from_inferred(
-        &schema,
-        &scanned,
-        glob,
-        include_bare_files,
-        model_name,
-        &model_revision,
-        max_chunk_size,
-    );
-    lock_doc.write(&lock_path)?;
 
     let mdvs_dir = path.join(".mdvs");
     std::fs::create_dir_all(&mdvs_dir)?;
@@ -177,7 +162,6 @@ mod tests {
 
         assert!(result.is_ok());
         assert!(!tmp.path().join("mdvs.toml").exists());
-        assert!(!tmp.path().join("mdvs.lock").exists());
         assert!(!tmp.path().join(".mdvs").exists());
     }
 
@@ -271,7 +255,6 @@ mod tests {
 
         // Verify files exist
         assert!(tmp.path().join("mdvs.toml").exists());
-        assert!(tmp.path().join("mdvs.lock").exists());
         assert!(tmp.path().join(".mdvs").is_dir());
 
         // Verify config contents
@@ -280,12 +263,5 @@ mod tests {
         assert!(!toml_doc.config.include_bare_files);
         assert_eq!(toml_doc.model.name, model);
         assert!(!toml_doc.fields.is_empty());
-
-        // Verify lock contents
-        let lock_doc = MdvsLock::read(&tmp.path().join("mdvs.lock")).unwrap();
-        assert_eq!(lock_doc.model.name, model);
-        assert!(lock_doc.model.revision.is_some());
-        assert_eq!(lock_doc.files.len(), 2); // 2 files with frontmatter (bare excluded)
-        assert!(!lock_doc.fields.is_empty());
     }
 }
