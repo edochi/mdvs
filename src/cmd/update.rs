@@ -102,7 +102,7 @@ pub fn run(
     }
 
     // Scan and infer
-    let scanned = ScannedFiles::scan(path, &config.scan.glob, config.scan.include_bare_files);
+    let scanned = ScannedFiles::scan(path, &config.scan);
     let schema = InferredSchema::infer(&scanned);
     let total_files = scanned.files.len();
 
@@ -243,6 +243,7 @@ mod tests {
             true, // ignore bare files
             None,
             false, // no auto_build
+            false, // skip_gitignore
         )
         .unwrap();
     }
@@ -453,6 +454,7 @@ mod tests {
             true,
             None,
             false, // no auto_build for init
+            false, // skip_gitignore
         )
         .unwrap();
 

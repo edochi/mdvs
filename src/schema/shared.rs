@@ -63,6 +63,8 @@ impl TryFrom<&FieldTypeSerde> for FieldType {
 pub struct ScanConfig {
     pub glob: String,
     pub include_bare_files: bool,
+    #[serde(default)]
+    pub skip_gitignore: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]

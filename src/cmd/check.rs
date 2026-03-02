@@ -85,7 +85,7 @@ pub fn run(path: &Path) -> anyhow::Result<CheckResult> {
     let config_path = path.join("mdvs.toml");
     let config = MdvsToml::read(&config_path)?;
 
-    let scanned = ScannedFiles::scan(path, &config.scan.glob, config.scan.include_bare_files);
+    let scanned = ScannedFiles::scan(path, &config.scan);
 
     // Build lookups
     let field_map: HashMap<&str, _> = config
@@ -274,6 +274,7 @@ mod tests {
             scan: ScanConfig {
                 glob: "**".into(),
                 include_bare_files: false,
+                skip_gitignore: false,
             },
             update: UpdateConfig { auto_build: false },
             fields: FieldsConfig {
@@ -488,6 +489,7 @@ mod tests {
             scan: ScanConfig {
                 glob: "**".into(),
                 include_bare_files: true,
+                skip_gitignore: false,
             },
             update: UpdateConfig { auto_build: false },
             fields: FieldsConfig {

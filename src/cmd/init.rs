@@ -2,7 +2,7 @@ use crate::discover::infer::InferredSchema;
 use crate::discover::scan::ScannedFiles;
 use crate::output::{CommandOutput, DiscoveredField};
 use crate::schema::config::MdvsToml;
-use crate::schema::shared::FieldTypeSerde;
+use crate::schema::shared::{FieldTypeSerde, ScanConfig};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
@@ -80,6 +80,7 @@ pub fn run(
     ignore_bare_files: bool,
     chunk_size: Option<usize>,
     auto_build: bool,
+    skip_gitignore: bool,
 ) -> anyhow::Result<InitResult> {
     anyhow::ensure!(path.is_dir(), "'{}' is not a directory", path.display());
 
@@ -105,8 +106,12 @@ pub fn run(
         }
     }
 
-    let include_bare_files = !ignore_bare_files;
-    let scanned = ScannedFiles::scan(path, glob, include_bare_files);
+    let scan_config = ScanConfig {
+        glob: glob.to_string(),
+        include_bare_files: !ignore_bare_files,
+        skip_gitignore,
+    };
+    let scanned = ScannedFiles::scan(path, &scan_config);
 
     anyhow::ensure!(
         !scanned.files.is_empty(),
@@ -144,8 +149,7 @@ pub fn run(
 
     let toml_doc = MdvsToml::from_inferred(
         &schema,
-        glob,
-        include_bare_files,
+        scan_config,
         model_name,
         revision,
         max_chunk_size,
@@ -202,7 +206,8 @@ mod tests {
             true, // dry_run
             true, // ignore_bare_files
             None,
-            true, // auto_build
+            true,  // auto_build
+            false, // skip_gitignore
         );
 
         let result = result.unwrap();
@@ -226,6 +231,7 @@ mod tests {
             true, // ignore_bare_files
             None,
             false, // no auto_build
+            false, // skip_gitignore
         )
         .unwrap();
 
@@ -257,6 +263,7 @@ mod tests {
             true,
             None,
             true,
+            false, // skip_gitignore
         );
 
         assert!(result.is_err());
@@ -282,6 +289,7 @@ mod tests {
             true,
             None,
             true,
+            false, // skip_gitignore
         );
 
         assert!(result.is_ok());
@@ -302,6 +310,7 @@ mod tests {
             true,
             None,
             true,
+            false, // skip_gitignore
         );
 
         assert!(result.is_err());
@@ -324,6 +333,7 @@ mod tests {
             true,
             None,
             false, // no auto_build
+            false, // skip_gitignore
         );
 
         assert!(result.is_err());
@@ -346,6 +356,7 @@ mod tests {
             true,
             None,
             false,
+            false, // skip_gitignore
         );
 
         assert!(result.is_err());
@@ -368,6 +379,7 @@ mod tests {
             true,
             Some(512),
             false,
+            false, // skip_gitignore
         );
 
         assert!(result.is_err());
@@ -390,6 +402,7 @@ mod tests {
             true,
             None,
             false, // no auto_build
+            false, // skip_gitignore
         )
         .unwrap();
 
@@ -420,7 +433,8 @@ mod tests {
             false, // not dry_run — full pipeline
             true,  // ignore bare files
             None,
-            true, // auto_build
+            true,  // auto_build
+            false, // skip_gitignore
         );
 
         let result = result.unwrap();

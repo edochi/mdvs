@@ -33,8 +33,8 @@ model2vec-rs = "0.1.4"
 # Inference (tree algorithm)
 indextree = "4"
 
-# File walking + glob
-walkdir = "2"
+# File walking + glob + ignore
+ignore = "0.4"
 globset = "0.4"
 
 # IDs + hashing

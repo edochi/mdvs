@@ -44,6 +44,9 @@ enum Command {
         /// Automatically build index after init
         #[arg(long, default_value = "true")]
         auto_build: bool,
+        /// Do not read .gitignore patterns during scan
+        #[arg(long)]
+        skip_gitignore: bool,
     },
     /// Build or rebuild the search index
     Build {
@@ -109,6 +112,7 @@ async fn main() -> anyhow::Result<()> {
             ignore_bare_files,
             chunk_size,
             auto_build,
+            skip_gitignore,
         } => {
             let result = mdvs::cmd::init::run(
                 &path,
@@ -120,6 +124,7 @@ async fn main() -> anyhow::Result<()> {
                 ignore_bare_files,
                 chunk_size,
                 auto_build,
+                skip_gitignore,
             )?;
             result.print(&cli.output);
             Ok(())

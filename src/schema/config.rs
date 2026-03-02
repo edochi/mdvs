@@ -47,8 +47,7 @@ pub struct MdvsToml {
 impl MdvsToml {
     pub fn from_inferred(
         schema: &InferredSchema,
-        glob: &str,
-        include_bare_files: bool,
+        scan: ScanConfig,
         model_name: &str,
         model_revision: Option<&str>,
         max_chunk_size: usize,
@@ -68,10 +67,7 @@ impl MdvsToml {
         };
 
         MdvsToml {
-            scan: ScanConfig {
-                glob: glob.to_string(),
-                include_bare_files,
-            },
+            scan,
             update: UpdateConfig { auto_build },
             fields: FieldsConfig {
                 ignore: vec![],
@@ -123,6 +119,7 @@ mod tests {
             scan: ScanConfig {
                 glob: "**".into(),
                 include_bare_files: false,
+                skip_gitignore: false,
             },
             update: default_update(),
             fields: FieldsConfig {
@@ -146,6 +143,7 @@ mod tests {
             scan: ScanConfig {
                 glob: "**".into(),
                 include_bare_files: false,
+                skip_gitignore: false,
             },
             update: default_update(),
             fields: FieldsConfig {
@@ -301,8 +299,9 @@ default_limit = 10
             ],
         };
 
+        let scan = ScanConfig { glob: "**".into(), include_bare_files: false, skip_gitignore: false };
         let toml_doc =
-            MdvsToml::from_inferred(&schema, "**", false, "minishlab/potion-base-8M", None, 1024, true);
+            MdvsToml::from_inferred(&schema, scan, "minishlab/potion-base-8M", None, 1024, true);
 
         assert_eq!(toml_doc.scan.glob, "**");
         assert!(!toml_doc.scan.include_bare_files);
@@ -331,10 +330,10 @@ default_limit = 10
     #[test]
     fn from_inferred_empty() {
         let schema = InferredSchema { fields: vec![] };
+        let scan = ScanConfig { glob: "docs/**".into(), include_bare_files: true, skip_gitignore: false };
         let toml_doc = MdvsToml::from_inferred(
             &schema,
-            "docs/**",
-            true,
+            scan,
             "minishlab/potion-base-8M",
             Some("rev123"),
             512,
@@ -352,10 +351,10 @@ default_limit = 10
     #[test]
     fn from_inferred_no_auto_build() {
         let schema = InferredSchema { fields: vec![] };
+        let scan = ScanConfig { glob: "**".into(), include_bare_files: false, skip_gitignore: false };
         let toml_doc = MdvsToml::from_inferred(
             &schema,
-            "**",
-            false,
+            scan,
             "minishlab/potion-base-8M",
             None,
             1024,
@@ -378,8 +377,9 @@ default_limit = 10
                 required: vec!["**".into()],
             }],
         };
+        let scan = ScanConfig { glob: "**".into(), include_bare_files: false, skip_gitignore: false };
         let toml_doc =
-            MdvsToml::from_inferred(&schema, "**", false, "minishlab/potion-base-8M", None, 1024, true);
+            MdvsToml::from_inferred(&schema, scan, "minishlab/potion-base-8M", None, 1024, true);
 
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("mdvs.toml");
@@ -395,6 +395,7 @@ default_limit = 10
             scan: ScanConfig {
                 glob: "**".into(),
                 include_bare_files: false,
+                skip_gitignore: false,
             },
             update: UpdateConfig { auto_build: true },
             fields: FieldsConfig {

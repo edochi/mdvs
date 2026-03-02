@@ -116,6 +116,7 @@ mod tests {
             scan: ScanConfig {
                 glob: "**".into(),
                 include_bare_files: false,
+                skip_gitignore: false,
             },
             update: UpdateConfig { auto_build: true },
             fields: FieldsConfig {
@@ -145,6 +146,7 @@ mod tests {
             true,
             None,
             true, // auto_build calls build internally
+            false, // skip_gitignore
         )
         .unwrap();
     }

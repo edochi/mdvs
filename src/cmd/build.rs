@@ -61,11 +61,7 @@ pub fn run(path: &Path) -> anyhow::Result<()> {
         .collect::<anyhow::Result<Vec<_>>>()?;
 
     // Scan files
-    let scanned = ScannedFiles::scan(
-        path,
-        &config.scan.glob,
-        config.scan.include_bare_files,
-    );
+    let scanned = ScannedFiles::scan(path, &config.scan);
 
     anyhow::ensure!(
         !scanned.files.is_empty(),
@@ -180,6 +176,7 @@ mod tests {
             true, // ignore bare files
             None,
             true,
+            false, // skip_gitignore
         )
         .unwrap();
 
@@ -233,6 +230,7 @@ mod tests {
             true,
             None,
             true,
+            false, // skip_gitignore
         )
         .unwrap();
 
