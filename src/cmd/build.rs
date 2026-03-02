@@ -169,21 +169,21 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
-        // Run init first
+        // Run init (auto_build calls build internally)
         crate::cmd::init::run(
             tmp.path(),
-            "minishlab/potion-base-8M",
+            Some("minishlab/potion-base-8M"),
             None,
             "**",
             false,
             false,
             true, // ignore bare files
-            1024,
+            None,
             true,
         )
         .unwrap();
 
-        // Run build
+        // Run build again (tests standalone rebuild)
         let result = run(tmp.path());
         assert!(result.is_ok(), "build failed: {:?}", result);
 
@@ -222,20 +222,19 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
-        // Run init + build
+        // Run init (auto_build calls build internally)
         crate::cmd::init::run(
             tmp.path(),
-            "minishlab/potion-base-8M",
+            Some("minishlab/potion-base-8M"),
             None,
             "**",
             false,
             false,
             true,
-            1024,
+            None,
             true,
         )
         .unwrap();
-        run(tmp.path()).unwrap();
 
         // Overwrite chunks.parquet with wrong dimension (2 instead of actual)
         let bad_chunks = vec![ChunkRow {

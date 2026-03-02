@@ -137,17 +137,16 @@ mod tests {
     fn init_and_build(dir: &Path) {
         crate::cmd::init::run(
             dir,
-            "minishlab/potion-base-8M",
+            Some("minishlab/potion-base-8M"),
             None,
             "**",
             false,
             false,
             true,
-            1024,
-            true,
+            None,
+            true, // auto_build calls build internally
         )
         .unwrap();
-        crate::cmd::build::run(dir).unwrap();
     }
 
     #[tokio::test]

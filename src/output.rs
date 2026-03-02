@@ -6,6 +6,14 @@ pub enum OutputFormat {
     Json,
 }
 
+#[derive(Debug, Serialize)]
+pub struct DiscoveredField {
+    pub name: String,
+    pub field_type: String,
+    pub files_found: usize,
+    pub total_files: usize,
+}
+
 pub trait CommandOutput: Serialize {
     /// Render this result as human-readable text (tables, summaries).
     fn format_human(&self) -> String;

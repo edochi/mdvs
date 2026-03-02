@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use mdvs::output::CommandOutput;
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -14,21 +15,21 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Discover fields, configure model, write mdvs.toml + mdvs.lock
+    /// Discover fields, configure model, write mdvs.toml
     Init {
         /// Directory to scan
         #[arg(default_value = ".")]
         path: PathBuf,
-        /// HuggingFace model ID
-        #[arg(long, default_value = "minishlab/potion-base-8M")]
-        model: String,
+        /// HuggingFace model ID [default: minishlab/potion-base-8M]
+        #[arg(long)]
+        model: Option<String>,
         /// Pin model to specific revision (commit SHA)
         #[arg(long)]
         revision: Option<String>,
         /// File glob pattern
         #[arg(long, default_value = "**")]
         glob: String,
-        /// Overwrite existing config and lock files
+        /// Overwrite existing config
         #[arg(long)]
         force: bool,
         /// Print discovery table only, write nothing
@@ -37,10 +38,10 @@ enum Command {
         /// Exclude files without frontmatter
         #[arg(long)]
         ignore_bare_files: bool,
-        /// Maximum chunk size in characters
-        #[arg(long, default_value = "1024")]
-        chunk_size: usize,
-        /// Automatically build index after update
+        /// Maximum chunk size in characters [default: 1024]
+        #[arg(long)]
+        chunk_size: Option<usize>,
+        /// Automatically build index after init
         #[arg(long, default_value = "true")]
         auto_build: bool,
     },
@@ -88,17 +89,21 @@ async fn main() -> anyhow::Result<()> {
             ignore_bare_files,
             chunk_size,
             auto_build,
-        } => mdvs::cmd::init::run(
-            &path,
-            &model,
-            revision.as_deref(),
-            &glob,
-            force,
-            dry_run,
-            ignore_bare_files,
-            chunk_size,
-            auto_build,
-        ),
+        } => {
+            let result = mdvs::cmd::init::run(
+                &path,
+                model.as_deref(),
+                revision.as_deref(),
+                &glob,
+                force,
+                dry_run,
+                ignore_bare_files,
+                chunk_size,
+                auto_build,
+            )?;
+            result.print(&cli.output);
+            Ok(())
+        }
         Command::Build { path } => mdvs::cmd::build::run(&path),
         Command::Search {
             query,
