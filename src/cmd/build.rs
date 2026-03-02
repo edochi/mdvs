@@ -1,4 +1,3 @@
-use anyhow::Context;
 use crate::discover::field_type::FieldType;
 use crate::discover::scan::ScannedFiles;
 use crate::index::chunk::{extract_plain_text, Chunks};
@@ -7,22 +6,83 @@ use crate::index::storage::{
     build_chunks_batch, build_files_batch, content_hash, read_parquet, write_parquet, ChunkRow,
     FileRow,
 };
-use crate::schema::config::MdvsToml;
+use crate::schema::config::{MdvsToml, SearchConfig};
+use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig};
 use datafusion::arrow::datatypes::DataType;
 use std::path::Path;
 
-pub fn run(path: &Path) -> anyhow::Result<()> {
+const DEFAULT_MODEL: &str = "minishlab/potion-base-8M";
+const DEFAULT_CHUNK_SIZE: usize = 1024;
+
+pub fn run(
+    path: &Path,
+    set_model: Option<&str>,
+    set_revision: Option<&str>,
+    set_chunk_size: Option<usize>,
+    force: bool,
+) -> anyhow::Result<()> {
     let config_path = path.join("mdvs.toml");
     let mdvs_dir = path.join(".mdvs");
     let files_parquet = mdvs_dir.join("files.parquet");
     let chunks_parquet = mdvs_dir.join("chunks.parquet");
 
-    // Read config
-    let config = MdvsToml::read(&config_path)?;
-    let embedding = config.embedding_model.as_ref()
-        .context("missing [embedding_model] in mdvs.toml (run `mdvs init --auto-build` or add it manually)")?;
-    let chunking = config.chunking.as_ref()
-        .context("missing [chunking] in mdvs.toml (run `mdvs init --auto-build` or add it manually)")?;
+    // Read config and fill missing build sections
+    let mut config = MdvsToml::read(&config_path)?;
+    let mut config_changed = false;
+
+    match config.embedding_model {
+        None => {
+            config.embedding_model = Some(EmbeddingModelConfig {
+                name: set_model.unwrap_or(DEFAULT_MODEL).to_string(),
+                revision: set_revision.map(|s| s.to_string()),
+            });
+            config_changed = true;
+        }
+        Some(ref mut em) if set_model.is_some() || set_revision.is_some() => {
+            anyhow::ensure!(
+                force,
+                "--set-model/--set-revision require --force (changes model, triggers full re-embed)"
+            );
+            if let Some(m) = set_model {
+                em.name = m.to_string();
+            }
+            if let Some(r) = set_revision {
+                em.revision = Some(r.to_string());
+            }
+            config_changed = true;
+        }
+        Some(_) => {}
+    }
+
+    match config.chunking {
+        None => {
+            config.chunking = Some(ChunkingConfig {
+                max_chunk_size: set_chunk_size.unwrap_or(DEFAULT_CHUNK_SIZE),
+            });
+            config_changed = true;
+        }
+        Some(ref mut ch) if set_chunk_size.is_some() => {
+            anyhow::ensure!(
+                force,
+                "--set-chunk-size requires --force (changes chunking, triggers full re-embed)"
+            );
+            ch.max_chunk_size = set_chunk_size.unwrap();
+            config_changed = true;
+        }
+        Some(_) => {}
+    }
+
+    if config.search.is_none() {
+        config.search = Some(SearchConfig { default_limit: 10 });
+        config_changed = true;
+    }
+
+    if config_changed {
+        config.write(&config_path)?;
+    }
+
+    let embedding = config.embedding_model.as_ref().unwrap();
+    let chunking = config.chunking.as_ref().unwrap();
 
     // Load model
     eprintln!("Loading model {}...", embedding.name);
@@ -156,7 +216,7 @@ mod tests {
     #[test]
     fn missing_config() {
         let tmp = tempfile::tempdir().unwrap();
-        let result = run(tmp.path());
+        let result = run(tmp.path(), None, None, None, false);
         assert!(result.is_err());
     }
 
@@ -181,7 +241,7 @@ mod tests {
         .unwrap();
 
         // Run build again (tests standalone rebuild)
-        let result = run(tmp.path());
+        let result = run(tmp.path(), None, None, None, false);
         assert!(result.is_ok(), "build failed: {:?}", result);
 
         // Verify Parquet files exist
@@ -247,9 +307,130 @@ mod tests {
         write_parquet(&tmp.path().join(".mdvs/chunks.parquet"), &bad_batch).unwrap();
 
         // Build again should fail with dimension mismatch
-        let result = run(tmp.path());
+        let result = run(tmp.path(), None, None, None, false);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("dimension mismatch"));
+    }
+
+    #[test]
+    fn missing_build_sections_filled() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_test_vault(tmp.path());
+
+        // Init without auto-build (no build sections in toml)
+        crate::cmd::init::run(
+            tmp.path(),
+            None,
+            None,
+            "**",
+            false,
+            false,
+            true,
+            None,
+            false, // no auto_build
+            false,
+        )
+        .unwrap();
+
+        // Verify no build sections
+        let config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
+        assert!(config.embedding_model.is_none());
+        assert!(config.chunking.is_none());
+        assert!(config.search.is_none());
+
+        // Build should fill defaults and succeed
+        let result = run(tmp.path(), None, None, None, false);
+        assert!(result.is_ok(), "build failed: {:?}", result);
+
+        // Verify sections were written
+        let config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
+        assert_eq!(config.embedding_model.as_ref().unwrap().name, DEFAULT_MODEL);
+        assert!(config.embedding_model.as_ref().unwrap().revision.is_none());
+        assert_eq!(config.chunking.as_ref().unwrap().max_chunk_size, DEFAULT_CHUNK_SIZE);
+        assert_eq!(config.search.as_ref().unwrap().default_limit, 10);
+
+        // Verify index was created
+        assert!(tmp.path().join(".mdvs/files.parquet").exists());
+        assert!(tmp.path().join(".mdvs/chunks.parquet").exists());
+    }
+
+    #[test]
+    fn set_model_without_force_errors() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_test_vault(tmp.path());
+
+        // Init with auto-build (sections exist)
+        crate::cmd::init::run(
+            tmp.path(),
+            Some("minishlab/potion-base-8M"),
+            None,
+            "**",
+            false,
+            false,
+            true,
+            None,
+            true,
+            false,
+        )
+        .unwrap();
+
+        // Try to change model without --force
+        let result = run(tmp.path(), Some("other-model"), None, None, false);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("--force"));
+    }
+
+    #[test]
+    fn set_chunk_size_without_force_errors() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_test_vault(tmp.path());
+
+        crate::cmd::init::run(
+            tmp.path(),
+            Some("minishlab/potion-base-8M"),
+            None,
+            "**",
+            false,
+            false,
+            true,
+            None,
+            true,
+            false,
+        )
+        .unwrap();
+
+        let result = run(tmp.path(), None, None, Some(512), false);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("--force"));
+    }
+
+    #[test]
+    fn set_model_with_force() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_test_vault(tmp.path());
+
+        crate::cmd::init::run(
+            tmp.path(),
+            Some("minishlab/potion-base-8M"),
+            None,
+            "**",
+            false,
+            false,
+            true,
+            None,
+            true,
+            false,
+        )
+        .unwrap();
+
+        // Change chunk size with --force (same model so no dimension mismatch)
+        let result = run(tmp.path(), None, None, Some(512), true);
+        assert!(result.is_ok(), "build with --force failed: {:?}", result);
+
+        let config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
+        assert_eq!(config.chunking.as_ref().unwrap().max_chunk_size, 512);
     }
 }

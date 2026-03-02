@@ -158,7 +158,7 @@ pub fn run(
     toml_doc.write(&config_path)?;
 
     if auto_build {
-        crate::cmd::build::run(path)?;
+        crate::cmd::build::run(path, None, None, None, false)?;
     }
 
     Ok(result)

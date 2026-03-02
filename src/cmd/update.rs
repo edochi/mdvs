@@ -203,7 +203,7 @@ pub fn run(
     config.write(&config_path)?;
 
     if should_build {
-        crate::cmd::build::run(path)?;
+        crate::cmd::build::run(path, None, None, None, false)?;
     }
 
     Ok(result)

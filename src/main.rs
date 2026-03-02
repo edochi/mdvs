@@ -53,6 +53,18 @@ enum Command {
         /// Directory containing mdvs.toml
         #[arg(default_value = ".")]
         path: PathBuf,
+        /// Change embedding model (requires --force if already configured)
+        #[arg(long)]
+        set_model: Option<String>,
+        /// Change model revision (requires --force if already configured)
+        #[arg(long)]
+        set_revision: Option<String>,
+        /// Change max chunk size (requires --force if already configured)
+        #[arg(long)]
+        set_chunk_size: Option<usize>,
+        /// Confirm config changes that require full re-embed
+        #[arg(long)]
+        force: bool,
     },
     /// Semantic search across notes
     Search {
@@ -129,7 +141,19 @@ async fn main() -> anyhow::Result<()> {
             result.print(&cli.output);
             Ok(())
         }
-        Command::Build { path } => mdvs::cmd::build::run(&path),
+        Command::Build {
+            path,
+            set_model,
+            set_revision,
+            set_chunk_size,
+            force,
+        } => mdvs::cmd::build::run(
+            &path,
+            set_model.as_deref(),
+            set_revision.as_deref(),
+            set_chunk_size,
+            force,
+        ),
         Command::Search {
             query,
             path,
