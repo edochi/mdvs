@@ -97,9 +97,38 @@ impl MdvsToml {
 
     pub fn write(&self, path: &Path) -> anyhow::Result<()> {
         let content = toml::to_string(self)?;
+        let content = inline_field_types(&content)?;
         fs::write(path, content)?;
         Ok(())
     }
+}
+
+/// Post-process serialized TOML to render `type` fields as inline tables.
+/// The `toml` crate expands them into `[fields.field.type]` sections;
+/// we convert those back to `type = { array = "String" }` form.
+fn inline_field_types(toml_str: &str) -> anyhow::Result<String> {
+    let mut doc = toml_str.parse::<toml_edit::DocumentMut>()?;
+
+    if let Some(fields) = doc.get_mut("fields") {
+        if let Some(field_array) = fields.get_mut("field") {
+            if let Some(array_of_tables) = field_array.as_array_of_tables_mut() {
+                for table in array_of_tables.iter_mut() {
+                    if let Some(type_item) = table.get_mut("type") {
+                        if let Some(t) = type_item.as_table_mut() {
+                            let inline = t.clone().into_inline_table();
+                            *type_item = toml_edit::Item::Value(inline.into());
+                        }
+                    }
+                    // Normalize key formatting (fix missing space before `=`)
+                    if let Some(mut key) = table.key_mut("type") {
+                        key.fmt();
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(doc.to_string())
 }
 
 #[cfg(test)]
@@ -390,6 +419,44 @@ default_limit = 10
         toml_doc.write(&path).unwrap();
         let loaded = MdvsToml::read(&path).unwrap();
         assert_eq!(loaded, toml_doc);
+    }
+
+    #[test]
+    fn write_uses_inline_tables_for_type() {
+        let doc = full_toml(vec![
+            TomlField {
+                name: "tags".into(),
+                field_type: FieldTypeSerde::Array {
+                    array: Box::new(FieldTypeSerde::Scalar("String".into())),
+                },
+                allowed: vec!["**".into()],
+                required: vec![],
+            },
+            TomlField {
+                name: "meta".into(),
+                field_type: FieldTypeSerde::Object {
+                    object: BTreeMap::from([
+                        ("author".into(), FieldTypeSerde::Scalar("String".into())),
+                    ]),
+                },
+                allowed: vec!["**".into()],
+                required: vec![],
+            },
+        ]);
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mdvs.toml");
+        doc.write(&path).unwrap();
+        let content = fs::read_to_string(&path).unwrap();
+
+        // Should use inline tables, not separate sections
+        assert!(content.contains(r#"type = { array = "String" }"#), "expected inline array type, got:\n{content}");
+        assert!(content.contains(r#"type = { object = { author = "String" } }"#), "expected inline object type, got:\n{content}");
+        assert!(!content.contains("[fields.field.type]"), "should not have expanded type sections");
+
+        // Still roundtrips correctly
+        let loaded = MdvsToml::read(&path).unwrap();
+        assert_eq!(loaded, doc);
     }
 
     #[test]
