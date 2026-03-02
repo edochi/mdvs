@@ -1,14 +1,11 @@
 use crate::discover::field_type::FieldType;
 use crate::discover::scan::ScannedFiles;
+use crate::index::backend::{IndexBackend, ParquetBackend};
 use crate::index::chunk::{extract_plain_text, Chunks};
 use crate::index::embed::{Embedder, ModelConfig};
-use crate::index::storage::{
-    build_chunks_batch, build_files_batch, content_hash, read_build_metadata, read_parquet,
-    write_parquet, write_parquet_with_metadata, BuildMetadata, ChunkRow, FileRow,
-};
+use crate::index::storage::{content_hash, BuildMetadata, ChunkRow, FileRow};
 use crate::schema::config::{MdvsToml, SearchConfig};
 use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig};
-use datafusion::arrow::datatypes::DataType;
 use std::path::Path;
 
 const DEFAULT_MODEL: &str = "minishlab/potion-base-8M";
@@ -22,9 +19,6 @@ pub fn run(
     force: bool,
 ) -> anyhow::Result<()> {
     let config_path = path.join("mdvs.toml");
-    let mdvs_dir = path.join(".mdvs");
-    let files_parquet = mdvs_dir.join("files.parquet");
-    let chunks_parquet = mdvs_dir.join("chunks.parquet");
 
     // Read config and fill missing build sections
     let mut config = MdvsToml::read(&config_path)?;
@@ -84,10 +78,10 @@ pub fn run(
     let embedding = config.embedding_model.as_ref().unwrap();
     let chunking = config.chunking.as_ref().unwrap();
 
+    let backend = ParquetBackend::new(path);
+
     // Detect manual config changes against existing index
-    if files_parquet.exists()
-        && let Some(ref meta) = read_build_metadata(&files_parquet)?
-    {
+    if let Some(ref meta) = backend.read_metadata()? {
         let mut mismatches = Vec::new();
         if meta.embedding_model != *embedding {
             mismatches.push(format!(
@@ -122,19 +116,13 @@ pub fn run(
     let embedder = Embedder::load(&model_config);
     let dimension = embedder.dimension();
 
-    // Dimension check against existing Parquet
-    if chunks_parquet.exists() {
-        let batches = read_parquet(&chunks_parquet)?;
-        if let Some(batch) = batches.first()
-            && let Ok(field) = batch.schema().field_with_name("embedding")
-            && let DataType::FixedSizeList(_, existing_dim) = field.data_type()
-        {
-            let model_dim = dimension as i32;
-            anyhow::ensure!(
-                *existing_dim == model_dim,
-                "dimension mismatch: model produces {model_dim}-dim embeddings but existing index has {existing_dim}-dim",
-            );
-        }
+    // Dimension check against existing index
+    if let Some(existing_dim) = backend.embedding_dimension()? {
+        let model_dim = dimension as i32;
+        anyhow::ensure!(
+            existing_dim == model_dim,
+            "dimension mismatch: model produces {model_dim}-dim embeddings but existing index has {existing_dim}-dim",
+        );
     }
 
     // Convert schema fields
@@ -201,20 +189,14 @@ pub fn run(
         }
     }
 
-    // Write Parquet files
-    std::fs::create_dir_all(&mdvs_dir)?;
-
-    let files_batch = build_files_batch(&schema_fields, &file_rows);
+    // Write index
     let build_meta = BuildMetadata {
         embedding_model: embedding.clone(),
         chunking: chunking.clone(),
         glob: config.scan.glob.clone(),
         built_at: chrono::Utc::now().to_rfc3339(),
     };
-    write_parquet_with_metadata(&files_parquet, &files_batch, build_meta.to_hash_map())?;
-
-    let chunks_batch = build_chunks_batch(&chunk_rows, dimension as i32);
-    write_parquet(&chunks_parquet, &chunks_batch)?;
+    backend.write_index(&schema_fields, &file_rows, &chunk_rows, build_meta)?;
 
     eprintln!(
         "Built index: {} files, {} chunks (dim={})",
@@ -229,6 +211,8 @@ pub fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::index::storage::{read_build_metadata, read_parquet};
+    use datafusion::arrow::datatypes::DataType;
     use std::fs;
 
     fn create_test_vault(dir: &Path) {

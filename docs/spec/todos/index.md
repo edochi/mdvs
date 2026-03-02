@@ -17,3 +17,4 @@
 | [0013](TODO-0013.md) | Search verifies model against parquet metadata | done | high | 2026-03-02 |
 | [0014](TODO-0014.md) | Build detects manual config changes via parquet metadata | done | high | 2026-03-02 |
 | [0015](TODO-0015.md) | Implement info and clean commands | done | high | 2026-03-02 |
+| [0016](TODO-0016.md) | LanceDB backend via compile-time feature flag | todo | medium | 2026-03-02 |

@@ -1,9 +1,7 @@
 use anyhow::Context;
+use crate::index::backend::{IndexBackend, ParquetBackend};
 use crate::index::embed::{Embedder, ModelConfig};
-use crate::index::storage::read_build_metadata;
 use crate::schema::config::MdvsToml;
-use crate::search::SearchContext;
-use datafusion::arrow::array::{Array, Float64Array, StringViewArray};
 use std::path::Path;
 
 pub async fn run(
@@ -13,29 +11,22 @@ pub async fn run(
     where_clause: Option<&str>,
 ) -> anyhow::Result<()> {
     let config_path = path.join("mdvs.toml");
-    let files_parquet = path.join(".mdvs/files.parquet");
-    let chunks_parquet = path.join(".mdvs/chunks.parquet");
 
     // Read config
     let config = MdvsToml::read(&config_path)?;
     let embedding = config.embedding_model.as_ref()
         .context("missing [embedding_model] in mdvs.toml (run `mdvs build` first)")?;
 
+    let backend = ParquetBackend::new(path);
+
     // Index existence check (before loading model to fail fast)
     anyhow::ensure!(
-        files_parquet.exists(),
-        "index not found: {} does not exist (run `mdvs build` first)",
-        files_parquet.display(),
-    );
-    anyhow::ensure!(
-        chunks_parquet.exists(),
-        "index not found: {} does not exist (run `mdvs build` first)",
-        chunks_parquet.display(),
+        backend.exists(),
+        "index not found (run `mdvs build` first)",
     );
 
     // Verify model matches index
-    let build_meta = read_build_metadata(&files_parquet)?;
-    if let Some(ref meta) = build_meta
+    if let Some(ref meta) = backend.read_metadata()?
         && meta.embedding_model != *embedding
     {
         anyhow::bail!(
@@ -56,45 +47,12 @@ pub async fn run(
     // Embed query
     let query_embedding = embedder.embed(query);
 
-    // Create search context
-    let sc = SearchContext::new(&files_parquet, &chunks_parquet, query_embedding).await?;
-
-    // Build SQL
-    let where_part = match where_clause {
-        Some(w) => format!("WHERE {w}"),
-        None => String::new(),
-    };
-    let sql = format!(
-        "SELECT f.filename,
-                MAX(cosine_similarity(c.embedding)) AS score
-         FROM chunks c JOIN files f ON c.file_id = f.file_id
-         {where_part}
-         GROUP BY f.file_id, f.filename
-         ORDER BY score DESC
-         LIMIT {limit}"
-    );
-
-    // Execute query
-    let batches = sc.query(&sql).await?;
+    // Search via backend
+    let hits = backend.search(query_embedding, where_clause, limit).await?;
 
     // Print results
-    for batch in &batches {
-        let filenames = batch
-            .column(0)
-            .as_any()
-            .downcast_ref::<StringViewArray>()
-            .ok_or_else(|| anyhow::anyhow!("unexpected type for filename column"))?;
-        let scores = batch
-            .column(1)
-            .as_any()
-            .downcast_ref::<Float64Array>()
-            .ok_or_else(|| anyhow::anyhow!("unexpected type for score column"))?;
-
-        for i in 0..batch.num_rows() {
-            let filename = filenames.value(i);
-            let score = scores.value(i);
-            println!("{score:.3}  {filename}");
-        }
+    for hit in &hits {
+        println!("{:.3}  {}", hit.score, hit.filename);
     }
 
     Ok(())
@@ -198,7 +156,8 @@ mod tests {
         create_test_vault(tmp.path());
         init_and_build(tmp.path());
 
-        // Capture output by running the SQL directly
+        // Use backend to search with limit=1
+        let backend = ParquetBackend::new(tmp.path());
         let config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
         let embedding = config.embedding_model.as_ref().unwrap();
         let model_config = ModelConfig::Model2Vec {
@@ -208,24 +167,8 @@ mod tests {
         let embedder = Embedder::load(&model_config);
         let query_embedding = embedder.embed("rust programming");
 
-        let sc = SearchContext::new(
-            &tmp.path().join(".mdvs/files.parquet"),
-            &tmp.path().join(".mdvs/chunks.parquet"),
-            query_embedding,
-        )
-        .await
-        .unwrap();
-
-        let sql = "SELECT f.filename,
-                          MAX(cosine_similarity(c.embedding)) AS score
-                   FROM chunks c JOIN files f ON c.file_id = f.file_id
-                   GROUP BY f.file_id, f.filename
-                   ORDER BY score DESC
-                   LIMIT 1";
-
-        let batches = sc.query(sql).await.unwrap();
-        let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
-        assert_eq!(total_rows, 1);
+        let hits = backend.search(query_embedding, None, 1).await.unwrap();
+        assert_eq!(hits.len(), 1);
     }
 
     #[tokio::test]
@@ -234,6 +177,7 @@ mod tests {
         create_test_vault(tmp.path());
         init_and_build(tmp.path());
 
+        let backend = ParquetBackend::new(tmp.path());
         let config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
         let embedding = config.embedding_model.as_ref().unwrap();
         let model_config = ModelConfig::Model2Vec {
@@ -243,32 +187,14 @@ mod tests {
         let embedder = Embedder::load(&model_config);
         let query_embedding = embedder.embed("cooking recipes");
 
-        let sc = SearchContext::new(
-            &tmp.path().join(".mdvs/files.parquet"),
-            &tmp.path().join(".mdvs/chunks.parquet"),
-            query_embedding,
-        )
-        .await
-        .unwrap();
-
         // Filter to non-draft only — cooking post (draft=true) should be excluded
-        let sql = "SELECT f.filename,
-                          MAX(cosine_similarity(c.embedding)) AS score
-                   FROM chunks c JOIN files f ON c.file_id = f.file_id
-                   WHERE f.data['draft'] = false
-                   GROUP BY f.file_id, f.filename
-                   ORDER BY score DESC";
+        let hits = backend
+            .search(query_embedding, Some("f.data['draft'] = false"), 10)
+            .await
+            .unwrap();
 
-        let batches = sc.query(sql).await.unwrap();
-        for batch in &batches {
-            let filenames = batch
-                .column(0)
-                .as_any()
-                .downcast_ref::<StringViewArray>()
-                .unwrap();
-            for i in 0..filenames.len() {
-                assert_ne!(filenames.value(i), "blog/post2.md");
-            }
+        for hit in &hits {
+            assert_ne!(hit.filename, "blog/post2.md");
         }
     }
 

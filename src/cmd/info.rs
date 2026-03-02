@@ -1,5 +1,5 @@
 use crate::discover::scan::ScannedFiles;
-use crate::index::storage::{read_build_metadata, read_parquet};
+use crate::index::backend::{IndexBackend, ParquetBackend};
 use crate::output::CommandOutput;
 use crate::schema::config::MdvsToml;
 use serde::Serialize;
@@ -120,30 +120,28 @@ pub fn run(path: &Path) -> anyhow::Result<InfoResult> {
         })
         .collect();
 
-    // Index info (if .mdvs/ exists)
-    let files_parquet = path.join(".mdvs/files.parquet");
-    let chunks_parquet = path.join(".mdvs/chunks.parquet");
-
-    let index = if files_parquet.exists() && chunks_parquet.exists() {
-        let build_meta = read_build_metadata(&files_parquet)?;
-        let file_batches = read_parquet(&files_parquet)?;
-        let chunk_batches = read_parquet(&chunks_parquet)?;
-        let files_indexed: usize = file_batches.iter().map(|b| b.num_rows()).sum();
-        let chunks: usize = chunk_batches.iter().map(|b| b.num_rows()).sum();
-
-        build_meta.map(|meta| {
-            let config_match = config.embedding_model.as_ref() == Some(&meta.embedding_model)
-                && config.chunking.as_ref() == Some(&meta.chunking);
-            IndexInfo {
-                model: meta.embedding_model.name,
-                revision: meta.embedding_model.revision,
-                chunk_size: meta.chunking.max_chunk_size,
-                files_indexed,
-                chunks,
-                built_at: meta.built_at,
-                config_match,
+    // Index info (if index exists)
+    let backend = ParquetBackend::new(path);
+    let index = if backend.exists() {
+        let build_meta = backend.read_metadata()?;
+        let idx_stats = backend.stats()?;
+        match (build_meta, idx_stats) {
+            (Some(meta), Some(stats)) => {
+                let config_match =
+                    config.embedding_model.as_ref() == Some(&meta.embedding_model)
+                        && config.chunking.as_ref() == Some(&meta.chunking);
+                Some(IndexInfo {
+                    model: meta.embedding_model.name,
+                    revision: meta.embedding_model.revision,
+                    chunk_size: meta.chunking.max_chunk_size,
+                    files_indexed: stats.files_indexed,
+                    chunks: stats.chunks,
+                    built_at: meta.built_at,
+                    config_match,
+                })
             }
-        })
+            _ => None,
+        }
     } else {
         None
     };
