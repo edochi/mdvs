@@ -14,6 +14,13 @@ pub struct DiscoveredField {
     pub total_files: usize,
 }
 
+#[derive(Debug, Serialize)]
+pub struct ChangedField {
+    pub name: String,
+    pub old_type: String,
+    pub new_type: String,
+}
+
 pub trait CommandOutput: Serialize {
     /// Render this result as human-readable text (tables, summaries).
     fn format_human(&self) -> String;

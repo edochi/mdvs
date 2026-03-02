@@ -67,8 +67,24 @@ enum Command {
     },
     /// Validate frontmatter against schema
     Check,
-    /// Re-scan and refresh lock file
-    Update,
+    /// Re-scan and update field definitions
+    Update {
+        /// Directory containing mdvs.toml
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Re-infer specific field(s) — can be repeated
+        #[arg(long)]
+        reinfer: Vec<String>,
+        /// Re-infer all fields
+        #[arg(long)]
+        reinfer_all: bool,
+        /// Override auto_build from [update] config
+        #[arg(long)]
+        build: Option<bool>,
+        /// Show what would change, write nothing
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Remove the .mdvs/ directory
     Clean,
     /// Show index status and statistics
@@ -114,7 +130,18 @@ async fn main() -> anyhow::Result<()> {
             mdvs::cmd::search::run(&path, &query, limit, where_clause.as_deref()).await
         }
         Command::Check => todo!("check"),
-        Command::Update => todo!("update"),
+        Command::Update {
+            path,
+            reinfer,
+            reinfer_all,
+            build,
+            dry_run,
+        } => {
+            let result =
+                mdvs::cmd::update::run(&path, &reinfer, reinfer_all, build, dry_run)?;
+            result.print(&cli.output);
+            Ok(())
+        }
         Command::Clean => todo!("clean"),
         Command::Info => todo!("info"),
     }

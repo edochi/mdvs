@@ -14,7 +14,7 @@ pub struct SearchConfig {
     pub default_limit: usize,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TomlField {
     pub name: String,
     #[serde(rename = "type")]
