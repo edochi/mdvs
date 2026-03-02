@@ -1,6 +1,6 @@
 use crate::discover::field_type::FieldType;
 use crate::discover::scan::ScannedFiles;
-use crate::index::backend::{IndexBackend, ParquetBackend};
+use crate::index::backend::Backend;
 use crate::index::chunk::{extract_plain_text, Chunks};
 use crate::index::embed::{Embedder, ModelConfig};
 use crate::index::storage::{content_hash, BuildMetadata, ChunkRow, FileRow};
@@ -11,7 +11,7 @@ use std::path::Path;
 const DEFAULT_MODEL: &str = "minishlab/potion-base-8M";
 const DEFAULT_CHUNK_SIZE: usize = 1024;
 
-pub fn run(
+pub async fn run(
     path: &Path,
     set_model: Option<&str>,
     set_revision: Option<&str>,
@@ -27,6 +27,7 @@ pub fn run(
     match config.embedding_model {
         None => {
             config.embedding_model = Some(EmbeddingModelConfig {
+                provider: "model2vec".to_string(),
                 name: set_model.unwrap_or(DEFAULT_MODEL).to_string(),
                 revision: set_revision.map(|s| s.to_string()),
             });
@@ -78,7 +79,7 @@ pub fn run(
     let embedding = config.embedding_model.as_ref().unwrap();
     let chunking = config.chunking.as_ref().unwrap();
 
-    let backend = ParquetBackend::new(path);
+    let backend = Backend::parquet(path);
 
     // Detect manual config changes against existing index
     if let Some(ref meta) = backend.read_metadata()? {
@@ -109,10 +110,7 @@ pub fn run(
 
     // Load model
     eprintln!("Loading model {}...", embedding.name);
-    let model_config = ModelConfig::Model2Vec {
-        model_id: embedding.name.clone(),
-        revision: embedding.revision.clone(),
-    };
+    let model_config = ModelConfig::try_from(embedding)?;
     let embedder = Embedder::load(&model_config);
     let dimension = embedder.dimension();
 
@@ -164,7 +162,7 @@ pub fn run(
         let embeddings = if text_refs.is_empty() {
             vec![]
         } else {
-            embedder.embed_batch(&text_refs)
+            embedder.embed_batch(&text_refs).await
         };
 
         // Build file row
@@ -232,15 +230,15 @@ mod tests {
         .unwrap();
     }
 
-    #[test]
-    fn missing_config() {
+    #[tokio::test]
+    async fn missing_config() {
         let tmp = tempfile::tempdir().unwrap();
-        let result = run(tmp.path(), None, None, None, false);
+        let result = run(tmp.path(), None, None, None, false).await;
         assert!(result.is_err());
     }
 
-    #[test]
-    fn end_to_end() {
+    #[tokio::test]
+    async fn end_to_end() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
@@ -257,10 +255,11 @@ mod tests {
             true,
             false, // skip_gitignore
         )
+        .await
         .unwrap();
 
         // Run build again (tests standalone rebuild)
-        let result = run(tmp.path(), None, None, None, false);
+        let result = run(tmp.path(), None, None, None, false).await;
         assert!(result.is_ok(), "build failed: {:?}", result);
 
         // Verify Parquet files exist
@@ -299,8 +298,8 @@ mod tests {
         assert_eq!(meta.glob, "**");
     }
 
-    #[test]
-    fn dimension_mismatch() {
+    #[tokio::test]
+    async fn dimension_mismatch() {
         use crate::index::storage::{build_chunks_batch, write_parquet, ChunkRow};
 
         let tmp = tempfile::tempdir().unwrap();
@@ -319,6 +318,7 @@ mod tests {
             true,
             false, // skip_gitignore
         )
+        .await
         .unwrap();
 
         // Overwrite chunks.parquet with wrong dimension (2 instead of actual)
@@ -334,14 +334,14 @@ mod tests {
         write_parquet(&tmp.path().join(".mdvs/chunks.parquet"), &bad_batch).unwrap();
 
         // Build again should fail with dimension mismatch
-        let result = run(tmp.path(), None, None, None, false);
+        let result = run(tmp.path(), None, None, None, false).await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("dimension mismatch"));
     }
 
-    #[test]
-    fn missing_build_sections_filled() {
+    #[tokio::test]
+    async fn missing_build_sections_filled() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
@@ -358,6 +358,7 @@ mod tests {
             false, // no auto_build
             false,
         )
+        .await
         .unwrap();
 
         // Verify no build sections
@@ -367,7 +368,7 @@ mod tests {
         assert!(config.search.is_none());
 
         // Build should fill defaults and succeed
-        let result = run(tmp.path(), None, None, None, false);
+        let result = run(tmp.path(), None, None, None, false).await;
         assert!(result.is_ok(), "build failed: {:?}", result);
 
         // Verify sections were written
@@ -382,8 +383,8 @@ mod tests {
         assert!(tmp.path().join(".mdvs/chunks.parquet").exists());
     }
 
-    #[test]
-    fn set_model_without_force_errors() {
+    #[tokio::test]
+    async fn set_model_without_force_errors() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
@@ -400,17 +401,18 @@ mod tests {
             true,
             false,
         )
+        .await
         .unwrap();
 
         // Try to change model without --force
-        let result = run(tmp.path(), Some("other-model"), None, None, false);
+        let result = run(tmp.path(), Some("other-model"), None, None, false).await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("--force"));
     }
 
-    #[test]
-    fn set_chunk_size_without_force_errors() {
+    #[tokio::test]
+    async fn set_chunk_size_without_force_errors() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
@@ -426,16 +428,17 @@ mod tests {
             true,
             false,
         )
+        .await
         .unwrap();
 
-        let result = run(tmp.path(), None, None, Some(512), false);
+        let result = run(tmp.path(), None, None, Some(512), false).await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("--force"));
     }
 
-    #[test]
-    fn set_model_with_force() {
+    #[tokio::test]
+    async fn set_model_with_force() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
@@ -451,18 +454,19 @@ mod tests {
             true,
             false,
         )
+        .await
         .unwrap();
 
         // Change chunk size with --force (same model so no dimension mismatch)
-        let result = run(tmp.path(), None, None, Some(512), true);
+        let result = run(tmp.path(), None, None, Some(512), true).await;
         assert!(result.is_ok(), "build with --force failed: {:?}", result);
 
         let config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
         assert_eq!(config.chunking.as_ref().unwrap().max_chunk_size, 512);
     }
 
-    #[test]
-    fn manual_config_change_detected() {
+    #[tokio::test]
+    async fn manual_config_change_detected() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
@@ -478,6 +482,7 @@ mod tests {
             true,
             false,
         )
+        .await
         .unwrap();
 
         // Manually change chunk_size in toml (simulates user editing)
@@ -486,14 +491,14 @@ mod tests {
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
 
         // Build without --force should error
-        let result = run(tmp.path(), None, None, None, false);
+        let result = run(tmp.path(), None, None, None, false).await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("config changed since last build"));
         assert!(err.contains("chunk_size"));
 
         // Build with --force should succeed
-        let result = run(tmp.path(), None, None, None, true);
+        let result = run(tmp.path(), None, None, None, true).await;
         assert!(result.is_ok(), "build with --force failed: {:?}", result);
     }
 }

@@ -1,5 +1,5 @@
 use crate::discover::scan::ScannedFiles;
-use crate::index::backend::{IndexBackend, ParquetBackend};
+use crate::index::backend::Backend;
 use crate::output::CommandOutput;
 use crate::schema::config::MdvsToml;
 use serde::Serialize;
@@ -121,7 +121,7 @@ pub fn run(path: &Path) -> anyhow::Result<InfoResult> {
         .collect();
 
     // Index info (if index exists)
-    let backend = ParquetBackend::new(path);
+    let backend = Backend::parquet(path);
     let index = if backend.exists() {
         let build_meta = backend.read_metadata()?;
         let idx_stats = backend.stats()?;
@@ -213,6 +213,7 @@ mod tests {
                 ],
             },
             embedding_model: Some(EmbeddingModelConfig {
+                provider: "model2vec".into(),
                 name: "minishlab/potion-base-8M".into(),
                 revision: None,
             }),
@@ -224,7 +225,7 @@ mod tests {
         config.write(&dir.join("mdvs.toml")).unwrap();
     }
 
-    fn init_and_build(dir: &Path) {
+    async fn init_and_build(dir: &Path) {
         crate::cmd::init::run(
             dir,
             Some("minishlab/potion-base-8M"),
@@ -237,6 +238,7 @@ mod tests {
             true,
             false,
         )
+        .await
         .unwrap();
     }
 
@@ -261,11 +263,11 @@ mod tests {
         assert!(result.index.is_none());
     }
 
-    #[test]
-    fn info_with_index() {
+    #[tokio::test]
+    async fn info_with_index() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
-        init_and_build(tmp.path());
+        init_and_build(tmp.path()).await;
 
         let result = run(tmp.path()).unwrap();
 
@@ -278,11 +280,11 @@ mod tests {
         assert!(idx.config_match);
     }
 
-    #[test]
-    fn info_config_mismatch() {
+    #[tokio::test]
+    async fn info_config_mismatch() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
-        init_and_build(tmp.path());
+        init_and_build(tmp.path()).await;
 
         // Change chunk_size in toml
         let mut config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();

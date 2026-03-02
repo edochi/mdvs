@@ -21,42 +21,76 @@ pub struct IndexStats {
     pub chunks: usize,
 }
 
-#[allow(async_fn_in_trait)]
-pub trait IndexBackend {
-    fn write_index(
+pub(crate) enum Backend {
+    Parquet(ParquetBackend),
+}
+
+impl Backend {
+    pub(crate) fn parquet(root: &Path) -> Self {
+        Backend::Parquet(ParquetBackend {
+            root: root.to_path_buf(),
+        })
+    }
+
+    pub fn write_index(
         &self,
         schema_fields: &[(String, FieldType)],
         files: &[FileRow],
         chunks: &[ChunkRow],
         metadata: BuildMetadata,
-    ) -> anyhow::Result<()>;
+    ) -> anyhow::Result<()> {
+        match self {
+            Backend::Parquet(b) => b.write_index(schema_fields, files, chunks, metadata),
+        }
+    }
 
-    fn read_metadata(&self) -> anyhow::Result<Option<BuildMetadata>>;
-    fn embedding_dimension(&self) -> anyhow::Result<Option<i32>>;
+    pub fn read_metadata(&self) -> anyhow::Result<Option<BuildMetadata>> {
+        match self {
+            Backend::Parquet(b) => b.read_metadata(),
+        }
+    }
 
-    async fn search(
+    pub fn embedding_dimension(&self) -> anyhow::Result<Option<i32>> {
+        match self {
+            Backend::Parquet(b) => b.embedding_dimension(),
+        }
+    }
+
+    pub async fn search(
         &self,
         query_embedding: Vec<f32>,
         where_clause: Option<&str>,
         limit: usize,
-    ) -> anyhow::Result<Vec<SearchHit>>;
+    ) -> anyhow::Result<Vec<SearchHit>> {
+        match self {
+            Backend::Parquet(b) => b.search(query_embedding, where_clause, limit).await,
+        }
+    }
 
-    fn stats(&self) -> anyhow::Result<Option<IndexStats>>;
-    fn exists(&self) -> bool;
-    fn clean(&self) -> anyhow::Result<()>;
+    pub fn stats(&self) -> anyhow::Result<Option<IndexStats>> {
+        match self {
+            Backend::Parquet(b) => b.stats(),
+        }
+    }
+
+    pub fn exists(&self) -> bool {
+        match self {
+            Backend::Parquet(b) => b.exists(),
+        }
+    }
+
+    pub fn clean(&self) -> anyhow::Result<()> {
+        match self {
+            Backend::Parquet(b) => b.clean(),
+        }
+    }
 }
 
-pub struct ParquetBackend {
+pub(crate) struct ParquetBackend {
     root: PathBuf,
 }
 
 impl ParquetBackend {
-    pub fn new(root: &Path) -> Self {
-        Self {
-            root: root.to_path_buf(),
-        }
-    }
-
     fn mdvs_dir(&self) -> PathBuf {
         self.root.join(".mdvs")
     }
@@ -68,9 +102,7 @@ impl ParquetBackend {
     fn chunks_parquet(&self) -> PathBuf {
         self.mdvs_dir().join("chunks.parquet")
     }
-}
 
-impl IndexBackend for ParquetBackend {
     fn write_index(
         &self,
         schema_fields: &[(String, FieldType)],
@@ -248,6 +280,7 @@ mod tests {
     fn test_metadata() -> BuildMetadata {
         BuildMetadata {
             embedding_model: EmbeddingModelConfig {
+                provider: "model2vec".into(),
                 name: "test-model".into(),
                 revision: Some("abc123".into()),
             },
@@ -262,7 +295,7 @@ mod tests {
     #[test]
     fn write_and_read_metadata() {
         let tmp = tempfile::tempdir().unwrap();
-        let backend = ParquetBackend::new(tmp.path());
+        let backend = Backend::parquet(tmp.path());
 
         backend
             .write_index(
@@ -280,7 +313,7 @@ mod tests {
     #[test]
     fn write_and_stats() {
         let tmp = tempfile::tempdir().unwrap();
-        let backend = ParquetBackend::new(tmp.path());
+        let backend = Backend::parquet(tmp.path());
 
         backend
             .write_index(
@@ -299,7 +332,7 @@ mod tests {
     #[test]
     fn exists_false_then_true() {
         let tmp = tempfile::tempdir().unwrap();
-        let backend = ParquetBackend::new(tmp.path());
+        let backend = Backend::parquet(tmp.path());
 
         assert!(!backend.exists());
 
@@ -318,7 +351,7 @@ mod tests {
     #[test]
     fn clean_removes_index() {
         let tmp = tempfile::tempdir().unwrap();
-        let backend = ParquetBackend::new(tmp.path());
+        let backend = Backend::parquet(tmp.path());
 
         backend
             .write_index(
@@ -338,7 +371,7 @@ mod tests {
     #[test]
     fn embedding_dimension_correct() {
         let tmp = tempfile::tempdir().unwrap();
-        let backend = ParquetBackend::new(tmp.path());
+        let backend = Backend::parquet(tmp.path());
 
         assert_eq!(backend.embedding_dimension().unwrap(), None);
 
@@ -357,7 +390,7 @@ mod tests {
     #[tokio::test]
     async fn search_returns_hits() {
         let tmp = tempfile::tempdir().unwrap();
-        let backend = ParquetBackend::new(tmp.path());
+        let backend = Backend::parquet(tmp.path());
 
         backend
             .write_index(

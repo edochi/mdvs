@@ -1,10 +1,10 @@
-use crate::index::backend::{IndexBackend, ParquetBackend};
+use crate::index::backend::Backend;
 use std::path::Path;
 
 pub fn run(path: &Path) -> anyhow::Result<()> {
     let mdvs_dir = path.join(".mdvs");
     if mdvs_dir.exists() {
-        let backend = ParquetBackend::new(path);
+        let backend = Backend::parquet(path);
         backend.clean()?;
         eprintln!("Removed {}", mdvs_dir.display());
     } else {

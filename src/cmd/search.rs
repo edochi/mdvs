@@ -1,5 +1,5 @@
 use anyhow::Context;
-use crate::index::backend::{IndexBackend, ParquetBackend};
+use crate::index::backend::Backend;
 use crate::index::embed::{Embedder, ModelConfig};
 use crate::schema::config::MdvsToml;
 use std::path::Path;
@@ -17,7 +17,7 @@ pub async fn run(
     let embedding = config.embedding_model.as_ref()
         .context("missing [embedding_model] in mdvs.toml (run `mdvs build` first)")?;
 
-    let backend = ParquetBackend::new(path);
+    let backend = Backend::parquet(path);
 
     // Index existence check (before loading model to fail fast)
     anyhow::ensure!(
@@ -38,14 +38,11 @@ pub async fn run(
 
     // Load model
     eprintln!("Loading model {}...", embedding.name);
-    let model_config = ModelConfig::Model2Vec {
-        model_id: embedding.name.clone(),
-        revision: embedding.revision.clone(),
-    };
+    let model_config = ModelConfig::try_from(embedding)?;
     let embedder = Embedder::load(&model_config);
 
     // Embed query
-    let query_embedding = embedder.embed(query);
+    let query_embedding = embedder.embed(query).await;
 
     // Search via backend
     let hits = backend.search(query_embedding, where_clause, limit).await?;
@@ -95,6 +92,7 @@ mod tests {
                 field: vec![],
             },
             embedding_model: Some(EmbeddingModelConfig {
+                provider: "model2vec".into(),
                 name: model_name.into(),
                 revision: None,
             }),
@@ -106,7 +104,7 @@ mod tests {
         config.write(&dir.join("mdvs.toml")).unwrap();
     }
 
-    fn init_and_build(dir: &Path) {
+    async fn init_and_build(dir: &Path) {
         crate::cmd::init::run(
             dir,
             Some("minishlab/potion-base-8M"),
@@ -119,6 +117,7 @@ mod tests {
             true, // auto_build calls build internally
             false, // skip_gitignore
         )
+        .await
         .unwrap();
     }
 
@@ -144,7 +143,7 @@ mod tests {
     async fn end_to_end() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
-        init_and_build(tmp.path());
+        init_and_build(tmp.path()).await;
 
         let result = run(tmp.path(), "rust programming", 10, None).await;
         assert!(result.is_ok(), "search failed: {:?}", result);
@@ -154,18 +153,15 @@ mod tests {
     async fn with_limit() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
-        init_and_build(tmp.path());
+        init_and_build(tmp.path()).await;
 
         // Use backend to search with limit=1
-        let backend = ParquetBackend::new(tmp.path());
+        let backend = Backend::parquet(tmp.path());
         let config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
         let embedding = config.embedding_model.as_ref().unwrap();
-        let model_config = ModelConfig::Model2Vec {
-            model_id: embedding.name.clone(),
-            revision: embedding.revision.clone(),
-        };
+        let model_config = ModelConfig::try_from(embedding).unwrap();
         let embedder = Embedder::load(&model_config);
-        let query_embedding = embedder.embed("rust programming");
+        let query_embedding = embedder.embed("rust programming").await;
 
         let hits = backend.search(query_embedding, None, 1).await.unwrap();
         assert_eq!(hits.len(), 1);
@@ -175,17 +171,14 @@ mod tests {
     async fn with_where_clause() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
-        init_and_build(tmp.path());
+        init_and_build(tmp.path()).await;
 
-        let backend = ParquetBackend::new(tmp.path());
+        let backend = Backend::parquet(tmp.path());
         let config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
         let embedding = config.embedding_model.as_ref().unwrap();
-        let model_config = ModelConfig::Model2Vec {
-            model_id: embedding.name.clone(),
-            revision: embedding.revision.clone(),
-        };
+        let model_config = ModelConfig::try_from(embedding).unwrap();
         let embedder = Embedder::load(&model_config);
-        let query_embedding = embedder.embed("cooking recipes");
+        let query_embedding = embedder.embed("cooking recipes").await;
 
         // Filter to non-draft only — cooking post (draft=true) should be excluded
         let hits = backend
@@ -202,7 +195,7 @@ mod tests {
     async fn model_mismatch() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
-        init_and_build(tmp.path());
+        init_and_build(tmp.path()).await;
 
         // Overwrite config with a different model name
         let mut config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
