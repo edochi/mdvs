@@ -135,6 +135,41 @@ fn main() {
 
 ---
 
+## FieldTypeSerde (TOML representation)
+
+Field types are stored in `mdvs.toml` using `#[serde(untagged)]` on the `FieldTypeSerde` enum.
+This is a **settled decision** — no further format discussion needed.
+
+### Scalar types
+
+| Type name   | Example TOML                  | Matches                       |
+|-------------|-------------------------------|-------------------------------|
+| `String`    | `type = "String"`             | Any YAML string value         |
+| `Boolean`   | `type = "Boolean"`            | `true` / `false`              |
+| `Integer`   | `type = "Integer"`            | Whole numbers (i64/u64)       |
+| `Float`     | `type = "Float"`              | Any number (int-in-float OK)  |
+
+### Compound types
+
+| Kind    | TOML representation                                     | Example                                          |
+|---------|---------------------------------------------------------|--------------------------------------------------|
+| Array   | inline table with `array` key                           | `type = { array = "String" }`                    |
+| Object  | inline table with `object` key (maps field→type)        | `type = { object = { name = "String" } }`        |
+
+### Nesting
+
+Arrays and objects compose arbitrarily:
+
+```toml
+# Array of arrays
+type = { array = { array = "String" } }
+
+# Object with mixed fields
+type = { object = { title = "String", count = "Integer", tags = { array = "String" } } }
+```
+
+---
+
 ## DiscoveredField
 
 Represents a single frontmatter field found during scanning.

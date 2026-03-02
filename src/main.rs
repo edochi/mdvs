@@ -66,7 +66,11 @@ enum Command {
         where_clause: Option<String>,
     },
     /// Validate frontmatter against schema
-    Check,
+    Check {
+        /// Directory containing mdvs.toml
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
     /// Re-scan and update field definitions
     Update {
         /// Directory containing mdvs.toml
@@ -129,7 +133,14 @@ async fn main() -> anyhow::Result<()> {
         } => {
             mdvs::cmd::search::run(&path, &query, limit, where_clause.as_deref()).await
         }
-        Command::Check => todo!("check"),
+        Command::Check { path } => {
+            let result = mdvs::cmd::check::run(&path)?;
+            result.print(&cli.output);
+            if result.has_violations() {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
         Command::Update {
             path,
             reinfer,

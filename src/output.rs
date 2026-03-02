@@ -1,4 +1,5 @@
 use serde::Serialize;
+use std::path::PathBuf;
 
 #[derive(Clone, clap::ValueEnum)]
 pub enum OutputFormat {
@@ -19,6 +20,33 @@ pub struct ChangedField {
     pub name: String,
     pub old_type: String,
     pub new_type: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub enum ViolationKind {
+    MissingRequired,
+    WrongType,
+    Disallowed,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ViolatingFile {
+    pub path: PathBuf,
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FieldViolation {
+    pub field: String,
+    pub kind: ViolationKind,
+    pub rule: String,
+    pub files: Vec<ViolatingFile>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct NewField {
+    pub name: String,
+    pub files_found: usize,
 }
 
 pub trait CommandOutput: Serialize {
