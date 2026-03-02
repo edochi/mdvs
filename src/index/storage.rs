@@ -1,4 +1,5 @@
 use crate::discover::field_type::FieldType;
+use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hasher};
@@ -44,9 +45,8 @@ pub struct ChunkRow {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BuildMetadata {
-    pub model: String,
-    pub revision: Option<String>,
-    pub chunk_size: usize,
+    pub embedding_model: EmbeddingModelConfig,
+    pub chunking: ChunkingConfig,
     pub glob: String,
     pub built_at: String, // ISO 8601
 }
@@ -54,11 +54,14 @@ pub struct BuildMetadata {
 impl BuildMetadata {
     pub fn to_hash_map(&self) -> HashMap<String, String> {
         let mut m = HashMap::new();
-        m.insert("mdvs.model".into(), self.model.clone());
-        if let Some(ref r) = self.revision {
+        m.insert("mdvs.model".into(), self.embedding_model.name.clone());
+        if let Some(ref r) = self.embedding_model.revision {
             m.insert("mdvs.revision".into(), r.clone());
         }
-        m.insert("mdvs.chunk_size".into(), self.chunk_size.to_string());
+        m.insert(
+            "mdvs.chunk_size".into(),
+            self.chunking.max_chunk_size.to_string(),
+        );
         m.insert("mdvs.glob".into(), self.glob.clone());
         m.insert("mdvs.built_at".into(), self.built_at.clone());
         m
@@ -66,9 +69,13 @@ impl BuildMetadata {
 
     pub fn from_hash_map(meta: &HashMap<String, String>) -> Option<Self> {
         Some(Self {
-            model: meta.get("mdvs.model")?.clone(),
-            revision: meta.get("mdvs.revision").cloned(),
-            chunk_size: meta.get("mdvs.chunk_size")?.parse().ok()?,
+            embedding_model: EmbeddingModelConfig {
+                name: meta.get("mdvs.model")?.clone(),
+                revision: meta.get("mdvs.revision").cloned(),
+            },
+            chunking: ChunkingConfig {
+                max_chunk_size: meta.get("mdvs.chunk_size")?.parse().ok()?,
+            },
             glob: meta.get("mdvs.glob")?.clone(),
             built_at: meta.get("mdvs.built_at")?.clone(),
         })
@@ -665,9 +672,11 @@ mod tests {
         let path = tmp.path().join("files.parquet");
 
         let meta = BuildMetadata {
-            model: "minishlab/potion-base-8M".into(),
-            revision: Some("abc123".into()),
-            chunk_size: 1024,
+            embedding_model: EmbeddingModelConfig {
+                name: "minishlab/potion-base-8M".into(),
+                revision: Some("abc123".into()),
+            },
+            chunking: ChunkingConfig { max_chunk_size: 1024 },
             glob: "**".into(),
             built_at: "2026-03-02T12:00:00+00:00".into(),
         };
@@ -695,9 +704,11 @@ mod tests {
         let path = tmp.path().join("files.parquet");
 
         let meta = BuildMetadata {
-            model: "minishlab/potion-base-8M".into(),
-            revision: None,
-            chunk_size: 512,
+            embedding_model: EmbeddingModelConfig {
+                name: "minishlab/potion-base-8M".into(),
+                revision: None,
+            },
+            chunking: ChunkingConfig { max_chunk_size: 512 },
             glob: "blog/**".into(),
             built_at: "2026-03-02T12:00:00+00:00".into(),
         };

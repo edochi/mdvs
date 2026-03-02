@@ -3,8 +3,8 @@ use crate::discover::scan::ScannedFiles;
 use crate::index::chunk::{extract_plain_text, Chunks};
 use crate::index::embed::{Embedder, ModelConfig};
 use crate::index::storage::{
-    build_chunks_batch, build_files_batch, content_hash, read_parquet, write_parquet,
-    write_parquet_with_metadata, BuildMetadata, ChunkRow, FileRow,
+    build_chunks_batch, build_files_batch, content_hash, read_build_metadata, read_parquet,
+    write_parquet, write_parquet_with_metadata, BuildMetadata, ChunkRow, FileRow,
 };
 use crate::schema::config::{MdvsToml, SearchConfig};
 use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig};
@@ -83,6 +83,35 @@ pub fn run(
 
     let embedding = config.embedding_model.as_ref().unwrap();
     let chunking = config.chunking.as_ref().unwrap();
+
+    // Detect manual config changes against existing index
+    if files_parquet.exists()
+        && let Some(ref meta) = read_build_metadata(&files_parquet)?
+    {
+        let mut mismatches = Vec::new();
+        if meta.embedding_model != *embedding {
+            mismatches.push(format!(
+                "model: '{}' (rev {:?}) -> '{}' (rev {:?})",
+                meta.embedding_model.name,
+                meta.embedding_model.revision,
+                embedding.name,
+                embedding.revision,
+            ));
+        }
+        if meta.chunking != *chunking {
+            mismatches.push(format!(
+                "chunk_size: {} -> {}",
+                meta.chunking.max_chunk_size, chunking.max_chunk_size,
+            ));
+        }
+        if !mismatches.is_empty() {
+            anyhow::ensure!(
+                force,
+                "config changed since last build:\n  {}\nUse --force to rebuild with new config",
+                mismatches.join("\n  "),
+            );
+        }
+    }
 
     // Load model
     eprintln!("Loading model {}...", embedding.name);
@@ -177,9 +206,8 @@ pub fn run(
 
     let files_batch = build_files_batch(&schema_fields, &file_rows);
     let build_meta = BuildMetadata {
-        model: embedding.name.clone(),
-        revision: embedding.revision.clone(),
-        chunk_size: chunking.max_chunk_size,
+        embedding_model: embedding.clone(),
+        chunking: chunking.clone(),
         glob: config.scan.glob.clone(),
         built_at: chrono::Utc::now().to_rfc3339(),
     };
@@ -279,12 +307,11 @@ mod tests {
         }
 
         // Verify build metadata on files.parquet
-        use crate::index::storage::read_build_metadata;
         let meta = read_build_metadata(&files_path).unwrap();
         assert!(meta.is_some(), "build metadata should be present");
         let meta = meta.unwrap();
-        assert_eq!(meta.model, "minishlab/potion-base-8M");
-        assert_eq!(meta.chunk_size, DEFAULT_CHUNK_SIZE);
+        assert_eq!(meta.embedding_model.name, "minishlab/potion-base-8M");
+        assert_eq!(meta.chunking.max_chunk_size, DEFAULT_CHUNK_SIZE);
         assert_eq!(meta.glob, "**");
     }
 
@@ -448,5 +475,41 @@ mod tests {
 
         let config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
         assert_eq!(config.chunking.as_ref().unwrap().max_chunk_size, 512);
+    }
+
+    #[test]
+    fn manual_config_change_detected() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_test_vault(tmp.path());
+
+        crate::cmd::init::run(
+            tmp.path(),
+            Some("minishlab/potion-base-8M"),
+            None,
+            "**",
+            false,
+            false,
+            true,
+            None,
+            true,
+            false,
+        )
+        .unwrap();
+
+        // Manually change chunk_size in toml (simulates user editing)
+        let mut config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
+        config.chunking.as_mut().unwrap().max_chunk_size = 256;
+        config.write(&tmp.path().join("mdvs.toml")).unwrap();
+
+        // Build without --force should error
+        let result = run(tmp.path(), None, None, None, false);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("config changed since last build"));
+        assert!(err.contains("chunk_size"));
+
+        // Build with --force should succeed
+        let result = run(tmp.path(), None, None, None, true);
+        assert!(result.is_ok(), "build with --force failed: {:?}", result);
     }
 }

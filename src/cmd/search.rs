@@ -1,5 +1,6 @@
 use anyhow::Context;
 use crate::index::embed::{Embedder, ModelConfig};
+use crate::index::storage::read_build_metadata;
 use crate::schema::config::MdvsToml;
 use crate::search::SearchContext;
 use datafusion::arrow::array::{Array, Float64Array, StringViewArray};
@@ -31,6 +32,18 @@ pub async fn run(
         "index not found: {} does not exist (run `mdvs build` first)",
         chunks_parquet.display(),
     );
+
+    // Verify model matches index
+    let build_meta = read_build_metadata(&files_parquet)?;
+    if let Some(ref meta) = build_meta
+        && meta.embedding_model != *embedding
+    {
+        anyhow::bail!(
+            "model mismatch: config has '{}' (rev {:?}) but index was built with '{}' (rev {:?}) — run 'mdvs build' to rebuild",
+            embedding.name, embedding.revision,
+            meta.embedding_model.name, meta.embedding_model.revision,
+        );
+    }
 
     // Load model
     eprintln!("Loading model {}...", embedding.name);
@@ -257,5 +270,22 @@ mod tests {
                 assert_ne!(filenames.value(i), "blog/post2.md");
             }
         }
+    }
+
+    #[tokio::test]
+    async fn model_mismatch() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_test_vault(tmp.path());
+        init_and_build(tmp.path());
+
+        // Overwrite config with a different model name
+        let mut config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
+        config.embedding_model.as_mut().unwrap().name = "some-other-model".into();
+        config.write(&tmp.path().join("mdvs.toml")).unwrap();
+
+        let result = run(tmp.path(), "test query", 10, None).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("model mismatch"));
     }
 }

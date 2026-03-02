@@ -67,14 +67,14 @@ pub struct ScanConfig {
     pub skip_gitignore: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EmbeddingModelConfig {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub revision: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ChunkingConfig {
     pub max_chunk_size: usize,
 }
