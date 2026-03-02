@@ -105,9 +105,17 @@ enum Command {
         dry_run: bool,
     },
     /// Remove the .mdvs/ directory
-    Clean,
+    Clean {
+        /// Directory containing mdvs.toml
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
     /// Show index status and statistics
-    Info,
+    Info {
+        /// Directory containing mdvs.toml
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
 }
 
 #[tokio::main]
@@ -182,7 +190,11 @@ async fn main() -> anyhow::Result<()> {
             result.print(&cli.output);
             Ok(())
         }
-        Command::Clean => todo!("clean"),
-        Command::Info => todo!("info"),
+        Command::Clean { path } => mdvs::cmd::clean::run(&path),
+        Command::Info { path } => {
+            let result = mdvs::cmd::info::run(&path)?;
+            result.print(&cli.output);
+            Ok(())
+        }
     }
 }

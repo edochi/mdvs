@@ -16,4 +16,4 @@
 | [0012](TODO-0012.md) | Store build metadata in parquet | done | high | 2026-03-02 |
 | [0013](TODO-0013.md) | Search verifies model against parquet metadata | done | high | 2026-03-02 |
 | [0014](TODO-0014.md) | Build detects manual config changes via parquet metadata | done | high | 2026-03-02 |
-| [0015](TODO-0015.md) | Implement info and clean commands | todo | high | 2026-03-02 |
+| [0015](TODO-0015.md) | Implement info and clean commands | done | high | 2026-03-02 |
