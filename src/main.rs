@@ -65,7 +65,7 @@ enum Command {
         #[arg(long, short = 'n', default_value = "10")]
         limit: usize,
         /// SQL WHERE clause for filtering (e.g. "data['draft'] = false")
-        #[arg(long, name = "where")]
+        #[arg(long = "where")]
         where_clause: Option<String>,
     },
     /// Validate frontmatter against schema
