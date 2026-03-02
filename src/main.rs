@@ -4,6 +4,10 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(name = "mdvs", about = "Markdown Directory Vector Search")]
 struct Cli {
+    /// Output format
+    #[arg(short, long, global = true, default_value = "human")]
+    output: mdvs::output::OutputFormat,
+
     #[command(subcommand)]
     command: Command,
 }
