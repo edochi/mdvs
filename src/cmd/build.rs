@@ -3,8 +3,8 @@ use crate::discover::scan::ScannedFiles;
 use crate::index::chunk::{extract_plain_text, Chunks};
 use crate::index::embed::{Embedder, ModelConfig};
 use crate::index::storage::{
-    build_chunks_batch, build_files_batch, content_hash, read_parquet, write_parquet, ChunkRow,
-    FileRow,
+    build_chunks_batch, build_files_batch, content_hash, read_parquet, write_parquet,
+    write_parquet_with_metadata, BuildMetadata, ChunkRow, FileRow,
 };
 use crate::schema::config::{MdvsToml, SearchConfig};
 use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig};
@@ -176,7 +176,14 @@ pub fn run(
     std::fs::create_dir_all(&mdvs_dir)?;
 
     let files_batch = build_files_batch(&schema_fields, &file_rows);
-    write_parquet(&files_parquet, &files_batch)?;
+    let build_meta = BuildMetadata {
+        model: embedding.name.clone(),
+        revision: embedding.revision.clone(),
+        chunk_size: chunking.max_chunk_size,
+        glob: config.scan.glob.clone(),
+        built_at: chrono::Utc::now().to_rfc3339(),
+    };
+    write_parquet_with_metadata(&files_parquet, &files_batch, build_meta.to_hash_map())?;
 
     let chunks_batch = build_chunks_batch(&chunk_rows, dimension as i32);
     write_parquet(&chunks_parquet, &chunks_batch)?;
@@ -270,6 +277,15 @@ mod tests {
         } else {
             panic!("expected FixedSizeList for embedding column");
         }
+
+        // Verify build metadata on files.parquet
+        use crate::index::storage::read_build_metadata;
+        let meta = read_build_metadata(&files_path).unwrap();
+        assert!(meta.is_some(), "build metadata should be present");
+        let meta = meta.unwrap();
+        assert_eq!(meta.model, "minishlab/potion-base-8M");
+        assert_eq!(meta.chunk_size, DEFAULT_CHUNK_SIZE);
+        assert_eq!(meta.glob, "**");
     }
 
     #[test]

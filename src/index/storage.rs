@@ -1,4 +1,6 @@
 use crate::discover::field_type::FieldType;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hasher};
 
 use datafusion::arrow::array::{
@@ -38,6 +40,39 @@ pub struct ChunkRow {
     pub start_line: i32,
     pub end_line: i32,
     pub embedding: Vec<f32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BuildMetadata {
+    pub model: String,
+    pub revision: Option<String>,
+    pub chunk_size: usize,
+    pub glob: String,
+    pub built_at: String, // ISO 8601
+}
+
+impl BuildMetadata {
+    pub fn to_hash_map(&self) -> HashMap<String, String> {
+        let mut m = HashMap::new();
+        m.insert("mdvs.model".into(), self.model.clone());
+        if let Some(ref r) = self.revision {
+            m.insert("mdvs.revision".into(), r.clone());
+        }
+        m.insert("mdvs.chunk_size".into(), self.chunk_size.to_string());
+        m.insert("mdvs.glob".into(), self.glob.clone());
+        m.insert("mdvs.built_at".into(), self.built_at.clone());
+        m
+    }
+
+    pub fn from_hash_map(meta: &HashMap<String, String>) -> Option<Self> {
+        Some(Self {
+            model: meta.get("mdvs.model")?.clone(),
+            revision: meta.get("mdvs.revision").cloned(),
+            chunk_size: meta.get("mdvs.chunk_size")?.parse().ok()?,
+            glob: meta.get("mdvs.glob")?.clone(),
+            built_at: meta.get("mdvs.built_at")?.clone(),
+        })
+    }
 }
 
 // ============================================================================
@@ -256,6 +291,27 @@ pub fn read_parquet(path: &Path) -> anyhow::Result<Vec<RecordBatch>> {
     let reader = ParquetRecordBatchReaderBuilder::try_new(file)?.build()?;
     let batches: Vec<RecordBatch> = reader.collect::<Result<Vec<_>, _>>()?;
     Ok(batches)
+}
+
+pub fn write_parquet_with_metadata(
+    path: &Path,
+    batch: &RecordBatch,
+    metadata: HashMap<String, String>,
+) -> anyhow::Result<()> {
+    let schema = (*batch.schema()).clone().with_metadata(metadata);
+    let batch = batch.clone().with_schema(Arc::new(schema))?;
+    let file = File::create(path)?;
+    let mut writer = ArrowWriter::try_new(file, batch.schema(), Some(writer_props()))?;
+    writer.write(&batch)?;
+    writer.close()?;
+    Ok(())
+}
+
+pub fn read_build_metadata(path: &Path) -> anyhow::Result<Option<BuildMetadata>> {
+    let file = File::open(path)?;
+    let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
+    let schema = builder.schema();
+    Ok(BuildMetadata::from_hash_map(schema.metadata()))
 }
 
 #[cfg(test)]
@@ -590,5 +646,88 @@ mod tests {
         let size = std::fs::metadata(&path).unwrap().len();
         assert!(size > 0);
         assert!(size < 10_000);
+    }
+
+    #[test]
+    fn build_metadata_roundtrip() {
+        let schema_fields: Vec<(String, FieldType)> =
+            vec![("title".into(), FieldType::String)];
+        let files = vec![FileRow {
+            file_id: "id-1".into(),
+            filename: "a.md".into(),
+            frontmatter: Some(serde_json::json!({"title": "Hello"})),
+            content_hash: "hash1".into(),
+            built_at: 1_700_000_000_000_000,
+        }];
+
+        let batch = build_files_batch(&schema_fields, &files);
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("files.parquet");
+
+        let meta = BuildMetadata {
+            model: "minishlab/potion-base-8M".into(),
+            revision: Some("abc123".into()),
+            chunk_size: 1024,
+            glob: "**".into(),
+            built_at: "2026-03-02T12:00:00+00:00".into(),
+        };
+
+        write_parquet_with_metadata(&path, &batch, meta.to_hash_map()).unwrap();
+
+        let read_meta = read_build_metadata(&path).unwrap();
+        assert_eq!(read_meta, Some(meta));
+    }
+
+    #[test]
+    fn build_metadata_no_revision() {
+        let schema_fields: Vec<(String, FieldType)> =
+            vec![("title".into(), FieldType::String)];
+        let files = vec![FileRow {
+            file_id: "id-1".into(),
+            filename: "a.md".into(),
+            frontmatter: Some(serde_json::json!({"title": "Hello"})),
+            content_hash: "hash1".into(),
+            built_at: 1_700_000_000_000_000,
+        }];
+
+        let batch = build_files_batch(&schema_fields, &files);
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("files.parquet");
+
+        let meta = BuildMetadata {
+            model: "minishlab/potion-base-8M".into(),
+            revision: None,
+            chunk_size: 512,
+            glob: "blog/**".into(),
+            built_at: "2026-03-02T12:00:00+00:00".into(),
+        };
+
+        write_parquet_with_metadata(&path, &batch, meta.to_hash_map()).unwrap();
+
+        let read_meta = read_build_metadata(&path).unwrap();
+        assert_eq!(read_meta, Some(meta));
+    }
+
+    #[test]
+    fn read_metadata_missing() {
+        let schema_fields: Vec<(String, FieldType)> =
+            vec![("title".into(), FieldType::String)];
+        let files = vec![FileRow {
+            file_id: "id-1".into(),
+            filename: "a.md".into(),
+            frontmatter: Some(serde_json::json!({"title": "Hello"})),
+            content_hash: "hash1".into(),
+            built_at: 1_700_000_000_000_000,
+        }];
+
+        let batch = build_files_batch(&schema_fields, &files);
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("files.parquet");
+
+        // Write without metadata
+        write_parquet(&path, &batch).unwrap();
+
+        let read_meta = read_build_metadata(&path).unwrap();
+        assert_eq!(read_meta, None);
     }
 }
