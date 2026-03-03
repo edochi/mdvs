@@ -12,6 +12,7 @@ use datafusion::arrow::buffer::{NullBuffer, OffsetBuffer};
 use datafusion::arrow::datatypes::{DataType, Field, Fields, Schema, TimeUnit};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use datafusion::parquet::arrow::ProjectionMask;
 use datafusion::parquet::arrow::ArrowWriter;
 use datafusion::parquet::basic::Compression;
 use datafusion::parquet::file::properties::WriterProperties;
@@ -335,6 +336,112 @@ pub fn read_build_metadata(path: &Path) -> anyhow::Result<Option<BuildMetadata>>
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
     let schema = builder.schema();
     Ok(BuildMetadata::from_hash_map(schema.metadata()))
+}
+
+// ============================================================================
+// Incremental build readers
+// ============================================================================
+
+/// Lightweight view of a file row for incremental build diffing.
+/// Does NOT include frontmatter — that comes from the fresh scan.
+pub struct FileIndexEntry {
+    pub file_id: String,
+    pub filename: String,
+    pub content_hash: String,
+}
+
+/// Read file_id, filename, content_hash from files.parquet using column projection.
+/// Skips the data Struct column (column 2) and built_at (column 4).
+pub fn read_file_index(path: &Path) -> anyhow::Result<Vec<FileIndexEntry>> {
+    let file = File::open(path)?;
+    let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
+    let mask = ProjectionMask::roots(builder.parquet_schema(), [0, 1, 3]);
+    let reader = builder.with_projection(mask).build()?;
+
+    let mut entries = Vec::new();
+    for batch in reader {
+        let batch = batch?;
+        let file_ids = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .ok_or_else(|| anyhow::anyhow!("expected StringArray for file_id"))?;
+        let filenames = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .ok_or_else(|| anyhow::anyhow!("expected StringArray for filename"))?;
+        let hashes = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .ok_or_else(|| anyhow::anyhow!("expected StringArray for content_hash"))?;
+        for i in 0..batch.num_rows() {
+            entries.push(FileIndexEntry {
+                file_id: file_ids.value(i).to_string(),
+                filename: filenames.value(i).to_string(),
+                content_hash: hashes.value(i).to_string(),
+            });
+        }
+    }
+    Ok(entries)
+}
+
+/// Deserialize all rows from chunks.parquet back into ChunkRow structs.
+pub fn read_chunk_rows(path: &Path) -> anyhow::Result<Vec<ChunkRow>> {
+    let batches = read_parquet(path)?;
+    let mut rows = Vec::new();
+    for batch in &batches {
+        let chunk_ids = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .ok_or_else(|| anyhow::anyhow!("expected StringArray for chunk_id"))?;
+        let file_ids = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .ok_or_else(|| anyhow::anyhow!("expected StringArray for file_id"))?;
+        let chunk_indices = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .ok_or_else(|| anyhow::anyhow!("expected Int32Array for chunk_index"))?;
+        let start_lines = batch
+            .column(3)
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .ok_or_else(|| anyhow::anyhow!("expected Int32Array for start_line"))?;
+        let end_lines = batch
+            .column(4)
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .ok_or_else(|| anyhow::anyhow!("expected Int32Array for end_line"))?;
+        let embeddings = batch
+            .column(5)
+            .as_any()
+            .downcast_ref::<FixedSizeListArray>()
+            .ok_or_else(|| anyhow::anyhow!("expected FixedSizeListArray for embedding"))?;
+
+        for i in 0..batch.num_rows() {
+            let emb = embeddings.value(i);
+            let floats = emb
+                .as_any()
+                .downcast_ref::<Float32Array>()
+                .ok_or_else(|| anyhow::anyhow!("expected Float32Array in embedding"))?;
+            let embedding: Vec<f32> = (0..floats.len()).map(|j| floats.value(j)).collect();
+
+            rows.push(ChunkRow {
+                chunk_id: chunk_ids.value(i).to_string(),
+                file_id: file_ids.value(i).to_string(),
+                chunk_index: chunk_indices.value(i),
+                start_line: start_lines.value(i),
+                end_line: end_lines.value(i),
+                embedding,
+            });
+        }
+    }
+    Ok(rows)
 }
 
 #[cfg(test)]
@@ -831,5 +938,110 @@ mod tests {
 
         let read_meta = read_build_metadata(&path).unwrap();
         assert_eq!(read_meta, None);
+    }
+
+    #[test]
+    fn read_file_index_roundtrip() {
+        let schema_fields = vec![
+            ("title".into(), FieldType::String),
+            (
+                "tags".into(),
+                FieldType::Array(Box::new(FieldType::String)),
+            ),
+        ];
+        let files = vec![
+            FileRow {
+                file_id: "f1".into(),
+                filename: "blog/post1.md".into(),
+                frontmatter: Some(serde_json::json!({"title": "Hello", "tags": ["rust"]})),
+                content_hash: "abc123".into(),
+                built_at: 1_700_000_000_000_000,
+            },
+            FileRow {
+                file_id: "f2".into(),
+                filename: "blog/post2.md".into(),
+                frontmatter: Some(serde_json::json!({"title": "World"})),
+                content_hash: "def456".into(),
+                built_at: 1_700_000_000_000_000,
+            },
+            FileRow {
+                file_id: "f3".into(),
+                filename: "notes/bare.md".into(),
+                frontmatter: None,
+                content_hash: "ghi789".into(),
+                built_at: 1_700_000_000_000_000,
+            },
+        ];
+
+        let batch = build_files_batch(&schema_fields, &files);
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("files.parquet");
+        write_parquet(&path, &batch).unwrap();
+
+        let index = read_file_index(&path).unwrap();
+        assert_eq!(index.len(), 3);
+
+        assert_eq!(index[0].file_id, "f1");
+        assert_eq!(index[0].filename, "blog/post1.md");
+        assert_eq!(index[0].content_hash, "abc123");
+
+        assert_eq!(index[1].file_id, "f2");
+        assert_eq!(index[1].filename, "blog/post2.md");
+        assert_eq!(index[1].content_hash, "def456");
+
+        assert_eq!(index[2].file_id, "f3");
+        assert_eq!(index[2].filename, "notes/bare.md");
+        assert_eq!(index[2].content_hash, "ghi789");
+    }
+
+    #[test]
+    fn read_chunk_rows_roundtrip() {
+        let original = vec![
+            ChunkRow {
+                chunk_id: "c1".into(),
+                file_id: "f1".into(),
+                chunk_index: 0,
+                start_line: 1,
+                end_line: 5,
+                embedding: vec![0.1, 0.2, 0.3, 0.4],
+            },
+            ChunkRow {
+                chunk_id: "c2".into(),
+                file_id: "f1".into(),
+                chunk_index: 1,
+                start_line: 7,
+                end_line: 12,
+                embedding: vec![0.5, 0.6, 0.7, 0.8],
+            },
+            ChunkRow {
+                chunk_id: "c3".into(),
+                file_id: "f2".into(),
+                chunk_index: 0,
+                start_line: 1,
+                end_line: 3,
+                embedding: vec![0.9, 1.0, 1.1, 1.2],
+            },
+        ];
+
+        let batch = build_chunks_batch(&original, 4);
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("chunks.parquet");
+        write_parquet(&path, &batch).unwrap();
+
+        let rows = read_chunk_rows(&path).unwrap();
+        assert_eq!(rows.len(), 3);
+
+        assert_eq!(rows[0].chunk_id, "c1");
+        assert_eq!(rows[0].file_id, "f1");
+        assert_eq!(rows[0].chunk_index, 0);
+        assert_eq!(rows[0].start_line, 1);
+        assert_eq!(rows[0].end_line, 5);
+        assert_eq!(rows[0].embedding.len(), 4);
+        assert!((rows[0].embedding[0] - 0.1).abs() < f32::EPSILON);
+        assert!((rows[0].embedding[3] - 0.4).abs() < f32::EPSILON);
+
+        assert_eq!(rows[2].chunk_id, "c3");
+        assert_eq!(rows[2].file_id, "f2");
+        assert!((rows[2].embedding[0] - 0.9).abs() < f32::EPSILON);
     }
 }

@@ -1,7 +1,8 @@
 use crate::discover::field_type::FieldType;
 use crate::index::storage::{
-    build_chunks_batch, build_files_batch, read_build_metadata, read_parquet, write_parquet,
-    write_parquet_with_metadata, BuildMetadata, ChunkRow, FileRow,
+    build_chunks_batch, build_files_batch, read_build_metadata, read_chunk_rows, read_file_index,
+    read_parquet, write_parquet, write_parquet_with_metadata, BuildMetadata, ChunkRow,
+    FileIndexEntry, FileRow,
 };
 use crate::search::SearchContext;
 use datafusion::arrow::array::{Array, Float64Array, StringViewArray};
@@ -47,6 +48,18 @@ impl Backend {
     pub fn read_metadata(&self) -> anyhow::Result<Option<BuildMetadata>> {
         match self {
             Backend::Parquet(b) => b.read_metadata(),
+        }
+    }
+
+    pub fn read_file_index(&self) -> anyhow::Result<Vec<FileIndexEntry>> {
+        match self {
+            Backend::Parquet(b) => b.read_file_index(),
+        }
+    }
+
+    pub fn read_chunk_rows(&self) -> anyhow::Result<Vec<ChunkRow>> {
+        match self {
+            Backend::Parquet(b) => b.read_chunk_rows(),
         }
     }
 
@@ -131,6 +144,20 @@ impl ParquetBackend {
             return Ok(None);
         }
         read_build_metadata(&self.files_parquet())
+    }
+
+    fn read_file_index(&self) -> anyhow::Result<Vec<FileIndexEntry>> {
+        if !self.files_parquet().exists() {
+            return Ok(vec![]);
+        }
+        read_file_index(&self.files_parquet())
+    }
+
+    fn read_chunk_rows(&self) -> anyhow::Result<Vec<ChunkRow>> {
+        if !self.chunks_parquet().exists() {
+            return Ok(vec![]);
+        }
+        read_chunk_rows(&self.chunks_parquet())
     }
 
     fn embedding_dimension(&self) -> anyhow::Result<Option<i32>> {

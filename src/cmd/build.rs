@@ -1,15 +1,90 @@
 use crate::discover::field_type::FieldType;
-use crate::discover::scan::ScannedFiles;
+use crate::discover::scan::{ScannedFile, ScannedFiles};
 use crate::index::backend::Backend;
 use crate::index::chunk::{extract_plain_text, Chunks};
 use crate::index::embed::{Embedder, ModelConfig};
-use crate::index::storage::{content_hash, BuildMetadata, ChunkRow, FileRow};
+use crate::index::storage::{content_hash, BuildMetadata, ChunkRow, FileIndexEntry, FileRow};
 use crate::schema::config::{MdvsToml, SearchConfig};
 use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig};
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 const DEFAULT_MODEL: &str = "minishlab/potion-base-8M";
 const DEFAULT_CHUNK_SIZE: usize = 1024;
+
+// ============================================================================
+// File classification for incremental build
+// ============================================================================
+
+struct FileClassification<'a> {
+    /// Files that need chunking + embedding (new or edited).
+    needs_embedding: Vec<FileToEmbed<'a>>,
+    /// Maps filename → file_id for ALL current files (new, edited, unchanged).
+    file_id_map: HashMap<String, String>,
+    /// file_ids whose existing chunks should be retained.
+    unchanged_file_ids: HashSet<String>,
+    /// Number of files in the old index that no longer exist.
+    removed_count: usize,
+}
+
+struct FileToEmbed<'a> {
+    file_id: String,
+    scanned: &'a ScannedFile,
+}
+
+fn classify_files<'a>(
+    scanned: &'a ScannedFiles,
+    existing_index: &[FileIndexEntry],
+) -> FileClassification<'a> {
+    let existing: HashMap<&str, (&str, &str)> = existing_index
+        .iter()
+        .map(|e| (e.filename.as_str(), (e.file_id.as_str(), e.content_hash.as_str())))
+        .collect();
+
+    let mut needs_embedding = Vec::new();
+    let mut file_id_map = HashMap::new();
+    let mut unchanged_file_ids = HashSet::new();
+    let mut seen_existing = HashSet::new();
+
+    for file in &scanned.files {
+        let filename = file.path.display().to_string();
+        let hash = content_hash(&file.content);
+
+        if let Some(&(old_id, old_hash)) = existing.get(filename.as_str()) {
+            seen_existing.insert(filename.as_str() as *const str);
+            if hash == old_hash {
+                // Unchanged — keep existing chunks
+                file_id_map.insert(filename, old_id.to_string());
+                unchanged_file_ids.insert(old_id.to_string());
+            } else {
+                // Edited — re-embed, keep file_id
+                let file_id = old_id.to_string();
+                file_id_map.insert(filename, file_id.clone());
+                needs_embedding.push(FileToEmbed {
+                    file_id,
+                    scanned: file,
+                });
+            }
+        } else {
+            // New file
+            let file_id = uuid::Uuid::new_v4().to_string();
+            file_id_map.insert(filename, file_id.clone());
+            needs_embedding.push(FileToEmbed {
+                file_id,
+                scanned: file,
+            });
+        }
+    }
+
+    let removed_count = existing_index.len() - seen_existing.len();
+
+    FileClassification {
+        needs_embedding,
+        file_id_map,
+        unchanged_file_ids,
+        removed_count,
+    }
+}
 
 pub async fn run(
     path: &Path,
@@ -131,21 +206,6 @@ pub async fn run(
         eprintln!("Run 'mdvs update' to incorporate new fields.\n");
     }
 
-    // Load model
-    eprintln!("Loading model {}...", embedding.name);
-    let model_config = ModelConfig::try_from(embedding)?;
-    let embedder = Embedder::load(&model_config);
-    let dimension = embedder.dimension();
-
-    // Dimension check against existing index
-    if let Some(existing_dim) = backend.embedding_dimension()? {
-        let model_dim = dimension as i32;
-        anyhow::ensure!(
-            existing_dim == model_dim,
-            "dimension mismatch: model produces {model_dim}-dim embeddings but existing index has {existing_dim}-dim",
-        );
-    }
-
     // Convert schema fields
     let schema_fields: Vec<(String, FieldType)> = config
         .fields
@@ -161,45 +221,97 @@ pub async fn run(
     let max_chunk_size = chunking.max_chunk_size;
     let built_at = chrono::Utc::now().timestamp_micros();
 
-    let mut file_rows: Vec<FileRow> = Vec::new();
-    let mut chunk_rows: Vec<ChunkRow> = Vec::new();
+    let full_rebuild = force || !backend.exists();
 
-    for file in &scanned.files {
-        let file_id = uuid::Uuid::new_v4().to_string();
+    let (file_rows, chunk_rows, files_embedded, files_unchanged, files_removed) = if full_rebuild {
+        // === FULL REBUILD ===
+        eprintln!("Loading model {}...", embedding.name);
+        let model_config = ModelConfig::try_from(embedding)?;
+        let embedder = Embedder::load(&model_config);
 
-        // Chunk the file content
-        let chunks = Chunks::new(&file.content, max_chunk_size);
-
-        // Extract plain text from each chunk and embed
-        let plain_texts: Vec<String> = chunks.iter().map(|c| extract_plain_text(&c.plain_text)).collect();
-        let text_refs: Vec<&str> = plain_texts.iter().map(|s| s.as_str()).collect();
-        let embeddings = if text_refs.is_empty() {
-            vec![]
-        } else {
-            embedder.embed_batch(&text_refs).await
-        };
-
-        // Build file row
-        file_rows.push(FileRow {
-            file_id: file_id.clone(),
-            filename: file.path.display().to_string(),
-            frontmatter: file.data.clone(),
-            content_hash: content_hash(&file.content),
-            built_at,
-        });
-
-        // Build chunk rows
-        for (chunk, embedding) in chunks.iter().zip(embeddings) {
-            chunk_rows.push(ChunkRow {
-                chunk_id: uuid::Uuid::new_v4().to_string(),
-                file_id: file_id.clone(),
-                chunk_index: chunk.chunk_index as i32,
-                start_line: chunk.start_line as i32,
-                end_line: chunk.end_line as i32,
-                embedding,
-            });
+        if let Some(existing_dim) = backend.embedding_dimension()? {
+            let model_dim = embedder.dimension() as i32;
+            anyhow::ensure!(
+                existing_dim == model_dim,
+                "dimension mismatch: model produces {model_dim}-dim embeddings but existing index has {existing_dim}-dim",
+            );
         }
-    }
+
+        let mut file_rows = Vec::new();
+        let mut chunk_rows = Vec::new();
+
+        for file in &scanned.files {
+            let file_id = uuid::Uuid::new_v4().to_string();
+            let (fr, crs) =
+                embed_file(&file_id, file, max_chunk_size, built_at, &embedder).await;
+            file_rows.push(fr);
+            chunk_rows.extend(crs);
+        }
+
+        let count = scanned.files.len();
+        (file_rows, chunk_rows, count, 0, 0)
+    } else {
+        // === INCREMENTAL BUILD ===
+        let existing_index = backend.read_file_index()?;
+        let classification = classify_files(&scanned, &existing_index);
+
+        // Build file rows for ALL scanned files with fresh frontmatter
+        let file_rows: Vec<FileRow> = scanned
+            .files
+            .iter()
+            .map(|f| {
+                let filename = f.path.display().to_string();
+                let file_id = classification.file_id_map[&filename].clone();
+                FileRow {
+                    file_id,
+                    filename,
+                    frontmatter: f.data.clone(),
+                    content_hash: content_hash(&f.content),
+                    built_at,
+                }
+            })
+            .collect();
+
+        // Retain existing chunks for unchanged files
+        let existing_chunks = backend.read_chunk_rows()?;
+        let mut chunk_rows: Vec<ChunkRow> = existing_chunks
+            .into_iter()
+            .filter(|c| classification.unchanged_file_ids.contains(&c.file_id))
+            .collect();
+
+        if !classification.needs_embedding.is_empty() {
+            eprintln!("Loading model {}...", embedding.name);
+            let model_config = ModelConfig::try_from(embedding)?;
+            let embedder = Embedder::load(&model_config);
+
+            if let Some(existing_dim) = backend.embedding_dimension()? {
+                let model_dim = embedder.dimension() as i32;
+                anyhow::ensure!(
+                    existing_dim == model_dim,
+                    "dimension mismatch: model produces {model_dim}-dim embeddings but existing index has {existing_dim}-dim",
+                );
+            }
+
+            for fte in &classification.needs_embedding {
+                let (_, crs) = embed_file(
+                    &fte.file_id,
+                    fte.scanned,
+                    max_chunk_size,
+                    built_at,
+                    &embedder,
+                )
+                .await;
+                chunk_rows.extend(crs);
+            }
+        } else {
+            eprintln!("No content changes detected, skipping embedding.");
+        }
+
+        let embedded = classification.needs_embedding.len();
+        let unchanged = classification.unchanged_file_ids.len();
+        let removed = classification.removed_count;
+        (file_rows, chunk_rows, embedded, unchanged, removed)
+    };
 
     // Write index
     let build_meta = BuildMetadata {
@@ -210,14 +322,75 @@ pub async fn run(
     };
     backend.write_index(&schema_fields, &file_rows, &chunk_rows, build_meta)?;
 
-    eprintln!(
-        "Built index: {} files, {} chunks (dim={})",
-        file_rows.len(),
-        chunk_rows.len(),
-        dimension,
-    );
+    // Report results
+    if full_rebuild {
+        eprintln!(
+            "Built index: {} files, {} chunks (full rebuild)",
+            file_rows.len(),
+            chunk_rows.len(),
+        );
+    } else if files_embedded > 0 {
+        eprintln!(
+            "Built index: {} files, {} chunks ({} embedded, {} unchanged, {} removed)",
+            file_rows.len(),
+            chunk_rows.len(),
+            files_embedded,
+            files_unchanged,
+            files_removed,
+        );
+    } else {
+        eprintln!(
+            "Built index: {} files, {} chunks (no embedding needed, {} removed)",
+            file_rows.len(),
+            chunk_rows.len(),
+            files_removed,
+        );
+    }
 
     Ok(())
+}
+
+async fn embed_file(
+    file_id: &str,
+    file: &ScannedFile,
+    max_chunk_size: usize,
+    built_at: i64,
+    embedder: &Embedder,
+) -> (FileRow, Vec<ChunkRow>) {
+    let chunks = Chunks::new(&file.content, max_chunk_size);
+    let plain_texts: Vec<String> = chunks
+        .iter()
+        .map(|c| extract_plain_text(&c.plain_text))
+        .collect();
+    let text_refs: Vec<&str> = plain_texts.iter().map(|s| s.as_str()).collect();
+    let embeddings = if text_refs.is_empty() {
+        vec![]
+    } else {
+        embedder.embed_batch(&text_refs).await
+    };
+
+    let file_row = FileRow {
+        file_id: file_id.to_string(),
+        filename: file.path.display().to_string(),
+        frontmatter: file.data.clone(),
+        content_hash: content_hash(&file.content),
+        built_at,
+    };
+
+    let chunk_rows: Vec<ChunkRow> = chunks
+        .iter()
+        .zip(embeddings)
+        .map(|(chunk, embedding)| ChunkRow {
+            chunk_id: uuid::Uuid::new_v4().to_string(),
+            file_id: file_id.to_string(),
+            chunk_index: chunk.chunk_index as i32,
+            start_line: chunk.start_line as i32,
+            end_line: chunk.end_line as i32,
+            embedding,
+        })
+        .collect();
+
+    (file_row, chunk_rows)
 }
 
 #[cfg(test)]
@@ -347,7 +520,14 @@ mod tests {
         let bad_batch = build_chunks_batch(&bad_chunks, 2);
         write_parquet(&tmp.path().join(".mdvs/chunks.parquet"), &bad_batch).unwrap();
 
-        // Build again should fail with dimension mismatch
+        // Add a new file so model gets loaded (incremental detects new file)
+        fs::write(
+            tmp.path().join("blog/post3.md"),
+            "---\ntitle: New\ntags:\n  - test\ndraft: true\n---\n# New\nNew content.",
+        )
+        .unwrap();
+
+        // Build should fail with dimension mismatch when model loads
         let result = run(tmp.path(), None, None, None, false).await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
@@ -677,5 +857,339 @@ mod tests {
         // Verify index was created
         assert!(tmp.path().join(".mdvs/files.parquet").exists());
         assert!(tmp.path().join(".mdvs/chunks.parquet").exists());
+    }
+
+    // ========================================================================
+    // classify_files unit tests
+    // ========================================================================
+
+    fn make_scanned_files(files: Vec<(&str, &str)>) -> ScannedFiles {
+        ScannedFiles {
+            files: files
+                .into_iter()
+                .map(|(path, body)| ScannedFile {
+                    path: std::path::PathBuf::from(path),
+                    data: None,
+                    content: body.to_string(),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn classify_all_new() {
+        let scanned = make_scanned_files(vec![
+            ("a.md", "hello"),
+            ("b.md", "world"),
+        ]);
+        let existing: Vec<FileIndexEntry> = vec![];
+        let c = classify_files(&scanned, &existing);
+
+        assert_eq!(c.needs_embedding.len(), 2);
+        assert_eq!(c.unchanged_file_ids.len(), 0);
+        assert_eq!(c.removed_count, 0);
+        assert_eq!(c.file_id_map.len(), 2);
+    }
+
+    #[test]
+    fn classify_all_unchanged() {
+        let scanned = make_scanned_files(vec![
+            ("a.md", "hello"),
+            ("b.md", "world"),
+        ]);
+        let existing = vec![
+            FileIndexEntry {
+                file_id: "f1".into(),
+                filename: "a.md".into(),
+                content_hash: content_hash("hello"),
+            },
+            FileIndexEntry {
+                file_id: "f2".into(),
+                filename: "b.md".into(),
+                content_hash: content_hash("world"),
+            },
+        ];
+        let c = classify_files(&scanned, &existing);
+
+        assert_eq!(c.needs_embedding.len(), 0);
+        assert_eq!(c.unchanged_file_ids.len(), 2);
+        assert!(c.unchanged_file_ids.contains("f1"));
+        assert!(c.unchanged_file_ids.contains("f2"));
+        assert_eq!(c.removed_count, 0);
+        assert_eq!(c.file_id_map["a.md"], "f1");
+        assert_eq!(c.file_id_map["b.md"], "f2");
+    }
+
+    #[test]
+    fn classify_mixed() {
+        // a.md: unchanged, b.md: edited, c.md: new, d.md: removed
+        let scanned = make_scanned_files(vec![
+            ("a.md", "same content"),
+            ("b.md", "new body"),
+            ("c.md", "brand new"),
+        ]);
+        let existing = vec![
+            FileIndexEntry {
+                file_id: "f1".into(),
+                filename: "a.md".into(),
+                content_hash: content_hash("same content"),
+            },
+            FileIndexEntry {
+                file_id: "f2".into(),
+                filename: "b.md".into(),
+                content_hash: content_hash("old body"),
+            },
+            FileIndexEntry {
+                file_id: "f3".into(),
+                filename: "d.md".into(),
+                content_hash: content_hash("deleted"),
+            },
+        ];
+        let c = classify_files(&scanned, &existing);
+
+        // a.md unchanged
+        assert!(c.unchanged_file_ids.contains("f1"));
+        assert_eq!(c.file_id_map["a.md"], "f1");
+
+        // b.md edited — needs embedding, keeps file_id
+        assert_eq!(c.needs_embedding.len(), 2); // b.md + c.md
+        let edited = c.needs_embedding.iter().find(|f| f.scanned.path.to_str() == Some("b.md")).unwrap();
+        assert_eq!(edited.file_id, "f2");
+
+        // c.md new — needs embedding, new UUID
+        let new = c.needs_embedding.iter().find(|f| f.scanned.path.to_str() == Some("c.md")).unwrap();
+        assert_ne!(new.file_id, "f1");
+        assert_ne!(new.file_id, "f2");
+        assert_ne!(new.file_id, "f3");
+
+        // d.md removed
+        assert_eq!(c.removed_count, 1);
+        assert!(!c.file_id_map.contains_key("d.md"));
+    }
+
+    // ========================================================================
+    // Incremental build integration tests
+    // ========================================================================
+
+    use crate::index::storage::{read_file_index, read_chunk_rows};
+
+    /// Read file_id→filename map and chunk_id→file_id map from existing parquets.
+    fn read_index_state(dir: &Path) -> (HashMap<String, String>, Vec<(String, String)>) {
+        let file_index = read_file_index(&dir.join(".mdvs/files.parquet")).unwrap();
+        let file_map: HashMap<String, String> = file_index
+            .iter()
+            .map(|e| (e.filename.clone(), e.file_id.clone()))
+            .collect();
+        let chunks = read_chunk_rows(&dir.join(".mdvs/chunks.parquet")).unwrap();
+        let chunk_pairs: Vec<(String, String)> = chunks
+            .iter()
+            .map(|c| (c.chunk_id.clone(), c.file_id.clone()))
+            .collect();
+        (file_map, chunk_pairs)
+    }
+
+    #[tokio::test]
+    async fn incremental_no_changes() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_test_vault(tmp.path());
+
+        crate::cmd::init::run(
+            tmp.path(), Some("minishlab/potion-base-8M"), None, "**",
+            false, false, true, None, true, false,
+        ).await.unwrap();
+
+        let (files_before, chunks_before) = read_index_state(tmp.path());
+
+        // Build again with no changes
+        run(tmp.path(), None, None, None, false).await.unwrap();
+
+        let (files_after, chunks_after) = read_index_state(tmp.path());
+
+        // file_ids preserved
+        for (filename, old_id) in &files_before {
+            assert_eq!(files_after[filename], *old_id, "file_id changed for {filename}");
+        }
+        // chunk_ids preserved (same chunks carried forward)
+        let old_chunk_ids: HashSet<&str> = chunks_before.iter().map(|(id, _)| id.as_str()).collect();
+        let new_chunk_ids: HashSet<&str> = chunks_after.iter().map(|(id, _)| id.as_str()).collect();
+        assert_eq!(old_chunk_ids, new_chunk_ids);
+    }
+
+    #[tokio::test]
+    async fn incremental_new_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_test_vault(tmp.path());
+
+        crate::cmd::init::run(
+            tmp.path(), Some("minishlab/potion-base-8M"), None, "**",
+            false, false, true, None, true, false,
+        ).await.unwrap();
+
+        let (files_before, chunks_before) = read_index_state(tmp.path());
+        // Add a new file
+        fs::write(
+            tmp.path().join("blog/post3.md"),
+            "---\ntitle: Third\ntags:\n  - new\ndraft: false\n---\n# Third\nNew post content.",
+        ).unwrap();
+
+        run(tmp.path(), None, None, None, false).await.unwrap();
+
+        let (files_after, chunks_after) = read_index_state(tmp.path());
+
+        // Old file_ids preserved
+        for (filename, old_id) in &files_before {
+            assert_eq!(files_after[filename], *old_id, "file_id changed for {filename}");
+        }
+        // New file added
+        assert!(files_after.contains_key("blog/post3.md"));
+        assert_eq!(files_after.len(), 3);
+
+        // Old chunks preserved, new chunks added
+        for (chunk_id, _) in &chunks_before {
+            assert!(
+                chunks_after.iter().any(|(id, _)| id == chunk_id),
+                "old chunk {chunk_id} missing",
+            );
+        }
+        assert!(chunks_after.len() > chunks_before.len());
+    }
+
+    #[tokio::test]
+    async fn incremental_edited_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_test_vault(tmp.path());
+
+        crate::cmd::init::run(
+            tmp.path(), Some("minishlab/potion-base-8M"), None, "**",
+            false, false, true, None, true, false,
+        ).await.unwrap();
+
+        let (files_before, chunks_before) = read_index_state(tmp.path());
+        let post1_id = files_before["blog/post1.md"].clone();
+        let post2_id = files_before["blog/post2.md"].clone();
+
+        // Chunks belonging to each file
+        let post1_chunks: HashSet<String> = chunks_before.iter()
+            .filter(|(_, fid)| fid == &post1_id)
+            .map(|(cid, _)| cid.clone())
+            .collect();
+        let post2_chunks: HashSet<String> = chunks_before.iter()
+            .filter(|(_, fid)| fid == &post2_id)
+            .map(|(cid, _)| cid.clone())
+            .collect();
+
+        // Edit post1's body (keep same frontmatter)
+        fs::write(
+            tmp.path().join("blog/post1.md"),
+            "---\ntitle: Hello\ntags:\n  - rust\n  - code\ndraft: false\n---\n# Hello\nCompletely different body text.",
+        ).unwrap();
+
+        run(tmp.path(), None, None, None, false).await.unwrap();
+
+        let (files_after, chunks_after) = read_index_state(tmp.path());
+
+        // file_ids preserved for both files
+        assert_eq!(files_after["blog/post1.md"], post1_id);
+        assert_eq!(files_after["blog/post2.md"], post2_id);
+
+        // post2 chunks preserved (unchanged file)
+        for chunk_id in &post2_chunks {
+            assert!(
+                chunks_after.iter().any(|(id, _)| id == chunk_id),
+                "post2 chunk {chunk_id} should be preserved",
+            );
+        }
+        // post1 chunks replaced (edited file — new chunk_ids)
+        let new_post1_chunks: HashSet<String> = chunks_after.iter()
+            .filter(|(_, fid)| fid == &post1_id)
+            .map(|(cid, _)| cid.clone())
+            .collect();
+        assert!(!new_post1_chunks.is_empty());
+        for old_id in &post1_chunks {
+            assert!(!new_post1_chunks.contains(old_id), "old chunk should be replaced");
+        }
+    }
+
+    #[tokio::test]
+    async fn incremental_removed_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_test_vault(tmp.path());
+
+        crate::cmd::init::run(
+            tmp.path(), Some("minishlab/potion-base-8M"), None, "**",
+            false, false, true, None, true, false,
+        ).await.unwrap();
+
+        let (files_before, _) = read_index_state(tmp.path());
+        assert_eq!(files_before.len(), 2);
+
+        // Remove post2
+        fs::remove_file(tmp.path().join("blog/post2.md")).unwrap();
+
+        run(tmp.path(), None, None, None, false).await.unwrap();
+
+        let (files_after, chunks_after) = read_index_state(tmp.path());
+
+        assert_eq!(files_after.len(), 1);
+        assert!(files_after.contains_key("blog/post1.md"));
+        assert!(!files_after.contains_key("blog/post2.md"));
+
+        // No chunks referencing removed file
+        let post2_id = &files_before["blog/post2.md"];
+        assert!(!chunks_after.iter().any(|(_, fid)| fid == post2_id));
+    }
+
+    #[tokio::test]
+    async fn incremental_frontmatter_only_change() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_test_vault(tmp.path());
+
+        crate::cmd::init::run(
+            tmp.path(), Some("minishlab/potion-base-8M"), None, "**",
+            false, false, true, None, true, false,
+        ).await.unwrap();
+
+        let (_, chunks_before) = read_index_state(tmp.path());
+        let old_chunk_ids: HashSet<String> = chunks_before.iter().map(|(id, _)| id.clone()).collect();
+
+        // Change only frontmatter (add a tag), keep same body
+        fs::write(
+            tmp.path().join("blog/post1.md"),
+            "---\ntitle: Hello\ntags:\n  - rust\n  - code\n  - new-tag\ndraft: false\n---\n# Hello\nBody text about Rust programming.",
+        ).unwrap();
+
+        run(tmp.path(), None, None, None, false).await.unwrap();
+
+        let (_, chunks_after) = read_index_state(tmp.path());
+        let new_chunk_ids: HashSet<String> = chunks_after.iter().map(|(id, _)| id.clone()).collect();
+
+        // Chunks preserved — body didn't change, no re-embedding
+        assert_eq!(old_chunk_ids, new_chunk_ids);
+    }
+
+    #[tokio::test]
+    async fn force_full_rebuild() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_test_vault(tmp.path());
+
+        crate::cmd::init::run(
+            tmp.path(), Some("minishlab/potion-base-8M"), None, "**",
+            false, false, true, None, true, false,
+        ).await.unwrap();
+
+        let (files_before, chunks_before) = read_index_state(tmp.path());
+        let old_file_ids: HashSet<String> = files_before.values().cloned().collect();
+        let old_chunk_ids: HashSet<String> = chunks_before.iter().map(|(id, _)| id.clone()).collect();
+
+        // Force rebuild — should generate all new IDs
+        run(tmp.path(), None, None, None, true).await.unwrap();
+
+        let (files_after, chunks_after) = read_index_state(tmp.path());
+        let new_file_ids: HashSet<String> = files_after.values().cloned().collect();
+        let new_chunk_ids: HashSet<String> = chunks_after.iter().map(|(id, _)| id.clone()).collect();
+
+        // All IDs should be different (new UUIDs)
+        assert!(old_file_ids.is_disjoint(&new_file_ids), "force rebuild should generate new file_ids");
+        assert!(old_chunk_ids.is_disjoint(&new_chunk_ids), "force rebuild should generate new chunk_ids");
     }
 }

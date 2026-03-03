@@ -35,12 +35,17 @@ mdvs build [path] [flags]
 5. Run check: validate frontmatter against `[fields]` rules
    - If violations: abort, report violations (same format as `check` command)
    - If new fields: collect for output (informational, does not abort)
-6. If `--dry-run`: print build plan, return
-7. Compare toml config against existing parquet metadata (see [Config changes](#config-changes))
-8. Load model
-9. Chunk, embed, write parquets to `.mdvs/`
-10. Write build metadata to parquet key-value metadata
-11. Print result
+6. Compare toml config against existing parquet metadata (see [Config changes](#config-changes))
+7. If `--force` or config changed with `--force`: full rebuild (step 10)
+8. Read existing index and classify files (see [Incremental build](#incremental-build))
+9. If no files need embedding: update `files.parquet` with fresh frontmatter, print result, return
+10. Load model
+11. Chunk and embed new/edited files only (or all files on full rebuild)
+12. Write parquets to `.mdvs/`:
+    - `files.parquet`: all current files with fresh frontmatter from scan (removed files excluded)
+    - `chunks.parquet`: existing chunks for unchanged files + new chunks for new/edited files (chunks for removed/edited files excluded)
+13. Write build metadata to parquet key-value metadata
+14. Print result
 
 Progress messages ("Loading model...", "Embedding...") go to **stderr**.
 The formatted result goes to **stdout**.
@@ -71,17 +76,40 @@ The `--set-*` flags update the toml value only when `--force` is also provided.
 
 ---
 
-## Build strategy
+## Incremental build
 
-**Current: full rebuild.** Every build re-chunks, re-embeds, and rewrites all parquets.
+Build is incremental by default. It uses `content_hash` from the existing `files.parquet` to detect what changed. The content hash covers only the file body (after frontmatter extraction), not the frontmatter itself.
 
-**Future (incremental):** use content hashes from `files.parquet` to detect changes:
-- File content changed → re-chunk, re-embed that file only
-- New files → chunk, embed, add
-- Deleted files → remove from parquets
-- Frontmatter changed (same text) → update `files.parquet` only, `chunks.parquet` unchanged
-- Config changed (model, chunk_size, glob) → full rebuild
-- Schema changed (new field, type change) → rewrite `files.parquet` only
+### File classification
+
+For each scanned file, compare against the existing index:
+
+| Classification | Condition | Action |
+|---|---|---|
+| **New** | filename not in existing index | chunk, embed |
+| **Edited** | filename in index, content_hash differs | chunk, re-embed (keep same file_id) |
+| **Unchanged** | filename in index, content_hash matches | keep existing chunks |
+| **Removed** | filename in index, not in scan | drop from both parquets |
+
+### What gets written
+
+- `files.parquet` is always fully rewritten from the fresh scan. Every file gets a FileRow built from the current frontmatter, regardless of classification. This ensures frontmatter-only changes (e.g., adding a tag) are captured without re-embedding.
+- `chunks.parquet` is rewritten with: existing chunks for unchanged files + new chunks for new/edited files. Chunks for removed and edited files are dropped.
+
+### Model loading
+
+The embedding model is only loaded if there are new or edited files. If all files are unchanged (only frontmatter or removed files changed), the model is not loaded and no embedding runs.
+
+### Full rebuild triggers
+
+A full rebuild (re-embed everything) happens when:
+- `--force` is provided
+- Config changed with `--force` (model, chunk_size)
+- First build (no existing parquets)
+
+### Schema changes
+
+If the Arrow schema changed (new field in toml, type change), `files.parquet` is rewritten with the new schema. This does not trigger re-embedding — only a schema-level rewrite of file rows.
 
 ---
 
@@ -119,8 +147,11 @@ No data is ever dropped — values that don't match the declared type are conver
 
 ```rust
 pub struct BuildResult {
-    pub files_built: usize,
-    pub chunks_created: usize,
+    pub files_total: usize,
+    pub files_embedded: usize,       // new + edited (actually embedded)
+    pub files_unchanged: usize,
+    pub files_removed: usize,
+    pub chunks_total: usize,
     pub model: String,
     pub model_revision: Option<String>,
     pub new_fields: Vec<NewField>,     // see shared.md
@@ -129,11 +160,28 @@ pub struct BuildResult {
 }
 ```
 
-### Human format
+### Human format (full rebuild)
 
 ```
-Built 12 files, 47 chunks
+Built 12 files, 47 chunks (full rebuild)
 Model: minishlab/potion-base-8M
+
+Built index in '/path/to/vault/.mdvs'
+```
+
+### Human format (incremental, changes found)
+
+```
+Built 12 files, 47 chunks (2 new, 1 edited, 9 unchanged, 1 removed)
+Model: minishlab/potion-base-8M
+
+Built index in '/path/to/vault/.mdvs'
+```
+
+### Human format (incremental, no embedding needed)
+
+```
+Built 12 files, 47 chunks (no embedding needed)
 
 Built index in '/path/to/vault/.mdvs'
 ```
@@ -141,7 +189,7 @@ Built index in '/path/to/vault/.mdvs'
 ### Human format (new fields)
 
 ```
-Built 12 files, 47 chunks
+Built 12 files, 47 chunks (3 new, 9 unchanged)
 Model: minishlab/potion-base-8M
 
 New fields (not in mdvs.toml):
@@ -180,13 +228,16 @@ See also [Prerequisites](check.md#prerequisites) for toml validation errors.
 ## Examples
 
 ```bash
-# Build index (full rebuild for now)
+# Incremental build (only embed new/changed files)
 mdvs build
 
 # Build a specific directory
 mdvs build ~/notes
 
-# Change model (requires --force)
+# Force full rebuild (re-embed everything)
+mdvs build --force
+
+# Change model (requires --force, triggers full re-embed)
 mdvs build --set-model minishlab/potion-base-32M --force
 
 # Change chunk size (requires --force)
