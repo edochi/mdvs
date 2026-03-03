@@ -12,14 +12,19 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use tracing::instrument;
 
+/// Result of the `check` command: validation violations and unknown fields.
 #[derive(Debug, Serialize)]
 pub struct CheckResult {
+    /// Number of markdown files checked.
     pub files_checked: usize,
+    /// Schema violations (wrong type, missing required, disallowed).
     pub field_violations: Vec<FieldViolation>,
+    /// Fields found in frontmatter but not defined in `mdvs.toml`.
     pub new_fields: Vec<NewField>,
 }
 
 impl CheckResult {
+    /// Returns `true` if any schema violations were found.
     pub fn has_violations(&self) -> bool {
         !self.field_violations.is_empty()
     }
@@ -82,6 +87,7 @@ impl CommandOutput for CheckResult {
     }
 }
 
+/// Read config and scan files, then validate frontmatter against the schema.
 #[instrument(name = "check", skip_all)]
 pub fn run(path: &Path) -> anyhow::Result<CheckResult> {
     let config = MdvsToml::read(&path.join("mdvs.toml"))?;
@@ -89,6 +95,7 @@ pub fn run(path: &Path) -> anyhow::Result<CheckResult> {
     validate(&scanned, &config)
 }
 
+/// Validate scanned files against the schema in `mdvs.toml`. Reusable core called by both `check` and `build`.
 #[instrument(name = "validate", skip_all)]
 pub fn validate(scanned: &ScannedFiles, config: &MdvsToml) -> anyhow::Result<CheckResult> {
     // Build lookups

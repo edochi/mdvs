@@ -127,11 +127,13 @@ impl ScalarUDFImpl for CosineSimilarityUDF {
 // SearchContext — registered tables + UDF
 // ============================================================================
 
+/// DataFusion session with registered Parquet tables and a cosine similarity UDF.
 pub struct SearchContext {
     ctx: SessionContext,
 }
 
 impl SearchContext {
+    /// Register Parquet files as tables and bind the query embedding into the UDF.
     #[instrument(name = "register_tables", skip_all, level = "debug")]
     pub async fn new(
         files_path: &Path,
@@ -150,6 +152,7 @@ impl SearchContext {
         Ok(Self { ctx })
     }
 
+    /// Execute a SQL query against the registered tables and return result batches.
     #[instrument(name = "query", skip_all, level = "debug")]
     pub async fn query(&self, sql: &str) -> anyhow::Result<Vec<RecordBatch>> {
         let df = self.ctx.sql(sql).await?;

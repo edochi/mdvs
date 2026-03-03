@@ -8,19 +8,26 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::instrument;
 
+/// A single markdown file with its parsed frontmatter and body content.
 #[derive(Debug)]
 pub struct ScannedFile {
+    /// Path relative to the project root.
     pub path: PathBuf,
+    /// Parsed YAML frontmatter as JSON, or `None` for bare files.
     pub data: Option<Value>,
+    /// Markdown body (after frontmatter extraction), trimmed.
     pub content: String,
 }
 
+/// Collection of scanned markdown files from a directory walk.
 #[derive(Debug)]
 pub struct ScannedFiles {
+    /// All matched files, sorted by relative path.
     pub files: Vec<ScannedFile>,
 }
 
 impl ScannedFiles {
+    /// Walk a directory, parse frontmatter, and collect matching markdown files.
     #[instrument(name = "scan", skip_all)]
     pub fn scan(root: &Path, config: &ScanConfig) -> Self {
         let matcher = Glob::new(&config.glob)

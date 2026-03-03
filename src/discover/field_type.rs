@@ -3,16 +3,24 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+/// Recursive type of a frontmatter field, inferred from YAML values.
 #[derive(Debug, Clone, PartialEq)]
 pub enum FieldType {
+    /// YAML `true` / `false`.
     Boolean,
+    /// YAML integer (i64/u64).
     Integer,
+    /// YAML float (f64). Integer+Float widens to Float.
     Float,
+    /// YAML string. Top type in the widening hierarchy — incompatible types widen here.
     String,
+    /// YAML sequence with a uniform element type.
     Array(Box<FieldType>),
+    /// YAML mapping with named sub-fields.
     Object(BTreeMap<std::string::String, FieldType>),
 }
 
+/// Widen two field types into their least upper bound.
 pub fn widen(a: FieldType, b: FieldType) -> FieldType {
     if a == b {
         return a;

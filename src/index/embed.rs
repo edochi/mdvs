@@ -4,10 +4,14 @@ use std::fs;
 use std::path::PathBuf;
 use tracing::instrument;
 
+/// Resolved embedding model configuration, ready for loading.
 #[derive(Debug, Clone)]
 pub enum ModelConfig {
+    /// Model2Vec static model with optional pinned revision.
     Model2Vec {
+        /// HuggingFace model identifier.
         model_id: String,
+        /// Pinned commit SHA from the HuggingFace cache.
         revision: Option<String>,
     },
 }
@@ -26,11 +30,14 @@ impl TryFrom<&EmbeddingModelConfig> for ModelConfig {
     }
 }
 
+/// Loaded embedding model, ready to produce vectors.
 pub enum Embedder {
+    /// A Model2Vec static model (CPU-only, no GPU required).
     Model2Vec(StaticModel),
 }
 
 impl Embedder {
+    /// Download (if needed) and load the model into memory.
     #[instrument(name = "load_model", skip_all, fields(model = ?config))]
     pub fn load(config: &ModelConfig) -> Self {
         match config {
@@ -47,12 +54,14 @@ impl Embedder {
         }
     }
 
+    /// Return the embedding dimension by encoding a probe string.
     pub fn dimension(&self) -> usize {
         match self {
             Embedder::Model2Vec(model) => model.encode_single("probe").len(),
         }
     }
 
+    /// Embed a single text string into a dense vector.
     #[instrument(name = "embed", skip_all, level = "debug")]
     pub async fn embed(&self, text: &str) -> Vec<f32> {
         match self {
@@ -60,6 +69,7 @@ impl Embedder {
         }
     }
 
+    /// Embed multiple texts in a single batch call.
     #[instrument(name = "embed_batch", skip_all, fields(texts = texts.len()), level = "debug")]
     pub async fn embed_batch(&self, texts: &[&str]) -> Vec<Vec<f32>> {
         match self {
@@ -71,6 +81,7 @@ impl Embedder {
     }
 }
 
+/// Look up the cached model revision (commit SHA) from the HuggingFace cache directory.
 pub fn resolve_revision(model_id: &str) -> Option<String> {
     let home = std::env::var("HOME").ok()?;
     let model_dir = model_id.replace('/', "--");
@@ -89,6 +100,7 @@ pub fn resolve_revision(model_id: &str) -> Option<String> {
     None
 }
 
+/// Compute the cosine similarity between two vectors, returning 0.0 for zero-norm inputs.
 pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
     let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();

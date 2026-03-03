@@ -21,38 +21,61 @@ use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
 
+/// Compute a deterministic hex-encoded hash of the given content using SipHash.
 pub fn content_hash(content: &str) -> String {
     let mut hasher = DefaultHasher::new();
     hasher.write(content.as_bytes());
     format!("{:016x}", hasher.finish())
 }
 
+/// A single file's metadata, ready to be written into `files.parquet`.
 pub struct FileRow {
+    /// Unique identifier for this file (UUID).
     pub file_id: String,
+    /// Path relative to the project root.
     pub filename: String,
+    /// Parsed YAML frontmatter as JSON, or `None` for bare files.
     pub frontmatter: Option<Value>,
+    /// SipHash of the markdown body (excluding frontmatter).
     pub content_hash: String,
-    pub built_at: i64, // microseconds since epoch
+    /// Timestamp when this file was indexed, as microseconds since epoch.
+    pub built_at: i64,
 }
 
+/// A single chunk with its embedding, ready to be written into `chunks.parquet`.
 pub struct ChunkRow {
+    /// Unique identifier for this chunk (UUID).
     pub chunk_id: String,
+    /// Foreign key referencing `FileRow::file_id`.
     pub file_id: String,
+    /// Zero-based index of this chunk within its parent file.
     pub chunk_index: i32,
+    /// First line of this chunk in the source file (1-based).
     pub start_line: i32,
+    /// Last line of this chunk in the source file (1-based, inclusive).
     pub end_line: i32,
+    /// Dense embedding vector for this chunk.
     pub embedding: Vec<f32>,
 }
 
+/// Configuration snapshot stored in parquet key-value metadata.
+///
+/// Captures the exact settings used for a build so that subsequent builds
+/// and searches can detect config changes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BuildMetadata {
+    /// Embedding model configuration (provider, name, revision).
     pub embedding_model: EmbeddingModelConfig,
+    /// Chunking configuration (max chunk size).
     pub chunking: ChunkingConfig,
+    /// Glob pattern used to select files for the build.
     pub glob: String,
-    pub built_at: String, // ISO 8601
+    /// ISO 8601 timestamp of when the build was produced.
+    pub built_at: String,
 }
 
 impl BuildMetadata {
+    /// Serialize to a `HashMap` suitable for parquet key-value metadata.
     pub fn to_hash_map(&self) -> HashMap<String, String> {
         let mut m = HashMap::new();
         m.insert(
@@ -72,6 +95,7 @@ impl BuildMetadata {
         m
     }
 
+    /// Deserialize from parquet key-value metadata. Returns `None` if required keys are missing.
     pub fn from_hash_map(meta: &HashMap<String, String>) -> Option<Self> {
         Some(Self {
             embedding_model: EmbeddingModelConfig {
@@ -185,6 +209,10 @@ fn build_array(values: &[Option<&Value>], ft: &FieldType) -> ArrayRef {
 // Batch builders
 // ============================================================================
 
+/// Build an Arrow `RecordBatch` for `files.parquet` from file rows and the inferred schema.
+///
+/// Frontmatter values are packed into a single `data` Struct column whose
+/// child fields match `schema_fields`.
 pub fn build_files_batch(
     schema_fields: &[(String, FieldType)],
     files: &[FileRow],
@@ -246,6 +274,9 @@ pub fn build_files_batch(
     .unwrap()
 }
 
+/// Build an Arrow `RecordBatch` for `chunks.parquet` from chunk rows.
+///
+/// Embeddings are stored as a `FixedSizeList<Float32>` with the given `dimension`.
 pub fn build_chunks_batch(chunks: &[ChunkRow], dimension: i32) -> RecordBatch {
     let chunk_id_arr: StringArray = chunks.iter().map(|c| Some(c.chunk_id.as_str())).collect();
     let file_id_arr: StringArray = chunks.iter().map(|c| Some(c.file_id.as_str())).collect();
@@ -302,6 +333,7 @@ fn writer_props() -> WriterProperties {
         .build()
 }
 
+/// Write a single `RecordBatch` to a Snappy-compressed Parquet file.
 pub fn write_parquet(path: &Path, batch: &RecordBatch) -> anyhow::Result<()> {
     let file = File::create(path)?;
     let mut writer = ArrowWriter::try_new(file, batch.schema(), Some(writer_props()))?;
@@ -310,6 +342,7 @@ pub fn write_parquet(path: &Path, batch: &RecordBatch) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Read all `RecordBatch`es from a Parquet file.
 pub fn read_parquet(path: &Path) -> anyhow::Result<Vec<RecordBatch>> {
     let file = File::open(path)?;
     let reader = ParquetRecordBatchReaderBuilder::try_new(file)?.build()?;
@@ -317,6 +350,7 @@ pub fn read_parquet(path: &Path) -> anyhow::Result<Vec<RecordBatch>> {
     Ok(batches)
 }
 
+/// Write a `RecordBatch` to Parquet, attaching key-value metadata to the Arrow schema.
 pub fn write_parquet_with_metadata(
     path: &Path,
     batch: &RecordBatch,
@@ -331,6 +365,8 @@ pub fn write_parquet_with_metadata(
     Ok(())
 }
 
+/// Read `BuildMetadata` from a Parquet file's schema-level key-value metadata.
+/// Returns `Ok(None)` if the file exists but contains no mdvs metadata keys.
 pub fn read_build_metadata(path: &Path) -> anyhow::Result<Option<BuildMetadata>> {
     let file = File::open(path)?;
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
@@ -345,8 +381,11 @@ pub fn read_build_metadata(path: &Path) -> anyhow::Result<Option<BuildMetadata>>
 /// Lightweight view of a file row for incremental build diffing.
 /// Does NOT include frontmatter — that comes from the fresh scan.
 pub struct FileIndexEntry {
+    /// Unique identifier for this file.
     pub file_id: String,
+    /// Path relative to the project root.
     pub filename: String,
+    /// SipHash of the markdown body, used to detect content changes.
     pub content_hash: String,
 }
 

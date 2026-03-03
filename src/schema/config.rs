@@ -5,47 +5,72 @@ use std::fs;
 use std::path::Path;
 use tracing::instrument;
 
+/// Controls behavior after `update` completes.
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct UpdateConfig {
+    /// Whether to automatically trigger a build after updating the schema.
     pub auto_build: bool,
 }
 
+/// Default settings for the `search` command.
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct SearchConfig {
+    /// Maximum number of results returned when `--limit` is not specified.
     pub default_limit: usize,
 }
 
+/// A single field definition in `[[fields.field]]`, specifying its type
+/// and the glob patterns that constrain where it may or must appear.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TomlField {
+    /// Frontmatter key this definition applies to.
     pub name: String,
+    /// Expected type (scalar, array, or object).
     #[serde(rename = "type")]
     pub field_type: FieldTypeSerde,
+    /// Glob patterns for files where this field is allowed.
     pub allowed: Vec<String>,
+    /// Glob patterns for files where this field is required.
     pub required: Vec<String>,
 }
 
+/// The `[fields]` section: ignore list and per-field definitions.
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct FieldsConfig {
+    /// Field names to ignore during validation (known but unconstrained).
     #[serde(default)]
     pub ignore: Vec<String>,
+    /// Constrained field definitions (`[[fields.field]]` entries).
     #[serde(default, rename = "field")]
     pub field: Vec<TomlField>,
 }
 
+/// Top-level representation of `mdvs.toml`, the single source of truth for
+/// schema validation and build configuration. Validation sections (`scan`,
+/// `update`, `fields`) are always present; build sections (`embedding_model`,
+/// `chunking`, `search`) are optional and added by `init --auto-build` or `build`.
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct MdvsToml {
+    /// File discovery settings (glob pattern, bare-file handling).
     pub scan: ScanConfig,
+    /// Post-update workflow settings.
     pub update: UpdateConfig,
+    /// Embedding model identity. Present only when build is configured.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub embedding_model: Option<EmbeddingModelConfig>,
+    /// Chunk-size settings for semantic splitting. Present only when build is configured.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chunking: Option<ChunkingConfig>,
+    /// Search defaults. Present only when build is configured.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub search: Option<SearchConfig>,
+    /// Field definitions and ignore list.
     pub fields: FieldsConfig,
 }
 
 impl MdvsToml {
+    /// Build an `MdvsToml` from an inferred schema and the provided scan/model/chunking settings.
+    /// When `auto_build` is false, the build sections are omitted.
     pub fn from_inferred(
         schema: &InferredSchema,
         scan: ScanConfig,
@@ -90,6 +115,7 @@ impl MdvsToml {
         }
     }
 
+    /// Deserialize an `MdvsToml` from a file on disk.
     #[instrument(name = "read_config", skip_all, level = "debug")]
     pub fn read(path: &Path) -> anyhow::Result<Self> {
         let content = fs::read_to_string(path)?;
@@ -97,6 +123,8 @@ impl MdvsToml {
         Ok(config)
     }
 
+    /// Serialize this config to TOML and write it to disk.
+    /// Complex field types are post-processed into inline tables for readability.
     #[instrument(name = "write_config", skip_all, level = "debug")]
     pub fn write(&self, path: &Path) -> anyhow::Result<()> {
         let content = toml::to_string(self)?;

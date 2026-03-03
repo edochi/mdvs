@@ -9,15 +9,24 @@ use std::collections::HashMap;
 use std::path::Path;
 use tracing::instrument;
 
+/// Result of the `update` command: field changes discovered by re-inference.
 #[derive(Debug, Serialize)]
 pub struct UpdateResult {
+    /// Number of markdown files scanned.
     pub files_scanned: usize,
+    /// Newly discovered fields not previously in `mdvs.toml`.
     pub added: Vec<DiscoveredField>,
+    /// Fields whose type or glob constraints changed during re-inference.
     pub changed: Vec<ChangedField>,
+    /// Field names that disappeared from all files during re-inference.
     pub removed: Vec<String>,
+    /// Number of fields that remained identical.
     pub unchanged: usize,
+    /// Whether a build was triggered after updating.
     pub auto_build: bool,
+    /// Whether this was a dry run (no files written).
     pub dry_run: bool,
+    /// Build result, if a build was triggered.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub build_result: Option<BuildResult>,
 }
@@ -88,6 +97,7 @@ impl CommandOutput for UpdateResult {
     }
 }
 
+/// Re-scan files, infer field changes, and update `mdvs.toml`.
 #[instrument(name = "update", skip_all)]
 pub async fn run(
     path: &Path,

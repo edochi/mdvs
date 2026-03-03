@@ -6,31 +6,50 @@ use serde::Serialize;
 use std::path::Path;
 use tracing::instrument;
 
+/// A field definition from `mdvs.toml`, rendered for display.
 #[derive(Debug, Serialize)]
 pub struct InfoField {
+    /// Field name.
     pub name: String,
+    /// Inferred or configured type (e.g. `"String"`, `"Boolean"`, `"String[]"`).
     pub field_type: String,
+    /// Glob patterns where this field may appear.
     pub allowed: Vec<String>,
+    /// Glob patterns where this field must appear.
     pub required: Vec<String>,
 }
 
+/// Metadata and statistics about a built search index.
 #[derive(Debug, Serialize)]
 pub struct IndexInfo {
+    /// Embedding model name.
     pub model: String,
+    /// Pinned model revision (commit SHA), if any.
     pub revision: Option<String>,
+    /// Maximum chunk size in characters.
     pub chunk_size: usize,
+    /// Number of files in the index.
     pub files_indexed: usize,
+    /// Total number of chunks across all files.
     pub chunks: usize,
+    /// ISO 8601 timestamp of last build.
     pub built_at: String,
+    /// Whether the index matches the current `mdvs.toml` configuration.
     pub config_match: bool,
 }
 
+/// Output of the `info` command.
 #[derive(Debug, Serialize)]
 pub struct InfoResult {
+    /// Glob pattern from `[scan]` config.
     pub scan_glob: String,
+    /// Number of markdown files matching the scan pattern.
     pub files_on_disk: usize,
+    /// Field definitions from `[[fields.field]]`.
     pub fields: Vec<InfoField>,
+    /// Field names in the `[fields].ignore` list.
     pub ignored_fields: Vec<String>,
+    /// Index info, if a built index exists.
     pub index: Option<IndexInfo>,
 }
 
@@ -102,6 +121,7 @@ impl CommandOutput for InfoResult {
     }
 }
 
+/// Read config and index metadata, return a summary of the project state.
 #[instrument(name = "info", skip_all)]
 pub fn run(path: &Path) -> anyhow::Result<InfoResult> {
     let config = MdvsToml::read(&path.join("mdvs.toml"))?;

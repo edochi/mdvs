@@ -19,14 +19,22 @@ const DEFAULT_CHUNK_SIZE: usize = 1024;
 // BuildResult
 // ============================================================================
 
+/// Result of the `build` command: embedding and index statistics.
 #[derive(Debug, Serialize)]
 pub struct BuildResult {
+    /// Whether this was a full rebuild (vs incremental).
     pub full_rebuild: bool,
+    /// Total number of files in the final index.
     pub files_total: usize,
+    /// Number of files that were chunked and embedded this run.
     pub files_embedded: usize,
+    /// Number of files reused from the previous index (content unchanged).
     pub files_unchanged: usize,
+    /// Number of files removed since the last build.
     pub files_removed: usize,
+    /// Total number of chunks in the final index.
     pub chunks_total: usize,
+    /// Fields found in frontmatter but not yet in `mdvs.toml`.
     pub new_fields: Vec<NewField>,
 }
 
@@ -139,6 +147,7 @@ fn classify_files<'a>(
     }
 }
 
+/// Validate frontmatter, chunk, embed, and write Parquet files to `.mdvs/`.
 #[instrument(name = "build", skip_all)]
 pub async fn run(
     path: &Path,

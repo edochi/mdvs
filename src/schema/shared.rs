@@ -4,12 +4,24 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 /// Serde-friendly representation of FieldType for TOML.
+///
+/// Uses `#[serde(untagged)]`: scalars serialize as `"String"`,
+/// arrays as `{ array = "String" }`, objects as `{ object = { ... } }`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
 pub enum FieldTypeSerde {
+    /// A primitive type name: `"Boolean"`, `"Integer"`, `"Float"`, or `"String"`.
     Scalar(String),
-    Array { array: Box<FieldTypeSerde> },
-    Object { object: BTreeMap<String, FieldTypeSerde> },
+    /// An array type, e.g. `{ array = "String" }`.
+    Array {
+        /// Inner element type.
+        array: Box<FieldTypeSerde>,
+    },
+    /// An object type with named sub-fields.
+    Object {
+        /// Map of sub-field names to their types.
+        object: BTreeMap<String, FieldTypeSerde>,
+    },
 }
 
 impl From<&FieldType> for FieldTypeSerde {
@@ -59,19 +71,27 @@ impl TryFrom<&FieldTypeSerde> for FieldType {
     }
 }
 
+/// Configuration for file scanning (`[scan]` in `mdvs.toml`).
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct ScanConfig {
+    /// Glob pattern for matching markdown files.
     pub glob: String,
+    /// Whether to include files without YAML frontmatter.
     pub include_bare_files: bool,
+    /// Skip reading `.gitignore` patterns during scan.
     #[serde(default)]
     pub skip_gitignore: bool,
 }
 
+/// Embedding model identity (`[embedding_model]` in `mdvs.toml`).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EmbeddingModelConfig {
+    /// Provider name (e.g. `"model2vec"`).
     #[serde(default = "default_provider")]
     pub provider: String,
+    /// HuggingFace model ID (e.g. `"minishlab/potion-base-8M"`).
     pub name: String,
+    /// Pinned revision (commit SHA).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub revision: Option<String>,
 }
@@ -80,8 +100,10 @@ fn default_provider() -> String {
     "model2vec".to_string()
 }
 
+/// Chunking settings (`[chunking]` in `mdvs.toml`).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ChunkingConfig {
+    /// Maximum chunk size in characters.
     pub max_chunk_size: usize,
 }
 

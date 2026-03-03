@@ -7,8 +7,10 @@ use serde::Serialize;
 use std::path::Path;
 use tracing::{info, instrument};
 
+/// Result of the `search` command: ranked list of matching files.
 #[derive(Debug, Serialize)]
 pub struct SearchResult {
+    /// Files ranked by cosine similarity to the query, descending.
     pub hits: Vec<SearchHit>,
 }
 
@@ -21,6 +23,7 @@ impl CommandOutput for SearchResult {
     }
 }
 
+/// Embed a query, search the index, and return ranked results.
 #[instrument(name = "search", skip_all)]
 pub async fn run(
     path: &Path,

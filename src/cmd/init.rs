@@ -8,13 +8,20 @@ use serde::Serialize;
 use std::path::{Path, PathBuf};
 use tracing::instrument;
 
+/// Result of the `init` command: discovered fields and optional build output.
 #[derive(Debug, Serialize)]
 pub struct InitResult {
+    /// Directory where `mdvs.toml` was written.
     pub path: PathBuf,
+    /// Number of markdown files scanned.
     pub files_scanned: usize,
+    /// Fields inferred from frontmatter.
     pub fields: Vec<DiscoveredField>,
+    /// Whether a build was triggered after initialization.
     pub auto_build: bool,
+    /// Whether this was a dry run (no files written).
     pub dry_run: bool,
+    /// Build result, if a build was triggered.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub build_result: Option<BuildResult>,
 }
@@ -78,6 +85,7 @@ impl CommandOutput for InitResult {
 const DEFAULT_MODEL: &str = "minishlab/potion-base-8M";
 const DEFAULT_CHUNK_SIZE: usize = 1024;
 
+/// Scan a directory, infer frontmatter schema, write `mdvs.toml`, and optionally build.
 #[allow(clippy::too_many_arguments)]
 #[instrument(name = "init", skip_all)]
 pub async fn run(

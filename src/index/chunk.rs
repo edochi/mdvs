@@ -3,14 +3,20 @@ use regex::Regex;
 use text_splitter::MarkdownSplitter;
 use tracing::instrument;
 
+/// A single chunk of a markdown file with its extracted plain text.
 #[derive(Debug, Clone)]
 pub struct Chunk {
+    /// Zero-based index of this chunk within its parent file.
     pub chunk_index: usize,
-    pub start_line: usize, // 1-based
-    pub end_line: usize,   // 1-based
+    /// First line of this chunk in the source file (1-based).
+    pub start_line: usize,
+    /// Last line of this chunk in the source file (1-based, inclusive).
+    pub end_line: usize,
+    /// Plain text extracted from the markdown chunk (no formatting).
     pub plain_text: String,
 }
 
+/// Newtype wrapper over a list of chunks produced by semantic splitting.
 pub struct Chunks(Vec<Chunk>);
 
 impl std::ops::Deref for Chunks {
@@ -21,6 +27,7 @@ impl std::ops::Deref for Chunks {
 }
 
 impl Chunks {
+    /// Split a markdown body into semantically meaningful chunks with line ranges.
     #[instrument(name = "chunk", skip_all, level = "trace")]
     pub fn new(body: &str, max_chars: usize) -> Self {
         let splitter = MarkdownSplitter::new(max_chars);

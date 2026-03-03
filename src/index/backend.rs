@@ -11,15 +11,21 @@ use serde::Serialize;
 use std::path::{Path, PathBuf};
 use tracing::instrument;
 
+/// A single search result with its relevance score.
 #[derive(Debug, Serialize)]
 pub struct SearchHit {
+    /// Path of the matching file relative to the project root.
     pub filename: String,
+    /// Cosine similarity score (higher is more relevant).
     pub score: f64,
 }
 
+/// Summary statistics for a built search index.
 #[derive(Debug, Serialize)]
 pub struct IndexStats {
+    /// Number of files in the index.
     pub files_indexed: usize,
+    /// Total number of chunks across all files.
     pub chunks: usize,
 }
 

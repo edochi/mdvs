@@ -10,12 +10,16 @@ use tracing::instrument;
 // Type inference — flat pass
 // ============================================================================
 
+/// Widened type and file list for a single frontmatter field.
 #[derive(Debug)]
 pub struct FieldTypeInfo {
+    /// Widened type across all files where this field appears.
     pub field_type: FieldType,
+    /// Paths of files containing this field.
     pub files: Vec<PathBuf>,
 }
 
+/// Infer field types by scanning all files and widening across occurrences.
 #[instrument(name = "infer_types", skip_all, level = "debug")]
 pub fn infer_field_types(scanned: &ScannedFiles) -> BTreeMap<String, FieldTypeInfo> {
     let mut types: BTreeMap<String, FieldType> = BTreeMap::new();
@@ -65,12 +69,16 @@ pub fn infer_field_types(scanned: &ScannedFiles) -> BTreeMap<String, FieldTypeIn
 // Structure inference — DirectoryTree
 // ============================================================================
 
+/// Inferred glob patterns for a field's allowed and required paths.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FieldPaths {
+    /// Glob patterns where this field may appear.
     pub allowed: Vec<String>,
+    /// Glob patterns where this field must appear (present in every file).
     pub required: Vec<String>,
 }
 
+/// Tree of directories used to collapse per-directory field sets into glob patterns.
 pub struct DirectoryTree {
     arena: Arena<NodeData>,
     root: NodeId,
@@ -221,6 +229,7 @@ impl GlobMap {
 }
 
 impl DirectoryTree {
+    /// Walk the tree bottom-up, collapsing leaf directories into glob patterns.
     #[instrument(name = "infer_paths", skip_all, level = "debug")]
     pub fn infer_paths(&self) -> BTreeMap<String, FieldPaths> {
         let mut allowed: HashMap<String, GlobMap> = HashMap::new();
@@ -334,21 +343,30 @@ impl DirectoryTree {
 // InferredField / InferredSchema
 // ============================================================================
 
+/// A single field inferred from scanning: type, file list, and glob patterns.
 #[derive(Debug)]
 pub struct InferredField {
+    /// Field name (frontmatter key).
     pub name: String,
+    /// Widened type across all occurrences.
     pub field_type: FieldType,
+    /// Paths of files containing this field.
     pub files: Vec<PathBuf>,
+    /// Glob patterns where this field may appear.
     pub allowed: Vec<String>,
+    /// Glob patterns where this field is present in every file.
     pub required: Vec<String>,
 }
 
+/// Complete inferred schema: all fields with types and path constraints.
 #[derive(Debug)]
 pub struct InferredSchema {
+    /// Fields sorted by name.
     pub fields: Vec<InferredField>,
 }
 
 impl InferredSchema {
+    /// Run full inference: types + directory tree → fields with glob patterns.
     #[instrument(name = "infer", skip_all)]
     pub fn infer(scanned: &ScannedFiles) -> Self {
         let mut type_info = infer_field_types(scanned);
@@ -378,6 +396,7 @@ impl InferredSchema {
         InferredSchema { fields }
     }
 
+    /// Look up a field by name.
     pub fn field(&self, name: &str) -> Option<&InferredField> {
         self.fields.iter().find(|f| f.name == name)
     }

@@ -4,9 +4,12 @@ use serde::Serialize;
 use std::path::{Path, PathBuf};
 use tracing::instrument;
 
+/// Result of the `clean` command.
 #[derive(Debug, Serialize)]
 pub struct CleanResult {
+    /// Whether the `.mdvs/` directory was actually removed.
     pub removed: bool,
+    /// Path to the `.mdvs/` directory.
     pub path: PathBuf,
 }
 
@@ -20,6 +23,7 @@ impl CommandOutput for CleanResult {
     }
 }
 
+/// Delete the `.mdvs/` index directory if it exists.
 #[instrument(name = "clean", skip_all)]
 pub fn run(path: &Path) -> anyhow::Result<CleanResult> {
     let mdvs_dir = path.join(".mdvs");
