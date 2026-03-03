@@ -37,6 +37,18 @@ mdvs search "papers" --where "year >= 2024"
 mdvs search "rust" --where "draft = false AND year >= 2024"
 ```
 
+### Array fields
+
+For array fields like `tags: [rust, traits]`, use DataFusion's array functions:
+
+```bash
+# Files where tags contains 'rust'
+mdvs search "ownership" --where "array_has(tags, 'rust')"
+
+# Files with more than 2 tags
+mdvs search "notes" --where "array_length(tags) > 2"
+```
+
 Field names are used directly — no prefix or special syntax needed. Under the hood, mdvs uses [DataFusion](https://datafusion.apache.org/) for SQL execution, so any valid SQL expression works.
 
 ## Limiting results

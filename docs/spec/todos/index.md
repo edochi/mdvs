@@ -33,3 +33,5 @@
 | [0029](TODO-0029.md) | User documentation site with mdBook | todo | medium | 2026-03-03 |
 | [0030](TODO-0030.md) | Homebrew tap and prebuilt binaries | todo | medium | 2026-03-03 |
 | [0031](TODO-0031.md) | Example vault repository | todo | medium | 2026-03-04 |
+| [0032](TODO-0032.md) | Fix verbose tracing output — show timing and useful info | todo | high | 2026-03-04 |
+| [0033](TODO-0033.md) | Improve check command human-readable output | todo | high | 2026-03-04 |
