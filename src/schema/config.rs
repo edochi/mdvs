@@ -19,6 +19,19 @@ pub struct SearchConfig {
     pub default_limit: usize,
 }
 
+/// Storage-layer settings controlling how parquet columns are named.
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+pub struct StorageConfig {
+    /// Prefix applied to internal parquet column names to avoid collisions
+    /// with frontmatter field names. Defaults to `"_"`.
+    #[serde(default = "default_internal_prefix")]
+    pub internal_prefix: String,
+}
+
+fn default_internal_prefix() -> String {
+    "_".into()
+}
+
 /// A single field definition in `[[fields.field]]`, specifying its type
 /// and the glob patterns that constrain where it may or must appear.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -64,11 +77,21 @@ pub struct MdvsToml {
     /// Search defaults. Present only when build is configured.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub search: Option<SearchConfig>,
+    /// Storage-layer settings (column prefix). Hidden by default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub storage: Option<StorageConfig>,
     /// Field definitions and ignore list.
     pub fields: FieldsConfig,
 }
 
 impl MdvsToml {
+    /// Return the internal column prefix, defaulting to `"_"` when no `[storage]` section is set.
+    pub fn internal_prefix(&self) -> &str {
+        self.storage
+            .as_ref()
+            .map_or("_", |s| &s.internal_prefix)
+    }
+
     /// Build an `MdvsToml` from an inferred schema and the provided scan/model/chunking settings.
     /// When `auto_build` is false, the build sections are omitted.
     pub fn from_inferred(
@@ -109,6 +132,7 @@ impl MdvsToml {
                     })
                     .collect(),
             },
+            storage: None,
             embedding_model,
             chunking,
             search,
@@ -196,6 +220,7 @@ mod tests {
                 max_chunk_size: 1024,
             }),
             search: Some(SearchConfig { default_limit: 10 }),
+            storage: None,
         }
     }
 
@@ -253,6 +278,7 @@ mod tests {
                 max_chunk_size: 1024,
             }),
             search: Some(SearchConfig { default_limit: 10 }),
+            storage: None,
         };
 
         let toml_str = toml::to_string(&toml_doc).unwrap();
@@ -506,6 +532,7 @@ default_limit = 10
             embedding_model: None,
             chunking: None,
             search: None,
+            storage: None,
         };
         let toml_str = toml::to_string(&doc).unwrap();
         assert!(toml_str.contains("auto_build = true"));

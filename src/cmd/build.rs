@@ -217,7 +217,7 @@ pub async fn run(
     let embedding = config.embedding_model.as_ref().unwrap();
     let chunking = config.chunking.as_ref().unwrap();
 
-    let backend = Backend::parquet(path);
+    let backend = Backend::parquet(path, config.internal_prefix());
 
     // Detect manual config changes against existing index
     if let Some(ref meta) = backend.read_metadata()? {
@@ -235,6 +235,13 @@ pub async fn run(
             mismatches.push(format!(
                 "chunk_size: {} -> {}",
                 meta.chunking.max_chunk_size, chunking.max_chunk_size,
+            ));
+        }
+        if meta.internal_prefix != config.internal_prefix() {
+            mismatches.push(format!(
+                "internal_prefix: '{}' -> '{}'",
+                meta.internal_prefix,
+                config.internal_prefix(),
             ));
         }
         if !mismatches.is_empty() {
@@ -383,6 +390,7 @@ pub async fn run(
         chunking: chunking.clone(),
         glob: config.scan.glob.clone(),
         built_at: chrono::Utc::now().to_rfc3339(),
+        internal_prefix: config.internal_prefix().to_string(),
     };
     backend.write_index(&schema_fields, &file_rows, &chunk_rows, build_meta)?;
 
@@ -515,7 +523,7 @@ mod tests {
 
         let embedding_field = chunk_batches[0]
             .schema()
-            .field_with_name("embedding")
+            .field_with_name("_embedding")
             .unwrap()
             .clone();
         if let DataType::FixedSizeList(_, dim) = embedding_field.data_type() {
@@ -565,7 +573,7 @@ mod tests {
             end_line: 1,
             embedding: vec![0.1, 0.2], // dim=2
         }];
-        let bad_batch = build_chunks_batch(&bad_chunks, 2);
+        let bad_batch = build_chunks_batch(&bad_chunks, 2, "_");
         write_parquet(&tmp.path().join(".mdvs/chunks.parquet"), &bad_batch).unwrap();
 
         // Add a new file so model gets loaded (incremental detects new file)
@@ -789,6 +797,7 @@ mod tests {
             }),
             chunking: Some(ChunkingConfig { max_chunk_size: 1024 }),
             search: Some(SearchConfig { default_limit: 10 }),
+            storage: None,
         };
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
 
@@ -849,6 +858,7 @@ mod tests {
             }),
             chunking: Some(ChunkingConfig { max_chunk_size: 1024 }),
             search: Some(SearchConfig { default_limit: 10 }),
+            storage: None,
         };
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
 
@@ -895,6 +905,7 @@ mod tests {
             }),
             chunking: Some(ChunkingConfig { max_chunk_size: 1024 }),
             search: Some(SearchConfig { default_limit: 10 }),
+            storage: None,
         };
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
 

@@ -223,10 +223,10 @@ mod tests {
         let chunks_path = tmp.path().join("chunks.parquet");
 
         let (schema_fields, files) = test_files();
-        let files_batch = build_files_batch(&schema_fields, &files);
+        let files_batch = build_files_batch(&schema_fields, &files, "_");
         write_parquet(&files_path, &files_batch).unwrap();
 
-        let chunks_batch = build_chunks_batch(&test_chunks(), 4);
+        let chunks_batch = build_chunks_batch(&test_chunks(), 4, "_");
         write_parquet(&chunks_path, &chunks_batch).unwrap();
 
         TestIndex {
@@ -263,9 +263,9 @@ mod tests {
             .unwrap();
 
         let sql = "
-            SELECT f.filename, c.chunk_id, c.start_line, c.end_line,
-                   cosine_similarity(c.embedding) AS score
-            FROM chunks c JOIN files f ON c.file_id = f.file_id
+            SELECT f._filename, c._chunk_id, c._start_line, c._end_line,
+                   cosine_similarity(c._embedding) AS score
+            FROM chunks c JOIN files f ON c._file_id = f._file_id
             ORDER BY score DESC
         ";
 
@@ -299,10 +299,10 @@ mod tests {
             .unwrap();
 
         let sql = "
-            SELECT f.filename,
-                   MAX(cosine_similarity(c.embedding)) AS score
-            FROM chunks c JOIN files f ON c.file_id = f.file_id
-            GROUP BY f.file_id, f.filename
+            SELECT f._filename,
+                   MAX(cosine_similarity(c._embedding)) AS score
+            FROM chunks c JOIN files f ON c._file_id = f._file_id
+            GROUP BY f._file_id, f._filename
             ORDER BY score DESC
         ";
 
@@ -335,11 +335,11 @@ mod tests {
             .unwrap();
 
         let sql = "
-            SELECT f.filename,
-                   MAX(cosine_similarity(c.embedding)) AS score
-            FROM chunks c JOIN files f ON c.file_id = f.file_id
-            WHERE f.data['draft'] = false
-            GROUP BY f.file_id, f.filename
+            SELECT f._filename,
+                   MAX(cosine_similarity(c._embedding)) AS score
+            FROM chunks c JOIN files f ON c._file_id = f._file_id
+            WHERE f._data['draft'] = false
+            GROUP BY f._file_id, f._filename
             ORDER BY score DESC
         ";
 
@@ -366,8 +366,8 @@ mod tests {
             .unwrap();
 
         let sql = "
-            SELECT f.filename, cosine_similarity(c.embedding) AS score
-            FROM chunks c JOIN files f ON c.file_id = f.file_id
+            SELECT f._filename, cosine_similarity(c._embedding) AS score
+            FROM chunks c JOIN files f ON c._file_id = f._file_id
             ORDER BY score DESC
             LIMIT 2
         ";

@@ -21,6 +21,32 @@ use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
 
+/// Prepend `prefix` to a base column name (e.g. `col("_", "file_id")` → `"_file_id"`).
+pub fn col(prefix: &str, name: &str) -> String {
+    format!("{prefix}{name}")
+}
+
+/// Internal column base names in `files.parquet` that must not collide with frontmatter fields.
+const RESERVED_BASE_NAMES: &[&str] = &["file_id", "filename", "data", "content_hash", "built_at"];
+
+/// Verify that no frontmatter field name collides with a reserved internal column name.
+///
+/// Returns an error if any field name matches `{prefix}{base}` for any reserved base name.
+pub fn check_reserved_names(field_names: &[String], prefix: &str) -> anyhow::Result<()> {
+    for name in field_names {
+        for base in RESERVED_BASE_NAMES {
+            if *name == col(prefix, base) {
+                anyhow::bail!(
+                    "field '{}' conflicts with reserved internal column name \
+                     (set internal_prefix in [storage] in mdvs.toml to avoid this)",
+                    name
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Compute a deterministic hex-encoded hash of the given content using SipHash.
 pub fn content_hash(content: &str) -> String {
     let mut hasher = DefaultHasher::new();
@@ -72,6 +98,8 @@ pub struct BuildMetadata {
     pub glob: String,
     /// ISO 8601 timestamp of when the build was produced.
     pub built_at: String,
+    /// Prefix applied to internal parquet column names.
+    pub internal_prefix: String,
 }
 
 impl BuildMetadata {
@@ -92,6 +120,10 @@ impl BuildMetadata {
         );
         m.insert("mdvs.glob".into(), self.glob.clone());
         m.insert("mdvs.built_at".into(), self.built_at.clone());
+        m.insert(
+            "mdvs.internal_prefix".into(),
+            self.internal_prefix.clone(),
+        );
         m
     }
 
@@ -111,6 +143,12 @@ impl BuildMetadata {
             },
             glob: meta.get("mdvs.glob")?.clone(),
             built_at: meta.get("mdvs.built_at")?.clone(),
+            // Missing key means pre-prefix parquet (old format) — use empty string
+            // so comparison with default "_" detects mismatch and requires --force
+            internal_prefix: meta
+                .get("mdvs.internal_prefix")
+                .cloned()
+                .unwrap_or_default(),
         })
     }
 }
@@ -216,6 +254,7 @@ fn build_array(values: &[Option<&Value>], ft: &FieldType) -> ArrayRef {
 pub fn build_files_batch(
     schema_fields: &[(String, FieldType)],
     files: &[FileRow],
+    prefix: &str,
 ) -> RecordBatch {
     let file_id_arr: StringArray = files.iter().map(|f| Some(f.file_id.as_str())).collect();
     let filename_arr: StringArray = files.iter().map(|f| Some(f.filename.as_str())).collect();
@@ -250,12 +289,12 @@ pub fn build_files_batch(
     );
 
     let schema = Schema::new(vec![
-        Field::new("file_id", DataType::Utf8, false),
-        Field::new("filename", DataType::Utf8, false),
-        Field::new("data", data_struct_type, true),
-        Field::new("content_hash", DataType::Utf8, false),
+        Field::new(&col(prefix, "file_id"), DataType::Utf8, false),
+        Field::new(&col(prefix, "filename"), DataType::Utf8, false),
+        Field::new(&col(prefix, "data"), data_struct_type, true),
+        Field::new(&col(prefix, "content_hash"), DataType::Utf8, false),
         Field::new(
-            "built_at",
+            &col(prefix, "built_at"),
             DataType::Timestamp(TimeUnit::Microsecond, None),
             false,
         ),
@@ -277,7 +316,7 @@ pub fn build_files_batch(
 /// Build an Arrow `RecordBatch` for `chunks.parquet` from chunk rows.
 ///
 /// Embeddings are stored as a `FixedSizeList<Float32>` with the given `dimension`.
-pub fn build_chunks_batch(chunks: &[ChunkRow], dimension: i32) -> RecordBatch {
+pub fn build_chunks_batch(chunks: &[ChunkRow], dimension: i32, prefix: &str) -> RecordBatch {
     let chunk_id_arr: StringArray = chunks.iter().map(|c| Some(c.chunk_id.as_str())).collect();
     let file_id_arr: StringArray = chunks.iter().map(|c| Some(c.file_id.as_str())).collect();
     let chunk_index_arr: Int32Array = chunks.iter().map(|c| Some(c.chunk_index)).collect();
@@ -294,13 +333,13 @@ pub fn build_chunks_batch(chunks: &[ChunkRow], dimension: i32) -> RecordBatch {
     );
 
     let schema = Schema::new(vec![
-        Field::new("chunk_id", DataType::Utf8, false),
-        Field::new("file_id", DataType::Utf8, false),
-        Field::new("chunk_index", DataType::Int32, false),
-        Field::new("start_line", DataType::Int32, false),
-        Field::new("end_line", DataType::Int32, false),
+        Field::new(&col(prefix, "chunk_id"), DataType::Utf8, false),
+        Field::new(&col(prefix, "file_id"), DataType::Utf8, false),
+        Field::new(&col(prefix, "chunk_index"), DataType::Int32, false),
+        Field::new(&col(prefix, "start_line"), DataType::Int32, false),
+        Field::new(&col(prefix, "end_line"), DataType::Int32, false),
         Field::new(
-            "embedding",
+            &col(prefix, "embedding"),
             DataType::FixedSizeList(
                 Arc::new(Field::new("item", DataType::Float32, false)),
                 dimension,
@@ -525,7 +564,7 @@ mod tests {
             },
         ];
 
-        let batch = build_files_batch(&schema_fields, &files);
+        let batch = build_files_batch(&schema_fields, &files, "_");
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("files.parquet");
 
@@ -607,7 +646,7 @@ mod tests {
             },
         ];
 
-        let batch = build_files_batch(&schema_fields, &files);
+        let batch = build_files_batch(&schema_fields, &files, "_");
 
         let data = batch
             .column(2)
@@ -668,7 +707,7 @@ mod tests {
             },
         ];
 
-        let batch = build_chunks_batch(&chunks, dimension);
+        let batch = build_chunks_batch(&chunks, dimension, "_");
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("chunks.parquet");
 
@@ -713,6 +752,7 @@ mod tests {
                 content_hash: "h1".into(),
                 built_at: 1_700_000_000_000_000,
             }],
+            "_",
         );
         let batch2 = build_files_batch(
             &schema_fields,
@@ -723,6 +763,7 @@ mod tests {
                 content_hash: "h2".into(),
                 built_at: 1_700_000_000_000_000,
             }],
+            "_",
         );
 
         let tmp = tempfile::tempdir().unwrap();
@@ -770,6 +811,7 @@ mod tests {
                 content_hash: "h1".into(),
                 built_at: 1_700_000_000_000_000,
             }],
+            "_",
         );
         let batch2 = build_files_batch(
             &schema_fields,
@@ -780,6 +822,7 @@ mod tests {
                 content_hash: "h2".into(),
                 built_at: 1_700_000_000_000_000,
             }],
+            "_",
         );
 
         let tmp = tempfile::tempdir().unwrap();
@@ -837,7 +880,7 @@ mod tests {
             },
         ];
 
-        let batch = build_files_batch(&schema_fields, &files);
+        let batch = build_files_batch(&schema_fields, &files, "_");
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("files_proj.parquet");
 
@@ -856,8 +899,8 @@ mod tests {
         let batches: Vec<RecordBatch> = reader.map(|r| r.unwrap()).collect();
         let batch = &batches[0];
         assert_eq!(batch.num_columns(), 2);
-        assert_eq!(batch.schema().field(0).name(), "filename");
-        assert_eq!(batch.schema().field(1).name(), "content_hash");
+        assert_eq!(batch.schema().field(0).name(), "_filename");
+        assert_eq!(batch.schema().field(1).name(), "_content_hash");
 
         let filenames = batch
             .column(0)
@@ -879,7 +922,7 @@ mod tests {
             built_at: 1_700_000_000_000_000,
         }];
 
-        let batch = build_files_batch(&schema_fields, &files);
+        let batch = build_files_batch(&schema_fields, &files, "_");
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("files_size.parquet");
 
@@ -902,7 +945,7 @@ mod tests {
             built_at: 1_700_000_000_000_000,
         }];
 
-        let batch = build_files_batch(&schema_fields, &files);
+        let batch = build_files_batch(&schema_fields, &files, "_");
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("files.parquet");
 
@@ -915,6 +958,7 @@ mod tests {
             chunking: ChunkingConfig { max_chunk_size: 1024 },
             glob: "**".into(),
             built_at: "2026-03-02T12:00:00+00:00".into(),
+            internal_prefix: "_".into(),
         };
 
         write_parquet_with_metadata(&path, &batch, meta.to_hash_map()).unwrap();
@@ -935,7 +979,7 @@ mod tests {
             built_at: 1_700_000_000_000_000,
         }];
 
-        let batch = build_files_batch(&schema_fields, &files);
+        let batch = build_files_batch(&schema_fields, &files, "_");
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("files.parquet");
 
@@ -948,6 +992,7 @@ mod tests {
             chunking: ChunkingConfig { max_chunk_size: 512 },
             glob: "blog/**".into(),
             built_at: "2026-03-02T12:00:00+00:00".into(),
+            internal_prefix: "_".into(),
         };
 
         write_parquet_with_metadata(&path, &batch, meta.to_hash_map()).unwrap();
@@ -968,7 +1013,7 @@ mod tests {
             built_at: 1_700_000_000_000_000,
         }];
 
-        let batch = build_files_batch(&schema_fields, &files);
+        let batch = build_files_batch(&schema_fields, &files, "_");
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("files.parquet");
 
@@ -1012,7 +1057,7 @@ mod tests {
             },
         ];
 
-        let batch = build_files_batch(&schema_fields, &files);
+        let batch = build_files_batch(&schema_fields, &files, "_");
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("files.parquet");
         write_parquet(&path, &batch).unwrap();
@@ -1062,7 +1107,7 @@ mod tests {
             },
         ];
 
-        let batch = build_chunks_batch(&original, 4);
+        let batch = build_chunks_batch(&original, 4, "_");
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("chunks.parquet");
         write_parquet(&path, &batch).unwrap();

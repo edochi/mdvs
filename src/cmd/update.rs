@@ -1,6 +1,7 @@
 use crate::cmd::build::BuildResult;
 use crate::discover::infer::InferredSchema;
 use crate::discover::scan::ScannedFiles;
+use crate::index::storage::check_reserved_names;
 use crate::output::{ChangedField, CommandOutput, DiscoveredField};
 use crate::schema::config::{MdvsToml, TomlField};
 use crate::schema::shared::FieldTypeSerde;
@@ -218,6 +219,10 @@ pub async fn run(
     if dry_run || !result.has_changes() {
         return Ok(result);
     }
+
+    // Validate field names don't collide with internal column names
+    let field_names: Vec<String> = new_fields.iter().map(|f| f.name.clone()).collect();
+    check_reserved_names(&field_names, config.internal_prefix())?;
 
     // Update fields and write
     config.fields.field = new_fields;

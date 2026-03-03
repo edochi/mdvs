@@ -28,7 +28,7 @@ impl CommandOutput for CleanResult {
 pub fn run(path: &Path) -> anyhow::Result<CleanResult> {
     let mdvs_dir = path.join(".mdvs");
     if mdvs_dir.exists() {
-        let backend = Backend::parquet(path);
+        let backend = Backend::parquet(path, "_");
         backend.clean()?;
         Ok(CleanResult {
             removed: true,

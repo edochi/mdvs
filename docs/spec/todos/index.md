@@ -28,3 +28,5 @@
 | [0024](TODO-0024.md) | Add CHANGELOG.md | todo | medium | 2026-03-03 |
 | [0025](TODO-0025.md) | Trim published package size | done | low | 2026-03-03 |
 | [0026](TODO-0026.md) | Fix clippy collapsible_if warnings | done | low | 2026-03-03 |
+| [0027](TODO-0027.md) | Prefix internal parquet columns to avoid frontmatter collisions | todo | medium | 2026-03-03 |
+| [0028](TODO-0028.md) | Bare field names in --where clauses | todo | medium | 2026-03-03 |

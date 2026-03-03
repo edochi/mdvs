@@ -1,6 +1,7 @@
 use crate::cmd::build::BuildResult;
 use crate::discover::infer::InferredSchema;
 use crate::discover::scan::ScannedFiles;
+use crate::index::storage::check_reserved_names;
 use crate::output::{CommandOutput, DiscoveredField};
 use crate::schema::config::MdvsToml;
 use crate::schema::shared::{FieldTypeSerde, ScanConfig};
@@ -174,6 +175,11 @@ pub async fn run(
         max_chunk_size,
         auto_build,
     );
+
+    // Validate field names don't collide with internal column names
+    let field_names: Vec<String> = schema.fields.iter().map(|f| f.name.clone()).collect();
+    check_reserved_names(&field_names, toml_doc.internal_prefix())?;
+
     toml_doc.write(&config_path)?;
 
     if auto_build {

@@ -143,7 +143,7 @@ pub fn run(path: &Path) -> anyhow::Result<InfoResult> {
         .collect();
 
     // Index info (if index exists)
-    let backend = Backend::parquet(path);
+    let backend = Backend::parquet(path, config.internal_prefix());
     let index = if backend.exists() {
         let build_meta = backend.read_metadata()?;
         let idx_stats = backend.stats()?;
@@ -243,6 +243,7 @@ mod tests {
                 max_chunk_size: 1024,
             }),
             search: Some(SearchConfig { default_limit: 10 }),
+            storage: None,
         };
         config.write(&dir.join("mdvs.toml")).unwrap();
     }

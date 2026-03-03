@@ -38,7 +38,7 @@ pub async fn run(
     let embedding = config.embedding_model.as_ref()
         .context("missing [embedding_model] in mdvs.toml (run `mdvs build` first)")?;
 
-    let backend = Backend::parquet(path);
+    let backend = Backend::parquet(path, config.internal_prefix());
 
     // Index existence check (before loading model to fail fast)
     anyhow::ensure!(
@@ -116,6 +116,7 @@ mod tests {
                 max_chunk_size: 1024,
             }),
             search: Some(SearchConfig { default_limit: 10 }),
+            storage: None,
         };
         config.write(&dir.join("mdvs.toml")).unwrap();
     }
@@ -172,8 +173,8 @@ mod tests {
         init_and_build(tmp.path()).await;
 
         // Use backend to search with limit=1
-        let backend = Backend::parquet(tmp.path());
         let config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
+        let backend = Backend::parquet(tmp.path(), config.internal_prefix());
         let embedding = config.embedding_model.as_ref().unwrap();
         let model_config = ModelConfig::try_from(embedding).unwrap();
         let embedder = Embedder::load(&model_config);
@@ -189,8 +190,8 @@ mod tests {
         create_test_vault(tmp.path());
         init_and_build(tmp.path()).await;
 
-        let backend = Backend::parquet(tmp.path());
         let config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
+        let backend = Backend::parquet(tmp.path(), config.internal_prefix());
         let embedding = config.embedding_model.as_ref().unwrap();
         let model_config = ModelConfig::try_from(embedding).unwrap();
         let embedder = Embedder::load(&model_config);
@@ -198,7 +199,7 @@ mod tests {
 
         // Filter to non-draft only — cooking post (draft=true) should be excluded
         let hits = backend
-            .search(query_embedding, Some("f.data['draft'] = false"), 10)
+            .search(query_embedding, Some("f._data['draft'] = false"), 10)
             .await
             .unwrap();
 
