@@ -27,5 +27,8 @@ target
 # Jupyter
 .ipynb_checkpoints/
 
+# mdBook output
+docs/book/book/
+
 # macOS
 .DS_Store
