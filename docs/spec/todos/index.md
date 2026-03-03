@@ -25,6 +25,6 @@
 | [0021](TODO-0021.md) | Downgrade edition from 2024 to 2021 | done | high | 2026-03-03 |
 | [0022](TODO-0022.md) | Update README for release | done | high | 2026-03-03 |
 | [0023](TODO-0023.md) | Clean up stale .gitignore entries | done | low | 2026-03-03 |
-| [0024](TODO-0024.md) | Add CHANGELOG.md | done | medium | 2026-03-03 |
+| [0024](TODO-0024.md) | Add CHANGELOG.md | todo | medium | 2026-03-03 |
 | [0025](TODO-0025.md) | Trim published package size | done | low | 2026-03-03 |
 | [0026](TODO-0026.md) | Fix clippy collapsible_if warnings | done | low | 2026-03-03 |
