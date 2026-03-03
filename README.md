@@ -41,8 +41,23 @@ Single Rust binary. Two layers:
 | `build` | Search | Check + embed + write Parquets |
 | `search` | Search | Query the index |
 | `info` | Utility | Show config and index status |
+| `clean` | Utility | Delete `.mdvs/` build artifacts |
 
 See `docs/spec/commands/` for detailed specs.
+
+## Installation
+
+```bash
+cargo install mdvs
+```
+
+Or build from source:
+
+```bash
+git clone https://github.com/edochi/mdvs.git
+cd mdvs
+cargo install --path .
+```
 
 ## Quick start
 
@@ -54,7 +69,7 @@ mdvs init ~/notes
 mdvs search "how to handle errors in rust"
 
 # Search with filters
-mdvs search "async patterns" --where "tags = 'rust'" --limit 5
+mdvs search "async patterns" --where "data['draft'] = false" --limit 5
 
 # Validate frontmatter
 mdvs check
