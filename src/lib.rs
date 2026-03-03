@@ -1,9 +1,9 @@
 #![warn(missing_docs)]
 
-//! mdvs — Markdown Directory Vector Search.
+//! mdvs — Markdown Validation & Search.
 //!
-//! Single-binary CLI for semantic search over directories of markdown files.
-//! Instant embeddings via Model2Vec, DataFusion + Parquet for storage and search.
+//! A database of markdown documents: schema inference, frontmatter validation,
+//! and semantic search with SQL filtering. Single binary, no cloud, no setup.
 
 /// CLI command implementations.
 pub mod cmd;

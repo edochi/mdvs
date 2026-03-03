@@ -3,7 +3,7 @@ use mdvs::output::CommandOutput;
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "mdvs", about = "Markdown Directory Vector Search")]
+#[command(name = "mdvs", about = "Markdown Validation & Search")]
 struct Cli {
     /// Output format
     #[arg(short, long, global = true, default_value = "human")]

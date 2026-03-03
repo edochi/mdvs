@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-mdvs (Markdown Directory Vector Search) is a Rust CLI for semantic search over directories of markdown files. Single binary, no external services, instant embeddings via Model2Vec static models, DataFusion + Parquet for storage and vector search. Design specs live in `docs/spec/`.
+mdvs (Markdown Validation & Search) is a Rust CLI that treats markdown directories as databases — schema inference, frontmatter validation, and semantic search with SQL filtering. Single binary, no external services, instant embeddings via Model2Vec static models, DataFusion + Parquet for storage and search. Design specs live in `docs/spec/`.
 
 ## Build Commands
 
