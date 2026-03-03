@@ -2,6 +2,7 @@ use crate::index::backend::Backend;
 use crate::output::CommandOutput;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
+use tracing::instrument;
 
 #[derive(Debug, Serialize)]
 pub struct CleanResult {
@@ -19,6 +20,7 @@ impl CommandOutput for CleanResult {
     }
 }
 
+#[instrument(name = "clean", skip_all)]
 pub fn run(path: &Path) -> anyhow::Result<CleanResult> {
     let mdvs_dir = path.join(".mdvs");
     if mdvs_dir.exists() {

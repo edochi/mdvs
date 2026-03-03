@@ -7,6 +7,7 @@ use crate::schema::shared::FieldTypeSerde;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
+use tracing::instrument;
 
 #[derive(Debug, Serialize)]
 pub struct UpdateResult {
@@ -87,6 +88,7 @@ impl CommandOutput for UpdateResult {
     }
 }
 
+#[instrument(name = "update", skip_all)]
 pub async fn run(
     path: &Path,
     reinfer: &[String],

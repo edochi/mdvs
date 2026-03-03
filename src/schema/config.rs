@@ -3,6 +3,7 @@ use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig, FieldTypeSerde
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
+use tracing::instrument;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct UpdateConfig {
@@ -89,12 +90,14 @@ impl MdvsToml {
         }
     }
 
+    #[instrument(name = "read_config", skip_all, level = "debug")]
     pub fn read(path: &Path) -> anyhow::Result<Self> {
         let content = fs::read_to_string(path)?;
         let config: MdvsToml = toml::from_str(&content)?;
         Ok(config)
     }
 
+    #[instrument(name = "write_config", skip_all, level = "debug")]
     pub fn write(&self, path: &Path) -> anyhow::Result<()> {
         let content = toml::to_string(self)?;
         let content = inline_field_types(&content)?;

@@ -82,6 +82,7 @@ impl CommandOutput for CheckResult {
     }
 }
 
+#[instrument(name = "check", skip_all)]
 pub fn run(path: &Path) -> anyhow::Result<CheckResult> {
     let config = MdvsToml::read(&path.join("mdvs.toml"))?;
     let scanned = ScannedFiles::scan(path, &config.scan);

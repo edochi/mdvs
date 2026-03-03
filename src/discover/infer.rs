@@ -16,6 +16,7 @@ pub struct FieldTypeInfo {
     pub files: Vec<PathBuf>,
 }
 
+#[instrument(name = "infer_types", skip_all, level = "debug")]
 pub fn infer_field_types(scanned: &ScannedFiles) -> BTreeMap<String, FieldTypeInfo> {
     let mut types: BTreeMap<String, FieldType> = BTreeMap::new();
     let mut files: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
@@ -220,6 +221,7 @@ impl GlobMap {
 }
 
 impl DirectoryTree {
+    #[instrument(name = "infer_paths", skip_all, level = "debug")]
     pub fn infer_paths(&self) -> BTreeMap<String, FieldPaths> {
         let mut allowed: HashMap<String, GlobMap> = HashMap::new();
         let mut required: HashMap<String, GlobMap> = HashMap::new();

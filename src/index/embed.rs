@@ -53,12 +53,14 @@ impl Embedder {
         }
     }
 
+    #[instrument(name = "embed", skip_all, level = "debug")]
     pub async fn embed(&self, text: &str) -> Vec<f32> {
         match self {
             Embedder::Model2Vec(model) => model.encode_single(text),
         }
     }
 
+    #[instrument(name = "embed_batch", skip_all, fields(texts = texts.len()), level = "debug")]
     pub async fn embed_batch(&self, texts: &[&str]) -> Vec<Vec<f32>> {
         match self {
             Embedder::Model2Vec(model) => {

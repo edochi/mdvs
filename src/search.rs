@@ -9,6 +9,7 @@ use std::any::Any;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::sync::Arc;
+use tracing::instrument;
 
 // ============================================================================
 // Cosine similarity UDF — captures query vector at creation time
@@ -131,6 +132,7 @@ pub struct SearchContext {
 }
 
 impl SearchContext {
+    #[instrument(name = "register_tables", skip_all, level = "debug")]
     pub async fn new(
         files_path: &Path,
         chunks_path: &Path,
@@ -148,6 +150,7 @@ impl SearchContext {
         Ok(Self { ctx })
     }
 
+    #[instrument(name = "query", skip_all, level = "debug")]
     pub async fn query(&self, sql: &str) -> anyhow::Result<Vec<RecordBatch>> {
         let df = self.ctx.sql(sql).await?;
         let batches = df.collect().await?;

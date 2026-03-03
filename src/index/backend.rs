@@ -47,6 +47,7 @@ impl Backend {
         }
     }
 
+    #[instrument(name = "read_metadata", skip_all, level = "debug")]
     pub fn read_metadata(&self) -> anyhow::Result<Option<BuildMetadata>> {
         match self {
             Backend::Parquet(b) => b.read_metadata(),
@@ -67,12 +68,14 @@ impl Backend {
         }
     }
 
+    #[instrument(name = "embedding_dimension", skip_all, level = "debug")]
     pub fn embedding_dimension(&self) -> anyhow::Result<Option<i32>> {
         match self {
             Backend::Parquet(b) => b.embedding_dimension(),
         }
     }
 
+    #[instrument(name = "search_index", skip_all)]
     pub async fn search(
         &self,
         query_embedding: Vec<f32>,
@@ -84,6 +87,7 @@ impl Backend {
         }
     }
 
+    #[instrument(name = "stats", skip_all, level = "debug")]
     pub fn stats(&self) -> anyhow::Result<Option<IndexStats>> {
         match self {
             Backend::Parquet(b) => b.stats(),
@@ -96,6 +100,7 @@ impl Backend {
         }
     }
 
+    #[instrument(name = "clean_index", skip_all)]
     pub fn clean(&self) -> anyhow::Result<()> {
         match self {
             Backend::Parquet(b) => b.clean(),

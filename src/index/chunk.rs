@@ -1,6 +1,7 @@
 use pulldown_cmark::{Event, Parser};
 use regex::Regex;
 use text_splitter::MarkdownSplitter;
+use tracing::instrument;
 
 #[derive(Debug, Clone)]
 pub struct Chunk {
@@ -20,6 +21,7 @@ impl std::ops::Deref for Chunks {
 }
 
 impl Chunks {
+    #[instrument(name = "chunk", skip_all, level = "trace")]
     pub fn new(body: &str, max_chars: usize) -> Self {
         let splitter = MarkdownSplitter::new(max_chars);
 

@@ -4,6 +4,7 @@ use crate::output::CommandOutput;
 use crate::schema::config::MdvsToml;
 use serde::Serialize;
 use std::path::Path;
+use tracing::instrument;
 
 #[derive(Debug, Serialize)]
 pub struct InfoField {
@@ -101,6 +102,7 @@ impl CommandOutput for InfoResult {
     }
 }
 
+#[instrument(name = "info", skip_all)]
 pub fn run(path: &Path) -> anyhow::Result<InfoResult> {
     let config = MdvsToml::read(&path.join("mdvs.toml"))?;
 
