@@ -198,9 +198,13 @@ impl ParquetBackend {
         where_clause: Option<&str>,
         limit: usize,
     ) -> anyhow::Result<Vec<SearchHit>> {
-        let sc =
-            SearchContext::new(&self.files_parquet(), &self.chunks_parquet(), query_embedding)
-                .await?;
+        let sc = SearchContext::new(
+            &self.files_parquet(),
+            &self.chunks_parquet(),
+            query_embedding,
+            &self.prefix,
+        )
+        .await?;
 
         let where_part = match where_clause {
             Some(w) => format!("WHERE {w}"),
@@ -210,7 +214,7 @@ impl ParquetBackend {
         let sql = format!(
             "SELECT f.{fn_col},
                     MAX(cosine_similarity(c.{emb_col})) AS score
-             FROM chunks c JOIN files f ON c.{c_fid} = f.{f_fid}
+             FROM chunks c JOIN files_v f ON c.{c_fid} = f.{f_fid}
              {where_part}
              GROUP BY f.{f_fid}, f.{fn_col}
              ORDER BY score DESC

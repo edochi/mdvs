@@ -80,7 +80,7 @@ enum Command {
         /// Maximum number of results
         #[arg(long, short = 'n', default_value = "10")]
         limit: usize,
-        /// SQL WHERE clause for filtering (e.g. "data['draft'] = false")
+        /// SQL WHERE clause for filtering (e.g. "draft = false")
         #[arg(long = "where")]
         where_clause: Option<String>,
     },

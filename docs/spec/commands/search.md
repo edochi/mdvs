@@ -47,8 +47,8 @@ ranks above a file with uniformly mediocre relevance.
 
 ### WHERE clause
 
-The `--where` flag accepts a raw SQL expression applied to the `data` Struct column
-in `files.parquet`. Field access uses the column names directly.
+The `--where` flag accepts a raw SQL expression on frontmatter fields.
+Field names are used directly — no prefix or bracket notation needed.
 
 ```bash
 mdvs search "rust async" --where "tags = 'rust' AND draft = false"

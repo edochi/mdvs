@@ -198,8 +198,9 @@ mod tests {
         let query_embedding = embedder.embed("cooking recipes").await;
 
         // Filter to non-draft only — cooking post (draft=true) should be excluded
+        // Uses bare field name (promoted via files_v view)
         let hits = backend
-            .search(query_embedding, Some("f._data['draft'] = false"), 10)
+            .search(query_embedding, Some("draft = false"), 10)
             .await
             .unwrap();
 

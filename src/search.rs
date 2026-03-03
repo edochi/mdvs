@@ -1,3 +1,4 @@
+use crate::index::storage::col;
 use datafusion::arrow::array::{Array, ArrayRef, FixedSizeListArray, Float32Array, Float64Array};
 use datafusion::arrow::datatypes::{DataType, Field};
 use datafusion::arrow::record_batch::RecordBatch;
@@ -133,12 +134,14 @@ pub struct SearchContext {
 }
 
 impl SearchContext {
-    /// Register Parquet files as tables and bind the query embedding into the UDF.
+    /// Register Parquet files as tables, create a view that promotes frontmatter
+    /// fields to top-level columns, and bind the query embedding into the UDF.
     #[instrument(name = "register_tables", skip_all, level = "debug")]
     pub async fn new(
         files_path: &Path,
         chunks_path: &Path,
         query_embedding: Vec<f32>,
+        prefix: &str,
     ) -> anyhow::Result<Self> {
         let ctx = SessionContext::new();
         ctx.register_parquet("files", files_path.to_str().unwrap(), Default::default())
@@ -148,6 +151,33 @@ impl SearchContext {
 
         let udf = ScalarUDF::from(CosineSimilarityUDF::new(query_embedding));
         ctx.register_udf(udf);
+
+        // Create a view that promotes _data Struct children to top-level columns,
+        // so users can write `--where "draft = false"` instead of `_data['draft'] = false`.
+        let data_col = col(prefix, "data");
+        let files_table = ctx.table("files").await?;
+        let schema = files_table.schema();
+        let mut projections = Vec::new();
+        for field in schema.fields() {
+            if field.name() == &data_col {
+                if let DataType::Struct(children) = field.data_type() {
+                    for child in children {
+                        projections.push(format!(
+                            "{data_col}['{}'] AS \"{}\"",
+                            child.name(),
+                            child.name(),
+                        ));
+                    }
+                }
+            }
+        }
+        let extra = if projections.is_empty() {
+            String::new()
+        } else {
+            format!(", {}", projections.join(", "))
+        };
+        let view_sql = format!("CREATE VIEW files_v AS SELECT *{extra} FROM files");
+        ctx.sql(&view_sql).await?;
 
         Ok(Self { ctx })
     }
@@ -240,7 +270,7 @@ mod tests {
     async fn register_and_count() {
         let idx = setup_test_index();
         let query_vec = vec![1.0, 0.0, 0.0, 0.0];
-        let sc = SearchContext::new(&idx.files_path, &idx.chunks_path, query_vec)
+        let sc = SearchContext::new(&idx.files_path, &idx.chunks_path, query_vec, "_")
             .await
             .unwrap();
 
@@ -258,7 +288,7 @@ mod tests {
     async fn chunk_level_search() {
         let idx = setup_test_index();
         let query_vec = vec![1.0, 0.0, 0.0, 0.0]; // rust-like
-        let sc = SearchContext::new(&idx.files_path, &idx.chunks_path, query_vec)
+        let sc = SearchContext::new(&idx.files_path, &idx.chunks_path, query_vec, "_")
             .await
             .unwrap();
 
@@ -294,7 +324,7 @@ mod tests {
     async fn note_level_ranking() {
         let idx = setup_test_index();
         let query_vec = vec![1.0, 0.0, 0.0, 0.0];
-        let sc = SearchContext::new(&idx.files_path, &idx.chunks_path, query_vec)
+        let sc = SearchContext::new(&idx.files_path, &idx.chunks_path, query_vec, "_")
             .await
             .unwrap();
 
@@ -330,15 +360,16 @@ mod tests {
     async fn frontmatter_filter() {
         let idx = setup_test_index();
         let query_vec = vec![0.0, 0.0, 0.0, 1.0]; // cooking-like
-        let sc = SearchContext::new(&idx.files_path, &idx.chunks_path, query_vec)
+        let sc = SearchContext::new(&idx.files_path, &idx.chunks_path, query_vec, "_")
             .await
             .unwrap();
 
+        // Use bare field name via files_v view
         let sql = "
             SELECT f._filename,
                    MAX(cosine_similarity(c._embedding)) AS score
-            FROM chunks c JOIN files f ON c._file_id = f._file_id
-            WHERE f._data['draft'] = false
+            FROM chunks c JOIN files_v f ON c._file_id = f._file_id
+            WHERE draft = false
             GROUP BY f._file_id, f._filename
             ORDER BY score DESC
         ";
@@ -361,7 +392,7 @@ mod tests {
     async fn limit() {
         let idx = setup_test_index();
         let query_vec = vec![1.0, 0.0, 0.0, 0.0];
-        let sc = SearchContext::new(&idx.files_path, &idx.chunks_path, query_vec)
+        let sc = SearchContext::new(&idx.files_path, &idx.chunks_path, query_vec, "_")
             .await
             .unwrap();
 
@@ -375,5 +406,35 @@ mod tests {
         let batches = sc.query(sql).await.unwrap();
         let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
         assert_eq!(total_rows, 2);
+    }
+
+    #[tokio::test]
+    async fn frontmatter_filter_backward_compat() {
+        let idx = setup_test_index();
+        let query_vec = vec![0.0, 0.0, 0.0, 1.0];
+        let sc = SearchContext::new(&idx.files_path, &idx.chunks_path, query_vec, "_")
+            .await
+            .unwrap();
+
+        // Old bracket syntax still works via files_v (SELECT * includes _data)
+        let sql = "
+            SELECT f._filename,
+                   MAX(cosine_similarity(c._embedding)) AS score
+            FROM chunks c JOIN files_v f ON c._file_id = f._file_id
+            WHERE f._data['draft'] = false
+            GROUP BY f._file_id, f._filename
+            ORDER BY score DESC
+        ";
+
+        let batches = sc.query(sql).await.unwrap();
+        let batch = &batches[0];
+        assert_eq!(batch.num_rows(), 2);
+        let filenames = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringViewArray>()
+            .unwrap();
+        let names: Vec<&str> = (0..filenames.len()).map(|i| filenames.value(i)).collect();
+        assert!(!names.contains(&"recipes/cooking.md"));
     }
 }

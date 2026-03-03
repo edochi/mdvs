@@ -69,7 +69,7 @@ mdvs init ~/notes
 mdvs search "how to handle errors in rust"
 
 # Search with filters
-mdvs search "async patterns" --where "data['draft'] = false" --limit 5
+mdvs search "async patterns" --where "draft = false" --limit 5
 
 # Validate frontmatter
 mdvs check
