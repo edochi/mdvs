@@ -103,7 +103,7 @@ impl From<&ScannedFiles> for DirectoryTree {
         for file in &scanned.files {
             let fields: HashSet<String> = match &file.data {
                 Some(Value::Object(map)) => map.keys().cloned().collect(),
-                _ => continue,
+                _ => HashSet::new(),
             };
 
             let parent_dir = file.path.parent().unwrap_or(Path::new("")).to_path_buf();
@@ -541,12 +541,12 @@ mod tests {
         let title = schema.field("title").unwrap();
         assert_eq!(title.files.len(), 2);
         assert_eq!(title.allowed, vec!["**"]);
-        assert_eq!(title.required, vec!["**"]);
+        assert_eq!(title.required, vec!["notes/**"]);
 
         let draft = schema.field("draft").unwrap();
         assert_eq!(draft.files.len(), 1);
         assert_eq!(draft.allowed, vec!["blog/**"]);
-        assert_eq!(draft.required, vec!["blog/**"]);
+        assert!(draft.required.is_empty());
     }
 
     #[test]
@@ -659,8 +659,8 @@ mod tests {
         let title = schema.field("title").unwrap();
         assert_eq!(title.field_type, FieldType::String);
         assert_eq!(title.files.len(), 6);
-        assert_eq!(title.allowed, vec!["**"]);
-        assert_eq!(title.required, vec!["**"]);
+        assert_eq!(title.allowed, vec!["blog/**", "notes/**", "papers/**"]);
+        assert_eq!(title.required, vec!["blog/**", "notes/**", "papers/**"]);
 
         let tags = schema.field("tags").unwrap();
         assert_eq!(tags.field_type, FieldType::Array(Box::new(FieldType::String)));

@@ -165,13 +165,10 @@ pub fn validate(scanned: &ScannedFiles, config: &MdvsToml) -> anyhow::Result<Che
                 continue;
             }
 
-            // Bare files (no frontmatter) have no fields — skip required checks
-            let Some(map) = file.data.as_ref().and_then(|v| v.as_object()) else {
-                continue;
-            };
-
-            let has_field = map
-                .get(&toml_field.name)
+            let has_field = file.data
+                .as_ref()
+                .and_then(|v| v.as_object())
+                .and_then(|map| map.get(&toml_field.name))
                 .is_some_and(|v| !v.is_null());
 
             if !has_field {
@@ -510,11 +507,11 @@ mod tests {
     }
 
     #[test]
-    fn bare_files_skip_required() {
+    fn bare_files_trigger_required() {
         let tmp = tempfile::tempdir().unwrap();
         fs::create_dir_all(tmp.path().join("blog")).unwrap();
 
-        // A bare file (no frontmatter) in blog/ — should not violate required
+        // A bare file (no frontmatter) in blog/ — should violate required
         fs::write(
             tmp.path().join("blog/bare.md"),
             "# No frontmatter\nJust content.",
@@ -546,8 +543,8 @@ mod tests {
 
         let result = run(tmp.path()).unwrap();
 
-        // Bare files have no fields — they don't violate required
-        assert!(!result.has_violations());
+        // Bare files missing required fields are violations
+        assert!(result.has_violations());
     }
 
     #[test]

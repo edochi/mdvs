@@ -120,10 +120,10 @@ pub async fn run(
         (config.fields.field.drain(..).collect(), vec![])
     };
 
-    // Build old_types map from targets for comparison
-    let old_types: HashMap<&str, &FieldTypeSerde> = targets
+    // Build old_fields map from targets for comparison (type + globs)
+    let old_fields: HashMap<&str, &TomlField> = targets
         .iter()
-        .map(|f| (f.name.as_str(), &f.field_type))
+        .map(|f| (f.name.as_str(), f))
         .collect();
 
     let mut new_fields: Vec<TomlField> = protected.clone();
@@ -150,14 +150,14 @@ pub async fn run(
             required: inf.required.clone(),
         };
 
-        if let Some(old_type) = old_types.get(inf.name.as_str()) {
-            // Was a target for reinference
-            if **old_type == new_type {
+        if let Some(old_field) = old_fields.get(inf.name.as_str()) {
+            // Was a target for reinference — compare full field (type + globs)
+            if **old_field == toml_field {
                 unchanged += 1;
             } else {
                 changed.push(ChangedField {
                     name: inf.name.clone(),
-                    old_type: old_type.to_string(),
+                    old_type: old_field.field_type.to_string(),
                     new_type: new_type.to_string(),
                 });
             }
@@ -175,7 +175,7 @@ pub async fn run(
     }
 
     // Removed = target names not found in inferred
-    let mut removed: Vec<String> = old_types
+    let mut removed: Vec<String> = old_fields
         .keys()
         .filter(|name| !schema.fields.iter().any(|f| f.name == **name))
         .map(|name| name.to_string())
@@ -476,6 +476,63 @@ mod tests {
 
         assert!(!result.auto_build);
         assert!(!tmp.path().join(".mdvs").exists());
+    }
+
+    #[tokio::test]
+    async fn reinfer_all_detects_glob_changes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let blog_dir = tmp.path().join("blog");
+        fs::create_dir_all(&blog_dir).unwrap();
+
+        // Two files with frontmatter + one bare file
+        fs::write(
+            blog_dir.join("post1.md"),
+            "---\ntitle: Hello\n---\n# Hello\nBody.",
+        )
+        .unwrap();
+        fs::write(
+            blog_dir.join("post2.md"),
+            "---\ntitle: World\n---\n# World\nMore.",
+        )
+        .unwrap();
+        fs::write(blog_dir.join("bare.md"), "# No frontmatter\nJust content.")
+            .unwrap();
+
+        // Init with ignore_bare_files=true → title required=["**"]
+        crate::cmd::init::run(
+            tmp.path(),
+            None,
+            None,
+            "**",
+            false,
+            false,
+            true,  // ignore bare files
+            None,
+            false, // no auto_build
+            false,
+        )
+        .await
+        .unwrap();
+
+        let toml_before = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
+        let title_before = toml_before.fields.field.iter().find(|f| f.name == "title").unwrap();
+        assert_eq!(title_before.required, vec!["**"]);
+
+        // Flip include_bare_files to true
+        let mut config = toml_before;
+        config.scan.include_bare_files = true;
+        config.write(&tmp.path().join("mdvs.toml")).unwrap();
+
+        // Reinfer all — globs should change even though types don't
+        let result = run(tmp.path(), &[], true, Some(false), false).await.unwrap();
+        assert!(result.has_changes());
+        assert_eq!(result.changed.len(), 1);
+        assert_eq!(result.changed[0].name, "title");
+
+        // Toml rewritten with narrower required
+        let toml_after = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
+        let title_after = toml_after.fields.field.iter().find(|f| f.name == "title").unwrap();
+        assert!(!title_after.required.contains(&"**".to_string()));
     }
 
     #[tokio::test]
