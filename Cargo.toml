@@ -2,7 +2,7 @@
 name = "mdvs"
 version = "0.1.0"
 edition = "2021"
-description = "Semantic search over directories of markdown files"
+description = "A database of markdown documents — schema validation and semantic search"
 license = "MIT"
 repository = "https://github.com/edochi/mdvs"
 readme = "README.md"
