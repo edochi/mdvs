@@ -35,13 +35,13 @@ pub struct FieldsConfig {
 pub struct MdvsToml {
     pub scan: ScanConfig,
     pub update: UpdateConfig,
-    pub fields: FieldsConfig,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub embedding_model: Option<EmbeddingModelConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chunking: Option<ChunkingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub search: Option<SearchConfig>,
+    pub fields: FieldsConfig,
 }
 
 impl MdvsToml {
