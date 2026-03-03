@@ -12,7 +12,7 @@
 | [0008](TODO-0008.md) | Support value boundary constraints on numeric fields | todo | low | 2026-03-02 |
 | [0009](TODO-0009.md) | Custom field and text processors | todo | low | 2026-03-02 |
 | [0010](TODO-0010.md) | Support length constraints on strings and arrays | todo | low | 2026-03-02 |
-| [0011](TODO-0011.md) | Incremental build | todo | medium | 2026-03-02 |
+| [0011](TODO-0011.md) | Incremental build | done | medium | 2026-03-02 |
 | [0012](TODO-0012.md) | Store build metadata in parquet | done | high | 2026-03-02 |
 | [0013](TODO-0013.md) | Search verifies model against parquet metadata | done | high | 2026-03-02 |
 | [0014](TODO-0014.md) | Build detects manual config changes via parquet metadata | done | high | 2026-03-02 |
