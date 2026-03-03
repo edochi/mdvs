@@ -180,14 +180,14 @@ impl ParquetBackend {
             return Ok(None);
         }
         let batches = read_parquet(&self.chunks_parquet())?;
-        if let Some(batch) = batches.first()
-            && let Ok(field) = batch.schema().field_with_name("embedding")
-            && let DataType::FixedSizeList(_, dim) = field.data_type()
-        {
-            Ok(Some(*dim))
-        } else {
-            Ok(None)
+        if let Some(batch) = batches.first() {
+            if let Ok(field) = batch.schema().field_with_name("embedding") {
+                if let DataType::FixedSizeList(_, dim) = field.data_type() {
+                    return Ok(Some(*dim));
+                }
+            }
         }
+        Ok(None)
     }
 
     async fn search(

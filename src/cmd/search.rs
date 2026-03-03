@@ -47,14 +47,14 @@ pub async fn run(
     );
 
     // Verify model matches index
-    if let Some(ref meta) = backend.read_metadata()?
-        && meta.embedding_model != *embedding
-    {
-        anyhow::bail!(
-            "model mismatch: config has '{}' (rev {:?}) but index was built with '{}' (rev {:?}) — run 'mdvs build' to rebuild",
-            embedding.name, embedding.revision,
-            meta.embedding_model.name, meta.embedding_model.revision,
-        );
+    if let Some(ref meta) = backend.read_metadata()? {
+        if meta.embedding_model != *embedding {
+            anyhow::bail!(
+                "model mismatch: config has '{}' (rev {:?}) but index was built with '{}' (rev {:?}) — run 'mdvs build' to rebuild",
+                embedding.name, embedding.revision,
+                meta.embedding_model.name, meta.embedding_model.revision,
+            );
+        }
     }
 
     // Load model
