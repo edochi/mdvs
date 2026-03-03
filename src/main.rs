@@ -9,6 +9,10 @@ struct Cli {
     #[arg(short, long, global = true, default_value = "human")]
     output: mdvs::output::OutputFormat,
 
+    /// Increase verbosity (-v info, -vv debug, -vvv trace)
+    #[arg(short, long, global = true, action = clap::ArgAction::Count)]
+    verbose: u8,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -121,6 +125,27 @@ enum Command {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+
+    if cli.verbose > 0 {
+        use tracing_subscriber::layer::SubscriberExt;
+        use tracing_subscriber::util::SubscriberInitExt;
+
+        let filter = match cli.verbose {
+            1 => "mdvs=info",
+            2 => "mdvs=debug",
+            _ => "mdvs=trace",
+        };
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::EnvFilter::new(filter))
+            .with(
+                tracing_tree::HierarchicalLayer::new(2)
+                    .with_targets(false)
+                    .with_writer(std::io::stderr)
+                    .with_timer(tracing_tree::time::Uptime::default()),
+            )
+            .init();
+    }
+
     match cli.command {
         Command::Init {
             path,
@@ -155,20 +180,27 @@ async fn main() -> anyhow::Result<()> {
             set_revision,
             set_chunk_size,
             force,
-        } => mdvs::cmd::build::run(
-            &path,
-            set_model.as_deref(),
-            set_revision.as_deref(),
-            set_chunk_size,
-            force,
-        ).await,
+        } => {
+            let result = mdvs::cmd::build::run(
+                &path,
+                set_model.as_deref(),
+                set_revision.as_deref(),
+                set_chunk_size,
+                force,
+            ).await?;
+            result.print(&cli.output);
+            Ok(())
+        }
         Command::Search {
             query,
             path,
             limit,
             where_clause,
         } => {
-            mdvs::cmd::search::run(&path, &query, limit, where_clause.as_deref()).await
+            let result =
+                mdvs::cmd::search::run(&path, &query, limit, where_clause.as_deref()).await?;
+            result.print(&cli.output);
+            Ok(())
         }
         Command::Check { path } => {
             let result = mdvs::cmd::check::run(&path)?;
@@ -190,7 +222,11 @@ async fn main() -> anyhow::Result<()> {
             result.print(&cli.output);
             Ok(())
         }
-        Command::Clean { path } => mdvs::cmd::clean::run(&path),
+        Command::Clean { path } => {
+            let result = mdvs::cmd::clean::run(&path)?;
+            result.print(&cli.output);
+            Ok(())
+        }
         Command::Info { path } => {
             let result = mdvs::cmd::info::run(&path)?;
             result.print(&cli.output);

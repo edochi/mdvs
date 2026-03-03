@@ -1,3 +1,4 @@
+use crate::cmd::build::BuildResult;
 use crate::discover::infer::InferredSchema;
 use crate::discover::scan::ScannedFiles;
 use crate::output::{CommandOutput, DiscoveredField};
@@ -5,6 +6,7 @@ use crate::schema::config::MdvsToml;
 use crate::schema::shared::{FieldTypeSerde, ScanConfig};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
+use tracing::instrument;
 
 #[derive(Debug, Serialize)]
 pub struct InitResult {
@@ -13,6 +15,8 @@ pub struct InitResult {
     pub fields: Vec<DiscoveredField>,
     pub auto_build: bool,
     pub dry_run: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub build_result: Option<BuildResult>,
 }
 
 impl CommandOutput for InitResult {
@@ -62,6 +66,11 @@ impl CommandOutput for InitResult {
             out.push_str(&format!("\nInitialized mdvs in '{}'\n", self.path.display()));
         }
 
+        if let Some(ref br) = self.build_result {
+            out.push('\n');
+            out.push_str(&br.format_human());
+        }
+
         out
     }
 }
@@ -70,6 +79,7 @@ const DEFAULT_MODEL: &str = "minishlab/potion-base-8M";
 const DEFAULT_CHUNK_SIZE: usize = 1024;
 
 #[allow(clippy::too_many_arguments)]
+#[instrument(name = "init", skip_all)]
 pub async fn run(
     path: &Path,
     model: Option<&str>,
@@ -122,7 +132,7 @@ pub async fn run(
     let schema = InferredSchema::infer(&scanned);
     let total_files = scanned.files.len();
 
-    let result = InitResult {
+    let mut result = InitResult {
         path: path.to_path_buf(),
         files_scanned: total_files,
         fields: schema
@@ -137,6 +147,7 @@ pub async fn run(
             .collect(),
         auto_build,
         dry_run,
+        build_result: None,
     };
 
     if dry_run {
@@ -158,7 +169,8 @@ pub async fn run(
     toml_doc.write(&config_path)?;
 
     if auto_build {
-        crate::cmd::build::run(path, None, None, None, false).await?;
+        result.build_result =
+            Some(crate::cmd::build::run(path, None, None, None, false).await?);
     }
 
     Ok(result)

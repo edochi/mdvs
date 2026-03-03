@@ -1,16 +1,39 @@
 use crate::index::backend::Backend;
-use std::path::Path;
+use crate::output::CommandOutput;
+use serde::Serialize;
+use std::path::{Path, PathBuf};
 
-pub fn run(path: &Path) -> anyhow::Result<()> {
+#[derive(Debug, Serialize)]
+pub struct CleanResult {
+    pub removed: bool,
+    pub path: PathBuf,
+}
+
+impl CommandOutput for CleanResult {
+    fn format_human(&self) -> String {
+        if self.removed {
+            format!("Removed {}\n", self.path.display())
+        } else {
+            format!("Nothing to clean — {} does not exist\n", self.path.display())
+        }
+    }
+}
+
+pub fn run(path: &Path) -> anyhow::Result<CleanResult> {
     let mdvs_dir = path.join(".mdvs");
     if mdvs_dir.exists() {
         let backend = Backend::parquet(path);
         backend.clean()?;
-        eprintln!("Removed {}", mdvs_dir.display());
+        Ok(CleanResult {
+            removed: true,
+            path: mdvs_dir,
+        })
     } else {
-        eprintln!("Nothing to clean — {} does not exist", mdvs_dir.display());
+        Ok(CleanResult {
+            removed: false,
+            path: mdvs_dir,
+        })
     }
-    Ok(())
 }
 
 #[cfg(test)]

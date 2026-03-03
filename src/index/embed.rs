@@ -2,6 +2,7 @@ use crate::schema::shared::EmbeddingModelConfig;
 use model2vec_rs::model::StaticModel;
 use std::fs;
 use std::path::PathBuf;
+use tracing::instrument;
 
 #[derive(Debug, Clone)]
 pub enum ModelConfig {
@@ -30,6 +31,7 @@ pub enum Embedder {
 }
 
 impl Embedder {
+    #[instrument(name = "load_model", skip_all, fields(model = ?config))]
     pub fn load(config: &ModelConfig) -> Self {
         match config {
             ModelConfig::Model2Vec { model_id, revision } => {

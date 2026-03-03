@@ -4,6 +4,7 @@ use indextree::{Arena, NodeEdge, NodeId};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use tracing::instrument;
 
 // ============================================================================
 // Type inference — flat pass
@@ -346,6 +347,7 @@ pub struct InferredSchema {
 }
 
 impl InferredSchema {
+    #[instrument(name = "infer", skip_all)]
     pub fn infer(scanned: &ScannedFiles) -> Self {
         let mut type_info = infer_field_types(scanned);
         let tree = DirectoryTree::from(scanned);

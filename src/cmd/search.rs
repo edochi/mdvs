@@ -1,15 +1,33 @@
 use anyhow::Context;
-use crate::index::backend::Backend;
+use crate::index::backend::{Backend, SearchHit};
 use crate::index::embed::{Embedder, ModelConfig};
+use crate::output::CommandOutput;
 use crate::schema::config::MdvsToml;
+use serde::Serialize;
 use std::path::Path;
+use tracing::{info, instrument};
 
+#[derive(Debug, Serialize)]
+pub struct SearchResult {
+    pub hits: Vec<SearchHit>,
+}
+
+impl CommandOutput for SearchResult {
+    fn format_human(&self) -> String {
+        self.hits
+            .iter()
+            .map(|h| format!("{:.3}  {}\n", h.score, h.filename))
+            .collect()
+    }
+}
+
+#[instrument(name = "search", skip_all)]
 pub async fn run(
     path: &Path,
     query: &str,
     limit: usize,
     where_clause: Option<&str>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<SearchResult> {
     let config_path = path.join("mdvs.toml");
 
     // Read config
@@ -37,7 +55,7 @@ pub async fn run(
     }
 
     // Load model
-    eprintln!("Loading model {}...", embedding.name);
+    info!(model = %embedding.name, "loading model");
     let model_config = ModelConfig::try_from(embedding)?;
     let embedder = Embedder::load(&model_config);
 
@@ -47,12 +65,7 @@ pub async fn run(
     // Search via backend
     let hits = backend.search(query_embedding, where_clause, limit).await?;
 
-    // Print results
-    for hit in &hits {
-        println!("{:.3}  {}", hit.score, hit.filename);
-    }
-
-    Ok(())
+    Ok(SearchResult { hits })
 }
 
 #[cfg(test)]

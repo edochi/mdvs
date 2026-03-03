@@ -6,6 +6,7 @@ use ignore::WalkBuilder;
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
+use tracing::instrument;
 
 #[derive(Debug)]
 pub struct ScannedFile {
@@ -20,6 +21,7 @@ pub struct ScannedFiles {
 }
 
 impl ScannedFiles {
+    #[instrument(name = "scan", skip_all)]
     pub fn scan(root: &Path, config: &ScanConfig) -> Self {
         let matcher = Glob::new(&config.glob)
             .expect("invalid glob pattern")

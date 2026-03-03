@@ -4,13 +4,65 @@ use crate::index::backend::Backend;
 use crate::index::chunk::{extract_plain_text, Chunks};
 use crate::index::embed::{Embedder, ModelConfig};
 use crate::index::storage::{content_hash, BuildMetadata, ChunkRow, FileIndexEntry, FileRow};
+use crate::output::{CommandOutput, NewField};
 use crate::schema::config::{MdvsToml, SearchConfig};
 use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig};
+use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use tracing::{info, info_span, instrument};
 
 const DEFAULT_MODEL: &str = "minishlab/potion-base-8M";
 const DEFAULT_CHUNK_SIZE: usize = 1024;
+
+// ============================================================================
+// BuildResult
+// ============================================================================
+
+#[derive(Debug, Serialize)]
+pub struct BuildResult {
+    pub full_rebuild: bool,
+    pub files_total: usize,
+    pub files_embedded: usize,
+    pub files_unchanged: usize,
+    pub files_removed: usize,
+    pub chunks_total: usize,
+    pub new_fields: Vec<NewField>,
+}
+
+impl CommandOutput for BuildResult {
+    fn format_human(&self) -> String {
+        let mut out = String::new();
+        for nf in &self.new_fields {
+            let word = if nf.files_found == 1 { "file" } else { "files" };
+            out.push_str(&format!("  new field: {} ({} {word})\n", nf.name, nf.files_found));
+        }
+        if !self.new_fields.is_empty() {
+            out.push_str("Run 'mdvs update' to incorporate new fields.\n\n");
+        }
+        if self.full_rebuild {
+            out.push_str(&format!(
+                "Built index: {} files, {} chunks (full rebuild)\n",
+                self.files_total, self.chunks_total
+            ));
+        } else if self.files_embedded > 0 {
+            out.push_str(&format!(
+                "Built index: {} files, {} chunks ({} embedded, {} unchanged, {} removed)\n",
+                self.files_total,
+                self.chunks_total,
+                self.files_embedded,
+                self.files_unchanged,
+                self.files_removed
+            ));
+        } else {
+            out.push_str(&format!(
+                "Built index: {} files, {} chunks (no embedding needed, {} removed)\n",
+                self.files_total, self.chunks_total, self.files_removed
+            ));
+        }
+        out
+    }
+}
 
 // ============================================================================
 // File classification for incremental build
@@ -32,6 +84,7 @@ struct FileToEmbed<'a> {
     scanned: &'a ScannedFile,
 }
 
+#[instrument(name = "classify", skip_all, level = "debug")]
 fn classify_files<'a>(
     scanned: &'a ScannedFiles,
     existing_index: &[FileIndexEntry],
@@ -86,13 +139,14 @@ fn classify_files<'a>(
     }
 }
 
+#[instrument(name = "build", skip_all)]
 pub async fn run(
     path: &Path,
     set_model: Option<&str>,
     set_revision: Option<&str>,
     set_chunk_size: Option<usize>,
     force: bool,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<BuildResult> {
     let config_path = path.join("mdvs.toml");
 
     // Read config and fill missing build sections
@@ -198,13 +252,7 @@ pub async fn run(
         let report = crate::output::CommandOutput::format_human(&check_result);
         anyhow::bail!("{report}build aborted due to validation errors");
     }
-    if !check_result.new_fields.is_empty() {
-        for nf in &check_result.new_fields {
-            let word = if nf.files_found == 1 { "file" } else { "files" };
-            eprintln!("  new field: {} ({} {word})", nf.name, nf.files_found);
-        }
-        eprintln!("Run 'mdvs update' to incorporate new fields.\n");
-    }
+    let new_fields = check_result.new_fields;
 
     // Convert schema fields
     let schema_fields: Vec<(String, FieldType)> = config
@@ -225,7 +273,7 @@ pub async fn run(
 
     let (file_rows, chunk_rows, files_embedded, files_unchanged, files_removed) = if full_rebuild {
         // === FULL REBUILD ===
-        eprintln!("Loading model {}...", embedding.name);
+        info!(model = %embedding.name, "loading model");
         let model_config = ModelConfig::try_from(embedding)?;
         let embedder = Embedder::load(&model_config);
 
@@ -240,12 +288,15 @@ pub async fn run(
         let mut file_rows = Vec::new();
         let mut chunk_rows = Vec::new();
 
-        for file in &scanned.files {
-            let file_id = uuid::Uuid::new_v4().to_string();
-            let (fr, crs) =
-                embed_file(&file_id, file, max_chunk_size, built_at, &embedder).await;
-            file_rows.push(fr);
-            chunk_rows.extend(crs);
+        {
+            let _span = info_span!("embed", files = scanned.files.len()).entered();
+            for file in &scanned.files {
+                let file_id = uuid::Uuid::new_v4().to_string();
+                let (fr, crs) =
+                    embed_file(&file_id, file, max_chunk_size, built_at, &embedder).await;
+                file_rows.push(fr);
+                chunk_rows.extend(crs);
+            }
         }
 
         let count = scanned.files.len();
@@ -280,7 +331,7 @@ pub async fn run(
             .collect();
 
         if !classification.needs_embedding.is_empty() {
-            eprintln!("Loading model {}...", embedding.name);
+            info!(model = %embedding.name, "loading model");
             let model_config = ModelConfig::try_from(embedding)?;
             let embedder = Embedder::load(&model_config);
 
@@ -292,19 +343,23 @@ pub async fn run(
                 );
             }
 
-            for fte in &classification.needs_embedding {
-                let (_, crs) = embed_file(
-                    &fte.file_id,
-                    fte.scanned,
-                    max_chunk_size,
-                    built_at,
-                    &embedder,
-                )
-                .await;
-                chunk_rows.extend(crs);
+            {
+                let _span =
+                    info_span!("embed", files = classification.needs_embedding.len()).entered();
+                for fte in &classification.needs_embedding {
+                    let (_, crs) = embed_file(
+                        &fte.file_id,
+                        fte.scanned,
+                        max_chunk_size,
+                        built_at,
+                        &embedder,
+                    )
+                    .await;
+                    chunk_rows.extend(crs);
+                }
             }
         } else {
-            eprintln!("No content changes detected, skipping embedding.");
+            info!("no content changes, skipping embedding");
         }
 
         let embedded = classification.needs_embedding.len();
@@ -322,34 +377,18 @@ pub async fn run(
     };
     backend.write_index(&schema_fields, &file_rows, &chunk_rows, build_meta)?;
 
-    // Report results
-    if full_rebuild {
-        eprintln!(
-            "Built index: {} files, {} chunks (full rebuild)",
-            file_rows.len(),
-            chunk_rows.len(),
-        );
-    } else if files_embedded > 0 {
-        eprintln!(
-            "Built index: {} files, {} chunks ({} embedded, {} unchanged, {} removed)",
-            file_rows.len(),
-            chunk_rows.len(),
-            files_embedded,
-            files_unchanged,
-            files_removed,
-        );
-    } else {
-        eprintln!(
-            "Built index: {} files, {} chunks (no embedding needed, {} removed)",
-            file_rows.len(),
-            chunk_rows.len(),
-            files_removed,
-        );
-    }
-
-    Ok(())
+    Ok(BuildResult {
+        full_rebuild,
+        files_total: file_rows.len(),
+        files_embedded,
+        files_unchanged,
+        files_removed,
+        chunks_total: chunk_rows.len(),
+        new_fields,
+    })
 }
 
+#[instrument(name = "embed_file", skip_all, fields(file = %file.path.display()), level = "debug")]
 async fn embed_file(
     file_id: &str,
     file: &ScannedFile,

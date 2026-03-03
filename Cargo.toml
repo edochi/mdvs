@@ -42,5 +42,10 @@ globset = "0.4"
 uuid = { version = "1", features = ["v4"] }
 chrono = "0.4"
 
+# Telemetry
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-tree = "0.4"
+
 [dev-dependencies]
 tempfile = "3"

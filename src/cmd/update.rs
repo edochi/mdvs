@@ -1,3 +1,4 @@
+use crate::cmd::build::BuildResult;
 use crate::discover::infer::InferredSchema;
 use crate::discover::scan::ScannedFiles;
 use crate::output::{ChangedField, CommandOutput, DiscoveredField};
@@ -16,6 +17,8 @@ pub struct UpdateResult {
     pub unchanged: usize,
     pub auto_build: bool,
     pub dry_run: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub build_result: Option<BuildResult>,
 }
 
 impl UpdateResult {
@@ -73,6 +76,11 @@ impl CommandOutput for UpdateResult {
             out.push_str("(dry run, nothing written)\n");
         } else {
             out.push_str("\nUpdated mdvs.toml\n");
+        }
+
+        if let Some(ref br) = self.build_result {
+            out.push('\n');
+            out.push_str(&br.format_human());
         }
 
         out
@@ -184,7 +192,7 @@ pub async fn run(
 
     let should_build = build_flag.unwrap_or(config.update.auto_build);
 
-    let result = UpdateResult {
+    let mut result = UpdateResult {
         files_scanned: total_files,
         added,
         changed,
@@ -192,6 +200,7 @@ pub async fn run(
         unchanged,
         auto_build: should_build && !dry_run,
         dry_run,
+        build_result: None,
     };
 
     if dry_run || !result.has_changes() {
@@ -203,7 +212,8 @@ pub async fn run(
     config.write(&config_path)?;
 
     if should_build {
-        crate::cmd::build::run(path, None, None, None, false).await?;
+        result.build_result =
+            Some(crate::cmd::build::run(path, None, None, None, false).await?);
     }
 
     Ok(result)

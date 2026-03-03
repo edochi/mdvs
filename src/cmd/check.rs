@@ -10,6 +10,7 @@ use serde::Serialize;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
+use tracing::instrument;
 
 #[derive(Debug, Serialize)]
 pub struct CheckResult {
@@ -87,6 +88,7 @@ pub fn run(path: &Path) -> anyhow::Result<CheckResult> {
     validate(&scanned, &config)
 }
 
+#[instrument(name = "validate", skip_all)]
 pub fn validate(scanned: &ScannedFiles, config: &MdvsToml) -> anyhow::Result<CheckResult> {
     // Build lookups
     let field_map: HashMap<&str, _> = config

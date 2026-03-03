@@ -9,6 +9,7 @@ use datafusion::arrow::array::{Array, Float64Array, StringViewArray};
 use datafusion::arrow::datatypes::DataType;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
+use tracing::instrument;
 
 #[derive(Debug, Serialize)]
 pub struct SearchHit {
@@ -33,6 +34,7 @@ impl Backend {
         })
     }
 
+    #[instrument(name = "write_index", skip_all)]
     pub fn write_index(
         &self,
         schema_fields: &[(String, FieldType)],
@@ -51,12 +53,14 @@ impl Backend {
         }
     }
 
+    #[instrument(name = "read_file_index", skip_all, level = "debug")]
     pub fn read_file_index(&self) -> anyhow::Result<Vec<FileIndexEntry>> {
         match self {
             Backend::Parquet(b) => b.read_file_index(),
         }
     }
 
+    #[instrument(name = "read_chunk_rows", skip_all, level = "debug")]
     pub fn read_chunk_rows(&self) -> anyhow::Result<Vec<ChunkRow>> {
         match self {
             Backend::Parquet(b) => b.read_chunk_rows(),
