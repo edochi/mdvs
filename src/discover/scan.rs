@@ -6,7 +6,7 @@ use ignore::WalkBuilder;
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
-use tracing::instrument;
+use tracing::{info, instrument};
 
 /// A single markdown file with its parsed frontmatter and body content.
 #[derive(Debug)]
@@ -89,6 +89,8 @@ impl ScannedFiles {
         }
 
         files.sort_by(|a, b| a.path.cmp(&b.path));
+
+        info!(files = files.len(), "scan complete");
 
         ScannedFiles { files }
     }

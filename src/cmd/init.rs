@@ -7,7 +7,7 @@ use crate::schema::config::MdvsToml;
 use crate::schema::shared::{FieldTypeSerde, ScanConfig};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
-use tracing::instrument;
+use tracing::{info, instrument};
 
 /// Result of the `init` command: discovered fields and optional build output.
 #[derive(Debug, Serialize)]
@@ -101,6 +101,8 @@ pub async fn run(
     auto_build: bool,
     skip_gitignore: bool,
 ) -> anyhow::Result<InitResult> {
+    info!(path = %path.display(), "initializing");
+
     anyhow::ensure!(path.is_dir(), "'{}' is not a directory", path.display());
 
     let config_path = path.join("mdvs.toml");
@@ -140,6 +142,8 @@ pub async fn run(
 
     let schema = InferredSchema::infer(&scanned);
     let total_files = scanned.files.len();
+
+    info!(fields = schema.fields.len(), "schema inferred");
 
     let mut result = InitResult {
         path: path.to_path_buf(),

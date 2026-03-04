@@ -4,7 +4,7 @@ use indextree::{Arena, NodeEdge, NodeId};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use tracing::instrument;
+use tracing::{info, instrument};
 
 // ============================================================================
 // Type inference — flat pass
@@ -392,6 +392,8 @@ impl InferredSchema {
             .collect();
 
         fields.sort_by(|a, b| a.name.cmp(&b.name));
+
+        info!(fields = fields.len(), "inference complete");
 
         InferredSchema { fields }
     }

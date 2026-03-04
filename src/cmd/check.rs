@@ -10,7 +10,7 @@ use serde::Serialize;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
-use tracing::instrument;
+use tracing::{info, instrument};
 
 /// Result of the `check` command: validation violations and unknown fields.
 #[derive(Debug, Serialize)]
@@ -98,6 +98,8 @@ pub fn run(path: &Path) -> anyhow::Result<CheckResult> {
 /// Validate scanned files against the schema in `mdvs.toml`. Reusable core called by both `check` and `build`.
 #[instrument(name = "validate", skip_all)]
 pub fn validate(scanned: &ScannedFiles, config: &MdvsToml) -> anyhow::Result<CheckResult> {
+    info!(files = scanned.files.len(), "validating frontmatter");
+
     // Build lookups
     let field_map: HashMap<&str, _> = config
         .fields
@@ -217,6 +219,8 @@ pub fn validate(scanned: &ScannedFiles, config: &MdvsToml) -> anyhow::Result<Che
         .into_iter()
         .map(|(name, files_found)| NewField { name, files_found })
         .collect();
+
+    info!(violations = field_violations.len(), "validation complete");
 
     Ok(CheckResult {
         files_checked: scanned.files.len(),

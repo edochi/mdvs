@@ -290,8 +290,10 @@ pub async fn run(
     let (file_rows, chunk_rows, files_embedded, files_unchanged, files_removed) = if full_rebuild {
         // === FULL REBUILD ===
         info!(model = %embedding.name, "loading model");
+        let t = std::time::Instant::now();
         let model_config = ModelConfig::try_from(embedding)?;
         let embedder = Embedder::load(&model_config);
+        info!(elapsed_ms = t.elapsed().as_millis() as u64, "model loaded");
 
         if let Some(existing_dim) = backend.embedding_dimension()? {
             let model_dim = embedder.dimension() as i32;
@@ -305,6 +307,7 @@ pub async fn run(
         let mut chunk_rows = Vec::new();
 
         {
+            let t = std::time::Instant::now();
             let _span = info_span!("embed", files = scanned.files.len()).entered();
             for file in &scanned.files {
                 let file_id = uuid::Uuid::new_v4().to_string();
@@ -313,6 +316,7 @@ pub async fn run(
                 file_rows.push(fr);
                 chunk_rows.extend(crs);
             }
+            info!(elapsed_ms = t.elapsed().as_millis() as u64, chunks = chunk_rows.len(), "embedding complete");
         }
 
         let count = scanned.files.len();
@@ -321,6 +325,13 @@ pub async fn run(
         // === INCREMENTAL BUILD ===
         let existing_index = backend.read_file_index()?;
         let classification = classify_files(&scanned, &existing_index);
+
+        info!(
+            to_embed = classification.needs_embedding.len(),
+            unchanged = classification.unchanged_file_ids.len(),
+            removed = classification.removed_count,
+            "files classified"
+        );
 
         // Build file rows for ALL scanned files with fresh frontmatter
         let file_rows: Vec<FileRow> = scanned
@@ -348,8 +359,10 @@ pub async fn run(
 
         if !classification.needs_embedding.is_empty() {
             info!(model = %embedding.name, "loading model");
+            let t = std::time::Instant::now();
             let model_config = ModelConfig::try_from(embedding)?;
             let embedder = Embedder::load(&model_config);
+            info!(elapsed_ms = t.elapsed().as_millis() as u64, "model loaded");
 
             if let Some(existing_dim) = backend.embedding_dimension()? {
                 let model_dim = embedder.dimension() as i32;
@@ -360,6 +373,7 @@ pub async fn run(
             }
 
             {
+                let t = std::time::Instant::now();
                 let _span =
                     info_span!("embed", files = classification.needs_embedding.len()).entered();
                 for fte in &classification.needs_embedding {
@@ -373,6 +387,7 @@ pub async fn run(
                     .await;
                     chunk_rows.extend(crs);
                 }
+                info!(elapsed_ms = t.elapsed().as_millis() as u64, "embedding complete");
             }
         } else {
             info!("no content changes, skipping embedding");
@@ -392,7 +407,14 @@ pub async fn run(
         built_at: chrono::Utc::now().to_rfc3339(),
         internal_prefix: config.internal_prefix().to_string(),
     };
+    let t = std::time::Instant::now();
     backend.write_index(&schema_fields, &file_rows, &chunk_rows, build_meta)?;
+    info!(
+        files = file_rows.len(),
+        chunks = chunk_rows.len(),
+        elapsed_ms = t.elapsed().as_millis() as u64,
+        "index written"
+    );
 
     Ok(BuildResult {
         full_rebuild,

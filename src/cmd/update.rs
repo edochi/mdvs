@@ -8,7 +8,7 @@ use crate::schema::shared::FieldTypeSerde;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
-use tracing::instrument;
+use tracing::{info, instrument};
 
 /// Result of the `update` command: field changes discovered by re-inference.
 #[derive(Debug, Serialize)]
@@ -202,6 +202,13 @@ pub async fn run(
         .map(|name| name.to_string())
         .collect();
     removed.sort();
+
+    info!(
+        added = added.len(),
+        changed = changed.len(),
+        removed = removed.len(),
+        "update complete"
+    );
 
     let should_build = build_flag.unwrap_or(config.update.auto_build);
 

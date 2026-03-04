@@ -59,14 +59,18 @@ pub async fn run(
 
     // Load model
     info!(model = %embedding.name, "loading model");
+    let t = std::time::Instant::now();
     let model_config = ModelConfig::try_from(embedding)?;
     let embedder = Embedder::load(&model_config);
+    info!(elapsed_ms = t.elapsed().as_millis() as u64, "model loaded");
 
     // Embed query
     let query_embedding = embedder.embed(query).await;
 
     // Search via backend
+    let t = std::time::Instant::now();
     let hits = backend.search(query_embedding, where_clause, limit).await?;
+    info!(hits = hits.len(), elapsed_ms = t.elapsed().as_millis() as u64, "search complete");
 
     Ok(SearchResult { hits })
 }
