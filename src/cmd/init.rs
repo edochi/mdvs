@@ -28,7 +28,7 @@ pub struct InitResult {
 }
 
 impl CommandOutput for InitResult {
-    fn format_human(&self) -> String {
+    fn format_text(&self, _verbose: bool) -> String {
         let mut out = String::new();
 
         out.push_str(&format!("{} files scanned\n", self.files_scanned));
@@ -76,7 +76,7 @@ impl CommandOutput for InitResult {
 
         if let Some(ref br) = self.build_result {
             out.push('\n');
-            out.push_str(&br.format_human());
+            out.push_str(&br.format_text(false));
         }
 
         out

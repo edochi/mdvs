@@ -39,7 +39,7 @@ pub struct BuildResult {
 }
 
 impl CommandOutput for BuildResult {
-    fn format_human(&self) -> String {
+    fn format_text(&self, _verbose: bool) -> String {
         let mut out = String::new();
         for nf in &self.new_fields {
             let word = if nf.files_found == 1 { "file" } else { "files" };
@@ -265,7 +265,7 @@ pub async fn run(
     // Validate frontmatter against schema (abort on violations)
     let check_result = crate::cmd::check::validate(&scanned, &config)?;
     if check_result.has_violations() {
-        let report = crate::output::CommandOutput::format_human(&check_result);
+        let report = crate::output::CommandOutput::format_text(&check_result, false);
         anyhow::bail!("{report}build aborted due to validation errors");
     }
     let new_fields = check_result.new_fields;

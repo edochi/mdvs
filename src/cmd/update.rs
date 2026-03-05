@@ -39,7 +39,7 @@ impl UpdateResult {
 }
 
 impl CommandOutput for UpdateResult {
-    fn format_human(&self) -> String {
+    fn format_text(&self, _verbose: bool) -> String {
         let mut out = String::new();
 
         if !self.has_changes() {
@@ -91,7 +91,7 @@ impl CommandOutput for UpdateResult {
 
         if let Some(ref br) = self.build_result {
             out.push('\n');
-            out.push_str(&br.format_human());
+            out.push_str(&br.format_text(false));
         }
 
         out

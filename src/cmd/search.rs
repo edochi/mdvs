@@ -15,7 +15,7 @@ pub struct SearchResult {
 }
 
 impl CommandOutput for SearchResult {
-    fn format_human(&self) -> String {
+    fn format_text(&self, _verbose: bool) -> String {
         self.hits
             .iter()
             .map(|h| format!("{:.3}  {}\n", h.score, h.filename))

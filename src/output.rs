@@ -1,11 +1,11 @@
 use serde::Serialize;
 use std::path::PathBuf;
 
-/// Controls whether command output is rendered as human-readable text or machine-readable JSON.
+/// Controls whether command output is rendered as plain text or machine-readable JSON.
 #[derive(Clone, clap::ValueEnum)]
 pub enum OutputFormat {
     /// Pretty-printed tables and summaries for terminal display.
-    Human,
+    Text,
     /// Structured JSON for piping into other tools.
     Json,
 }
@@ -76,20 +76,21 @@ pub struct NewField {
     pub files_found: usize,
 }
 
-/// Shared interface for command result structs, providing human and JSON rendering.
+/// Shared interface for command result structs, providing text and JSON rendering.
 ///
 /// Every command collects its results into a struct that implements this trait.
 /// JSON output is derived automatically via `Serialize`; commands only need to
-/// implement `format_human`.
+/// implement `format_text`.
 pub trait CommandOutput: Serialize {
     /// Render this result as human-readable text (tables, summaries).
-    fn format_human(&self) -> String;
+    /// When `verbose` is true, output includes expanded details and a metadata footer.
+    fn format_text(&self, verbose: bool) -> String;
 
     /// Print to stdout in the requested format.
     /// Default implementation handles dispatch — commands don't need to override this.
-    fn print(&self, format: &OutputFormat) {
+    fn print(&self, format: &OutputFormat, verbose: bool) {
         match format {
-            OutputFormat::Human => print!("{}", self.format_human()),
+            OutputFormat::Text => print!("{}", self.format_text(verbose)),
             OutputFormat::Json => print!("{}", serde_json::to_string_pretty(self).unwrap()),
         }
     }

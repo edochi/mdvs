@@ -14,7 +14,7 @@ pub struct CleanResult {
 }
 
 impl CommandOutput for CleanResult {
-    fn format_human(&self) -> String {
+    fn format_text(&self, _verbose: bool) -> String {
         if self.removed {
             format!("Removed {}\n", self.path.display())
         } else {

@@ -54,7 +54,7 @@ pub struct InfoResult {
 }
 
 impl CommandOutput for InfoResult {
-    fn format_human(&self) -> String {
+    fn format_text(&self, _verbose: bool) -> String {
         let mut out = String::new();
 
         // Scan section

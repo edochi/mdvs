@@ -31,7 +31,7 @@ impl CheckResult {
 }
 
 impl CommandOutput for CheckResult {
-    fn format_human(&self) -> String {
+    fn format_text(&self, _verbose: bool) -> String {
         let mut out = String::new();
 
         if !self.has_violations() && self.new_fields.is_empty() {

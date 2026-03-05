@@ -2,16 +2,28 @@ use clap::{Parser, Subcommand};
 use mdvs::output::CommandOutput;
 use std::path::PathBuf;
 
+/// Stderr logging level for `--logs`.
+#[derive(Clone, clap::ValueEnum)]
+enum LogLevel {
+    Info,
+    Debug,
+    Trace,
+}
+
 #[derive(Parser)]
 #[command(name = "mdvs", about = "Markdown Validation & Search")]
 struct Cli {
     /// Output format
-    #[arg(short, long, global = true, default_value = "human")]
+    #[arg(short, long, global = true, default_value = "text")]
     output: mdvs::output::OutputFormat,
 
-    /// Increase verbosity (-v info, -vv debug, -vvv trace)
-    #[arg(short, long, global = true, action = clap::ArgAction::Count)]
-    verbose: u8,
+    /// Show detailed output
+    #[arg(short, long, global = true)]
+    verbose: bool,
+
+    /// Enable stderr logging
+    #[arg(long, global = true, value_name = "LEVEL")]
+    logs: Option<LogLevel>,
 
     #[command(subcommand)]
     command: Command,
@@ -126,14 +138,14 @@ enum Command {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    if cli.verbose > 0 {
+    if let Some(ref level) = cli.logs {
         use tracing_subscriber::layer::SubscriberExt;
         use tracing_subscriber::util::SubscriberInitExt;
 
-        let filter = match cli.verbose {
-            1 => "mdvs=info",
-            2 => "mdvs=debug",
-            _ => "mdvs=trace",
+        let filter = match level {
+            LogLevel::Info => "mdvs=info",
+            LogLevel::Debug => "mdvs=debug",
+            LogLevel::Trace => "mdvs=trace",
         };
         tracing_subscriber::registry()
             .with(tracing_subscriber::EnvFilter::new(filter))
@@ -171,7 +183,7 @@ async fn main() -> anyhow::Result<()> {
                 !suppress_auto_build,
                 skip_gitignore,
             ).await?;
-            result.print(&cli.output);
+            result.print(&cli.output, cli.verbose);
             Ok(())
         }
         Command::Build {
@@ -188,7 +200,7 @@ async fn main() -> anyhow::Result<()> {
                 set_chunk_size,
                 force,
             ).await?;
-            result.print(&cli.output);
+            result.print(&cli.output, cli.verbose);
             Ok(())
         }
         Command::Search {
@@ -199,12 +211,12 @@ async fn main() -> anyhow::Result<()> {
         } => {
             let result =
                 mdvs::cmd::search::run(&path, &query, limit, where_clause.as_deref()).await?;
-            result.print(&cli.output);
+            result.print(&cli.output, cli.verbose);
             Ok(())
         }
         Command::Check { path } => {
             let result = mdvs::cmd::check::run(&path)?;
-            result.print(&cli.output);
+            result.print(&cli.output, cli.verbose);
             if result.has_violations() {
                 std::process::exit(1);
             }
@@ -219,17 +231,17 @@ async fn main() -> anyhow::Result<()> {
         } => {
             let result =
                 mdvs::cmd::update::run(&path, &reinfer, reinfer_all, build, dry_run).await?;
-            result.print(&cli.output);
+            result.print(&cli.output, cli.verbose);
             Ok(())
         }
         Command::Clean { path } => {
             let result = mdvs::cmd::clean::run(&path)?;
-            result.print(&cli.output);
+            result.print(&cli.output, cli.verbose);
             Ok(())
         }
         Command::Info { path } => {
             let result = mdvs::cmd::info::run(&path)?;
-            result.print(&cli.output);
+            result.print(&cli.output, cli.verbose);
             Ok(())
         }
     }
