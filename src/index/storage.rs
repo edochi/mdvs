@@ -289,12 +289,12 @@ pub fn build_files_batch(
     );
 
     let schema = Schema::new(vec![
-        Field::new(&col(prefix, "file_id"), DataType::Utf8, false),
-        Field::new(&col(prefix, "filename"), DataType::Utf8, false),
-        Field::new(&col(prefix, "data"), data_struct_type, true),
-        Field::new(&col(prefix, "content_hash"), DataType::Utf8, false),
+        Field::new(col(prefix, "file_id"), DataType::Utf8, false),
+        Field::new(col(prefix, "filename"), DataType::Utf8, false),
+        Field::new(col(prefix, "data"), data_struct_type, true),
+        Field::new(col(prefix, "content_hash"), DataType::Utf8, false),
         Field::new(
-            &col(prefix, "built_at"),
+            col(prefix, "built_at"),
             DataType::Timestamp(TimeUnit::Microsecond, None),
             false,
         ),
@@ -333,13 +333,13 @@ pub fn build_chunks_batch(chunks: &[ChunkRow], dimension: i32, prefix: &str) -> 
     );
 
     let schema = Schema::new(vec![
-        Field::new(&col(prefix, "chunk_id"), DataType::Utf8, false),
-        Field::new(&col(prefix, "file_id"), DataType::Utf8, false),
-        Field::new(&col(prefix, "chunk_index"), DataType::Int32, false),
-        Field::new(&col(prefix, "start_line"), DataType::Int32, false),
-        Field::new(&col(prefix, "end_line"), DataType::Int32, false),
+        Field::new(col(prefix, "chunk_id"), DataType::Utf8, false),
+        Field::new(col(prefix, "file_id"), DataType::Utf8, false),
+        Field::new(col(prefix, "chunk_index"), DataType::Int32, false),
+        Field::new(col(prefix, "start_line"), DataType::Int32, false),
+        Field::new(col(prefix, "end_line"), DataType::Int32, false),
         Field::new(
-            &col(prefix, "embedding"),
+            col(prefix, "embedding"),
             DataType::FixedSizeList(
                 Arc::new(Field::new("item", DataType::Float32, false)),
                 dimension,
