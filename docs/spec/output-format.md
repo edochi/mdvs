@@ -9,6 +9,8 @@ Verbose is an expansion of compact: same information, plus indented details unde
 
 All user-defined values (field names, file paths, glob patterns) are quoted with `"`.
 
+**Text/JSON alignment**: text and JSON output contain the same data — only the format differs. Verbose-only detail fields are `Option` with `#[serde(skip_serializing_if = "Option::is_none")]`, populated by `run(verbose: bool)`. Both `format_text()` and JSON serialization use the same struct.
+
 ## Rendering
 
 - Tables rendered with `tabled` crate (`Style::rounded()`)

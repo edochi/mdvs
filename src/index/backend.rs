@@ -5,7 +5,7 @@ use crate::index::storage::{
     ChunkRow, FileIndexEntry, FileRow,
 };
 use crate::search::SearchContext;
-use datafusion::arrow::array::{Array, Float64Array, StringViewArray};
+use datafusion::arrow::array::{Array, Float64Array, Int32Array, StringViewArray};
 use datafusion::arrow::datatypes::DataType;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -18,6 +18,13 @@ pub struct SearchHit {
     pub filename: String,
     /// Cosine similarity score (higher is more relevant).
     pub score: f64,
+    /// Start line of the best matching chunk (1-indexed).
+    pub start_line: Option<i32>,
+    /// End line of the best matching chunk (1-indexed).
+    pub end_line: Option<i32>,
+    /// Text of the best matching chunk (populated in verbose mode).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chunk_text: Option<String>,
 }
 
 /// Summary statistics for a built search index.
@@ -207,22 +214,34 @@ impl ParquetBackend {
         .await?;
 
         let where_part = match where_clause {
-            Some(w) => format!("WHERE {w}"),
+            Some(w) => format!("AND {w}"),
             None => String::new(),
         };
         let p = &self.prefix;
         let sql = format!(
-            "SELECT f.{fn_col},
-                    MAX(cosine_similarity(c.{emb_col})) AS score
-             FROM chunks c JOIN files_v f ON c.{c_fid} = f.{f_fid}
+            "SELECT f.{fn_col}, sub.score, sub.{sl_col}, sub.{el_col}
+             FROM (
+                 SELECT c.{c_fid},
+                        cosine_similarity(c.{emb_col}) AS score,
+                        c.{sl_col},
+                        c.{el_col},
+                        ROW_NUMBER() OVER (
+                            PARTITION BY c.{c_fid}
+                            ORDER BY cosine_similarity(c.{emb_col}) DESC
+                        ) AS rn
+                 FROM chunks c
+             ) sub
+             JOIN files_v f ON sub.{c_fid} = f.{f_fid}
+             WHERE sub.rn = 1
              {where_part}
-             GROUP BY f.{f_fid}, f.{fn_col}
-             ORDER BY score DESC
+             ORDER BY sub.score DESC
              LIMIT {limit}",
             fn_col = col(p, "filename"),
             emb_col = col(p, "embedding"),
             c_fid = col(p, "file_id"),
             f_fid = col(p, "file_id"),
+            sl_col = col(p, "start_line"),
+            el_col = col(p, "end_line"),
         );
 
         let batches = sc.query(&sql).await?;
@@ -239,11 +258,24 @@ impl ParquetBackend {
                 .as_any()
                 .downcast_ref::<Float64Array>()
                 .ok_or_else(|| anyhow::anyhow!("unexpected type for score column"))?;
+            let start_lines = batch
+                .column(2)
+                .as_any()
+                .downcast_ref::<Int32Array>()
+                .ok_or_else(|| anyhow::anyhow!("unexpected type for start_line column"))?;
+            let end_lines = batch
+                .column(3)
+                .as_any()
+                .downcast_ref::<Int32Array>()
+                .ok_or_else(|| anyhow::anyhow!("unexpected type for end_line column"))?;
 
             for i in 0..batch.num_rows() {
                 hits.push(SearchHit {
                     filename: filenames.value(i).to_string(),
                     score: scores.value(i),
+                    start_line: if start_lines.is_null(i) { None } else { Some(start_lines.value(i)) },
+                    end_line: if end_lines.is_null(i) { None } else { Some(end_lines.value(i)) },
+                    chunk_text: None,
                 });
             }
         }
@@ -464,5 +496,7 @@ mod tests {
         assert_eq!(hits.len(), 2);
         assert_eq!(hits[0].filename, "blog/rust.md");
         assert!(hits[0].score > hits[1].score);
+        assert_eq!(hits[0].start_line, Some(1));
+        assert_eq!(hits[0].end_line, Some(4));
     }
 }

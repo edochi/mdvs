@@ -4,7 +4,8 @@
 //! spanning all columns) — both using rounded borders and auto-sized to terminal width.
 
 use tabled::settings::{
-    object::Cell, span::ColumnSpan, style::Style, themes::BorderCorrection, width::Width, Modify,
+    object::Cell, peaker::PriorityMax, span::ColumnSpan, style::Style, themes::BorderCorrection,
+    width::Width, Modify,
 };
 
 pub use tabled::builder::Builder;
@@ -22,7 +23,7 @@ pub fn style_compact(table: &mut tabled::Table) {
     let w = term_width();
     table.with(Style::rounded().remove_horizontals());
     table.with(Width::increase(w));
-    table.with(Width::wrap(w));
+    table.with(Width::wrap(w).priority(PriorityMax::left()));
 }
 
 /// Apply record table style: rounded borders, second row spans all columns
@@ -33,5 +34,5 @@ pub fn style_record(table: &mut tabled::Table, cols: isize) {
     table.with(Modify::new(Cell::new(1, 0)).with(ColumnSpan::new(cols)));
     table.with(BorderCorrection {});
     table.with(Width::increase(w));
-    table.with(Width::wrap(w));
+    table.with(Width::wrap(w).priority(PriorityMax::left()));
 }

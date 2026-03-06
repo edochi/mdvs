@@ -3,6 +3,7 @@ use crate::index::backend::{Backend, SearchHit};
 use crate::index::embed::{Embedder, ModelConfig};
 use crate::output::CommandOutput;
 use crate::schema::config::MdvsToml;
+use crate::table::{style_compact, style_record, Builder};
 use serde::Serialize;
 use std::path::Path;
 use tracing::{info, instrument};
@@ -10,17 +11,102 @@ use tracing::{info, instrument};
 /// Result of the `search` command: ranked list of matching files.
 #[derive(Debug, Serialize)]
 pub struct SearchResult {
+    /// The query string.
+    pub query: String,
     /// Files ranked by cosine similarity to the query, descending.
     pub hits: Vec<SearchHit>,
+    /// Name of the embedding model used.
+    pub model_name: String,
+    /// Result limit that was applied.
+    pub limit: usize,
+    /// Wall-clock time for the search operation in milliseconds.
+    pub elapsed_ms: u64,
 }
 
 impl CommandOutput for SearchResult {
-    fn format_text(&self, _verbose: bool) -> String {
-        self.hits
-            .iter()
-            .map(|h| format!("{:.3}  {}\n", h.score, h.filename))
-            .collect()
+    fn format_text(&self, verbose: bool) -> String {
+        let mut out = String::new();
+
+        // One-liner
+        let hit_word = if self.hits.len() == 1 { "hit" } else { "hits" };
+        out.push_str(&format!(
+            "Searched \"{}\" — {} {}\n",
+            self.query,
+            self.hits.len(),
+            hit_word
+        ));
+
+        if self.hits.is_empty() {
+            return out;
+        }
+
+        out.push('\n');
+
+        if verbose {
+            // Record tables: one per hit with chunk text
+            for (i, hit) in self.hits.iter().enumerate() {
+                let mut builder = Builder::default();
+                let idx = format!("{}", i + 1);
+                let path = format!("\"{}\"", hit.filename);
+                let score = format!("{:.3}", hit.score);
+                builder.push_record([idx.as_str(), path.as_str(), score.as_str()]);
+
+                let detail = match (&hit.chunk_text, hit.start_line, hit.end_line) {
+                    (Some(text), Some(start), Some(end)) => {
+                        let indented: String = text
+                            .lines()
+                            .map(|l| format!("    {l}"))
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        format!("  lines {start}-{end}:\n{indented}")
+                    }
+                    (None, Some(start), Some(end)) => format!("  lines {start}-{end}"),
+                    _ => String::new(),
+                };
+
+                builder.push_record([detail.as_str(), "", ""]);
+                let mut table = builder.build();
+                style_record(&mut table, 3);
+                out.push_str(&format!("{table}\n"));
+            }
+
+            // Footer
+            out.push_str(&format!(
+                "{} {} | model: \"{}\" | limit: {} | {}ms\n",
+                self.hits.len(),
+                hit_word,
+                self.model_name,
+                self.limit,
+                self.elapsed_ms
+            ));
+        } else {
+            // Compact table
+            let mut builder = Builder::default();
+            for (i, hit) in self.hits.iter().enumerate() {
+                let idx = format!("{}", i + 1);
+                let path = format!("\"{}\"", hit.filename);
+                let score = format!("{:.3}", hit.score);
+                builder.push_record([idx.as_str(), path.as_str(), score.as_str()]);
+            }
+            let mut table = builder.build();
+            style_compact(&mut table);
+            out.push_str(&format!("{table}\n"));
+        }
+
+        out
     }
+}
+
+/// Read lines from a file (1-indexed, inclusive range).
+fn read_lines(path: &Path, start: i32, end: i32) -> Option<String> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let lines: Vec<&str> = content.lines().collect();
+    let start = (start - 1).max(0) as usize;
+    let end = (end as usize).min(lines.len());
+    if start >= end {
+        return None;
+    }
+    Some(lines[start..end].join("\n"))
 }
 
 /// Embed a query, search the index, and return ranked results.
@@ -30,7 +116,9 @@ pub async fn run(
     query: &str,
     limit: usize,
     where_clause: Option<&str>,
+    verbose: bool,
 ) -> anyhow::Result<SearchResult> {
+    let start = std::time::Instant::now();
     let config_path = path.join("mdvs.toml");
 
     // Read config
@@ -69,10 +157,27 @@ pub async fn run(
 
     // Search via backend
     let t = std::time::Instant::now();
-    let hits = backend.search(query_embedding, where_clause, limit).await?;
+    let mut hits = backend.search(query_embedding, where_clause, limit).await?;
     info!(hits = hits.len(), elapsed_ms = t.elapsed().as_millis() as u64, "search complete");
 
-    Ok(SearchResult { hits })
+    // Populate chunk text from disk when verbose
+    if verbose {
+        for hit in &mut hits {
+            if let (Some(start), Some(end)) = (hit.start_line, hit.end_line) {
+                hit.chunk_text = read_lines(&path.join(&hit.filename), start, end);
+            }
+        }
+    }
+
+    let model_name = embedding.name.clone();
+
+    Ok(SearchResult {
+        query: query.to_string(),
+        hits,
+        model_name,
+        limit,
+        elapsed_ms: start.elapsed().as_millis() as u64,
+    })
 }
 
 #[cfg(test)]
@@ -135,8 +240,8 @@ mod tests {
             false,
             true,
             None,
-            true, // auto_build calls build internally
-            false, // skip_gitignore
+            true,
+            false,
         )
         .await
         .unwrap();
@@ -145,7 +250,7 @@ mod tests {
     #[tokio::test]
     async fn missing_config() {
         let tmp = tempfile::tempdir().unwrap();
-        let result = run(tmp.path(), "test query", 10, None).await;
+        let result = run(tmp.path(), "test query", 10, None, false).await;
         assert!(result.is_err());
     }
 
@@ -154,7 +259,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         write_config(tmp.path(), "test-model");
 
-        let result = run(tmp.path(), "test query", 10, None).await;
+        let result = run(tmp.path(), "test query", 10, None, false).await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("index not found"));
@@ -166,8 +271,29 @@ mod tests {
         create_test_vault(tmp.path());
         init_and_build(tmp.path()).await;
 
-        let result = run(tmp.path(), "rust programming", 10, None).await;
+        let result = run(tmp.path(), "rust programming", 10, None, false).await;
         assert!(result.is_ok(), "search failed: {:?}", result);
+        let result = result.unwrap();
+        assert_eq!(result.query, "rust programming");
+        assert!(!result.model_name.is_empty());
+        assert!(!result.hits.is_empty());
+        // start_line/end_line always present
+        assert!(result.hits[0].start_line.is_some());
+        assert!(result.hits[0].end_line.is_some());
+        // chunk_text not populated without verbose
+        assert!(result.hits[0].chunk_text.is_none());
+    }
+
+    #[tokio::test]
+    async fn end_to_end_verbose() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_test_vault(tmp.path());
+        init_and_build(tmp.path()).await;
+
+        let result = run(tmp.path(), "rust programming", 10, None, true).await.unwrap();
+        assert!(!result.hits.is_empty());
+        // chunk_text populated in verbose mode
+        assert!(result.hits[0].chunk_text.is_some());
     }
 
     #[tokio::test]
@@ -176,7 +302,6 @@ mod tests {
         create_test_vault(tmp.path());
         init_and_build(tmp.path()).await;
 
-        // Use backend to search with limit=1
         let config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
         let backend = Backend::parquet(tmp.path(), config.internal_prefix());
         let embedding = config.embedding_model.as_ref().unwrap();
@@ -201,8 +326,6 @@ mod tests {
         let embedder = Embedder::load(&model_config);
         let query_embedding = embedder.embed("cooking recipes").await;
 
-        // Filter to non-draft only — cooking post (draft=true) should be excluded
-        // Uses bare field name (promoted via files_v view)
         let hits = backend
             .search(query_embedding, Some("draft = false"), 10)
             .await
@@ -219,12 +342,11 @@ mod tests {
         create_test_vault(tmp.path());
         init_and_build(tmp.path()).await;
 
-        // Overwrite config with a different model name
         let mut config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
         config.embedding_model.as_mut().unwrap().name = "some-other-model".into();
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
 
-        let result = run(tmp.path(), "test query", 10, None).await;
+        let result = run(tmp.path(), "test query", 10, None, false).await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("model mismatch"));

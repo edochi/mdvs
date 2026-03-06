@@ -38,7 +38,7 @@
 | [0034](TODO-0034.md) | Flag rework — rename human→text, add --logs, repurpose -v | done | high | 2026-03-05 |
 | [0035](TODO-0035.md) | Add tabled + terminal_size and create table style helpers | done | high | 2026-03-05 |
 | [0036](TODO-0036.md) | Rewrite clean command output | done | high | 2026-03-05 |
-| [0037](TODO-0037.md) | Rewrite search command output | todo | high | 2026-03-05 |
+| [0037](TODO-0037.md) | Rewrite search command output | done | high | 2026-03-05 |
 | [0038](TODO-0038.md) | Rewrite build command output | todo | high | 2026-03-05 |
 | [0039](TODO-0039.md) | Rewrite check command output | todo | high | 2026-03-05 |
 | [0040](TODO-0040.md) | Rewrite init command output | todo | high | 2026-03-05 |

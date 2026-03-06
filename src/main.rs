@@ -210,7 +210,7 @@ async fn main() -> anyhow::Result<()> {
             where_clause,
         } => {
             let result =
-                mdvs::cmd::search::run(&path, &query, limit, where_clause.as_deref()).await?;
+                mdvs::cmd::search::run(&path, &query, limit, where_clause.as_deref(), cli.verbose).await?;
             result.print(&cli.output, cli.verbose);
             Ok(())
         }
