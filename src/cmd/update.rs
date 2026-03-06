@@ -2,12 +2,16 @@ use crate::cmd::build::BuildResult;
 use crate::discover::infer::InferredSchema;
 use crate::discover::scan::ScannedFiles;
 use crate::index::storage::check_reserved_names;
-use crate::output::{ChangedField, CommandOutput, DiscoveredField};
+use crate::output::{
+    format_file_count, ChangedField, CommandOutput, DiscoveredField, RemovedField,
+};
 use crate::schema::config::{MdvsToml, TomlField};
 use crate::schema::shared::FieldTypeSerde;
+use crate::table::{style_compact, style_record, Builder};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
+use std::time::Instant;
 use tracing::{info, instrument};
 
 /// Result of the `update` command: field changes discovered by re-inference.
@@ -19,8 +23,8 @@ pub struct UpdateResult {
     pub added: Vec<DiscoveredField>,
     /// Fields whose type or glob constraints changed during re-inference.
     pub changed: Vec<ChangedField>,
-    /// Field names that disappeared from all files during re-inference.
-    pub removed: Vec<String>,
+    /// Fields that disappeared from all files during re-inference.
+    pub removed: Vec<RemovedField>,
     /// Number of fields that remained identical.
     pub unchanged: usize,
     /// Whether a build was triggered after updating.
@@ -30,6 +34,12 @@ pub struct UpdateResult {
     /// Build result, if a build was triggered.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub build_result: Option<BuildResult>,
+    /// Scan glob pattern (verbose only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub glob: Option<String>,
+    /// Wall-clock time for the update operation in milliseconds (verbose only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub elapsed_ms: Option<u64>,
 }
 
 impl UpdateResult {
@@ -39,59 +49,168 @@ impl UpdateResult {
 }
 
 impl CommandOutput for UpdateResult {
-    fn format_text(&self, _verbose: bool) -> String {
+    fn format_text(&self, verbose: bool) -> String {
         let mut out = String::new();
 
+        // One-liner
+        let total_changes = self.added.len() + self.changed.len() + self.removed.len();
+        let summary = if total_changes == 0 {
+            "no changes".to_string()
+        } else {
+            format!("{total_changes} field(s) changed")
+        };
+        let dry_run_suffix = if self.dry_run { " (dry run)" } else { "" };
+        out.push_str(&format!(
+            "Scanned {} — {summary}{dry_run_suffix}\n",
+            format_file_count(self.files_scanned)
+        ));
+
         if !self.has_changes() {
-            out.push_str(&format!(
-                "Scanned {} files — no changes\n",
-                self.files_scanned
-            ));
+            // Verbose footer for no-changes case
+            if verbose {
+                if let (Some(glob), Some(ms)) = (&self.glob, self.elapsed_ms) {
+                    out.push_str(&format!(
+                        "\n{} | glob: \"{glob}\" | {ms}ms\n",
+                        format_file_count(self.files_scanned)
+                    ));
+                }
+            }
             return out;
         }
 
-        out.push_str(&format!("Scanned {} files\n", self.files_scanned));
-
-        if !self.added.is_empty() {
-            out.push_str(&format!("\nAdded {} field(s):\n", self.added.len()));
+        // Changes table
+        out.push('\n');
+        if verbose {
+            // Record tables per field change
             for field in &self.added {
-                out.push_str(&format!(
-                    "  {}  {}  {}/{}\n",
-                    field.name, field.field_type, field.files_found, field.total_files,
-                ));
+                let mut builder = Builder::default();
+                builder.push_record([
+                    format!("\"{}\"", field.name),
+                    "added".to_string(),
+                    field.field_type.clone(),
+                ]);
+                let detail = match &field.allowed {
+                    Some(globs) => {
+                        let mut lines = vec!["  found in:".to_string()];
+                        for g in globs {
+                            lines.push(format!("    - \"{g}\""));
+                        }
+                        lines.join("\n")
+                    }
+                    None => String::new(),
+                };
+                builder.push_record([detail, String::new(), String::new()]);
+                let mut table = builder.build();
+                style_record(&mut table, 3);
+                out.push_str(&format!("{table}\n"));
             }
-        }
-
-        if !self.changed.is_empty() {
-            out.push_str(&format!("\nChanged {} field(s):\n", self.changed.len()));
             for field in &self.changed {
+                let mut builder = Builder::default();
+                builder.push_record([
+                    format!("\"{}\"", field.name),
+                    "changed".to_string(),
+                    format!("{} → {}", field.old_type, field.new_type),
+                ]);
+                let detail = match &field.allowed {
+                    Some(globs) => {
+                        let mut lines = vec!["  found in:".to_string()];
+                        for g in globs {
+                            lines.push(format!("    - \"{g}\""));
+                        }
+                        lines.join("\n")
+                    }
+                    None => String::new(),
+                };
+                builder.push_record([detail, String::new(), String::new()]);
+                let mut table = builder.build();
+                style_record(&mut table, 3);
+                out.push_str(&format!("{table}\n"));
+            }
+            for field in &self.removed {
+                let mut builder = Builder::default();
+                builder.push_record([
+                    format!("\"{}\"", field.name),
+                    "removed".to_string(),
+                    String::new(),
+                ]);
+                let detail = match &field.allowed {
+                    Some(globs) => {
+                        let mut lines = vec!["  previously in:".to_string()];
+                        for g in globs {
+                            lines.push(format!("    - \"{g}\""));
+                        }
+                        lines.join("\n")
+                    }
+                    None => String::new(),
+                };
+                builder.push_record([detail, String::new(), String::new()]);
+                let mut table = builder.build();
+                style_record(&mut table, 3);
+                out.push_str(&format!("{table}\n"));
+            }
+        } else {
+            // Compact: single table with all changes
+            let mut builder = Builder::default();
+            for field in &self.added {
+                let globs_summary = field
+                    .allowed
+                    .as_ref()
+                    .map(|g| {
+                        g.iter()
+                            .map(|s| format!("\"{s}\""))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    })
+                    .unwrap_or_default();
+                builder.push_record([
+                    format!("\"{}\"", field.name),
+                    format!("added      {}", field.field_type),
+                    globs_summary,
+                ]);
+            }
+            for field in &self.changed {
+                let globs_summary = field
+                    .allowed
+                    .as_ref()
+                    .map(|g| {
+                        g.iter()
+                            .map(|s| format!("\"{s}\""))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    })
+                    .unwrap_or_default();
+                builder.push_record([
+                    format!("\"{}\"", field.name),
+                    format!("changed    {} → {}", field.old_type, field.new_type),
+                    globs_summary,
+                ]);
+            }
+            for field in &self.removed {
+                builder.push_record([
+                    format!("\"{}\"", field.name),
+                    "removed".to_string(),
+                    String::new(),
+                ]);
+            }
+            let mut table = builder.build();
+            style_compact(&mut table);
+            out.push_str(&format!("{table}\n"));
+        }
+
+        // Verbose footer
+        if verbose {
+            if let (Some(glob), Some(ms)) = (&self.glob, self.elapsed_ms) {
                 out.push_str(&format!(
-                    "  {}  {} -> {}\n",
-                    field.name, field.old_type, field.new_type,
+                    "\n{} | glob: \"{glob}\" | {ms}ms\n",
+                    format_file_count(self.files_scanned)
                 ));
             }
         }
 
-        if !self.removed.is_empty() {
-            out.push_str(&format!("\nRemoved {} field(s):\n", self.removed.len()));
-            for name in &self.removed {
-                out.push_str(&format!("  {name}  (no longer found)\n"));
-            }
-        }
-
-        if self.unchanged > 0 {
-            out.push_str(&format!("\n{} field(s) unchanged\n", self.unchanged));
-        }
-
-        if self.dry_run {
-            out.push_str("(dry run, nothing written)\n");
-        } else {
-            out.push_str("\nUpdated mdvs.toml\n");
-        }
-
+        // Build result
         if let Some(ref br) = self.build_result {
             out.push('\n');
-            out.push_str(&br.format_text(false));
+            out.push_str(&br.format_text(verbose));
         }
 
         out
@@ -106,7 +225,9 @@ pub async fn run(
     reinfer_all: bool,
     build_flag: Option<bool>,
     dry_run: bool,
+    verbose: bool,
 ) -> anyhow::Result<UpdateResult> {
+    let start = Instant::now();
     let config_path = path.join("mdvs.toml");
     let mut config = MdvsToml::read(&config_path)?;
 
@@ -178,6 +299,11 @@ pub async fn run(
                     name: inf.name.clone(),
                     old_type: old_field.field_type.to_string(),
                     new_type: new_type.to_string(),
+                    allowed: if verbose {
+                        Some(inf.allowed.clone())
+                    } else {
+                        None
+                    },
                 });
             }
             new_fields.push(toml_field);
@@ -188,18 +314,30 @@ pub async fn run(
                 field_type: new_type.to_string(),
                 files_found: inf.files.len(),
                 total_files,
+                allowed: if verbose {
+                    Some(inf.allowed.clone())
+                } else {
+                    None
+                },
             });
             new_fields.push(toml_field);
         }
     }
 
     // Removed = target names not found in inferred
-    let mut removed: Vec<String> = old_fields
-        .keys()
-        .filter(|name| !schema.fields.iter().any(|f| f.name == **name))
-        .map(|name| name.to_string())
+    let mut removed: Vec<RemovedField> = old_fields
+        .iter()
+        .filter(|(name, _)| !schema.fields.iter().any(|f| f.name == **name))
+        .map(|(name, old_field)| RemovedField {
+            name: name.to_string(),
+            allowed: if verbose {
+                Some(old_field.allowed.clone())
+            } else {
+                None
+            },
+        })
         .collect();
-    removed.sort();
+    removed.sort_by(|a, b| a.name.cmp(&b.name));
 
     info!(
         added = added.len(),
@@ -219,6 +357,16 @@ pub async fn run(
         auto_build: should_build && !dry_run,
         dry_run,
         build_result: None,
+        glob: if verbose {
+            Some(config.scan.glob.clone())
+        } else {
+            None
+        },
+        elapsed_ms: if verbose {
+            Some(start.elapsed().as_millis() as u64)
+        } else {
+            None
+        },
     };
 
     if dry_run || !result.has_changes() {
@@ -279,7 +427,7 @@ mod tests {
         create_test_vault(tmp.path());
         init_no_build(tmp.path()).await;
 
-        let result = run(tmp.path(), &[], false, Some(false), false)
+        let result = run(tmp.path(), &[], false, Some(false), false, false)
             .await
             .unwrap();
 
@@ -301,7 +449,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = run(tmp.path(), &[], false, Some(false), false)
+        let result = run(tmp.path(), &[], false, Some(false), false, false)
             .await
             .unwrap();
 
@@ -332,9 +480,16 @@ mod tests {
         )
         .unwrap();
 
-        let result = run(tmp.path(), &["tags".to_string()], false, Some(false), false)
-            .await
-            .unwrap();
+        let result = run(
+            tmp.path(),
+            &["tags".to_string()],
+            false,
+            Some(false),
+            false,
+            false,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(result.changed.len(), 1);
         assert_eq!(result.changed[0].name, "tags");
@@ -356,11 +511,19 @@ mod tests {
         )
         .unwrap();
 
-        let result = run(tmp.path(), &["tags".to_string()], false, Some(false), false)
-            .await
-            .unwrap();
+        let result = run(
+            tmp.path(),
+            &["tags".to_string()],
+            false,
+            Some(false),
+            false,
+            false,
+        )
+        .await
+        .unwrap();
 
-        assert_eq!(result.removed, vec!["tags"]);
+        assert_eq!(result.removed.len(), 1);
+        assert_eq!(result.removed[0].name, "tags");
         assert!(result.changed.is_empty());
         assert!(result.added.is_empty());
 
@@ -380,6 +543,7 @@ mod tests {
             &["nonexistent".to_string()],
             false,
             Some(false),
+            false,
             false,
         )
         .await;
@@ -401,6 +565,7 @@ mod tests {
             true, // reinfer_all
             Some(false),
             false,
+            false,
         )
         .await;
 
@@ -417,7 +582,7 @@ mod tests {
 
         let toml_before = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
 
-        let result = run(tmp.path(), &[], true, Some(false), false)
+        let result = run(tmp.path(), &[], true, Some(false), false, false)
             .await
             .unwrap();
 
@@ -451,7 +616,7 @@ mod tests {
 
         let toml_before = fs::read_to_string(tmp.path().join("mdvs.toml")).unwrap();
 
-        let result = run(tmp.path(), &[], false, Some(false), true)
+        let result = run(tmp.path(), &[], false, Some(false), true, false)
             .await
             .unwrap();
 
@@ -492,7 +657,7 @@ mod tests {
         .unwrap();
 
         // --build false should skip build even if auto_build is true in toml
-        let result = run(tmp.path(), &[], false, Some(false), false)
+        let result = run(tmp.path(), &[], false, Some(false), false, false)
             .await
             .unwrap();
 
@@ -550,7 +715,7 @@ mod tests {
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
 
         // Reinfer all — globs should change even though types don't
-        let result = run(tmp.path(), &[], true, Some(false), false)
+        let result = run(tmp.path(), &[], true, Some(false), false, false)
             .await
             .unwrap();
         assert!(result.has_changes());
@@ -582,7 +747,7 @@ mod tests {
         .unwrap();
 
         // Default mode: tags should stay in toml even though it disappeared
-        let result = run(tmp.path(), &[], false, Some(false), false)
+        let result = run(tmp.path(), &[], false, Some(false), false, false)
             .await
             .unwrap();
 

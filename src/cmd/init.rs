@@ -159,6 +159,7 @@ pub async fn run(
                 field_type: FieldTypeSerde::from(&f.field_type).to_string(),
                 files_found: f.files.len(),
                 total_files,
+                allowed: None,
             })
             .collect(),
         auto_build,

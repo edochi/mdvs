@@ -233,7 +233,8 @@ async fn main() -> anyhow::Result<()> {
             dry_run,
         } => {
             let result =
-                mdvs::cmd::update::run(&path, &reinfer, reinfer_all, build, dry_run).await?;
+                mdvs::cmd::update::run(&path, &reinfer, reinfer_all, build, dry_run, cli.verbose)
+                    .await?;
             result.print(&cli.output, cli.verbose);
             Ok(())
         }

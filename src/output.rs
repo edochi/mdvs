@@ -21,6 +21,9 @@ pub struct DiscoveredField {
     pub files_found: usize,
     /// Total number of scanned files (for computing prevalence).
     pub total_files: usize,
+    /// Glob patterns where this field appears (verbose only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed: Option<Vec<String>>,
 }
 
 /// A field whose inferred type changed between the previous and current scan.
@@ -32,6 +35,19 @@ pub struct ChangedField {
     pub old_type: String,
     /// Newly inferred type after re-scanning.
     pub new_type: String,
+    /// Current glob patterns where this field appears (verbose only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed: Option<Vec<String>>,
+}
+
+/// A field that disappeared from all files during re-inference.
+#[derive(Debug, Serialize)]
+pub struct RemovedField {
+    /// Field name.
+    pub name: String,
+    /// Previous glob patterns where this field appeared (verbose only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed: Option<Vec<String>>,
 }
 
 /// Category of a frontmatter validation failure.
