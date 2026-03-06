@@ -10,9 +10,22 @@ mdvs (Markdown Validation & Search) is a Rust CLI that treats markdown directori
 
 **NEVER commit or push unless the user explicitly asks.** No autonomous commits. No "let me commit this" — wait for the user to say "commit" or "commit and push". This is non-negotiable.
 
-**Always run `cargo fmt` after `cargo clippy`** when verifying changes.
+**Use conventional commits.** All commit messages must follow the [Conventional Commits](https://www.conventionalcommits.org/) format. A `commit-msg` hook (via cocogitto) enforces this locally. See `docs/spec/cocogitto.md` for the full guide.
 
-## Build Commands
+Format: `<type>[optional scope]: <description>`
+
+Types: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `ci`, `perf`, `style`
+
+Examples:
+```
+feat: add enum constraints on string fields
+fix(build): track removed chunk counts correctly
+docs: add cocogitto setup guide
+chore(deps): bump datafusion to 53
+refactor: extract validate() from check command
+```
+
+## Build & Verify
 
 ```bash
 cargo build              # build
@@ -21,6 +34,8 @@ cargo test               # run all tests
 cargo clippy             # lint
 cargo fmt                # format
 ```
+
+**Always run `cargo fmt` after `cargo clippy`** when verifying changes.
 
 ## Architecture
 
@@ -45,7 +60,7 @@ Single crate at the repo root. Modules grouped by pipeline stage:
 - Model identity tracking in parquet metadata: hard error on model/revision mismatch for both search and build
 - Note-level ranking uses max chunk similarity across chunks (not average)
 - `--where` SQL clauses for metadata filtering (no custom filter syntax)
-- `--output` global flag (`human`/`json`) via `CommandOutput` trait
+- `--output` global flag (`text`/`json`) via `CommandOutput` trait
 - All text processing and vector math in Rust; DataFusion handles SQL query execution
 
 ### Storage
@@ -70,7 +85,7 @@ Single crate at the repo root. Modules grouped by pipeline stage:
 - `build [path]` — check + embed + write Parquets to `.mdvs/`
 - `search <query> [path]` — query the index
 - `info [path]` — show config and index status
-- `clean [path]` — delete `.mdvs/` (deferred)
+- `clean [path]` — delete `.mdvs/`
 
 See `docs/spec/commands/` for detailed specs.
 
@@ -86,3 +101,5 @@ See `docs/spec/commands/` for detailed specs.
 | `pulldown-cmark` | Markdown → plain text |
 | `clap` | CLI parsing |
 | `tokio` | Async runtime (required by DataFusion) |
+| `tabled` | Table rendering |
+| `cocogitto` | Conventional commit enforcement (dev tool, not a dependency) |
