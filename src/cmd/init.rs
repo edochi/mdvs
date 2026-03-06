@@ -254,7 +254,8 @@ pub async fn run(
     toml_doc.write(&config_path)?;
 
     if auto_build {
-        result.build_result = Some(crate::cmd::build::run(path, None, None, None, false).await?);
+        result.build_result =
+            Some(crate::cmd::build::run(path, None, None, None, false, verbose).await?);
     }
 
     if verbose {

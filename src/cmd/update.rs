@@ -383,7 +383,8 @@ pub async fn run(
     config.write(&config_path)?;
 
     if should_build {
-        result.build_result = Some(crate::cmd::build::run(path, None, None, None, false).await?);
+        result.build_result =
+            Some(crate::cmd::build::run(path, None, None, None, false, false).await?);
     }
 
     Ok(result)

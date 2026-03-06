@@ -201,6 +201,7 @@ async fn main() -> anyhow::Result<()> {
                 set_revision.as_deref(),
                 set_chunk_size,
                 force,
+                cli.verbose,
             )
             .await?;
             result.print(&cli.output, cli.verbose);

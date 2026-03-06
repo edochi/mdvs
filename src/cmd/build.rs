@@ -4,12 +4,14 @@ use crate::index::backend::Backend;
 use crate::index::chunk::{extract_plain_text, Chunks};
 use crate::index::embed::{Embedder, ModelConfig};
 use crate::index::storage::{content_hash, BuildMetadata, ChunkRow, FileIndexEntry, FileRow};
-use crate::output::{CommandOutput, NewField};
+use crate::output::{format_file_count, CommandOutput, NewField};
 use crate::schema::config::{MdvsToml, SearchConfig};
 use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig};
+use crate::table::{style_compact, style_record, Builder};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::time::Instant;
 use tracing::{info, info_span, instrument};
 
 const DEFAULT_MODEL: &str = "minishlab/potion-base-8M";
@@ -18,6 +20,15 @@ const DEFAULT_CHUNK_SIZE: usize = 1024;
 // ============================================================================
 // BuildResult
 // ============================================================================
+
+/// Per-file chunk count for verbose build output.
+#[derive(Debug, Serialize)]
+pub struct BuildFileDetail {
+    /// Relative path of the file.
+    pub filename: String,
+    /// Number of chunks produced for this file.
+    pub chunks: usize,
+}
 
 /// Result of the `build` command: embedding and index statistics.
 #[derive(Debug, Serialize)]
@@ -34,43 +45,170 @@ pub struct BuildResult {
     pub files_removed: usize,
     /// Total number of chunks in the final index.
     pub chunks_total: usize,
+    /// Number of chunks produced by newly embedded files.
+    pub chunks_embedded: usize,
+    /// Number of chunks retained from unchanged files.
+    pub chunks_unchanged: usize,
+    /// Number of chunks dropped from removed files.
+    pub chunks_removed: usize,
     /// Fields found in frontmatter but not yet in `mdvs.toml`.
     pub new_fields: Vec<NewField>,
+    /// Per-file chunk counts for embedded files (verbose only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub embedded_files: Option<Vec<BuildFileDetail>>,
+    /// Per-file chunk counts for removed files (verbose only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub removed_files: Option<Vec<BuildFileDetail>>,
+    /// Embedding model name (verbose only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Scan glob pattern (verbose only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub glob: Option<String>,
+    /// Wall-clock time for the build operation in milliseconds (verbose only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub elapsed_ms: Option<u64>,
+}
+
+fn format_chunk_count(n: usize) -> String {
+    if n == 1 {
+        "1 chunk".to_string()
+    } else {
+        format!("{n} chunks")
+    }
 }
 
 impl CommandOutput for BuildResult {
-    fn format_text(&self, _verbose: bool) -> String {
+    fn format_text(&self, verbose: bool) -> String {
         let mut out = String::new();
+
+        // New fields (shown before stats)
         for nf in &self.new_fields {
-            let word = if nf.files_found == 1 { "file" } else { "files" };
             out.push_str(&format!(
-                "  new field: {} ({} {word})\n",
-                nf.name, nf.files_found
+                "  new field: {} ({})\n",
+                nf.name,
+                format_file_count(nf.files_found)
             ));
         }
         if !self.new_fields.is_empty() {
             out.push_str("Run 'mdvs update' to incorporate new fields.\n\n");
         }
-        if self.full_rebuild {
-            out.push_str(&format!(
-                "Built index: {} files, {} chunks (full rebuild)\n",
-                self.files_total, self.chunks_total
-            ));
-        } else if self.files_embedded > 0 {
-            out.push_str(&format!(
-                "Built index: {} files, {} chunks ({} embedded, {} unchanged, {} removed)\n",
-                self.files_total,
-                self.chunks_total,
-                self.files_embedded,
-                self.files_unchanged,
-                self.files_removed
-            ));
+
+        // One-liner
+        let rebuild_suffix = if self.full_rebuild {
+            " (full rebuild)"
         } else {
-            out.push_str(&format!(
-                "Built index: {} files, {} chunks (no embedding needed, {} removed)\n",
-                self.files_total, self.chunks_total, self.files_removed
-            ));
+            ""
+        };
+        out.push_str(&format!(
+            "Built index — {}, {}{rebuild_suffix}\n",
+            format_file_count(self.files_total),
+            format_chunk_count(self.chunks_total)
+        ));
+
+        // Stats table
+        out.push('\n');
+        if verbose {
+            // Verbose: record tables for embedded/removed, compact for unchanged
+            if self.files_embedded > 0 {
+                let mut builder = Builder::default();
+                builder.push_record([
+                    "embedded".to_string(),
+                    format_file_count(self.files_embedded),
+                    format_chunk_count(self.chunks_embedded),
+                ]);
+                let detail = match &self.embedded_files {
+                    Some(files) => {
+                        let lines: Vec<String> = files
+                            .iter()
+                            .map(|f| {
+                                format!("  - \"{}\" ({})", f.filename, format_chunk_count(f.chunks))
+                            })
+                            .collect();
+                        lines.join("\n")
+                    }
+                    None => String::new(),
+                };
+                builder.push_record([detail, String::new(), String::new()]);
+                let mut table = builder.build();
+                style_record(&mut table, 3);
+                out.push_str(&format!("{table}\n"));
+            }
+            if self.files_unchanged > 0 {
+                let mut builder = Builder::default();
+                builder.push_record([
+                    "unchanged".to_string(),
+                    format_file_count(self.files_unchanged),
+                    format_chunk_count(self.chunks_unchanged),
+                ]);
+                let mut table = builder.build();
+                style_compact(&mut table);
+                out.push_str(&format!("{table}\n"));
+            }
+            if self.files_removed > 0 {
+                let mut builder = Builder::default();
+                builder.push_record([
+                    "removed".to_string(),
+                    format_file_count(self.files_removed),
+                    format_chunk_count(self.chunks_removed),
+                ]);
+                let detail = match &self.removed_files {
+                    Some(files) => {
+                        let lines: Vec<String> = files
+                            .iter()
+                            .map(|f| {
+                                format!("  - \"{}\" ({})", f.filename, format_chunk_count(f.chunks))
+                            })
+                            .collect();
+                        lines.join("\n")
+                    }
+                    None => String::new(),
+                };
+                builder.push_record([detail, String::new(), String::new()]);
+                let mut table = builder.build();
+                style_record(&mut table, 3);
+                out.push_str(&format!("{table}\n"));
+            }
+        } else {
+            // Compact: single table with all non-zero categories
+            let mut builder = Builder::default();
+            if self.files_embedded > 0 {
+                builder.push_record([
+                    "embedded".to_string(),
+                    format_file_count(self.files_embedded),
+                    format_chunk_count(self.chunks_embedded),
+                ]);
+            }
+            if self.files_unchanged > 0 {
+                builder.push_record([
+                    "unchanged".to_string(),
+                    format_file_count(self.files_unchanged),
+                    format_chunk_count(self.chunks_unchanged),
+                ]);
+            }
+            if self.files_removed > 0 {
+                builder.push_record([
+                    "removed".to_string(),
+                    format_file_count(self.files_removed),
+                    format_chunk_count(self.chunks_removed),
+                ]);
+            }
+            let mut table = builder.build();
+            style_compact(&mut table);
+            out.push_str(&format!("{table}\n"));
         }
+
+        // Verbose footer
+        if verbose {
+            if let (Some(model), Some(glob), Some(ms)) = (&self.model, &self.glob, self.elapsed_ms)
+            {
+                out.push_str(&format!(
+                    "{} | model: \"{model}\" | glob: \"{glob}\" | {ms}ms\n",
+                    format_file_count(self.files_total)
+                ));
+            }
+        }
+
         out
     }
 }
@@ -88,6 +226,10 @@ struct FileClassification<'a> {
     unchanged_file_ids: HashSet<String>,
     /// Number of files in the old index that no longer exist.
     removed_count: usize,
+    /// file_ids of removed files (for chunk counting).
+    removed_file_ids: HashSet<String>,
+    /// Filenames of removed files (for verbose output).
+    removed_filenames: Vec<String>,
 }
 
 struct FileToEmbed<'a> {
@@ -113,14 +255,14 @@ fn classify_files<'a>(
     let mut needs_embedding = Vec::new();
     let mut file_id_map = HashMap::new();
     let mut unchanged_file_ids = HashSet::new();
-    let mut seen_existing = HashSet::new();
+    let mut seen_filenames = HashSet::new();
 
     for file in &scanned.files {
         let filename = file.path.display().to_string();
         let hash = content_hash(&file.content);
 
         if let Some(&(old_id, old_hash)) = existing.get(filename.as_str()) {
-            seen_existing.insert(filename.as_str() as *const str);
+            seen_filenames.insert(filename.clone());
             if hash == old_hash {
                 // Unchanged — keep existing chunks
                 file_id_map.insert(filename, old_id.to_string());
@@ -145,13 +287,23 @@ fn classify_files<'a>(
         }
     }
 
-    let removed_count = existing_index.len() - seen_existing.len();
+    let mut removed_file_ids = HashSet::new();
+    let mut removed_filenames = Vec::new();
+    for entry in existing_index {
+        if !seen_filenames.contains(entry.filename.as_str()) {
+            removed_file_ids.insert(entry.file_id.clone());
+            removed_filenames.push(entry.filename.clone());
+        }
+    }
+    let removed_count = removed_filenames.len();
 
     FileClassification {
         needs_embedding,
         file_id_map,
         unchanged_file_ids,
         removed_count,
+        removed_file_ids,
+        removed_filenames,
     }
 }
 
@@ -163,7 +315,9 @@ pub async fn run(
     set_revision: Option<&str>,
     set_chunk_size: Option<usize>,
     force: bool,
+    verbose: bool,
 ) -> anyhow::Result<BuildResult> {
+    let start = Instant::now();
     let config_path = path.join("mdvs.toml");
 
     // Read config and fill missing build sections
@@ -295,10 +449,15 @@ pub async fn run(
 
     let full_rebuild = force || !backend.exists();
 
+    // Track per-file chunk counts for result
+    let mut embedded_details: Vec<BuildFileDetail> = Vec::new();
+    let mut removed_details: Vec<BuildFileDetail> = Vec::new();
+    let mut chunks_removed: usize = 0;
+
     let (file_rows, chunk_rows, files_embedded, files_unchanged, files_removed) = if full_rebuild {
         // === FULL REBUILD ===
         info!(model = %embedding.name, "loading model");
-        let t = std::time::Instant::now();
+        let t = Instant::now();
         let model_config = ModelConfig::try_from(embedding)?;
         let embedder = Embedder::load(&model_config);
         info!(elapsed_ms = t.elapsed().as_millis() as u64, "model loaded");
@@ -315,12 +474,16 @@ pub async fn run(
         let mut chunk_rows = Vec::new();
 
         {
-            let t = std::time::Instant::now();
+            let t = Instant::now();
             let _span = info_span!("embed", files = scanned.files.len()).entered();
             for file in &scanned.files {
                 let file_id = uuid::Uuid::new_v4().to_string();
                 let (fr, crs) =
                     embed_file(&file_id, file, max_chunk_size, built_at, &embedder).await;
+                embedded_details.push(BuildFileDetail {
+                    filename: file.path.display().to_string(),
+                    chunks: crs.len(),
+                });
                 file_rows.push(fr);
                 chunk_rows.extend(crs);
             }
@@ -362,8 +525,34 @@ pub async fn run(
             })
             .collect();
 
-        // Retain existing chunks for unchanged files
+        // Count removed chunks and build removed file details
         let existing_chunks = backend.read_chunk_rows()?;
+        {
+            // Count chunks per removed file
+            let mut removed_chunk_counts: HashMap<&str, usize> = HashMap::new();
+            for c in &existing_chunks {
+                if classification.removed_file_ids.contains(&c.file_id) {
+                    *removed_chunk_counts.entry(c.file_id.as_str()).or_default() += 1;
+                }
+            }
+            chunks_removed = removed_chunk_counts.values().sum();
+
+            // Build removed file details (map file_id back to filename)
+            let filename_to_id: HashMap<&str, &str> = existing_index
+                .iter()
+                .map(|e| (e.filename.as_str(), e.file_id.as_str()))
+                .collect();
+            for filename in &classification.removed_filenames {
+                let file_id = filename_to_id.get(filename.as_str()).copied().unwrap_or("");
+                let chunk_count = removed_chunk_counts.get(file_id).copied().unwrap_or(0);
+                removed_details.push(BuildFileDetail {
+                    filename: filename.clone(),
+                    chunks: chunk_count,
+                });
+            }
+        }
+
+        // Retain existing chunks for unchanged files
         let mut chunk_rows: Vec<ChunkRow> = existing_chunks
             .into_iter()
             .filter(|c| classification.unchanged_file_ids.contains(&c.file_id))
@@ -371,7 +560,7 @@ pub async fn run(
 
         if !classification.needs_embedding.is_empty() {
             info!(model = %embedding.name, "loading model");
-            let t = std::time::Instant::now();
+            let t = Instant::now();
             let model_config = ModelConfig::try_from(embedding)?;
             let embedder = Embedder::load(&model_config);
             info!(elapsed_ms = t.elapsed().as_millis() as u64, "model loaded");
@@ -385,7 +574,7 @@ pub async fn run(
             }
 
             {
-                let t = std::time::Instant::now();
+                let t = Instant::now();
                 let _span =
                     info_span!("embed", files = classification.needs_embedding.len()).entered();
                 for fte in &classification.needs_embedding {
@@ -397,6 +586,10 @@ pub async fn run(
                         &embedder,
                     )
                     .await;
+                    embedded_details.push(BuildFileDetail {
+                        filename: fte.scanned.path.display().to_string(),
+                        chunks: crs.len(),
+                    });
                     chunk_rows.extend(crs);
                 }
                 info!(
@@ -422,7 +615,7 @@ pub async fn run(
         built_at: chrono::Utc::now().to_rfc3339(),
         internal_prefix: config.internal_prefix().to_string(),
     };
-    let t = std::time::Instant::now();
+    let t = Instant::now();
     backend.write_index(&schema_fields, &file_rows, &chunk_rows, build_meta)?;
     info!(
         files = file_rows.len(),
@@ -431,14 +624,46 @@ pub async fn run(
         "index written"
     );
 
+    let chunks_embedded: usize = embedded_details.iter().map(|d| d.chunks).sum();
+    let chunks_total = chunk_rows.len();
+    let chunks_unchanged = chunks_total - chunks_embedded;
+
     Ok(BuildResult {
         full_rebuild,
         files_total: file_rows.len(),
         files_embedded,
         files_unchanged,
         files_removed,
-        chunks_total: chunk_rows.len(),
+        chunks_total,
+        chunks_embedded,
+        chunks_unchanged,
+        chunks_removed,
         new_fields,
+        embedded_files: if verbose {
+            Some(embedded_details)
+        } else {
+            None
+        },
+        removed_files: if verbose && !removed_details.is_empty() {
+            Some(removed_details)
+        } else {
+            None
+        },
+        model: if verbose {
+            Some(embedding.name.clone())
+        } else {
+            None
+        },
+        glob: if verbose {
+            Some(config.scan.glob.clone())
+        } else {
+            None
+        },
+        elapsed_ms: if verbose {
+            Some(start.elapsed().as_millis() as u64)
+        } else {
+            None
+        },
     })
 }
 
@@ -513,7 +738,7 @@ mod tests {
     #[tokio::test]
     async fn missing_config() {
         let tmp = tempfile::tempdir().unwrap();
-        let result = run(tmp.path(), None, None, None, false).await;
+        let result = run(tmp.path(), None, None, None, false, false).await;
         assert!(result.is_err());
     }
 
@@ -540,7 +765,7 @@ mod tests {
         .unwrap();
 
         // Run build again (tests standalone rebuild)
-        let result = run(tmp.path(), None, None, None, false).await;
+        let result = run(tmp.path(), None, None, None, false, false).await;
         assert!(result.is_ok(), "build failed: {:?}", result);
 
         // Verify Parquet files exist
@@ -623,7 +848,7 @@ mod tests {
         .unwrap();
 
         // Build should fail with dimension mismatch when model loads
-        let result = run(tmp.path(), None, None, None, false).await;
+        let result = run(tmp.path(), None, None, None, false, false).await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("dimension mismatch"));
@@ -658,7 +883,7 @@ mod tests {
         assert!(config.search.is_none());
 
         // Build should fill defaults and succeed
-        let result = run(tmp.path(), None, None, None, false).await;
+        let result = run(tmp.path(), None, None, None, false, false).await;
         assert!(result.is_ok(), "build failed: {:?}", result);
 
         // Verify sections were written
@@ -699,7 +924,7 @@ mod tests {
         .unwrap();
 
         // Try to change model without --force
-        let result = run(tmp.path(), Some("other-model"), None, None, false).await;
+        let result = run(tmp.path(), Some("other-model"), None, None, false, false).await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("--force"));
@@ -726,7 +951,7 @@ mod tests {
         .await
         .unwrap();
 
-        let result = run(tmp.path(), None, None, Some(512), false).await;
+        let result = run(tmp.path(), None, None, Some(512), false, false).await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("--force"));
@@ -754,7 +979,7 @@ mod tests {
         .unwrap();
 
         // Change chunk size with --force (same model so no dimension mismatch)
-        let result = run(tmp.path(), None, None, Some(512), true).await;
+        let result = run(tmp.path(), None, None, Some(512), true, false).await;
         assert!(result.is_ok(), "build with --force failed: {:?}", result);
 
         let config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
@@ -788,14 +1013,14 @@ mod tests {
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
 
         // Build without --force should error
-        let result = run(tmp.path(), None, None, None, false).await;
+        let result = run(tmp.path(), None, None, None, false, false).await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("config changed since last build"));
         assert!(err.contains("chunk_size"));
 
         // Build with --force should succeed
-        let result = run(tmp.path(), None, None, None, true).await;
+        let result = run(tmp.path(), None, None, None, true, false).await;
         assert!(result.is_ok(), "build with --force failed: {:?}", result);
     }
 
@@ -850,7 +1075,7 @@ mod tests {
         };
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
 
-        let result = run(tmp.path(), None, None, None, false).await;
+        let result = run(tmp.path(), None, None, None, false, false).await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
@@ -918,7 +1143,7 @@ mod tests {
         };
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
 
-        let result = run(tmp.path(), None, None, None, false).await;
+        let result = run(tmp.path(), None, None, None, false, false).await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
@@ -971,7 +1196,7 @@ mod tests {
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
 
         // Build should succeed despite unknown "author" field
-        let result = run(tmp.path(), None, None, None, false).await;
+        let result = run(tmp.path(), None, None, None, false, false).await;
         assert!(
             result.is_ok(),
             "build should succeed with new fields: {:?}",
@@ -1138,7 +1363,9 @@ mod tests {
         let (files_before, chunks_before) = read_index_state(tmp.path());
 
         // Build again with no changes
-        run(tmp.path(), None, None, None, false).await.unwrap();
+        run(tmp.path(), None, None, None, false, false)
+            .await
+            .unwrap();
 
         let (files_after, chunks_after) = read_index_state(tmp.path());
 
@@ -1185,7 +1412,9 @@ mod tests {
         )
         .unwrap();
 
-        run(tmp.path(), None, None, None, false).await.unwrap();
+        run(tmp.path(), None, None, None, false, false)
+            .await
+            .unwrap();
 
         let (files_after, chunks_after) = read_index_state(tmp.path());
 
@@ -1253,7 +1482,9 @@ mod tests {
             "---\ntitle: Hello\ntags:\n  - rust\n  - code\ndraft: false\n---\n# Hello\nCompletely different body text.",
         ).unwrap();
 
-        run(tmp.path(), None, None, None, false).await.unwrap();
+        run(tmp.path(), None, None, None, false, false)
+            .await
+            .unwrap();
 
         let (files_after, chunks_after) = read_index_state(tmp.path());
 
@@ -1310,7 +1541,9 @@ mod tests {
         // Remove post2
         fs::remove_file(tmp.path().join("blog/post2.md")).unwrap();
 
-        run(tmp.path(), None, None, None, false).await.unwrap();
+        run(tmp.path(), None, None, None, false, false)
+            .await
+            .unwrap();
 
         let (files_after, chunks_after) = read_index_state(tmp.path());
 
@@ -1354,7 +1587,9 @@ mod tests {
             "---\ntitle: Hello\ntags:\n  - rust\n  - code\n  - new-tag\ndraft: false\n---\n# Hello\nBody text about Rust programming.",
         ).unwrap();
 
-        run(tmp.path(), None, None, None, false).await.unwrap();
+        run(tmp.path(), None, None, None, false, false)
+            .await
+            .unwrap();
 
         let (_, chunks_after) = read_index_state(tmp.path());
         let new_chunk_ids: HashSet<String> =
@@ -1391,7 +1626,9 @@ mod tests {
             chunks_before.iter().map(|(id, _)| id.clone()).collect();
 
         // Force rebuild — should generate all new IDs
-        run(tmp.path(), None, None, None, true).await.unwrap();
+        run(tmp.path(), None, None, None, true, false)
+            .await
+            .unwrap();
 
         let (files_after, chunks_after) = read_index_state(tmp.path());
         let new_file_ids: HashSet<String> = files_after.values().cloned().collect();
