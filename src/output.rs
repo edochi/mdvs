@@ -74,6 +74,9 @@ pub struct NewField {
     pub name: String,
     /// Number of files containing this field.
     pub files_found: usize,
+    /// Paths of files containing this field (verbose only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub files: Option<Vec<PathBuf>>,
 }
 
 /// Format a file count with correct pluralization: `"1 file"` / `"3 files"`.

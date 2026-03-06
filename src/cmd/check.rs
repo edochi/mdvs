@@ -1,15 +1,17 @@
 use crate::discover::field_type::FieldType;
 use crate::discover::scan::ScannedFiles;
 use crate::output::{
-    CommandOutput, FieldViolation, NewField, ViolatingFile, ViolationKind,
+    format_file_count, CommandOutput, FieldViolation, NewField, ViolatingFile, ViolationKind,
 };
 use crate::schema::config::MdvsToml;
 use crate::schema::shared::FieldTypeSerde;
+use crate::table::{style_compact, style_record, Builder};
 use globset::Glob;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::time::Instant;
 use tracing::{info, instrument};
 
 /// Result of the `check` command: validation violations and unknown fields.
@@ -21,6 +23,12 @@ pub struct CheckResult {
     pub field_violations: Vec<FieldViolation>,
     /// Fields found in frontmatter but not defined in `mdvs.toml`.
     pub new_fields: Vec<NewField>,
+    /// Scan glob pattern (verbose only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub glob: Option<String>,
+    /// Wall-clock time for the check operation in milliseconds (verbose only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub elapsed_ms: Option<u64>,
 }
 
 impl CheckResult {
@@ -31,56 +39,122 @@ impl CheckResult {
 }
 
 impl CommandOutput for CheckResult {
-    fn format_text(&self, _verbose: bool) -> String {
+    fn format_text(&self, verbose: bool) -> String {
         let mut out = String::new();
 
-        if !self.has_violations() && self.new_fields.is_empty() {
-            out.push_str(&format!(
-                "Checked {} files — no violations\n",
-                self.files_checked
-            ));
-            return out;
-        }
-
-        if self.has_violations() {
-            for violation in &self.field_violations {
-                out.push_str(&format!("{}: {}\n", violation.field, violation.rule));
-                let label = match violation.kind {
-                    ViolationKind::MissingRequired => "missing",
-                    ViolationKind::WrongType => "wrong type",
-                    ViolationKind::Disallowed => "disallowed",
-                };
-                let file_parts: Vec<String> = violation
-                    .files
-                    .iter()
-                    .map(|f| match &f.detail {
-                        Some(d) => format!("{} ({d})", f.path.display()),
-                        None => f.path.display().to_string(),
-                    })
-                    .collect();
-                out.push_str(&format!("  {label}: {}\n", file_parts.join(", ")));
-                out.push('\n');
-            }
-
-            out.push_str(&format!(
-                "Checked {} files — {} field violation(s)\n",
-                self.files_checked,
-                self.field_violations.len(),
-            ));
+        // One-liner
+        let violations_part = if self.has_violations() {
+            format!("{} violation(s)", self.field_violations.len())
         } else {
-            out.push_str(&format!(
-                "Checked {} files — no violations\n",
-                self.files_checked
-            ));
+            "no violations".to_string()
+        };
+        let new_fields_part = if self.new_fields.is_empty() {
+            String::new()
+        } else {
+            format!(", {} new field(s)", self.new_fields.len())
+        };
+        out.push_str(&format!(
+            "Checked {} files — {violations_part}{new_fields_part}\n",
+            self.files_checked
+        ));
+
+        // Violations table
+        if self.has_violations() {
+            out.push('\n');
+            if verbose {
+                for v in &self.field_violations {
+                    let mut builder = Builder::default();
+                    let kind_str = match v.kind {
+                        ViolationKind::MissingRequired => "MissingRequired",
+                        ViolationKind::WrongType => "WrongType",
+                        ViolationKind::Disallowed => "Disallowed",
+                    };
+                    builder.push_record([
+                        format!("\"{}\"", v.field),
+                        kind_str.to_string(),
+                        format_file_count(v.files.len()),
+                    ]);
+                    let detail: String = v
+                        .files
+                        .iter()
+                        .map(|f| match &f.detail {
+                            Some(d) => format!("  - \"{}\" ({d})", f.path.display()),
+                            None => format!("  - \"{}\"", f.path.display()),
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    builder.push_record([detail, String::new(), String::new()]);
+                    let mut table = builder.build();
+                    style_record(&mut table, 3);
+                    out.push_str(&format!("{table}\n"));
+                }
+            } else {
+                let mut builder = Builder::default();
+                for v in &self.field_violations {
+                    let kind_str = match v.kind {
+                        ViolationKind::MissingRequired => "MissingRequired",
+                        ViolationKind::WrongType => "WrongType",
+                        ViolationKind::Disallowed => "Disallowed",
+                    };
+                    builder.push_record([
+                        format!("\"{}\"", v.field),
+                        kind_str.to_string(),
+                        format_file_count(v.files.len()),
+                    ]);
+                }
+                let mut table = builder.build();
+                style_compact(&mut table);
+                out.push_str(&format!("{table}\n"));
+            }
         }
 
+        // New fields table
         if !self.new_fields.is_empty() {
-            out.push_str("\nNew fields (not in mdvs.toml):\n");
-            for nf in &self.new_fields {
-                let word = if nf.files_found == 1 { "file" } else { "files" };
-                out.push_str(&format!("  {} ({} {word})\n", nf.name, nf.files_found));
+            out.push('\n');
+            if verbose {
+                for nf in &self.new_fields {
+                    let mut builder = Builder::default();
+                    builder.push_record([
+                        format!("\"{}\"", nf.name),
+                        "new".to_string(),
+                        format_file_count(nf.files_found),
+                    ]);
+                    let detail = match &nf.files {
+                        Some(files) => files
+                            .iter()
+                            .map(|p| format!("  - \"{}\"", p.display()))
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                        None => String::new(),
+                    };
+                    builder.push_record([detail, String::new(), String::new()]);
+                    let mut table = builder.build();
+                    style_record(&mut table, 3);
+                    out.push_str(&format!("{table}\n"));
+                }
+            } else {
+                let mut builder = Builder::default();
+                for nf in &self.new_fields {
+                    builder.push_record([
+                        format!("\"{}\"", nf.name),
+                        "new".to_string(),
+                        format_file_count(nf.files_found),
+                    ]);
+                }
+                let mut table = builder.build();
+                style_compact(&mut table);
+                out.push_str(&format!("{table}\n"));
             }
-            out.push_str("Run 'mdvs update' to incorporate new fields.\n");
+        }
+
+        // Verbose footer
+        if verbose {
+            if let (Some(glob), Some(ms)) = (&self.glob, self.elapsed_ms) {
+                out.push_str(&format!(
+                    "\n{} | glob: \"{glob}\" | {ms}ms\n",
+                    format_file_count(self.files_checked)
+                ));
+            }
         }
 
         out
@@ -89,15 +163,25 @@ impl CommandOutput for CheckResult {
 
 /// Read config and scan files, then validate frontmatter against the schema.
 #[instrument(name = "check", skip_all)]
-pub fn run(path: &Path) -> anyhow::Result<CheckResult> {
+pub fn run(path: &Path, verbose: bool) -> anyhow::Result<CheckResult> {
+    let start = Instant::now();
     let config = MdvsToml::read(&path.join("mdvs.toml"))?;
     let scanned = ScannedFiles::scan(path, &config.scan);
-    validate(&scanned, &config)
+    let mut result = validate(&scanned, &config, verbose)?;
+    if verbose {
+        result.glob = Some(config.scan.glob.clone());
+        result.elapsed_ms = Some(start.elapsed().as_millis() as u64);
+    }
+    Ok(result)
 }
 
 /// Validate scanned files against the schema in `mdvs.toml`. Reusable core called by both `check` and `build`.
 #[instrument(name = "validate", skip_all)]
-pub fn validate(scanned: &ScannedFiles, config: &MdvsToml) -> anyhow::Result<CheckResult> {
+pub fn validate(
+    scanned: &ScannedFiles,
+    config: &MdvsToml,
+    verbose: bool,
+) -> anyhow::Result<CheckResult> {
     info!(files = scanned.files.len(), "validating frontmatter");
 
     // Build lookups
@@ -112,7 +196,7 @@ pub fn validate(scanned: &ScannedFiles, config: &MdvsToml) -> anyhow::Result<Che
     // Accumulate violations keyed by (field_name, kind_tag, rule)
     // kind_tag is a string so it can be a HashMap key
     let mut violations: HashMap<(String, String, String), Vec<ViolatingFile>> = HashMap::new();
-    let mut new_field_counts: BTreeMap<String, usize> = BTreeMap::new();
+    let mut new_field_paths: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
 
     // Check each file's frontmatter fields
     for file in &scanned.files {
@@ -158,7 +242,10 @@ pub fn validate(scanned: &ScannedFiles, config: &MdvsToml) -> anyhow::Result<Che
                     }
                 } else {
                     // New field
-                    *new_field_counts.entry(field_name.clone()).or_insert(0) += 1;
+                    new_field_paths
+                        .entry(field_name.clone())
+                        .or_default()
+                        .push(file.path.clone());
                 }
             }
         }
@@ -177,7 +264,8 @@ pub fn validate(scanned: &ScannedFiles, config: &MdvsToml) -> anyhow::Result<Che
                 continue;
             }
 
-            let has_field = file.data
+            let has_field = file
+                .data
                 .as_ref()
                 .and_then(|v| v.as_object())
                 .and_then(|map| map.get(&toml_field.name))
@@ -215,9 +303,16 @@ pub fn validate(scanned: &ScannedFiles, config: &MdvsToml) -> anyhow::Result<Che
     field_violations.sort_by(|a, b| a.field.cmp(&b.field));
 
     // Convert new fields
-    let new_fields: Vec<NewField> = new_field_counts
+    let new_fields: Vec<NewField> = new_field_paths
         .into_iter()
-        .map(|(name, files_found)| NewField { name, files_found })
+        .map(|(name, paths)| {
+            let files_found = paths.len();
+            NewField {
+                name,
+                files_found,
+                files: if verbose { Some(paths) } else { None },
+            }
+        })
         .collect();
 
     info!(violations = field_violations.len(), "validation complete");
@@ -226,6 +321,8 @@ pub fn validate(scanned: &ScannedFiles, config: &MdvsToml) -> anyhow::Result<Che
         files_checked: scanned.files.len(),
         field_violations,
         new_fields,
+        glob: None,
+        elapsed_ms: None,
     })
 }
 
@@ -340,7 +437,7 @@ mod tests {
             vec![],
         );
 
-        let result = run(tmp.path()).unwrap();
+        let result = run(tmp.path(), false).unwrap();
 
         assert!(!result.has_violations());
         assert!(result.new_fields.is_empty());
@@ -370,7 +467,7 @@ mod tests {
             vec![],
         );
 
-        let result = run(tmp.path()).unwrap();
+        let result = run(tmp.path(), false).unwrap();
 
         assert!(result.has_violations());
         let v = &result.field_violations[0];
@@ -399,7 +496,7 @@ mod tests {
             vec![],
         );
 
-        let result = run(tmp.path()).unwrap();
+        let result = run(tmp.path(), false).unwrap();
 
         assert!(result.has_violations());
         let v = &result.field_violations[0];
@@ -431,7 +528,7 @@ mod tests {
             vec![],
         );
 
-        let result = run(tmp.path()).unwrap();
+        let result = run(tmp.path(), false).unwrap();
 
         assert!(!result.has_violations());
     }
@@ -460,7 +557,7 @@ mod tests {
             vec![],
         );
 
-        let result = run(tmp.path()).unwrap();
+        let result = run(tmp.path(), false).unwrap();
 
         assert!(result.has_violations());
         let v = &result.field_violations[0];
@@ -477,7 +574,7 @@ mod tests {
         // Only declare title — tags and draft are new
         write_toml(tmp.path(), vec![string_field("title")], vec![]);
 
-        let result = run(tmp.path()).unwrap();
+        let result = run(tmp.path(), false).unwrap();
 
         assert!(!result.has_violations());
         assert_eq!(result.new_fields.len(), 2);
@@ -515,7 +612,7 @@ mod tests {
 
         write_toml(tmp.path(), vec![string_field("field")], vec![]);
 
-        let result = run(tmp.path()).unwrap();
+        let result = run(tmp.path(), false).unwrap();
 
         assert!(!result.has_violations());
         assert_eq!(result.files_checked, 4);
@@ -557,7 +654,7 @@ mod tests {
         };
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
 
-        let result = run(tmp.path()).unwrap();
+        let result = run(tmp.path(), false).unwrap();
 
         // Bare files missing required fields are violations
         assert!(result.has_violations());
@@ -575,7 +672,7 @@ mod tests {
             vec!["draft".into(), "tags".into()],
         );
 
-        let result = run(tmp.path()).unwrap();
+        let result = run(tmp.path(), false).unwrap();
 
         assert!(!result.has_violations());
         assert!(result.new_fields.is_empty()); // draft and tags are ignored, not new
@@ -630,7 +727,7 @@ mod tests {
             vec![],
         );
 
-        let result = run(tmp.path()).unwrap();
+        let result = run(tmp.path(), false).unwrap();
 
         assert!(result.has_violations());
         // Should have: draft wrong type, tags missing required, draft disallowed

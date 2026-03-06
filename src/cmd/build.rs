@@ -263,7 +263,7 @@ pub async fn run(
     );
 
     // Validate frontmatter against schema (abort on violations)
-    let check_result = crate::cmd::check::validate(&scanned, &config)?;
+    let check_result = crate::cmd::check::validate(&scanned, &config, false)?;
     if check_result.has_violations() {
         let report = crate::output::CommandOutput::format_text(&check_result, false);
         anyhow::bail!("{report}build aborted due to validation errors");
