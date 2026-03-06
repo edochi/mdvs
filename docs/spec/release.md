@@ -140,7 +140,7 @@ Shows what the next version would be without doing anything. Review with the use
 | `cog bump --minor` | 0.1.0 → 0.2.0 | New features |
 | `cog bump --major` | 0.1.0 → 1.0.0 | Breaking changes |
 | `cog bump --auto` | (auto-detected) | Let commit types decide the level |
-| `cog bump --pre rc` | 0.1.0 → 0.1.1-rc.1 | Prerelease / testing |
+| `cog bump --minor --pre rc` | 0.1.0 → 0.1.0-rc | Prerelease / testing |
 
 Each command:
 1. Bumps version in `Cargo.toml`

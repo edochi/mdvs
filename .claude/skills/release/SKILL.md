@@ -64,7 +64,7 @@ The tag push triggers `.github/workflows/release.yml`, which builds binaries for
 | `cog bump --patch` | 0.1.0 → 0.1.1 | Bug fixes |
 | `cog bump --minor` | 0.1.0 → 0.2.0 | New features |
 | `cog bump --major` | 0.1.0 → 1.0.0 | Breaking changes |
-| `cog bump --pre rc` | 0.1.0 → 0.1.1-rc.1 | Prerelease / testing |
+| `cog bump --minor --pre rc` | 0.1.0 → 0.1.0-rc | Prerelease / testing |
 
 ### After pushing
 
