@@ -1,0 +1,19 @@
+from_latest_tag = true
+ignore_merge_commits = false
+branch_whitelist = []
+tag_prefix = "v"
+
+pre_bump_hooks = []
+post_bump_hooks = []
+
+[changelog]
+path = "CHANGELOG.md"
+remote = "github.com"
+owner = "edochi"
+repository = "mdvs"
+
+[git_hooks.commit-msg]
+script = """#!/bin/sh
+set -e
+cog verify --file $1
+"""
