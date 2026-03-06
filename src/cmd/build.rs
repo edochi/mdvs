@@ -534,6 +534,7 @@ mod tests {
             None,
             true,
             false, // skip_gitignore
+            false, // verbose
         )
         .await
         .unwrap();
@@ -597,6 +598,7 @@ mod tests {
             None,
             true,
             false, // skip_gitignore
+            false, // verbose
         )
         .await
         .unwrap();
@@ -644,6 +646,7 @@ mod tests {
             None,
             false, // no auto_build
             false,
+            false, // verbose
         )
         .await
         .unwrap();
@@ -690,6 +693,7 @@ mod tests {
             None,
             true,
             false,
+            false, // verbose
         )
         .await
         .unwrap();
@@ -717,6 +721,7 @@ mod tests {
             None,
             true,
             false,
+            false, // verbose
         )
         .await
         .unwrap();
@@ -743,6 +748,7 @@ mod tests {
             None,
             true,
             false,
+            false, // verbose
         )
         .await
         .unwrap();
@@ -771,6 +777,7 @@ mod tests {
             None,
             true,
             false,
+            false, // verbose
         )
         .await
         .unwrap();
@@ -1123,6 +1130,7 @@ mod tests {
             None,
             true,
             false,
+            false, // verbose
         )
         .await
         .unwrap();
@@ -1164,6 +1172,7 @@ mod tests {
             None,
             true,
             false,
+            false, // verbose
         )
         .await
         .unwrap();
@@ -1217,6 +1226,7 @@ mod tests {
             None,
             true,
             false,
+            false, // verbose
         )
         .await
         .unwrap();
@@ -1289,6 +1299,7 @@ mod tests {
             None,
             true,
             false,
+            false, // verbose
         )
         .await
         .unwrap();
@@ -1328,6 +1339,7 @@ mod tests {
             None,
             true,
             false,
+            false, // verbose
         )
         .await
         .unwrap();
@@ -1368,6 +1380,7 @@ mod tests {
             None,
             true,
             false,
+            false, // verbose
         )
         .await
         .unwrap();

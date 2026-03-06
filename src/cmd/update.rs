@@ -319,6 +319,7 @@ pub async fn run(
                 } else {
                     None
                 },
+                required: None,
             });
             new_fields.push(toml_field);
         }
@@ -416,6 +417,7 @@ mod tests {
             dir, None, None, "**", false, false, true, // ignore bare files
             None, false, // no auto_build
             false, // skip_gitignore
+            false, // verbose
         )
         .await
         .unwrap();
@@ -645,6 +647,7 @@ mod tests {
             None,
             false, // no auto_build for init
             false, // skip_gitignore
+            false, // verbose
         )
         .await
         .unwrap();
@@ -696,6 +699,7 @@ mod tests {
             None,
             false, // no auto_build
             false,
+            false, // verbose
         )
         .await
         .unwrap();

@@ -2,11 +2,13 @@ use crate::cmd::build::BuildResult;
 use crate::discover::infer::InferredSchema;
 use crate::discover::scan::ScannedFiles;
 use crate::index::storage::check_reserved_names;
-use crate::output::{CommandOutput, DiscoveredField};
+use crate::output::{format_file_count, CommandOutput, DiscoveredField};
 use crate::schema::config::MdvsToml;
 use crate::schema::shared::{FieldTypeSerde, ScanConfig};
+use crate::table::{style_compact, style_record, Builder};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 use tracing::{info, instrument};
 
 /// Result of the `init` command: discovered fields and optional build output.
@@ -25,43 +27,74 @@ pub struct InitResult {
     /// Build result, if a build was triggered.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub build_result: Option<BuildResult>,
+    /// Scan glob pattern (verbose only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub glob: Option<String>,
+    /// Wall-clock time for the init operation in milliseconds (verbose only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub elapsed_ms: Option<u64>,
 }
 
 impl CommandOutput for InitResult {
-    fn format_text(&self, _verbose: bool) -> String {
+    fn format_text(&self, verbose: bool) -> String {
         let mut out = String::new();
 
-        out.push_str(&format!("{} files scanned\n", self.files_scanned));
-
-        if self.fields.is_empty() {
-            out.push_str("No frontmatter fields found.\n");
+        // One-liner
+        let field_summary = if self.fields.is_empty() {
+            "no fields found".to_string()
         } else {
-            let name_width = self
-                .fields
-                .iter()
-                .map(|f| f.name.len())
-                .max()
-                .unwrap()
-                .max(5);
-            let type_width = self
-                .fields
-                .iter()
-                .map(|f| f.field_type.len())
-                .max()
-                .unwrap()
-                .max(4);
+            format!("{} field(s)", self.fields.len())
+        };
+        let dry_run_suffix = if self.dry_run { " (dry run)" } else { "" };
+        out.push_str(&format!(
+            "Initialized {} — {field_summary}{dry_run_suffix}\n",
+            format_file_count(self.files_scanned)
+        ));
 
+        if !self.fields.is_empty() {
             out.push('\n');
-            out.push_str(&format!(
-                " {:<name_width$}  {:<type_width$}  Count\n",
-                "Field", "Type",
-            ));
-            out.push_str(&format!(" {}\n", "─".repeat(name_width + type_width + 10)));
-            for field in &self.fields {
-                out.push_str(&format!(
-                    " {:<name_width$}  {:<type_width$}  {}/{}\n",
-                    field.name, field.field_type, field.files_found, field.total_files,
-                ));
+            if verbose {
+                // Record tables per field
+                for field in &self.fields {
+                    let mut builder = Builder::default();
+                    builder.push_record([
+                        format!("\"{}\"", field.name),
+                        field.field_type.clone(),
+                        format!("{}/{}", field.files_found, field.total_files),
+                    ]);
+                    let mut detail_lines = Vec::new();
+                    if let Some(ref req) = field.required {
+                        if !req.is_empty() {
+                            detail_lines.push("  required:".to_string());
+                            for g in req {
+                                detail_lines.push(format!("    - \"{g}\""));
+                            }
+                        }
+                    }
+                    if let Some(ref allowed) = field.allowed {
+                        detail_lines.push("  allowed:".to_string());
+                        for g in allowed {
+                            detail_lines.push(format!("    - \"{g}\""));
+                        }
+                    }
+                    builder.push_record([detail_lines.join("\n"), String::new(), String::new()]);
+                    let mut table = builder.build();
+                    style_record(&mut table, 3);
+                    out.push_str(&format!("{table}\n"));
+                }
+            } else {
+                // Compact table
+                let mut builder = Builder::default();
+                for field in &self.fields {
+                    builder.push_record([
+                        format!("\"{}\"", field.name),
+                        field.field_type.clone(),
+                        format!("{}/{}", field.files_found, field.total_files),
+                    ]);
+                }
+                let mut table = builder.build();
+                style_compact(&mut table);
+                out.push_str(&format!("{table}\n"));
             }
         }
 
@@ -77,9 +110,19 @@ impl CommandOutput for InitResult {
             ));
         }
 
+        // Verbose footer
+        if verbose {
+            if let (Some(glob), Some(ms)) = (&self.glob, self.elapsed_ms) {
+                out.push_str(&format!(
+                    "\n{} | glob: \"{glob}\" | {ms}ms\n",
+                    format_file_count(self.files_scanned)
+                ));
+            }
+        }
+
         if let Some(ref br) = self.build_result {
             out.push('\n');
-            out.push_str(&br.format_text(false));
+            out.push_str(&br.format_text(verbose));
         }
 
         out
@@ -103,7 +146,9 @@ pub async fn run(
     chunk_size: Option<usize>,
     auto_build: bool,
     skip_gitignore: bool,
+    verbose: bool,
 ) -> anyhow::Result<InitResult> {
+    let start = Instant::now();
     info!(path = %path.display(), "initializing");
 
     anyhow::ensure!(path.is_dir(), "'{}' is not a directory", path.display());
@@ -159,15 +204,33 @@ pub async fn run(
                 field_type: FieldTypeSerde::from(&f.field_type).to_string(),
                 files_found: f.files.len(),
                 total_files,
-                allowed: None,
+                allowed: if verbose {
+                    Some(f.allowed.clone())
+                } else {
+                    None
+                },
+                required: if verbose {
+                    Some(f.required.clone())
+                } else {
+                    None
+                },
             })
             .collect(),
         auto_build,
         dry_run,
         build_result: None,
+        glob: if verbose {
+            Some(glob.to_string())
+        } else {
+            None
+        },
+        elapsed_ms: None,
     };
 
     if dry_run {
+        if verbose {
+            result.elapsed_ms = Some(start.elapsed().as_millis() as u64);
+        }
         return Ok(result);
     }
 
@@ -192,6 +255,10 @@ pub async fn run(
 
     if auto_build {
         result.build_result = Some(crate::cmd::build::run(path, None, None, None, false).await?);
+    }
+
+    if verbose {
+        result.elapsed_ms = Some(start.elapsed().as_millis() as u64);
     }
 
     Ok(result)
@@ -237,6 +304,7 @@ mod tests {
             None,
             true,  // auto_build
             false, // skip_gitignore
+            false, // verbose
         )
         .await;
 
@@ -262,6 +330,7 @@ mod tests {
             None,
             false, // no auto_build
             false, // skip_gitignore
+            false, // verbose
         )
         .await
         .unwrap();
@@ -295,6 +364,7 @@ mod tests {
             None,
             true,
             false, // skip_gitignore
+            false, // verbose
         )
         .await;
 
@@ -322,6 +392,7 @@ mod tests {
             None,
             true,
             false, // skip_gitignore
+            false, // verbose
         )
         .await;
 
@@ -344,6 +415,7 @@ mod tests {
             None,
             true,
             false, // skip_gitignore
+            false, // verbose
         )
         .await;
 
@@ -368,6 +440,7 @@ mod tests {
             None,
             false, // no auto_build
             false, // skip_gitignore
+            false, // verbose
         )
         .await;
 
@@ -392,6 +465,7 @@ mod tests {
             None,
             false,
             false, // skip_gitignore
+            false, // verbose
         )
         .await;
 
@@ -416,6 +490,7 @@ mod tests {
             Some(512),
             false,
             false, // skip_gitignore
+            false, // verbose
         )
         .await;
 
@@ -440,6 +515,7 @@ mod tests {
             None,
             false, // no auto_build
             false, // skip_gitignore
+            false, // verbose
         )
         .await
         .unwrap();
@@ -473,6 +549,7 @@ mod tests {
             None,
             true,  // auto_build
             false, // skip_gitignore
+            false, // verbose
         )
         .await;
 

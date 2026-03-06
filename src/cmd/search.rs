@@ -245,6 +245,7 @@ mod tests {
             None,
             true,
             false,
+            false, // verbose
         )
         .await
         .unwrap();

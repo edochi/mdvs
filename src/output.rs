@@ -24,6 +24,9 @@ pub struct DiscoveredField {
     /// Glob patterns where this field appears (verbose only).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub allowed: Option<Vec<String>>,
+    /// Glob patterns where this field is required in every file (verbose only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub required: Option<Vec<String>>,
 }
 
 /// A field whose inferred type changed between the previous and current scan.

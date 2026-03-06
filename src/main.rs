@@ -182,6 +182,7 @@ async fn main() -> anyhow::Result<()> {
                 chunk_size,
                 !suppress_auto_build,
                 skip_gitignore,
+                cli.verbose,
             )
             .await?;
             result.print(&cli.output, cli.verbose);
