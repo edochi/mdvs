@@ -50,3 +50,4 @@
 | [0046](TODO-0046.md) | Homebrew tap via cargo-dist | todo | medium | 2026-03-06 |
 | [0047](TODO-0047.md) | npm binary wrapper via cargo-dist | todo | medium | 2026-03-06 |
 | [0048](TODO-0048.md) | README install section update | todo | medium | 2026-03-06 |
+| [0049](TODO-0049.md) | GitHub Actions CI workflow | done | high | 2026-03-06 |

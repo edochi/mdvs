@@ -1,0 +1,3 @@
+publish = false
+tag-prefix = "v"
+push-remote = "origin"
