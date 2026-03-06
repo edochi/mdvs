@@ -31,7 +31,7 @@
 | [0027](TODO-0027.md) | Prefix internal parquet columns to avoid frontmatter collisions | done | medium | 2026-03-03 |
 | [0028](TODO-0028.md) | Bare field names in --where clauses | done | medium | 2026-03-03 |
 | [0029](TODO-0029.md) | User documentation site with mdBook | todo | medium | 2026-03-03 |
-| [0030](TODO-0030.md) | Homebrew tap and prebuilt binaries | todo | medium | 2026-03-03 |
+| [0030](TODO-0030.md) | Homebrew tap and prebuilt binaries | superseded | medium | 2026-03-03 |
 | [0031](TODO-0031.md) | Example vault repository | todo | medium | 2026-03-04 |
 | [0032](TODO-0032.md) | Fix verbose tracing output — show timing and useful info | done | high | 2026-03-04 |
 | [0033](TODO-0033.md) | Unified output format (umbrella) | done | high | 2026-03-04 |
@@ -45,4 +45,8 @@
 | [0041](TODO-0041.md) | Rewrite update command output | done | high | 2026-03-05 |
 | [0042](TODO-0042.md) | Rewrite info command output | done | high | 2026-03-05 |
 | [0043](TODO-0043.md) | Fix tracing levels — distinct debug/trace events with elapsed times | todo | medium | 2026-03-05 |
-| [0044](TODO-0044.md) | Final distribution readiness and cargo-dist setup | todo | high | 2026-03-06 |
+| [0044](TODO-0044.md) | Cargo.toml metadata and crate optimization | todo | high | 2026-03-06 |
+| [0045](TODO-0045.md) | cargo-dist initialization and release workflow | todo | high | 2026-03-06 |
+| [0046](TODO-0046.md) | Homebrew tap via cargo-dist | todo | medium | 2026-03-06 |
+| [0047](TODO-0047.md) | npm binary wrapper via cargo-dist | todo | medium | 2026-03-06 |
+| [0048](TODO-0048.md) | README install section update | todo | medium | 2026-03-06 |
