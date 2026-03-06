@@ -45,7 +45,7 @@
 | [0041](TODO-0041.md) | Rewrite update command output | done | high | 2026-03-05 |
 | [0042](TODO-0042.md) | Rewrite info command output | done | high | 2026-03-05 |
 | [0043](TODO-0043.md) | Fix tracing levels — distinct debug/trace events with elapsed times | todo | medium | 2026-03-05 |
-| [0044](TODO-0044.md) | Cargo.toml metadata and crate optimization | todo | high | 2026-03-06 |
+| [0044](TODO-0044.md) | Cargo.toml metadata and crate optimization | done | high | 2026-03-06 |
 | [0045](TODO-0045.md) | cargo-dist initialization and release workflow | todo | high | 2026-03-06 |
 | [0046](TODO-0046.md) | Homebrew tap via cargo-dist | todo | medium | 2026-03-06 |
 | [0047](TODO-0047.md) | npm binary wrapper via cargo-dist | todo | medium | 2026-03-06 |
