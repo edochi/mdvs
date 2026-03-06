@@ -64,6 +64,10 @@ tracing-tree = "0.4"
 [dev-dependencies]
 tempfile = "3"
 
+[profile.dist]
+inherits = "release"
+lto = "thin"
+
 [package.metadata.dist]
 dist = true
 installers = ["shell", "powershell"]
