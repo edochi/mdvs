@@ -35,9 +35,9 @@
 | [0031](TODO-0031.md) | Example vault repository | todo | medium | 2026-03-04 |
 | [0032](TODO-0032.md) | Fix verbose tracing output — show timing and useful info | done | high | 2026-03-04 |
 | [0033](TODO-0033.md) | Unified output format (umbrella) | todo | high | 2026-03-04 |
-| [0034](TODO-0034.md) | Flag rework — rename human→text, add --logs, repurpose -v | todo | high | 2026-03-05 |
-| [0035](TODO-0035.md) | Add tabled + terminal_size and create table style helpers | todo | high | 2026-03-05 |
-| [0036](TODO-0036.md) | Rewrite clean command output | todo | high | 2026-03-05 |
+| [0034](TODO-0034.md) | Flag rework — rename human→text, add --logs, repurpose -v | done | high | 2026-03-05 |
+| [0035](TODO-0035.md) | Add tabled + terminal_size and create table style helpers | done | high | 2026-03-05 |
+| [0036](TODO-0036.md) | Rewrite clean command output | done | high | 2026-03-05 |
 | [0037](TODO-0037.md) | Rewrite search command output | todo | high | 2026-03-05 |
 | [0038](TODO-0038.md) | Rewrite build command output | todo | high | 2026-03-05 |
 | [0039](TODO-0039.md) | Rewrite check command output | todo | high | 2026-03-05 |
