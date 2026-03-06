@@ -5,15 +5,15 @@ use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hasher};
 
 use datafusion::arrow::array::{
-    ArrayRef, BooleanArray, FixedSizeListArray, Float32Array, Float64Array, Int32Array,
-    Int64Array, ListArray, StringArray, StructArray, TimestampMicrosecondArray,
+    ArrayRef, BooleanArray, FixedSizeListArray, Float32Array, Float64Array, Int32Array, Int64Array,
+    ListArray, StringArray, StructArray, TimestampMicrosecondArray,
 };
 use datafusion::arrow::buffer::{NullBuffer, OffsetBuffer};
 use datafusion::arrow::datatypes::{DataType, Field, Fields, Schema, TimeUnit};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
-use datafusion::parquet::arrow::ProjectionMask;
 use datafusion::parquet::arrow::ArrowWriter;
+use datafusion::parquet::arrow::ProjectionMask;
 use datafusion::parquet::basic::Compression;
 use datafusion::parquet::file::properties::WriterProperties;
 use serde_json::Value;
@@ -120,10 +120,7 @@ impl BuildMetadata {
         );
         m.insert("mdvs.glob".into(), self.glob.clone());
         m.insert("mdvs.built_at".into(), self.built_at.clone());
-        m.insert(
-            "mdvs.internal_prefix".into(),
-            self.internal_prefix.clone(),
-        );
+        m.insert("mdvs.internal_prefix".into(), self.internal_prefix.clone());
         m
     }
 
@@ -258,17 +255,22 @@ pub fn build_files_batch(
 ) -> RecordBatch {
     let file_id_arr: StringArray = files.iter().map(|f| Some(f.file_id.as_str())).collect();
     let filename_arr: StringArray = files.iter().map(|f| Some(f.filename.as_str())).collect();
-    let content_hash_arr: StringArray =
-        files.iter().map(|f| Some(f.content_hash.as_str())).collect();
-    let built_at_arr: TimestampMicrosecondArray =
-        files.iter().map(|f| Some(f.built_at)).collect();
+    let content_hash_arr: StringArray = files
+        .iter()
+        .map(|f| Some(f.content_hash.as_str()))
+        .collect();
+    let built_at_arr: TimestampMicrosecondArray = files.iter().map(|f| Some(f.built_at)).collect();
 
     let mut data_child_fields: Vec<Arc<Field>> = Vec::new();
     let mut data_child_arrays: Vec<ArrayRef> = Vec::new();
     for (name, ft) in schema_fields {
         let values: Vec<Option<&Value>> = files
             .iter()
-            .map(|f| f.frontmatter.as_ref().and_then(|obj| obj.get(name.as_str())))
+            .map(|f| {
+                f.frontmatter
+                    .as_ref()
+                    .and_then(|obj| obj.get(name.as_str()))
+            })
             .collect();
         let dt: DataType = ft.into();
         data_child_fields.push(Arc::new(Field::new(name, dt, true)));
@@ -323,7 +325,10 @@ pub fn build_chunks_batch(chunks: &[ChunkRow], dimension: i32, prefix: &str) -> 
     let start_line_arr: Int32Array = chunks.iter().map(|c| Some(c.start_line)).collect();
     let end_line_arr: Int32Array = chunks.iter().map(|c| Some(c.end_line)).collect();
 
-    let flat_values: Vec<f32> = chunks.iter().flat_map(|c| c.embedding.iter().copied()).collect();
+    let flat_values: Vec<f32> = chunks
+        .iter()
+        .flat_map(|c| c.embedding.iter().copied())
+        .collect();
     let values_arr = Float32Array::from(flat_values);
     let embedding_arr = FixedSizeListArray::new(
         Arc::new(Field::new("item", DataType::Float32, false)),
@@ -531,10 +536,7 @@ mod tests {
     fn files_parquet_roundtrip() {
         let schema_fields = vec![
             ("title".into(), FieldType::String),
-            (
-                "tags".into(),
-                FieldType::Array(Box::new(FieldType::String)),
-            ),
+            ("tags".into(), FieldType::Array(Box::new(FieldType::String))),
             ("draft".into(), FieldType::Boolean),
         ];
 
@@ -740,8 +742,7 @@ mod tests {
 
     #[test]
     fn streaming_write() {
-        let schema_fields: Vec<(String, FieldType)> =
-            vec![("title".into(), FieldType::String)];
+        let schema_fields: Vec<(String, FieldType)> = vec![("title".into(), FieldType::String)];
 
         let batch1 = build_files_batch(
             &schema_fields,
@@ -770,8 +771,7 @@ mod tests {
         let path = tmp.path().join("files_streamed.parquet");
 
         let file = File::create(&path).unwrap();
-        let mut writer =
-            ArrowWriter::try_new(file, batch1.schema(), Some(writer_props())).unwrap();
+        let mut writer = ArrowWriter::try_new(file, batch1.schema(), Some(writer_props())).unwrap();
         writer.write(&batch1).unwrap();
         writer.write(&batch2).unwrap();
         writer.close().unwrap();
@@ -799,8 +799,7 @@ mod tests {
 
     #[test]
     fn streaming_read() {
-        let schema_fields: Vec<(String, FieldType)> =
-            vec![("title".into(), FieldType::String)];
+        let schema_fields: Vec<(String, FieldType)> = vec![("title".into(), FieldType::String)];
 
         let batch1 = build_files_batch(
             &schema_fields,
@@ -829,8 +828,7 @@ mod tests {
         let path = tmp.path().join("files_stream_read.parquet");
 
         let file = File::create(&path).unwrap();
-        let mut writer =
-            ArrowWriter::try_new(file, batch1.schema(), Some(writer_props())).unwrap();
+        let mut writer = ArrowWriter::try_new(file, batch1.schema(), Some(writer_props())).unwrap();
         writer.write(&batch1).unwrap();
         writer.write(&batch2).unwrap();
         writer.close().unwrap();
@@ -854,10 +852,7 @@ mod tests {
     fn column_projection() {
         let schema_fields = vec![
             ("title".into(), FieldType::String),
-            (
-                "tags".into(),
-                FieldType::Array(Box::new(FieldType::String)),
-            ),
+            ("tags".into(), FieldType::Array(Box::new(FieldType::String))),
             ("draft".into(), FieldType::Boolean),
         ];
 
@@ -890,10 +885,8 @@ mod tests {
         let builder = ParquetRecordBatchReaderBuilder::try_new(file).unwrap();
 
         // Read only filename and content_hash (columns 1 and 3)
-        let mask = datafusion::parquet::arrow::ProjectionMask::roots(
-            builder.parquet_schema(),
-            [1, 3],
-        );
+        let mask =
+            datafusion::parquet::arrow::ProjectionMask::roots(builder.parquet_schema(), [1, 3]);
         let reader = builder.with_projection(mask).build().unwrap();
 
         let batches: Vec<RecordBatch> = reader.map(|r| r.unwrap()).collect();
@@ -935,8 +928,7 @@ mod tests {
 
     #[test]
     fn build_metadata_roundtrip() {
-        let schema_fields: Vec<(String, FieldType)> =
-            vec![("title".into(), FieldType::String)];
+        let schema_fields: Vec<(String, FieldType)> = vec![("title".into(), FieldType::String)];
         let files = vec![FileRow {
             file_id: "id-1".into(),
             filename: "a.md".into(),
@@ -955,7 +947,9 @@ mod tests {
                 name: "minishlab/potion-base-8M".into(),
                 revision: Some("abc123".into()),
             },
-            chunking: ChunkingConfig { max_chunk_size: 1024 },
+            chunking: ChunkingConfig {
+                max_chunk_size: 1024,
+            },
             glob: "**".into(),
             built_at: "2026-03-02T12:00:00+00:00".into(),
             internal_prefix: "_".into(),
@@ -969,8 +963,7 @@ mod tests {
 
     #[test]
     fn build_metadata_no_revision() {
-        let schema_fields: Vec<(String, FieldType)> =
-            vec![("title".into(), FieldType::String)];
+        let schema_fields: Vec<(String, FieldType)> = vec![("title".into(), FieldType::String)];
         let files = vec![FileRow {
             file_id: "id-1".into(),
             filename: "a.md".into(),
@@ -989,7 +982,9 @@ mod tests {
                 name: "minishlab/potion-base-8M".into(),
                 revision: None,
             },
-            chunking: ChunkingConfig { max_chunk_size: 512 },
+            chunking: ChunkingConfig {
+                max_chunk_size: 512,
+            },
             glob: "blog/**".into(),
             built_at: "2026-03-02T12:00:00+00:00".into(),
             internal_prefix: "_".into(),
@@ -1003,8 +998,7 @@ mod tests {
 
     #[test]
     fn read_metadata_missing() {
-        let schema_fields: Vec<(String, FieldType)> =
-            vec![("title".into(), FieldType::String)];
+        let schema_fields: Vec<(String, FieldType)> = vec![("title".into(), FieldType::String)];
         let files = vec![FileRow {
             file_id: "id-1".into(),
             filename: "a.md".into(),
@@ -1028,10 +1022,7 @@ mod tests {
     fn read_file_index_roundtrip() {
         let schema_fields = vec![
             ("title".into(), FieldType::String),
-            (
-                "tags".into(),
-                FieldType::Array(Box::new(FieldType::String)),
-            ),
+            ("tags".into(), FieldType::Array(Box::new(FieldType::String))),
         ];
         let files = vec![
             FileRow {

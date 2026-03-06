@@ -150,13 +150,12 @@ impl ParquetBackend {
         std::fs::create_dir_all(self.mdvs_dir())?;
 
         let files_batch = build_files_batch(schema_fields, files, &self.prefix);
-        write_parquet_with_metadata(
-            &self.files_parquet(),
-            &files_batch,
-            metadata.to_hash_map(),
-        )?;
+        write_parquet_with_metadata(&self.files_parquet(), &files_batch, metadata.to_hash_map())?;
 
-        let dimension = chunks.first().map(|c| c.embedding.len() as i32).unwrap_or(0);
+        let dimension = chunks
+            .first()
+            .map(|c| c.embedding.len() as i32)
+            .unwrap_or(0);
         let chunks_batch = build_chunks_batch(chunks, dimension, &self.prefix);
         write_parquet(&self.chunks_parquet(), &chunks_batch)?;
 
@@ -190,7 +189,10 @@ impl ParquetBackend {
         }
         let batches = read_parquet(&self.chunks_parquet())?;
         if let Some(batch) = batches.first() {
-            if let Ok(field) = batch.schema().field_with_name(&col(&self.prefix, "embedding")) {
+            if let Ok(field) = batch
+                .schema()
+                .field_with_name(&col(&self.prefix, "embedding"))
+            {
                 if let DataType::FixedSizeList(_, dim) = field.data_type() {
                     return Ok(Some(*dim));
                 }
@@ -273,8 +275,16 @@ impl ParquetBackend {
                 hits.push(SearchHit {
                     filename: filenames.value(i).to_string(),
                     score: scores.value(i),
-                    start_line: if start_lines.is_null(i) { None } else { Some(start_lines.value(i)) },
-                    end_line: if end_lines.is_null(i) { None } else { Some(end_lines.value(i)) },
+                    start_line: if start_lines.is_null(i) {
+                        None
+                    } else {
+                        Some(start_lines.value(i))
+                    },
+                    end_line: if end_lines.is_null(i) {
+                        None
+                    } else {
+                        Some(end_lines.value(i))
+                    },
                     chunk_text: None,
                 });
             }

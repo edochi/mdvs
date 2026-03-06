@@ -71,7 +71,10 @@ impl CommandOutput for InitResult {
             }
             out.push_str("(dry run, nothing written)\n");
         } else {
-            out.push_str(&format!("\nInitialized mdvs in '{}'\n", self.path.display()));
+            out.push_str(&format!(
+                "\nInitialized mdvs in '{}'\n",
+                self.path.display()
+            ));
         }
 
         if let Some(ref br) = self.build_result {
@@ -187,8 +190,7 @@ pub async fn run(
     toml_doc.write(&config_path)?;
 
     if auto_build {
-        result.build_result =
-            Some(crate::cmd::build::run(path, None, None, None, false).await?);
+        result.build_result = Some(crate::cmd::build::run(path, None, None, None, false).await?);
     }
 
     Ok(result)
@@ -215,11 +217,7 @@ mod tests {
         )
         .unwrap();
 
-        fs::write(
-            dir.join("bare.md"),
-            "# No frontmatter\nJust content.",
-        )
-        .unwrap();
+        fs::write(dir.join("bare.md"), "# No frontmatter\nJust content.").unwrap();
     }
 
     #[tokio::test]

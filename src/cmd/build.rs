@@ -43,7 +43,10 @@ impl CommandOutput for BuildResult {
         let mut out = String::new();
         for nf in &self.new_fields {
             let word = if nf.files_found == 1 { "file" } else { "files" };
-            out.push_str(&format!("  new field: {} ({} {word})\n", nf.name, nf.files_found));
+            out.push_str(&format!(
+                "  new field: {} ({} {word})\n",
+                nf.name, nf.files_found
+            ));
         }
         if !self.new_fields.is_empty() {
             out.push_str("Run 'mdvs update' to incorporate new fields.\n\n");
@@ -99,7 +102,12 @@ fn classify_files<'a>(
 ) -> FileClassification<'a> {
     let existing: HashMap<&str, (&str, &str)> = existing_index
         .iter()
-        .map(|e| (e.filename.as_str(), (e.file_id.as_str(), e.content_hash.as_str())))
+        .map(|e| {
+            (
+                e.filename.as_str(),
+                (e.file_id.as_str(), e.content_hash.as_str()),
+            )
+        })
         .collect();
 
     let mut needs_embedding = Vec::new();
@@ -316,7 +324,11 @@ pub async fn run(
                 file_rows.push(fr);
                 chunk_rows.extend(crs);
             }
-            info!(elapsed_ms = t.elapsed().as_millis() as u64, chunks = chunk_rows.len(), "embedding complete");
+            info!(
+                elapsed_ms = t.elapsed().as_millis() as u64,
+                chunks = chunk_rows.len(),
+                "embedding complete"
+            );
         }
 
         let count = scanned.files.len();
@@ -387,7 +399,10 @@ pub async fn run(
                     .await;
                     chunk_rows.extend(crs);
                 }
-                info!(elapsed_ms = t.elapsed().as_millis() as u64, "embedding complete");
+                info!(
+                    elapsed_ms = t.elapsed().as_millis() as u64,
+                    "embedding complete"
+                );
             }
         } else {
             info!("no content changes, skipping embedding");
@@ -647,7 +662,10 @@ mod tests {
         let config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
         assert_eq!(config.embedding_model.as_ref().unwrap().name, DEFAULT_MODEL);
         assert!(config.embedding_model.as_ref().unwrap().revision.is_none());
-        assert_eq!(config.chunking.as_ref().unwrap().max_chunk_size, DEFAULT_CHUNK_SIZE);
+        assert_eq!(
+            config.chunking.as_ref().unwrap().max_chunk_size,
+            DEFAULT_CHUNK_SIZE
+        );
         assert_eq!(config.search.as_ref().unwrap().default_limit, 10);
 
         // Verify index was created
@@ -817,7 +835,9 @@ mod tests {
                 name: "minishlab/potion-base-8M".into(),
                 revision: None,
             }),
-            chunking: Some(ChunkingConfig { max_chunk_size: 1024 }),
+            chunking: Some(ChunkingConfig {
+                max_chunk_size: 1024,
+            }),
             search: Some(SearchConfig { default_limit: 10 }),
             storage: None,
         };
@@ -826,7 +846,10 @@ mod tests {
         let result = run(tmp.path(), None, None, None, false).await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("validation errors"), "expected validation abort, got: {err}");
+        assert!(
+            err.contains("validation errors"),
+            "expected validation abort, got: {err}"
+        );
     }
 
     #[tokio::test]
@@ -866,7 +889,9 @@ mod tests {
                     crate::schema::config::TomlField {
                         name: "tags".into(),
                         field_type: crate::schema::shared::FieldTypeSerde::Array {
-                            array: Box::new(crate::schema::shared::FieldTypeSerde::Scalar("String".into())),
+                            array: Box::new(crate::schema::shared::FieldTypeSerde::Scalar(
+                                "String".into(),
+                            )),
                         },
                         allowed: vec!["**".into()],
                         required: vec!["blog/**".into()],
@@ -878,7 +903,9 @@ mod tests {
                 name: "minishlab/potion-base-8M".into(),
                 revision: None,
             }),
-            chunking: Some(ChunkingConfig { max_chunk_size: 1024 }),
+            chunking: Some(ChunkingConfig {
+                max_chunk_size: 1024,
+            }),
             search: Some(SearchConfig { default_limit: 10 }),
             storage: None,
         };
@@ -887,7 +914,10 @@ mod tests {
         let result = run(tmp.path(), None, None, None, false).await;
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("validation errors"), "expected validation abort, got: {err}");
+        assert!(
+            err.contains("validation errors"),
+            "expected validation abort, got: {err}"
+        );
     }
 
     #[tokio::test]
@@ -925,7 +955,9 @@ mod tests {
                 name: "minishlab/potion-base-8M".into(),
                 revision: None,
             }),
-            chunking: Some(ChunkingConfig { max_chunk_size: 1024 }),
+            chunking: Some(ChunkingConfig {
+                max_chunk_size: 1024,
+            }),
             search: Some(SearchConfig { default_limit: 10 }),
             storage: None,
         };
@@ -933,7 +965,11 @@ mod tests {
 
         // Build should succeed despite unknown "author" field
         let result = run(tmp.path(), None, None, None, false).await;
-        assert!(result.is_ok(), "build should succeed with new fields: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "build should succeed with new fields: {:?}",
+            result
+        );
 
         // Verify index was created
         assert!(tmp.path().join(".mdvs/files.parquet").exists());
@@ -959,10 +995,7 @@ mod tests {
 
     #[test]
     fn classify_all_new() {
-        let scanned = make_scanned_files(vec![
-            ("a.md", "hello"),
-            ("b.md", "world"),
-        ]);
+        let scanned = make_scanned_files(vec![("a.md", "hello"), ("b.md", "world")]);
         let existing: Vec<FileIndexEntry> = vec![];
         let c = classify_files(&scanned, &existing);
 
@@ -974,10 +1007,7 @@ mod tests {
 
     #[test]
     fn classify_all_unchanged() {
-        let scanned = make_scanned_files(vec![
-            ("a.md", "hello"),
-            ("b.md", "world"),
-        ]);
+        let scanned = make_scanned_files(vec![("a.md", "hello"), ("b.md", "world")]);
         let existing = vec![
             FileIndexEntry {
                 file_id: "f1".into(),
@@ -1034,11 +1064,19 @@ mod tests {
 
         // b.md edited — needs embedding, keeps file_id
         assert_eq!(c.needs_embedding.len(), 2); // b.md + c.md
-        let edited = c.needs_embedding.iter().find(|f| f.scanned.path.to_str() == Some("b.md")).unwrap();
+        let edited = c
+            .needs_embedding
+            .iter()
+            .find(|f| f.scanned.path.to_str() == Some("b.md"))
+            .unwrap();
         assert_eq!(edited.file_id, "f2");
 
         // c.md new — needs embedding, new UUID
-        let new = c.needs_embedding.iter().find(|f| f.scanned.path.to_str() == Some("c.md")).unwrap();
+        let new = c
+            .needs_embedding
+            .iter()
+            .find(|f| f.scanned.path.to_str() == Some("c.md"))
+            .unwrap();
         assert_ne!(new.file_id, "f1");
         assert_ne!(new.file_id, "f2");
         assert_ne!(new.file_id, "f3");
@@ -1052,7 +1090,7 @@ mod tests {
     // Incremental build integration tests
     // ========================================================================
 
-    use crate::index::storage::{read_file_index, read_chunk_rows};
+    use crate::index::storage::{read_chunk_rows, read_file_index};
 
     /// Read file_id→filename map and chunk_id→file_id map from existing parquets.
     fn read_index_state(dir: &Path) -> (HashMap<String, String>, Vec<(String, String)>) {
@@ -1075,9 +1113,19 @@ mod tests {
         create_test_vault(tmp.path());
 
         crate::cmd::init::run(
-            tmp.path(), Some("minishlab/potion-base-8M"), None, "**",
-            false, false, true, None, true, false,
-        ).await.unwrap();
+            tmp.path(),
+            Some("minishlab/potion-base-8M"),
+            None,
+            "**",
+            false,
+            false,
+            true,
+            None,
+            true,
+            false,
+        )
+        .await
+        .unwrap();
 
         let (files_before, chunks_before) = read_index_state(tmp.path());
 
@@ -1088,10 +1136,14 @@ mod tests {
 
         // file_ids preserved
         for (filename, old_id) in &files_before {
-            assert_eq!(files_after[filename], *old_id, "file_id changed for {filename}");
+            assert_eq!(
+                files_after[filename], *old_id,
+                "file_id changed for {filename}"
+            );
         }
         // chunk_ids preserved (same chunks carried forward)
-        let old_chunk_ids: HashSet<&str> = chunks_before.iter().map(|(id, _)| id.as_str()).collect();
+        let old_chunk_ids: HashSet<&str> =
+            chunks_before.iter().map(|(id, _)| id.as_str()).collect();
         let new_chunk_ids: HashSet<&str> = chunks_after.iter().map(|(id, _)| id.as_str()).collect();
         assert_eq!(old_chunk_ids, new_chunk_ids);
     }
@@ -1102,16 +1154,27 @@ mod tests {
         create_test_vault(tmp.path());
 
         crate::cmd::init::run(
-            tmp.path(), Some("minishlab/potion-base-8M"), None, "**",
-            false, false, true, None, true, false,
-        ).await.unwrap();
+            tmp.path(),
+            Some("minishlab/potion-base-8M"),
+            None,
+            "**",
+            false,
+            false,
+            true,
+            None,
+            true,
+            false,
+        )
+        .await
+        .unwrap();
 
         let (files_before, chunks_before) = read_index_state(tmp.path());
         // Add a new file
         fs::write(
             tmp.path().join("blog/post3.md"),
             "---\ntitle: Third\ntags:\n  - new\ndraft: false\n---\n# Third\nNew post content.",
-        ).unwrap();
+        )
+        .unwrap();
 
         run(tmp.path(), None, None, None, false).await.unwrap();
 
@@ -1119,7 +1182,10 @@ mod tests {
 
         // Old file_ids preserved
         for (filename, old_id) in &files_before {
-            assert_eq!(files_after[filename], *old_id, "file_id changed for {filename}");
+            assert_eq!(
+                files_after[filename], *old_id,
+                "file_id changed for {filename}"
+            );
         }
         // New file added
         assert!(files_after.contains_key("blog/post3.md"));
@@ -1141,20 +1207,32 @@ mod tests {
         create_test_vault(tmp.path());
 
         crate::cmd::init::run(
-            tmp.path(), Some("minishlab/potion-base-8M"), None, "**",
-            false, false, true, None, true, false,
-        ).await.unwrap();
+            tmp.path(),
+            Some("minishlab/potion-base-8M"),
+            None,
+            "**",
+            false,
+            false,
+            true,
+            None,
+            true,
+            false,
+        )
+        .await
+        .unwrap();
 
         let (files_before, chunks_before) = read_index_state(tmp.path());
         let post1_id = files_before["blog/post1.md"].clone();
         let post2_id = files_before["blog/post2.md"].clone();
 
         // Chunks belonging to each file
-        let post1_chunks: HashSet<String> = chunks_before.iter()
+        let post1_chunks: HashSet<String> = chunks_before
+            .iter()
             .filter(|(_, fid)| fid == &post1_id)
             .map(|(cid, _)| cid.clone())
             .collect();
-        let post2_chunks: HashSet<String> = chunks_before.iter()
+        let post2_chunks: HashSet<String> = chunks_before
+            .iter()
             .filter(|(_, fid)| fid == &post2_id)
             .map(|(cid, _)| cid.clone())
             .collect();
@@ -1181,13 +1259,17 @@ mod tests {
             );
         }
         // post1 chunks replaced (edited file — new chunk_ids)
-        let new_post1_chunks: HashSet<String> = chunks_after.iter()
+        let new_post1_chunks: HashSet<String> = chunks_after
+            .iter()
             .filter(|(_, fid)| fid == &post1_id)
             .map(|(cid, _)| cid.clone())
             .collect();
         assert!(!new_post1_chunks.is_empty());
         for old_id in &post1_chunks {
-            assert!(!new_post1_chunks.contains(old_id), "old chunk should be replaced");
+            assert!(
+                !new_post1_chunks.contains(old_id),
+                "old chunk should be replaced"
+            );
         }
     }
 
@@ -1197,9 +1279,19 @@ mod tests {
         create_test_vault(tmp.path());
 
         crate::cmd::init::run(
-            tmp.path(), Some("minishlab/potion-base-8M"), None, "**",
-            false, false, true, None, true, false,
-        ).await.unwrap();
+            tmp.path(),
+            Some("minishlab/potion-base-8M"),
+            None,
+            "**",
+            false,
+            false,
+            true,
+            None,
+            true,
+            false,
+        )
+        .await
+        .unwrap();
 
         let (files_before, _) = read_index_state(tmp.path());
         assert_eq!(files_before.len(), 2);
@@ -1226,12 +1318,23 @@ mod tests {
         create_test_vault(tmp.path());
 
         crate::cmd::init::run(
-            tmp.path(), Some("minishlab/potion-base-8M"), None, "**",
-            false, false, true, None, true, false,
-        ).await.unwrap();
+            tmp.path(),
+            Some("minishlab/potion-base-8M"),
+            None,
+            "**",
+            false,
+            false,
+            true,
+            None,
+            true,
+            false,
+        )
+        .await
+        .unwrap();
 
         let (_, chunks_before) = read_index_state(tmp.path());
-        let old_chunk_ids: HashSet<String> = chunks_before.iter().map(|(id, _)| id.clone()).collect();
+        let old_chunk_ids: HashSet<String> =
+            chunks_before.iter().map(|(id, _)| id.clone()).collect();
 
         // Change only frontmatter (add a tag), keep same body
         fs::write(
@@ -1242,7 +1345,8 @@ mod tests {
         run(tmp.path(), None, None, None, false).await.unwrap();
 
         let (_, chunks_after) = read_index_state(tmp.path());
-        let new_chunk_ids: HashSet<String> = chunks_after.iter().map(|(id, _)| id.clone()).collect();
+        let new_chunk_ids: HashSet<String> =
+            chunks_after.iter().map(|(id, _)| id.clone()).collect();
 
         // Chunks preserved — body didn't change, no re-embedding
         assert_eq!(old_chunk_ids, new_chunk_ids);
@@ -1254,23 +1358,41 @@ mod tests {
         create_test_vault(tmp.path());
 
         crate::cmd::init::run(
-            tmp.path(), Some("minishlab/potion-base-8M"), None, "**",
-            false, false, true, None, true, false,
-        ).await.unwrap();
+            tmp.path(),
+            Some("minishlab/potion-base-8M"),
+            None,
+            "**",
+            false,
+            false,
+            true,
+            None,
+            true,
+            false,
+        )
+        .await
+        .unwrap();
 
         let (files_before, chunks_before) = read_index_state(tmp.path());
         let old_file_ids: HashSet<String> = files_before.values().cloned().collect();
-        let old_chunk_ids: HashSet<String> = chunks_before.iter().map(|(id, _)| id.clone()).collect();
+        let old_chunk_ids: HashSet<String> =
+            chunks_before.iter().map(|(id, _)| id.clone()).collect();
 
         // Force rebuild — should generate all new IDs
         run(tmp.path(), None, None, None, true).await.unwrap();
 
         let (files_after, chunks_after) = read_index_state(tmp.path());
         let new_file_ids: HashSet<String> = files_after.values().cloned().collect();
-        let new_chunk_ids: HashSet<String> = chunks_after.iter().map(|(id, _)| id.clone()).collect();
+        let new_chunk_ids: HashSet<String> =
+            chunks_after.iter().map(|(id, _)| id.clone()).collect();
 
         // All IDs should be different (new UUIDs)
-        assert!(old_file_ids.is_disjoint(&new_file_ids), "force rebuild should generate new file_ids");
-        assert!(old_chunk_ids.is_disjoint(&new_chunk_ids), "force rebuild should generate new chunk_ids");
+        assert!(
+            old_file_ids.is_disjoint(&new_file_ids),
+            "force rebuild should generate new file_ids"
+        );
+        assert!(
+            old_chunk_ids.is_disjoint(&new_chunk_ids),
+            "force rebuild should generate new chunk_ids"
+        );
     }
 }

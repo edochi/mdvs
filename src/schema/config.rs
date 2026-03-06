@@ -87,9 +87,7 @@ pub struct MdvsToml {
 impl MdvsToml {
     /// Return the internal column prefix, defaulting to `"_"` when no `[storage]` section is set.
     pub fn internal_prefix(&self) -> &str {
-        self.storage
-            .as_ref()
-            .map_or("_", |s| &s.internal_prefix)
+        self.storage.as_ref().map_or("_", |s| &s.internal_prefix)
     }
 
     /// Build an `MdvsToml` from an inferred schema and the provided scan/model/chunking settings.
@@ -378,23 +376,27 @@ default_limit = 10
                 InferredField {
                     name: "title".into(),
                     field_type: FieldType::String,
-                    files: vec![
-                        PathBuf::from("blog/a.md"),
-                        PathBuf::from("notes/b.md"),
-                    ],
+                    files: vec![PathBuf::from("blog/a.md"), PathBuf::from("notes/b.md")],
                     allowed: vec!["**".into()],
                     required: vec!["**".into()],
                 },
             ],
         };
 
-        let scan = ScanConfig { glob: "**".into(), include_bare_files: false, skip_gitignore: false };
+        let scan = ScanConfig {
+            glob: "**".into(),
+            include_bare_files: false,
+            skip_gitignore: false,
+        };
         let toml_doc =
             MdvsToml::from_inferred(&schema, scan, "minishlab/potion-base-8M", None, 1024, true);
 
         assert_eq!(toml_doc.scan.glob, "**");
         assert!(!toml_doc.scan.include_bare_files);
-        assert_eq!(toml_doc.embedding_model.as_ref().unwrap().name, "minishlab/potion-base-8M");
+        assert_eq!(
+            toml_doc.embedding_model.as_ref().unwrap().name,
+            "minishlab/potion-base-8M"
+        );
         assert_eq!(toml_doc.embedding_model.as_ref().unwrap().revision, None);
         assert_eq!(toml_doc.chunking.as_ref().unwrap().max_chunk_size, 1024);
         assert_eq!(toml_doc.fields.field.len(), 3);
@@ -419,7 +421,11 @@ default_limit = 10
     #[test]
     fn from_inferred_empty() {
         let schema = InferredSchema { fields: vec![] };
-        let scan = ScanConfig { glob: "docs/**".into(), include_bare_files: true, skip_gitignore: false };
+        let scan = ScanConfig {
+            glob: "docs/**".into(),
+            include_bare_files: true,
+            skip_gitignore: false,
+        };
         let toml_doc = MdvsToml::from_inferred(
             &schema,
             scan,
@@ -440,7 +446,11 @@ default_limit = 10
     #[test]
     fn from_inferred_no_auto_build() {
         let schema = InferredSchema { fields: vec![] };
-        let scan = ScanConfig { glob: "**".into(), include_bare_files: false, skip_gitignore: false };
+        let scan = ScanConfig {
+            glob: "**".into(),
+            include_bare_files: false,
+            skip_gitignore: false,
+        };
         let toml_doc = MdvsToml::from_inferred(
             &schema,
             scan,
@@ -466,7 +476,11 @@ default_limit = 10
                 required: vec!["**".into()],
             }],
         };
-        let scan = ScanConfig { glob: "**".into(), include_bare_files: false, skip_gitignore: false };
+        let scan = ScanConfig {
+            glob: "**".into(),
+            include_bare_files: false,
+            skip_gitignore: false,
+        };
         let toml_doc =
             MdvsToml::from_inferred(&schema, scan, "minishlab/potion-base-8M", None, 1024, true);
 
@@ -492,9 +506,10 @@ default_limit = 10
             TomlField {
                 name: "meta".into(),
                 field_type: FieldTypeSerde::Object {
-                    object: BTreeMap::from([
-                        ("author".into(), FieldTypeSerde::Scalar("String".into())),
-                    ]),
+                    object: BTreeMap::from([(
+                        "author".into(),
+                        FieldTypeSerde::Scalar("String".into()),
+                    )]),
                 },
                 allowed: vec!["**".into()],
                 required: vec![],
@@ -507,9 +522,18 @@ default_limit = 10
         let content = fs::read_to_string(&path).unwrap();
 
         // Should use inline tables, not separate sections
-        assert!(content.contains(r#"type = { array = "String" }"#), "expected inline array type, got:\n{content}");
-        assert!(content.contains(r#"type = { object = { author = "String" } }"#), "expected inline object type, got:\n{content}");
-        assert!(!content.contains("[fields.field.type]"), "should not have expanded type sections");
+        assert!(
+            content.contains(r#"type = { array = "String" }"#),
+            "expected inline array type, got:\n{content}"
+        );
+        assert!(
+            content.contains(r#"type = { object = { author = "String" } }"#),
+            "expected inline object type, got:\n{content}"
+        );
+        assert!(
+            !content.contains("[fields.field.type]"),
+            "should not have expanded type sections"
+        );
 
         // Still roundtrips correctly
         let loaded = MdvsToml::read(&path).unwrap();

@@ -108,7 +108,7 @@ mod tests {
         assert!(!mdvs_dir.exists());
         assert_eq!(result.files_removed, 1);
         assert_eq!(result.size_bytes, 5); // "dummy" is 5 bytes
-        // mdvs.toml should be untouched
+                                          // mdvs.toml should be untouched
         assert!(tmp.path().join("mdvs.toml").exists());
     }
 

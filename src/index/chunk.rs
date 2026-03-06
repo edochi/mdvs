@@ -44,8 +44,7 @@ impl Chunks {
                 let chunk_end_byte = byte_offset + chunk_md.len();
 
                 let start_line = byte_offset_to_line(&line_starts, byte_offset);
-                let end_line =
-                    byte_offset_to_line(&line_starts, chunk_end_byte.saturating_sub(1));
+                let end_line = byte_offset_to_line(&line_starts, chunk_end_byte.saturating_sub(1));
 
                 let plain_text = extract_plain_text(chunk_md);
 

@@ -1,9 +1,9 @@
-use anyhow::Context;
 use crate::index::backend::{Backend, SearchHit};
 use crate::index::embed::{Embedder, ModelConfig};
 use crate::output::CommandOutput;
 use crate::schema::config::MdvsToml;
 use crate::table::{style_compact, style_record, Builder};
+use anyhow::Context;
 use serde::Serialize;
 use std::path::Path;
 use tracing::{info, instrument};
@@ -123,16 +123,15 @@ pub async fn run(
 
     // Read config
     let config = MdvsToml::read(&config_path)?;
-    let embedding = config.embedding_model.as_ref()
+    let embedding = config
+        .embedding_model
+        .as_ref()
         .context("missing [embedding_model] in mdvs.toml (run `mdvs build` first)")?;
 
     let backend = Backend::parquet(path, config.internal_prefix());
 
     // Index existence check (before loading model to fail fast)
-    anyhow::ensure!(
-        backend.exists(),
-        "index not found (run `mdvs build` first)",
-    );
+    anyhow::ensure!(backend.exists(), "index not found (run `mdvs build` first)",);
 
     // Verify model matches index
     if let Some(ref meta) = backend.read_metadata()? {
@@ -158,7 +157,11 @@ pub async fn run(
     // Search via backend
     let t = std::time::Instant::now();
     let mut hits = backend.search(query_embedding, where_clause, limit).await?;
-    info!(hits = hits.len(), elapsed_ms = t.elapsed().as_millis() as u64, "search complete");
+    info!(
+        hits = hits.len(),
+        elapsed_ms = t.elapsed().as_millis() as u64,
+        "search complete"
+    );
 
     // Populate chunk text from disk when verbose
     if verbose {
@@ -290,7 +293,9 @@ mod tests {
         create_test_vault(tmp.path());
         init_and_build(tmp.path()).await;
 
-        let result = run(tmp.path(), "rust programming", 10, None, true).await.unwrap();
+        let result = run(tmp.path(), "rust programming", 10, None, true)
+            .await
+            .unwrap();
         assert!(!result.hits.is_empty());
         // chunk_text populated in verbose mode
         assert!(result.hits[0].chunk_text.is_some());

@@ -238,9 +238,8 @@ pub fn run(path: &Path, verbose: bool) -> anyhow::Result<InfoResult> {
         let idx_stats = backend.stats()?;
         match (build_meta, idx_stats) {
             (Some(meta), Some(stats)) => {
-                let config_match =
-                    config.embedding_model.as_ref() == Some(&meta.embedding_model)
-                        && config.chunking.as_ref() == Some(&meta.chunking);
+                let config_match = config.embedding_model.as_ref() == Some(&meta.embedding_model)
+                    && config.chunking.as_ref() == Some(&meta.chunking);
                 Some(IndexInfo {
                     model: meta.embedding_model.name,
                     revision: meta.embedding_model.revision,

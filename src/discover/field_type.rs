@@ -29,9 +29,7 @@ pub fn widen(a: FieldType, b: FieldType) -> FieldType {
         (FieldType::Integer, FieldType::Float) | (FieldType::Float, FieldType::Integer) => {
             FieldType::Float
         }
-        (FieldType::Array(x), FieldType::Array(y)) => {
-            FieldType::Array(Box::new(widen(*x, *y)))
-        }
+        (FieldType::Array(x), FieldType::Array(y)) => FieldType::Array(Box::new(widen(*x, *y))),
         (FieldType::Object(a), FieldType::Object(b)) => {
             let mut merged = BTreeMap::new();
             for (k, v) in &a {
@@ -117,24 +115,54 @@ mod tests {
 
     #[test]
     fn widen_same_type() {
-        assert_eq!(widen(FieldType::Integer, FieldType::Integer), FieldType::Integer);
-        assert_eq!(widen(FieldType::Boolean, FieldType::Boolean), FieldType::Boolean);
-        assert_eq!(widen(FieldType::String, FieldType::String), FieldType::String);
+        assert_eq!(
+            widen(FieldType::Integer, FieldType::Integer),
+            FieldType::Integer
+        );
+        assert_eq!(
+            widen(FieldType::Boolean, FieldType::Boolean),
+            FieldType::Boolean
+        );
+        assert_eq!(
+            widen(FieldType::String, FieldType::String),
+            FieldType::String
+        );
     }
 
     #[test]
     fn widen_integer_float() {
-        assert_eq!(widen(FieldType::Integer, FieldType::Float), FieldType::Float);
-        assert_eq!(widen(FieldType::Float, FieldType::Integer), FieldType::Float);
+        assert_eq!(
+            widen(FieldType::Integer, FieldType::Float),
+            FieldType::Float
+        );
+        assert_eq!(
+            widen(FieldType::Float, FieldType::Integer),
+            FieldType::Float
+        );
     }
 
     #[test]
     fn widen_incompatible_scalars_to_string() {
-        assert_eq!(widen(FieldType::Boolean, FieldType::Integer), FieldType::String);
-        assert_eq!(widen(FieldType::Boolean, FieldType::String), FieldType::String);
-        assert_eq!(widen(FieldType::Boolean, FieldType::Float), FieldType::String);
-        assert_eq!(widen(FieldType::Integer, FieldType::String), FieldType::String);
-        assert_eq!(widen(FieldType::Float, FieldType::String), FieldType::String);
+        assert_eq!(
+            widen(FieldType::Boolean, FieldType::Integer),
+            FieldType::String
+        );
+        assert_eq!(
+            widen(FieldType::Boolean, FieldType::String),
+            FieldType::String
+        );
+        assert_eq!(
+            widen(FieldType::Boolean, FieldType::Float),
+            FieldType::String
+        );
+        assert_eq!(
+            widen(FieldType::Integer, FieldType::String),
+            FieldType::String
+        );
+        assert_eq!(
+            widen(FieldType::Float, FieldType::String),
+            FieldType::String
+        );
     }
 
     #[test]
@@ -302,9 +330,10 @@ mod tests {
 
     #[test]
     fn widen_array_of_objects() {
-        let arr_obj_a = FieldType::Array(Box::new(FieldType::Object(BTreeMap::from([
-            ("id".into(), FieldType::Integer),
-        ]))));
+        let arr_obj_a = FieldType::Array(Box::new(FieldType::Object(BTreeMap::from([(
+            "id".into(),
+            FieldType::Integer,
+        )]))));
         let arr_obj_b = FieldType::Array(Box::new(FieldType::Object(BTreeMap::from([
             ("id".into(), FieldType::Integer),
             ("label".into(), FieldType::String),
@@ -327,7 +356,10 @@ mod tests {
             (FieldType::Boolean, FieldType::String),
             (FieldType::Integer, FieldType::String),
             (FieldType::Float, FieldType::String),
-            (FieldType::Array(Box::new(FieldType::Integer)), FieldType::Boolean),
+            (
+                FieldType::Array(Box::new(FieldType::Integer)),
+                FieldType::Boolean,
+            ),
             (
                 FieldType::Array(Box::new(FieldType::Integer)),
                 FieldType::Array(Box::new(FieldType::Float)),
@@ -391,10 +423,13 @@ mod tests {
         assert_eq!(
             FieldType::from(&deep),
             FieldType::Object(BTreeMap::from([
-                ("meta".into(), FieldType::Object(BTreeMap::from([
-                    ("author".into(), FieldType::String),
-                    ("version".into(), FieldType::Integer),
-                ]))),
+                (
+                    "meta".into(),
+                    FieldType::Object(BTreeMap::from([
+                        ("author".into(), FieldType::String),
+                        ("version".into(), FieldType::Integer),
+                    ]))
+                ),
                 ("tags".into(), FieldType::Array(Box::new(FieldType::String))),
             ])),
         );
@@ -438,9 +473,10 @@ mod tests {
         ]);
         assert_eq!(
             FieldType::from(&arr),
-            FieldType::Array(Box::new(FieldType::Object(BTreeMap::from([
-                ("val".into(), FieldType::String),
-            ])))),
+            FieldType::Array(Box::new(FieldType::Object(BTreeMap::from([(
+                "val".into(),
+                FieldType::String
+            ),])))),
         );
     }
 
@@ -480,7 +516,10 @@ mod tests {
         assert_eq!(field_types["title"], FieldType::String);
         assert_eq!(field_types["count"], FieldType::Float);
         assert_eq!(field_types["draft"], FieldType::Boolean);
-        assert_eq!(field_types["tags"], FieldType::Array(Box::new(FieldType::String)));
+        assert_eq!(
+            field_types["tags"],
+            FieldType::Array(Box::new(FieldType::String))
+        );
         assert_eq!(
             field_types["meta"],
             FieldType::Object(BTreeMap::from([

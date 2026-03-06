@@ -42,13 +42,8 @@ impl Embedder {
     pub fn load(config: &ModelConfig) -> Self {
         match config {
             ModelConfig::Model2Vec { model_id, revision } => {
-                let model = StaticModel::from_pretrained(
-                    model_id,
-                    revision.as_deref(),
-                    None,
-                    None,
-                )
-                .unwrap_or_else(|e| panic!("failed to load model {model_id}: {e}"));
+                let model = StaticModel::from_pretrained(model_id, revision.as_deref(), None, None)
+                    .unwrap_or_else(|e| panic!("failed to load model {model_id}: {e}"));
                 Embedder::Model2Vec(model)
             }
         }

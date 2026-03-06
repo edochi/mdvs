@@ -182,7 +182,8 @@ async fn main() -> anyhow::Result<()> {
                 chunk_size,
                 !suppress_auto_build,
                 skip_gitignore,
-            ).await?;
+            )
+            .await?;
             result.print(&cli.output, cli.verbose);
             Ok(())
         }
@@ -199,7 +200,8 @@ async fn main() -> anyhow::Result<()> {
                 set_revision.as_deref(),
                 set_chunk_size,
                 force,
-            ).await?;
+            )
+            .await?;
             result.print(&cli.output, cli.verbose);
             Ok(())
         }
@@ -210,7 +212,8 @@ async fn main() -> anyhow::Result<()> {
             where_clause,
         } => {
             let result =
-                mdvs::cmd::search::run(&path, &query, limit, where_clause.as_deref(), cli.verbose).await?;
+                mdvs::cmd::search::run(&path, &query, limit, where_clause.as_deref(), cli.verbose)
+                    .await?;
             result.print(&cli.output, cli.verbose);
             Ok(())
         }

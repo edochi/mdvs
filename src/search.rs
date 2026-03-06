@@ -195,7 +195,9 @@ impl SearchContext {
 mod tests {
     use super::*;
     use crate::discover::field_type::FieldType;
-    use crate::index::storage::{build_chunks_batch, build_files_batch, write_parquet, ChunkRow, FileRow};
+    use crate::index::storage::{
+        build_chunks_batch, build_files_batch, write_parquet, ChunkRow, FileRow,
+    };
     use datafusion::arrow::array::{Array, Float64Array, Int64Array, StringViewArray};
 
     fn test_files() -> (Vec<(String, FieldType)>, Vec<FileRow>) {
@@ -274,7 +276,10 @@ mod tests {
             .await
             .unwrap();
 
-        let batches = sc.query("SELECT COUNT(*) AS cnt FROM chunks").await.unwrap();
+        let batches = sc
+            .query("SELECT COUNT(*) AS cnt FROM chunks")
+            .await
+            .unwrap();
         let cnt = batches[0]
             .column(0)
             .as_any()

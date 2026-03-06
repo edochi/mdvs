@@ -200,10 +200,7 @@ mod tests {
     fn object_with_nested_array_roundtrip() {
         let ft = FieldType::Object(BTreeMap::from([
             ("author".into(), FieldType::String),
-            (
-                "tags".into(),
-                FieldType::Array(Box::new(FieldType::String)),
-            ),
+            ("tags".into(), FieldType::Array(Box::new(FieldType::String))),
         ]));
         let w = wrap(&ft);
         let toml_str = toml::to_string(&w).unwrap();
@@ -286,10 +283,7 @@ mod tests {
     fn deeply_nested_type_roundtrip() {
         // Array(Object(tags: Array(String), meta: Object(x: Integer)))
         let ft = FieldType::Array(Box::new(FieldType::Object(BTreeMap::from([
-            (
-                "tags".into(),
-                FieldType::Array(Box::new(FieldType::String)),
-            ),
+            ("tags".into(), FieldType::Array(Box::new(FieldType::String))),
             (
                 "meta".into(),
                 FieldType::Object(BTreeMap::from([("x".into(), FieldType::Integer)])),

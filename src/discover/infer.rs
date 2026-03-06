@@ -201,8 +201,7 @@ impl GlobMap {
     }
 
     fn collapse(&mut self, ancestor_path: &Path) {
-        self.entries
-            .retain(|p, _| !p.starts_with(ancestor_path));
+        self.entries.retain(|p, _| !p.starts_with(ancestor_path));
         self.entries
             .insert(ancestor_path.to_path_buf(), GlobDepth::Recursive);
     }
@@ -290,10 +289,7 @@ impl DirectoryTree {
             result.insert(
                 field.clone(),
                 FieldPaths {
-                    allowed: allowed
-                        .get(field)
-                        .map(|g| g.to_globs())
-                        .unwrap_or_default(),
+                    allowed: allowed.get(field).map(|g| g.to_globs()).unwrap_or_default(),
                     required: required
                         .get(field)
                         .map(|g| g.to_globs())
@@ -492,10 +488,22 @@ mod tests {
     fn partial_field_coverage() {
         let scanned = ScannedFiles {
             files: vec![
-                sf("blog/a.md", Some(serde_json::json!({"title": "A", "tags": ["rust"]})), ""),
+                sf(
+                    "blog/a.md",
+                    Some(serde_json::json!({"title": "A", "tags": ["rust"]})),
+                    "",
+                ),
                 sf("blog/b.md", Some(serde_json::json!({"title": "B"})), ""),
-                sf("notes/c.md", Some(serde_json::json!({"title": "C", "tags": ["idea"]})), ""),
-                sf("notes/d.md", Some(serde_json::json!({"title": "D", "tags": ["todo"]})), ""),
+                sf(
+                    "notes/c.md",
+                    Some(serde_json::json!({"title": "C", "tags": ["idea"]})),
+                    "",
+                ),
+                sf(
+                    "notes/d.md",
+                    Some(serde_json::json!({"title": "D", "tags": ["todo"]})),
+                    "",
+                ),
             ],
         };
         let schema = InferredSchema::infer(&scanned);
@@ -505,7 +513,10 @@ mod tests {
         assert_eq!(title.required, vec!["**"]);
 
         let tags = schema.field("tags").unwrap();
-        assert_eq!(tags.field_type, FieldType::Array(Box::new(FieldType::String)));
+        assert_eq!(
+            tags.field_type,
+            FieldType::Array(Box::new(FieldType::String))
+        );
         assert_eq!(tags.allowed, vec!["**"]);
         assert_eq!(tags.required, vec!["notes/**"]);
     }
@@ -514,10 +525,26 @@ mod tests {
     fn disjoint_fields_in_different_dirs() {
         let scanned = ScannedFiles {
             files: vec![
-                sf("blog/a.md", Some(serde_json::json!({"title": "A", "tags": ["rust"]})), ""),
-                sf("blog/b.md", Some(serde_json::json!({"title": "B", "tags": ["go"]})), ""),
-                sf("papers/x.md", Some(serde_json::json!({"title": "X", "doi": "10.1234"})), ""),
-                sf("papers/y.md", Some(serde_json::json!({"title": "Y", "doi": "10.5678"})), ""),
+                sf(
+                    "blog/a.md",
+                    Some(serde_json::json!({"title": "A", "tags": ["rust"]})),
+                    "",
+                ),
+                sf(
+                    "blog/b.md",
+                    Some(serde_json::json!({"title": "B", "tags": ["go"]})),
+                    "",
+                ),
+                sf(
+                    "papers/x.md",
+                    Some(serde_json::json!({"title": "X", "doi": "10.1234"})),
+                    "",
+                ),
+                sf(
+                    "papers/y.md",
+                    Some(serde_json::json!({"title": "Y", "doi": "10.5678"})),
+                    "",
+                ),
             ],
         };
         let schema = InferredSchema::infer(&scanned);
@@ -534,9 +561,21 @@ mod tests {
     fn object_widening_across_files() {
         let scanned = ScannedFiles {
             files: vec![
-                sf("a.md", Some(serde_json::json!({"meta": {"author": "Alice", "version": 1}})), ""),
-                sf("b.md", Some(serde_json::json!({"meta": {"author": "Bob", "license": "MIT"}})), ""),
-                sf("c.md", Some(serde_json::json!({"meta": {"author": "Charlie", "version": 2.0}})), ""),
+                sf(
+                    "a.md",
+                    Some(serde_json::json!({"meta": {"author": "Alice", "version": 1}})),
+                    "",
+                ),
+                sf(
+                    "b.md",
+                    Some(serde_json::json!({"meta": {"author": "Bob", "license": "MIT"}})),
+                    "",
+                ),
+                sf(
+                    "c.md",
+                    Some(serde_json::json!({"meta": {"author": "Charlie", "version": 2.0}})),
+                    "",
+                ),
             ],
         };
         let schema = InferredSchema::infer(&scanned);
@@ -556,9 +595,17 @@ mod tests {
     fn mixed_files_with_and_without_frontmatter() {
         let scanned = ScannedFiles {
             files: vec![
-                sf("blog/post.md", Some(serde_json::json!({"title": "Hello", "draft": true})), "Post body."),
+                sf(
+                    "blog/post.md",
+                    Some(serde_json::json!({"title": "Hello", "draft": true})),
+                    "Post body.",
+                ),
                 sf("blog/bare.md", None, "No frontmatter."),
-                sf("notes/idea.md", Some(serde_json::json!({"title": "Idea"})), "Idea body."),
+                sf(
+                    "notes/idea.md",
+                    Some(serde_json::json!({"title": "Idea"})),
+                    "Idea body.",
+                ),
             ],
         };
         let schema = InferredSchema::infer(&scanned);
@@ -578,10 +625,26 @@ mod tests {
     fn deep_nesting_with_partial_collapse() {
         let scanned = ScannedFiles {
             files: vec![
-                sf("blog/posts/a.md", Some(serde_json::json!({"title": "A", "tags": ["rust"]})), ""),
-                sf("blog/posts/b.md", Some(serde_json::json!({"title": "B", "tags": ["go"]})), ""),
-                sf("blog/drafts/c.md", Some(serde_json::json!({"title": "C", "draft": true})), ""),
-                sf("papers/x.md", Some(serde_json::json!({"title": "X", "doi": "10.1234"})), ""),
+                sf(
+                    "blog/posts/a.md",
+                    Some(serde_json::json!({"title": "A", "tags": ["rust"]})),
+                    "",
+                ),
+                sf(
+                    "blog/posts/b.md",
+                    Some(serde_json::json!({"title": "B", "tags": ["go"]})),
+                    "",
+                ),
+                sf(
+                    "blog/drafts/c.md",
+                    Some(serde_json::json!({"title": "C", "draft": true})),
+                    "",
+                ),
+                sf(
+                    "papers/x.md",
+                    Some(serde_json::json!({"title": "X", "doi": "10.1234"})),
+                    "",
+                ),
             ],
         };
         let schema = InferredSchema::infer(&scanned);
@@ -589,9 +652,18 @@ mod tests {
         assert_eq!(schema.field("title").unwrap().allowed, vec!["**"]);
         assert_eq!(schema.field("title").unwrap().required, vec!["**"]);
         assert_eq!(schema.field("tags").unwrap().allowed, vec!["blog/posts/**"]);
-        assert_eq!(schema.field("tags").unwrap().required, vec!["blog/posts/**"]);
-        assert_eq!(schema.field("draft").unwrap().allowed, vec!["blog/drafts/**"]);
-        assert_eq!(schema.field("draft").unwrap().required, vec!["blog/drafts/**"]);
+        assert_eq!(
+            schema.field("tags").unwrap().required,
+            vec!["blog/posts/**"]
+        );
+        assert_eq!(
+            schema.field("draft").unwrap().allowed,
+            vec!["blog/drafts/**"]
+        );
+        assert_eq!(
+            schema.field("draft").unwrap().required,
+            vec!["blog/drafts/**"]
+        );
         assert_eq!(schema.field("doi").unwrap().allowed, vec!["papers/**"]);
         assert_eq!(schema.field("doi").unwrap().required, vec!["papers/**"]);
     }
@@ -606,20 +678,51 @@ mod tests {
         };
         let schema = InferredSchema::infer(&scanned);
         let items = schema.field("items").unwrap();
-        assert_eq!(items.field_type, FieldType::Array(Box::new(FieldType::Float)));
+        assert_eq!(
+            items.field_type,
+            FieldType::Array(Box::new(FieldType::Float))
+        );
     }
 
     #[test]
     fn worked_example_from_spec() {
         let scanned = ScannedFiles {
             files: vec![
-                sf("blog/post1.md", Some(serde_json::json!({"title": "P1", "tags": ["a"]})), ""),
-                sf("blog/post2.md", Some(serde_json::json!({"title": "P2"})), ""),
-                sf("blog/drafts/d1.md", Some(serde_json::json!({"title": "D1", "tags": ["b"]})), ""),
-                sf("blog/drafts/d2.md", Some(serde_json::json!({"title": "D2", "tags": ["c"]})), ""),
-                sf("notes/idea1.md", Some(serde_json::json!({"title": "I1", "tags": ["d"]})), ""),
-                sf("notes/idea2.md", Some(serde_json::json!({"title": "I2", "tags": ["e"]})), ""),
-                sf("papers/paper1.md", Some(serde_json::json!({"title": "P1"})), ""),
+                sf(
+                    "blog/post1.md",
+                    Some(serde_json::json!({"title": "P1", "tags": ["a"]})),
+                    "",
+                ),
+                sf(
+                    "blog/post2.md",
+                    Some(serde_json::json!({"title": "P2"})),
+                    "",
+                ),
+                sf(
+                    "blog/drafts/d1.md",
+                    Some(serde_json::json!({"title": "D1", "tags": ["b"]})),
+                    "",
+                ),
+                sf(
+                    "blog/drafts/d2.md",
+                    Some(serde_json::json!({"title": "D2", "tags": ["c"]})),
+                    "",
+                ),
+                sf(
+                    "notes/idea1.md",
+                    Some(serde_json::json!({"title": "I1", "tags": ["d"]})),
+                    "",
+                ),
+                sf(
+                    "notes/idea2.md",
+                    Some(serde_json::json!({"title": "I2", "tags": ["e"]})),
+                    "",
+                ),
+                sf(
+                    "papers/paper1.md",
+                    Some(serde_json::json!({"title": "P1"})),
+                    "",
+                ),
             ],
         };
         let schema = InferredSchema::infer(&scanned);
@@ -651,9 +754,17 @@ mod tests {
     fn files_list_tracks_field_presence() {
         let scanned = ScannedFiles {
             files: vec![
-                sf("a.md", Some(serde_json::json!({"title": "A", "extra": true})), ""),
+                sf(
+                    "a.md",
+                    Some(serde_json::json!({"title": "A", "extra": true})),
+                    "",
+                ),
                 sf("b.md", Some(serde_json::json!({"title": "B"})), ""),
-                sf("c.md", Some(serde_json::json!({"title": "C", "extra": false})), ""),
+                sf(
+                    "c.md",
+                    Some(serde_json::json!({"title": "C", "extra": false})),
+                    "",
+                ),
             ],
         };
         let schema = InferredSchema::infer(&scanned);
@@ -670,12 +781,36 @@ mod tests {
     fn complex_real_world_scenario() {
         let scanned = ScannedFiles {
             files: vec![
-                sf("blog/2024/jan.md", Some(serde_json::json!({"title": "Jan", "tags": ["update"], "draft": false})), ""),
-                sf("blog/2024/feb.md", Some(serde_json::json!({"title": "Feb", "tags": ["release"]})), ""),
-                sf("blog/2025/mar.md", Some(serde_json::json!({"title": "Mar", "tags": ["news"], "draft": true})), ""),
-                sf("papers/p1.md", Some(serde_json::json!({"title": "Paper1", "doi": "10.1000/1"})), ""),
-                sf("papers/p2.md", Some(serde_json::json!({"title": "Paper2", "doi": "10.1000/2"})), ""),
-                sf("notes/idea.md", Some(serde_json::json!({"title": "Idea"})), ""),
+                sf(
+                    "blog/2024/jan.md",
+                    Some(serde_json::json!({"title": "Jan", "tags": ["update"], "draft": false})),
+                    "",
+                ),
+                sf(
+                    "blog/2024/feb.md",
+                    Some(serde_json::json!({"title": "Feb", "tags": ["release"]})),
+                    "",
+                ),
+                sf(
+                    "blog/2025/mar.md",
+                    Some(serde_json::json!({"title": "Mar", "tags": ["news"], "draft": true})),
+                    "",
+                ),
+                sf(
+                    "papers/p1.md",
+                    Some(serde_json::json!({"title": "Paper1", "doi": "10.1000/1"})),
+                    "",
+                ),
+                sf(
+                    "papers/p2.md",
+                    Some(serde_json::json!({"title": "Paper2", "doi": "10.1000/2"})),
+                    "",
+                ),
+                sf(
+                    "notes/idea.md",
+                    Some(serde_json::json!({"title": "Idea"})),
+                    "",
+                ),
                 sf("readme.md", None, "# README"),
             ],
         };
@@ -688,7 +823,10 @@ mod tests {
         assert_eq!(title.required, vec!["blog/**", "notes/**", "papers/**"]);
 
         let tags = schema.field("tags").unwrap();
-        assert_eq!(tags.field_type, FieldType::Array(Box::new(FieldType::String)));
+        assert_eq!(
+            tags.field_type,
+            FieldType::Array(Box::new(FieldType::String))
+        );
         assert_eq!(tags.files.len(), 3);
         assert_eq!(tags.allowed, vec!["blog/**"]);
         assert_eq!(tags.required, vec!["blog/**"]);
@@ -733,11 +871,7 @@ mod tests {
         let scanned = ScannedFiles {
             files: vec![
                 sf("a.md", Some(serde_json::json!({"projects": null})), ""),
-                sf(
-                    "b.md",
-                    Some(serde_json::json!({"projects": ["Foo"]})),
-                    "",
-                ),
+                sf("b.md", Some(serde_json::json!({"projects": ["Foo"]})), ""),
             ],
         };
         let schema = InferredSchema::infer(&scanned);
@@ -768,7 +902,11 @@ mod tests {
     fn root_files_shallow_glob() {
         let scanned = ScannedFiles {
             files: vec![
-                sf("readme.md", Some(serde_json::json!({"title": "Root", "featured": true})), ""),
+                sf(
+                    "readme.md",
+                    Some(serde_json::json!({"title": "Root", "featured": true})),
+                    "",
+                ),
                 sf("blog/a.md", Some(serde_json::json!({"title": "Blog"})), ""),
             ],
         };

@@ -333,9 +333,7 @@ fn type_matches(expected: &FieldType, value: &Value) -> bool {
         (FieldType::Boolean, Value::Bool(_)) => true,
         (FieldType::Integer, Value::Number(n)) => n.is_i64() || n.is_u64(),
         (FieldType::Float, Value::Number(_)) => true, // lenient: accepts integers
-        (FieldType::Array(inner), Value::Array(arr)) => {
-            arr.iter().all(|v| type_matches(inner, v))
-        }
+        (FieldType::Array(inner), Value::Array(arr)) => arr.iter().all(|v| type_matches(inner, v)),
         (FieldType::Object(_), Value::Object(_)) => true,
         _ => false,
     }
@@ -594,11 +592,7 @@ mod tests {
             "---\nfield: false\n---\n# Bool\nBody.",
         )
         .unwrap();
-        fs::write(
-            blog_dir.join("int.md"),
-            "---\nfield: 42\n---\n# Int\nBody.",
-        )
-        .unwrap();
+        fs::write(blog_dir.join("int.md"), "---\nfield: 42\n---\n# Int\nBody.").unwrap();
         fs::write(
             blog_dir.join("array.md"),
             "---\nfield:\n  - a\n  - b\n---\n# Array\nBody.",

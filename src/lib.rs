@@ -13,9 +13,9 @@ pub mod discover;
 pub mod index;
 /// Output formatting types and the `CommandOutput` trait.
 pub mod output;
-/// Table rendering helpers (compact and record styles via `tabled`).
-pub mod table;
 /// Configuration file types (`mdvs.toml`) and shared data structures.
 pub mod schema;
 /// DataFusion-based search context with cosine similarity UDF.
 pub mod search;
+/// Table rendering helpers (compact and record styles via `tabled`).
+pub mod table;

@@ -142,10 +142,8 @@ pub async fn run(
     };
 
     // Build old_fields map from targets for comparison (type + globs)
-    let old_fields: HashMap<&str, &TomlField> = targets
-        .iter()
-        .map(|f| (f.name.as_str(), f))
-        .collect();
+    let old_fields: HashMap<&str, &TomlField> =
+        targets.iter().map(|f| (f.name.as_str(), f)).collect();
 
     let mut new_fields: Vec<TomlField> = protected.clone();
     let mut added = Vec::new();
@@ -236,8 +234,7 @@ pub async fn run(
     config.write(&config_path)?;
 
     if should_build {
-        result.build_result =
-            Some(crate::cmd::build::run(path, None, None, None, false).await?);
+        result.build_result = Some(crate::cmd::build::run(path, None, None, None, false).await?);
     }
 
     Ok(result)
@@ -268,15 +265,8 @@ mod tests {
 
     async fn init_no_build(dir: &Path) {
         crate::cmd::init::run(
-            dir,
-            None,
-            None,
-            "**",
-            false,
-            false,
-            true, // ignore bare files
-            None,
-            false, // no auto_build
+            dir, None, None, "**", false, false, true, // ignore bare files
+            None, false, // no auto_build
             false, // skip_gitignore
         )
         .await
@@ -289,7 +279,9 @@ mod tests {
         create_test_vault(tmp.path());
         init_no_build(tmp.path()).await;
 
-        let result = run(tmp.path(), &[], false, Some(false), false).await.unwrap();
+        let result = run(tmp.path(), &[], false, Some(false), false)
+            .await
+            .unwrap();
 
         assert!(!result.has_changes());
         assert_eq!(result.files_scanned, 2);
@@ -309,7 +301,9 @@ mod tests {
         )
         .unwrap();
 
-        let result = run(tmp.path(), &[], false, Some(false), false).await.unwrap();
+        let result = run(tmp.path(), &[], false, Some(false), false)
+            .await
+            .unwrap();
 
         assert_eq!(result.added.len(), 1);
         assert_eq!(result.added[0].name, "author");
@@ -338,15 +332,9 @@ mod tests {
         )
         .unwrap();
 
-        let result = run(
-            tmp.path(),
-            &["tags".to_string()],
-            false,
-            Some(false),
-            false,
-        )
-        .await
-        .unwrap();
+        let result = run(tmp.path(), &["tags".to_string()], false, Some(false), false)
+            .await
+            .unwrap();
 
         assert_eq!(result.changed.len(), 1);
         assert_eq!(result.changed[0].name, "tags");
@@ -368,15 +356,9 @@ mod tests {
         )
         .unwrap();
 
-        let result = run(
-            tmp.path(),
-            &["tags".to_string()],
-            false,
-            Some(false),
-            false,
-        )
-        .await
-        .unwrap();
+        let result = run(tmp.path(), &["tags".to_string()], false, Some(false), false)
+            .await
+            .unwrap();
 
         assert_eq!(result.removed, vec!["tags"]);
         assert!(result.changed.is_empty());
@@ -435,7 +417,9 @@ mod tests {
 
         let toml_before = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
 
-        let result = run(tmp.path(), &[], true, Some(false), false).await.unwrap();
+        let result = run(tmp.path(), &[], true, Some(false), false)
+            .await
+            .unwrap();
 
         // All fields are re-inferred with same types → unchanged
         assert_eq!(result.unchanged, 3);
@@ -467,7 +451,9 @@ mod tests {
 
         let toml_before = fs::read_to_string(tmp.path().join("mdvs.toml")).unwrap();
 
-        let result = run(tmp.path(), &[], false, Some(false), true).await.unwrap();
+        let result = run(tmp.path(), &[], false, Some(false), true)
+            .await
+            .unwrap();
 
         assert!(result.dry_run);
         assert_eq!(result.added.len(), 1);
@@ -506,7 +492,9 @@ mod tests {
         .unwrap();
 
         // --build false should skip build even if auto_build is true in toml
-        let result = run(tmp.path(), &[], false, Some(false), false).await.unwrap();
+        let result = run(tmp.path(), &[], false, Some(false), false)
+            .await
+            .unwrap();
 
         assert!(!result.auto_build);
         assert!(!tmp.path().join(".mdvs").exists());
@@ -529,8 +517,7 @@ mod tests {
             "---\ntitle: World\n---\n# World\nMore.",
         )
         .unwrap();
-        fs::write(blog_dir.join("bare.md"), "# No frontmatter\nJust content.")
-            .unwrap();
+        fs::write(blog_dir.join("bare.md"), "# No frontmatter\nJust content.").unwrap();
 
         // Init with ignore_bare_files=true → title required=["**"]
         crate::cmd::init::run(
@@ -540,7 +527,7 @@ mod tests {
             "**",
             false,
             false,
-            true,  // ignore bare files
+            true, // ignore bare files
             None,
             false, // no auto_build
             false,
@@ -549,7 +536,12 @@ mod tests {
         .unwrap();
 
         let toml_before = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
-        let title_before = toml_before.fields.field.iter().find(|f| f.name == "title").unwrap();
+        let title_before = toml_before
+            .fields
+            .field
+            .iter()
+            .find(|f| f.name == "title")
+            .unwrap();
         assert_eq!(title_before.required, vec!["**"]);
 
         // Flip include_bare_files to true
@@ -558,14 +550,21 @@ mod tests {
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
 
         // Reinfer all — globs should change even though types don't
-        let result = run(tmp.path(), &[], true, Some(false), false).await.unwrap();
+        let result = run(tmp.path(), &[], true, Some(false), false)
+            .await
+            .unwrap();
         assert!(result.has_changes());
         assert_eq!(result.changed.len(), 1);
         assert_eq!(result.changed[0].name, "title");
 
         // Toml rewritten with narrower required
         let toml_after = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
-        let title_after = toml_after.fields.field.iter().find(|f| f.name == "title").unwrap();
+        let title_after = toml_after
+            .fields
+            .field
+            .iter()
+            .find(|f| f.name == "title")
+            .unwrap();
         assert!(!title_after.required.contains(&"**".to_string()));
     }
 
@@ -583,7 +582,9 @@ mod tests {
         .unwrap();
 
         // Default mode: tags should stay in toml even though it disappeared
-        let result = run(tmp.path(), &[], false, Some(false), false).await.unwrap();
+        let result = run(tmp.path(), &[], false, Some(false), false)
+            .await
+            .unwrap();
 
         assert!(!result.has_changes());
 
