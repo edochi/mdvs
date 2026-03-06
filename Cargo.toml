@@ -5,10 +5,12 @@ edition = "2021"
 description = "A database of markdown documents — schema validation and semantic search"
 license = "MIT"
 repository = "https://github.com/edochi/mdvs"
+homepage = "https://github.com/edochi/mdvs"
+documentation = "https://github.com/edochi/mdvs"
 readme = "README.md"
 keywords = ["markdown", "search", "embeddings", "semantic", "vector"]
 categories = ["command-line-utilities", "text-processing"]
-exclude = ["docs/", "tests/", "scripts/", "notebooks/", ".claude/", "CLAUDE.md"]
+include = ["src/", "Cargo.toml", "Cargo.lock", "LICENSE", "README.md"]
 
 [dependencies]
 # CLI
