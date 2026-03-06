@@ -240,7 +240,7 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
         Command::Info { path } => {
-            let result = mdvs::cmd::info::run(&path)?;
+            let result = mdvs::cmd::info::run(&path, cli.verbose)?;
             result.print(&cli.output, cli.verbose);
             Ok(())
         }

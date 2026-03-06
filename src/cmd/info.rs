@@ -2,8 +2,12 @@ use crate::discover::scan::ScannedFiles;
 use crate::index::backend::Backend;
 use crate::output::CommandOutput;
 use crate::schema::config::MdvsToml;
+use crate::table::{style_compact, style_record, Builder};
 use serde::Serialize;
+use serde_json::Value;
+use std::collections::HashMap;
 use std::path::Path;
+use std::time::Instant;
 use tracing::instrument;
 
 /// A field definition from `mdvs.toml`, rendered for display.
@@ -17,6 +21,12 @@ pub struct InfoField {
     pub allowed: Vec<String>,
     /// Glob patterns where this field must appear.
     pub required: Vec<String>,
+    /// Number of files containing this field (verbose only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub count: Option<usize>,
+    /// Total scanned files for computing prevalence (verbose only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_files: Option<usize>,
 }
 
 /// Metadata and statistics about a built search index.
@@ -25,17 +35,20 @@ pub struct IndexInfo {
     /// Embedding model name.
     pub model: String,
     /// Pinned model revision (commit SHA), if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub revision: Option<String>,
     /// Maximum chunk size in characters.
     pub chunk_size: usize,
     /// Number of files in the index.
     pub files_indexed: usize,
+    /// Number of files on disk (for N/N display).
+    pub files_on_disk: usize,
     /// Total number of chunks across all files.
     pub chunks: usize,
     /// ISO 8601 timestamp of last build.
     pub built_at: String,
-    /// Whether the index matches the current `mdvs.toml` configuration.
-    pub config_match: bool,
+    /// Config status: `"match"` or `"changed — rebuild recommended"`.
+    pub config_status: String,
 }
 
 /// Output of the `info` command.
@@ -51,69 +64,122 @@ pub struct InfoResult {
     pub ignored_fields: Vec<String>,
     /// Index info, if a built index exists.
     pub index: Option<IndexInfo>,
+    /// Scan glob pattern (verbose only, for footer).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub glob: Option<String>,
+    /// Wall-clock time for the info operation in milliseconds (verbose only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub elapsed_ms: Option<u64>,
 }
 
 impl CommandOutput for InfoResult {
-    fn format_text(&self, _verbose: bool) -> String {
+    fn format_text(&self, verbose: bool) -> String {
         let mut out = String::new();
 
-        // Scan section
-        out.push_str(&format!(
-            "Scan: glob = \"{}\", {} files on disk\n",
-            self.scan_glob, self.files_on_disk,
-        ));
-
-        // Fields section
-        if !self.fields.is_empty() {
-            out.push_str("\nFields:\n");
-            for f in &self.fields {
-                let mut constraints = Vec::new();
-                if !f.required.is_empty() {
-                    constraints.push(format!("required in {:?}", f.required));
-                }
-                if f.allowed != vec!["**"] {
-                    constraints.push(format!("allowed in {:?}", f.allowed));
-                }
-                if constraints.is_empty() {
-                    out.push_str(&format!("  {}    {}\n", f.name, f.field_type));
-                } else {
-                    out.push_str(&format!(
-                        "  {}    {}    ({})\n",
-                        f.name,
-                        f.field_type,
-                        constraints.join(", "),
-                    ));
-                }
-            }
-        }
-
-        if !self.ignored_fields.is_empty() {
-            out.push_str(&format!("Ignored: {}\n", self.ignored_fields.join(", ")));
-        }
-
-        // Index section
-        out.push('\n');
+        // One-liner
         match &self.index {
-            None => {
-                out.push_str("No index built — run 'mdvs build' to create one\n");
+            Some(idx) => out.push_str(&format!(
+                "{} files, {} fields, {} chunks\n",
+                self.files_on_disk,
+                self.fields.len(),
+                idx.chunks,
+            )),
+            None => out.push_str(&format!(
+                "{} files, {} fields\n",
+                self.files_on_disk,
+                self.fields.len(),
+            )),
+        }
+
+        // Metadata table (only when index exists)
+        if let Some(idx) = &self.index {
+            out.push('\n');
+            let mut builder = Builder::default();
+            builder.push_record(["model:", &idx.model]);
+            if verbose {
+                let rev = idx.revision.as_deref().unwrap_or("none");
+                builder.push_record(["revision:", rev]);
+                builder.push_record(["chunk size:", &idx.chunk_size.to_string()]);
+                builder.push_record(["built:", &idx.built_at]);
             }
-            Some(idx) => {
-                out.push_str("Index:\n");
-                out.push_str(&format!("  Model: {}\n", idx.model));
-                if let Some(ref rev) = idx.revision {
-                    out.push_str(&format!("  Revision: {rev}\n"));
+            builder.push_record(["config:", &idx.config_status]);
+            builder.push_record([
+                "files:",
+                &format!("{}/{}", idx.files_indexed, idx.files_on_disk),
+            ]);
+            let mut table = builder.build();
+            style_compact(&mut table);
+            out.push_str(&format!("{table}\n"));
+        }
+
+        // Fields table
+        if !self.fields.is_empty() {
+            out.push('\n');
+            if verbose {
+                for f in &self.fields {
+                    let mut builder = Builder::default();
+                    let count_str = match (f.count, f.total_files) {
+                        (Some(c), Some(t)) => format!("{c}/{t}"),
+                        _ => String::new(),
+                    };
+                    builder.push_record([
+                        format!("\"{}\"", f.name),
+                        f.field_type.clone(),
+                        count_str,
+                    ]);
+
+                    let mut detail_lines = Vec::new();
+                    if !f.required.is_empty() {
+                        detail_lines.push("  required:".to_string());
+                        for g in &f.required {
+                            detail_lines.push(format!("    - \"{g}\""));
+                        }
+                    }
+                    detail_lines.push("  allowed:".to_string());
+                    for g in &f.allowed {
+                        detail_lines.push(format!("    - \"{g}\""));
+                    }
+
+                    builder.push_record([detail_lines.join("\n"), String::new(), String::new()]);
+                    let mut table = builder.build();
+                    style_record(&mut table, 3);
+                    out.push_str(&format!("{table}\n"));
                 }
-                out.push_str(&format!("  Chunk size: {}\n", idx.chunk_size));
+            } else {
+                let mut builder = Builder::default();
+                for f in &self.fields {
+                    let required_str = if f.required.is_empty() {
+                        String::new()
+                    } else {
+                        let globs: Vec<String> =
+                            f.required.iter().map(|g| format!("\"{g}\"")).collect();
+                        format!("required: {}", globs.join(", "))
+                    };
+                    let allowed_str = {
+                        let globs: Vec<String> =
+                            f.allowed.iter().map(|g| format!("\"{g}\"")).collect();
+                        format!("allowed: {}", globs.join(", "))
+                    };
+                    builder.push_record([
+                        format!("\"{}\"", f.name),
+                        f.field_type.clone(),
+                        required_str,
+                        allowed_str,
+                    ]);
+                }
+                let mut table = builder.build();
+                style_compact(&mut table);
+                out.push_str(&format!("{table}\n"));
+            }
+        }
+
+        // Verbose footer
+        if verbose {
+            if let (Some(glob), Some(ms)) = (&self.glob, self.elapsed_ms) {
                 out.push_str(&format!(
-                    "  {} files indexed, {} chunks\n",
-                    idx.files_indexed, idx.chunks,
+                    "\n{} files | glob: \"{glob}\" | {ms}ms\n",
+                    self.files_on_disk
                 ));
-                out.push_str(&format!("  Built: {}\n", idx.built_at));
-                if idx.config_match {
-                    out.push_str("  Status: up to date\n");
-                } else {
-                    out.push_str("  Status: config changed — rebuild recommended\n");
-                }
             }
         }
 
@@ -123,11 +189,28 @@ impl CommandOutput for InfoResult {
 
 /// Read config and index metadata, return a summary of the project state.
 #[instrument(name = "info", skip_all)]
-pub fn run(path: &Path) -> anyhow::Result<InfoResult> {
+pub fn run(path: &Path, verbose: bool) -> anyhow::Result<InfoResult> {
+    let start = Instant::now();
     let config = MdvsToml::read(&path.join("mdvs.toml"))?;
 
     // Scan file count
     let scanned = ScannedFiles::scan(path, &config.scan);
+    let total_files = scanned.files.len();
+
+    // Count files per field (verbose only)
+    let field_counts: HashMap<String, usize> = if verbose {
+        let mut counts = HashMap::new();
+        for file in &scanned.files {
+            if let Some(Value::Object(map)) = &file.data {
+                for key in map.keys() {
+                    *counts.entry(key.clone()).or_insert(0) += 1;
+                }
+            }
+        }
+        counts
+    } else {
+        HashMap::new()
+    };
 
     // Fields from toml
     let fields: Vec<InfoField> = config
@@ -139,6 +222,12 @@ pub fn run(path: &Path) -> anyhow::Result<InfoResult> {
             field_type: f.field_type.to_string(),
             allowed: f.allowed.clone(),
             required: f.required.clone(),
+            count: if verbose {
+                Some(*field_counts.get(&f.name).unwrap_or(&0))
+            } else {
+                None
+            },
+            total_files: if verbose { Some(total_files) } else { None },
         })
         .collect();
 
@@ -157,9 +246,14 @@ pub fn run(path: &Path) -> anyhow::Result<InfoResult> {
                     revision: meta.embedding_model.revision,
                     chunk_size: meta.chunking.max_chunk_size,
                     files_indexed: stats.files_indexed,
+                    files_on_disk: total_files,
                     chunks: stats.chunks,
                     built_at: meta.built_at,
-                    config_match,
+                    config_status: if config_match {
+                        "match".to_string()
+                    } else {
+                        "changed — rebuild recommended".to_string()
+                    },
                 })
             }
             _ => None,
@@ -170,10 +264,20 @@ pub fn run(path: &Path) -> anyhow::Result<InfoResult> {
 
     Ok(InfoResult {
         scan_glob: config.scan.glob.clone(),
-        files_on_disk: scanned.files.len(),
+        files_on_disk: total_files,
         fields,
         ignored_fields: config.fields.ignore.clone(),
         index,
+        glob: if verbose {
+            Some(config.scan.glob.clone())
+        } else {
+            None
+        },
+        elapsed_ms: if verbose {
+            Some(start.elapsed().as_millis() as u64)
+        } else {
+            None
+        },
     })
 }
 
@@ -271,7 +375,7 @@ mod tests {
         create_test_vault(tmp.path());
         write_config(tmp.path());
 
-        let result = run(tmp.path()).unwrap();
+        let result = run(tmp.path(), false).unwrap();
 
         assert_eq!(result.scan_glob, "**");
         assert_eq!(result.files_on_disk, 2);
@@ -292,7 +396,7 @@ mod tests {
         create_test_vault(tmp.path());
         init_and_build(tmp.path()).await;
 
-        let result = run(tmp.path()).unwrap();
+        let result = run(tmp.path(), false).unwrap();
 
         assert_eq!(result.files_on_disk, 2);
         assert!(result.index.is_some());
@@ -300,7 +404,7 @@ mod tests {
         assert_eq!(idx.model, "minishlab/potion-base-8M");
         assert_eq!(idx.files_indexed, 2);
         assert!(idx.chunks > 0);
-        assert!(idx.config_match);
+        assert_eq!(idx.config_status, "match");
     }
 
     #[tokio::test]
@@ -314,10 +418,10 @@ mod tests {
         config.chunking.as_mut().unwrap().max_chunk_size = 512;
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
 
-        let result = run(tmp.path()).unwrap();
+        let result = run(tmp.path(), false).unwrap();
 
         assert!(result.index.is_some());
         let idx = result.index.unwrap();
-        assert!(!idx.config_match);
+        assert_eq!(idx.config_status, "changed — rebuild recommended");
     }
 }
