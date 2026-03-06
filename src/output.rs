@@ -76,6 +76,31 @@ pub struct NewField {
     pub files_found: usize,
 }
 
+/// Format a file count with correct pluralization: `"1 file"` / `"3 files"`.
+pub fn format_file_count(n: usize) -> String {
+    if n == 1 {
+        "1 file".to_string()
+    } else {
+        format!("{n} files")
+    }
+}
+
+/// Format a byte count as human-readable size: `"256 B"`, `"1.2 KB"`, `"12.4 MB"`, `"1.1 GB"`.
+pub fn format_size(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = 1024 * KB;
+    const GB: u64 = 1024 * MB;
+    if bytes >= GB {
+        format!("{:.1} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.1} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
 /// Shared interface for command result structs, providing text and JSON rendering.
 ///
 /// Every command collects its results into a struct that implements this trait.
