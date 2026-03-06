@@ -42,6 +42,6 @@
 | [0038](TODO-0038.md) | Rewrite build command output | todo | high | 2026-03-05 |
 | [0039](TODO-0039.md) | Rewrite check command output | done | high | 2026-03-05 |
 | [0040](TODO-0040.md) | Rewrite init command output | todo | high | 2026-03-05 |
-| [0041](TODO-0041.md) | Rewrite update command output | todo | high | 2026-03-05 |
+| [0041](TODO-0041.md) | Rewrite update command output | done | high | 2026-03-05 |
 | [0042](TODO-0042.md) | Rewrite info command output | done | high | 2026-03-05 |
 | [0043](TODO-0043.md) | Fix tracing levels — distinct debug/trace events with elapsed times | todo | medium | 2026-03-05 |
