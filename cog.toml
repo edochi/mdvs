@@ -4,7 +4,10 @@ branch_whitelist = []
 tag_prefix = "v"
 
 pre_bump_hooks = []
-post_bump_hooks = []
+post_bump_hooks = [
+    "git push origin",
+    "git push origin {{version_tag}}"
+]
 
 [changelog]
 path = "CHANGELOG.md"

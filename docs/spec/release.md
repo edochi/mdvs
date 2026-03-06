@@ -4,28 +4,41 @@
 
 Releases are semi-automated. You decide when to release, tools handle the mechanics:
 
-1. **cargo-release** — bumps version, commits, tags, pushes
+1. **cocogitto (`cog bump`)** — bumps version, generates changelog, commits, tags, pushes
 2. **cargo-dist** — builds cross-platform binaries, creates GitHub Release
-3. **cocogitto** — enforces conventional commits, generates changelog
 
 No publishing to external registries (crates.io, Homebrew, npm) for now. `publish = false` in `Cargo.toml` blocks all registry publishing.
 
 ## Tools
 
-### cargo-release
+### cocogitto (`cog bump`)
 
-Automates the version bump → commit → tag → push cycle.
+Automates the full release cycle: version bump → changelog generation → commit → tag → push. Determines the next version from conventional commits.
 
-**Install:** `cargo install cargo-release`
+**Install:** `cargo install cocogitto`
 
-**Config:** `release.toml`
+**Config:** `cog.toml`
 
 ```toml
-publish = false       # no crates.io publishing
-push-remote = "origin"
+tag_prefix = "v"
+
+post_bump_hooks = [
+    "git push origin",
+    "git push origin {{version_tag}}"
+]
+
+[changelog]
+path = "CHANGELOG.md"
+remote = "github.com"
+owner = "edochi"
+repository = "mdvs"
 ```
 
-The tag format is `v{version}` (e.g., `v0.1.0`). This is the default — no `tag-prefix` needed.
+- `tag_prefix` — tags as `v0.1.0`
+- `post_bump_hooks` — auto-pushes the commit and tag after bumping
+- `[changelog]` — generates CHANGELOG.md with GitHub commit/PR links
+
+See `docs/spec/cocogitto.md` for the full guide.
 
 ### cargo-dist
 
@@ -61,16 +74,6 @@ ci = "github"
 
 **Regenerating the workflow:** if you change the dist config, run `dist generate` to update `.github/workflows/release.yml`.
 
-### cocogitto
-
-Enforces conventional commits and generates changelog.
-
-**Install:** `cargo install cocogitto`
-
-**Config:** `cog.toml`
-
-See `docs/spec/cocogitto.md` for the full guide.
-
 ## Pipelines
 
 ### Commits (`.github/workflows/commits.yml`)
@@ -79,9 +82,9 @@ See `docs/spec/cocogitto.md` for the full guide.
 
 **Steps:**
 1. Checkout with full history (`fetch-depth: 0`)
-2. `cocogitto-action@v3` with `check-latest-tag-only: true`
+2. `cocogitto-action@v4.1.0` — `cog check --from-latest-tag`
 
-Validates that all commits since the latest tag follow conventional commit format. Requires full git history to locate the tag. Runs on all branches so non-conventional commits are caught immediately, not just at merge time.
+Validates that all commits since the latest tag follow conventional commit format. Runs on all branches so non-conventional commits are caught immediately, not just at merge time.
 
 ### CI (`.github/workflows/ci.yml`)
 
@@ -121,44 +124,58 @@ Prerelease tags (e.g., `v0.1.0-rc.1`) create a GitHub Release marked as prerelea
 
 ## Making a Release
 
-### Patch release (bug fixes)
+### Dry run (always do this first)
 
 ```bash
-cargo release patch --execute
+cog bump --dry-run --patch    # or --minor, --major, --auto
 ```
 
-Bumps `0.1.0` → `0.1.1`, commits, tags `v0.1.1`, pushes. The release pipeline builds and publishes automatically.
+Shows what the next version would be without doing anything. Review with the user before proceeding.
 
-### Minor release (new features)
+### Release commands
+
+| Command | Example | Use case |
+|---------|---------|----------|
+| `cog bump --patch` | 0.1.0 → 0.1.1 | Bug fixes |
+| `cog bump --minor` | 0.1.0 → 0.2.0 | New features |
+| `cog bump --major` | 0.1.0 → 1.0.0 | Breaking changes |
+| `cog bump --auto` | (auto-detected) | Let commit types decide the level |
+| `cog bump --pre rc` | 0.1.0 → 0.1.1-rc.1 | Prerelease / testing |
+
+Each command:
+1. Bumps version in `Cargo.toml`
+2. Generates/updates `CHANGELOG.md` from conventional commits
+3. Creates a bump commit
+4. Tags with `v{version}`
+5. Pushes commit and tag to `origin` (via `post_bump_hooks`)
+
+The tag push triggers the Release pipeline automatically.
+
+### `--auto` behavior
+
+`--auto` reads commits since the last tag and picks the bump level:
+- Any `feat:` → minor
+- Only `fix:`, `refactor:`, etc. → patch
+- Any `BREAKING CHANGE` → major
+
+### After pushing
+
+Monitor the release build:
 
 ```bash
-cargo release minor --execute
+gh run list --limit 1                  # find the run ID
+gh run view <run-id>                   # check job status
+gh run watch <run-id>                  # live follow (optional)
 ```
 
-Bumps `0.1.0` → `0.2.0`.
-
-### Major release (breaking changes)
-
+If a build fails:
 ```bash
-cargo release major --execute
+gh run view --job=<job-id> --log-failed  # see failure logs
 ```
 
-Bumps `0.1.0` → `1.0.0`.
-
-### Release candidate
-
+After success, verify the GitHub Release:
 ```bash
-cargo release rc --execute
-```
-
-Bumps `0.1.0` → `0.1.1-rc.1`. Creates a prerelease GitHub Release.
-
-### Dry run
-
-All commands default to dry-run. Omit `--execute` to see what would happen without doing anything:
-
-```bash
-cargo release patch    # shows what it would do
+gh release view v<version>
 ```
 
 ### Verifying without releasing
@@ -169,20 +186,30 @@ dist plan    # shows what artifacts would be built
 
 ## Changelog
 
-Cocogitto generates `CHANGELOG.md` from conventional commits when bumping versions:
+`CHANGELOG.md` is auto-generated by `cog bump` from conventional commits. The `[changelog]` section in `cog.toml` configures the output format, including GitHub links to commits and PRs.
 
-```bash
-cog bump --auto    # determine version from commit types
-cog bump --patch   # force patch bump
-```
+The changelog groups entries by commit type (Features, Bug Fixes, etc.) and includes the full list of changes since the previous tag.
 
-This is separate from `cargo release` — use one or the other for version bumping, not both. Currently we use `cargo release` for bumping and will integrate changelog generation later via `pre_bump_hooks` in `cog.toml`.
+## Configuration
+
+| File | Purpose |
+|------|---------|
+| `cog.toml` | cocogitto config — tag prefix, bump hooks, changelog, commit validation |
+| `Cargo.toml` | Version field, `[profile.dist]`, `[package.metadata.dist]`, `[workspace.metadata.dist]` |
+| `.github/workflows/release.yml` | Auto-generated by `dist generate`, do not hand-edit |
+
+## Important notes
+
+- `publish = false` — no crates.io publishing. Releases are GitHub-only for now.
+- Tag format is `v{version}` (e.g., `v0.1.0`), configured by `tag_prefix = "v"` in `cog.toml`.
+- Prerelease tags (e.g., `v0.1.0-rc.1`) create a GitHub Release marked as prerelease.
+- If cargo-dist config changes, regenerate the workflow: `dist generate`
 
 ## Future: Publishing to Registries
 
 When ready to publish externally:
 
-1. **crates.io** — remove `publish = false` from `Cargo.toml` and `release.toml`
+1. **crates.io** — remove `publish = false` from `Cargo.toml`
 2. **Homebrew** — add `"homebrew"` to `installers` and `publish-jobs` in `Cargo.toml`, create `edochi/homebrew-tap` repo
 3. **npm** — add `"npm"` to `installers` and `publish-jobs` in `Cargo.toml`
 
