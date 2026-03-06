@@ -6,6 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 mdvs (Markdown Validation & Search) is a Rust CLI that treats markdown directories as databases — schema inference, frontmatter validation, and semantic search with SQL filtering. Single binary, no external services, instant embeddings via Model2Vec static models, DataFusion + Parquet for storage and search. Design specs live in `docs/spec/`.
 
+## Git Rules
+
+**NEVER commit or push unless the user explicitly asks.** No autonomous commits. No "let me commit this" — wait for the user to say "commit" or "commit and push". This is non-negotiable.
+
+**Always run `cargo fmt` after `cargo clippy`** when verifying changes.
+
 ## Build Commands
 
 ```bash
