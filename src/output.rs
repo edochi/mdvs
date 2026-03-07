@@ -54,7 +54,7 @@ pub struct RemovedField {
 }
 
 /// Category of a frontmatter validation failure.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub enum ViolationKind {
     /// A field marked `required` is absent from the file's frontmatter.
     MissingRequired,

@@ -175,6 +175,14 @@ pub fn run(path: &Path, verbose: bool) -> anyhow::Result<CheckResult> {
     Ok(result)
 }
 
+/// Accumulator key for grouping violations by field, kind, and rule.
+#[derive(PartialEq, Eq, Hash)]
+struct ViolationKey {
+    field: String,
+    kind: ViolationKind,
+    rule: String,
+}
+
 /// Validate scanned files against the schema in `mdvs.toml`. Reusable core called by both `check` and `build`.
 #[instrument(name = "validate", skip_all)]
 pub fn validate(
@@ -184,7 +192,6 @@ pub fn validate(
 ) -> anyhow::Result<CheckResult> {
     info!(files = scanned.files.len(), "validating frontmatter");
 
-    // Build lookups
     let field_map: HashMap<&str, _> = config
         .fields
         .field
@@ -193,12 +200,40 @@ pub fn validate(
         .collect();
     let ignore_set: HashSet<&str> = config.fields.ignore.iter().map(|s| s.as_str()).collect();
 
-    // Accumulate violations keyed by (field_name, kind_tag, rule)
-    // kind_tag is a string so it can be a HashMap key
-    let mut violations: HashMap<(String, String, String), Vec<ViolatingFile>> = HashMap::new();
+    let mut violations: HashMap<ViolationKey, Vec<ViolatingFile>> = HashMap::new();
     let mut new_field_paths: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
 
-    // Check each file's frontmatter fields
+    check_field_values(
+        scanned,
+        &field_map,
+        &ignore_set,
+        &mut violations,
+        &mut new_field_paths,
+    )?;
+    check_required_fields(scanned, config, &mut violations);
+
+    let field_violations = collect_violations(violations);
+    let new_fields = collect_new_fields(new_field_paths, verbose);
+
+    info!(violations = field_violations.len(), "validation complete");
+
+    Ok(CheckResult {
+        files_checked: scanned.files.len(),
+        field_violations,
+        new_fields,
+        glob: None,
+        elapsed_ms: None,
+    })
+}
+
+/// Check each file's frontmatter fields for type mismatches, disallowed locations, and new fields.
+fn check_field_values(
+    scanned: &ScannedFiles,
+    field_map: &HashMap<&str, &crate::schema::config::TomlField>,
+    ignore_set: &HashSet<&str>,
+    violations: &mut HashMap<ViolationKey, Vec<ViolatingFile>>,
+    new_field_paths: &mut BTreeMap<String, Vec<PathBuf>>,
+) -> anyhow::Result<()> {
     for file in &scanned.files {
         let file_path_str = file.path.display().to_string();
 
@@ -213,35 +248,37 @@ pub fn validate(
                     continue;
                 }
 
-                // Null values (bare YAML keys like `field:`) are treated as absent
                 if value.is_null() {
                     continue;
                 }
 
                 if let Some(toml_field) = field_map.get(field_name.as_str()) {
-                    // Check type
                     let expected = FieldType::try_from(&toml_field.field_type)
                         .map_err(|e| anyhow::anyhow!("invalid type for '{}': {}", field_name, e))?;
                     if !type_matches(&expected, value) {
-                        let rule = format!("type {}", toml_field.field_type);
-                        let key = (field_name.clone(), "WrongType".into(), rule);
+                        let key = ViolationKey {
+                            field: field_name.clone(),
+                            kind: ViolationKind::WrongType,
+                            rule: format!("type {}", toml_field.field_type),
+                        };
                         violations.entry(key).or_default().push(ViolatingFile {
                             path: file.path.clone(),
                             detail: Some(format!("got {}", actual_type_name(value))),
                         });
                     }
 
-                    // Check allowed globs
                     if !matches_any_glob(&toml_field.allowed, &file_path_str) {
-                        let rule = format!("allowed in {:?}", toml_field.allowed);
-                        let key = (field_name.clone(), "Disallowed".into(), rule);
+                        let key = ViolationKey {
+                            field: field_name.clone(),
+                            kind: ViolationKind::Disallowed,
+                            rule: format!("allowed in {:?}", toml_field.allowed),
+                        };
                         violations.entry(key).or_default().push(ViolatingFile {
                             path: file.path.clone(),
                             detail: None,
                         });
                     }
                 } else {
-                    // New field
                     new_field_paths
                         .entry(field_name.clone())
                         .or_default()
@@ -250,8 +287,15 @@ pub fn validate(
             }
         }
     }
+    Ok(())
+}
 
-    // Check required fields
+/// Check that required fields are present in files matching their required glob patterns.
+fn check_required_fields(
+    scanned: &ScannedFiles,
+    config: &MdvsToml,
+    violations: &mut HashMap<ViolationKey, Vec<ViolatingFile>>,
+) {
     for toml_field in &config.fields.field {
         if toml_field.required.is_empty() {
             continue;
@@ -272,8 +316,11 @@ pub fn validate(
                 .is_some_and(|v| !v.is_null());
 
             if !has_field {
-                let rule = format!("required in {:?}", toml_field.required);
-                let key = (toml_field.name.clone(), "MissingRequired".into(), rule);
+                let key = ViolationKey {
+                    field: toml_field.name.clone(),
+                    kind: ViolationKind::MissingRequired,
+                    rule: format!("required in {:?}", toml_field.required),
+                };
                 violations.entry(key).or_default().push(ViolatingFile {
                     path: file.path.clone(),
                     detail: None,
@@ -281,29 +328,31 @@ pub fn validate(
             }
         }
     }
+}
 
-    // Convert violations map to sorted Vec<FieldViolation>
+/// Convert the violations accumulator into a sorted list of `FieldViolation`.
+fn collect_violations(
+    violations: HashMap<ViolationKey, Vec<ViolatingFile>>,
+) -> Vec<FieldViolation> {
     let mut field_violations: Vec<FieldViolation> = violations
         .into_iter()
-        .map(|((field, kind_tag, rule), files)| {
-            let kind = match kind_tag.as_str() {
-                "MissingRequired" => ViolationKind::MissingRequired,
-                "WrongType" => ViolationKind::WrongType,
-                "Disallowed" => ViolationKind::Disallowed,
-                _ => unreachable!(),
-            };
-            FieldViolation {
-                field,
-                kind,
-                rule,
-                files,
-            }
+        .map(|(key, files)| FieldViolation {
+            field: key.field,
+            kind: key.kind,
+            rule: key.rule,
+            files,
         })
         .collect();
     field_violations.sort_by(|a, b| a.field.cmp(&b.field));
+    field_violations
+}
 
-    // Convert new fields
-    let new_fields: Vec<NewField> = new_field_paths
+/// Convert the new fields accumulator into a list of `NewField`.
+fn collect_new_fields(
+    new_field_paths: BTreeMap<String, Vec<PathBuf>>,
+    verbose: bool,
+) -> Vec<NewField> {
+    new_field_paths
         .into_iter()
         .map(|(name, paths)| {
             let files_found = paths.len();
@@ -313,17 +362,7 @@ pub fn validate(
                 files: if verbose { Some(paths) } else { None },
             }
         })
-        .collect();
-
-    info!(violations = field_violations.len(), "validation complete");
-
-    Ok(CheckResult {
-        files_checked: scanned.files.len(),
-        field_violations,
-        new_fields,
-        glob: None,
-        elapsed_ms: None,
-    })
+        .collect()
 }
 
 fn type_matches(expected: &FieldType, value: &Value) -> bool {

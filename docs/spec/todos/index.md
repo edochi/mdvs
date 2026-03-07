@@ -72,4 +72,4 @@
 | [0068](TODO-0068.md) | Add context to parquet read error messages | done | low | 2026-03-07 |
 | [0069](TODO-0069.md) | Warn when search verbose chunk text is unavailable | done | low | 2026-03-07 |
 | [0070](TODO-0070.md) | Extract shared inference logic from init and update | done | low | 2026-03-07 |
-| [0071](TODO-0071.md) | Break up monolithic validate() function | todo | low | 2026-03-07 |
+| [0071](TODO-0071.md) | Break up monolithic validate() function | done | low | 2026-03-07 |
