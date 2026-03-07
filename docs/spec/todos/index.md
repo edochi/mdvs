@@ -51,25 +51,25 @@
 | [0047](TODO-0047.md) | npm binary wrapper via cargo-dist | todo | medium | 2026-03-06 |
 | [0048](TODO-0048.md) | README install section update | todo | medium | 2026-03-06 |
 | [0049](TODO-0049.md) | GitHub Actions CI workflow | done | high | 2026-03-06 |
-| [0050](TODO-0050.md) | Fix String null serialization to Arrow NULL | todo | high | 2026-03-07 |
-| [0051](TODO-0051.md) | Replace panic! in model loading with error propagation | todo | high | 2026-03-07 |
-| [0052](TODO-0052.md) | Handle unreadable files gracefully in scan | todo | high | 2026-03-07 |
-| [0053](TODO-0053.md) | Handle symlink escape in scan strip_prefix | todo | high | 2026-03-07 |
-| [0054](TODO-0054.md) | Handle invalid glob pattern without panicking | todo | high | 2026-03-07 |
-| [0055](TODO-0055.md) | Add file size limit to scan | todo | medium | 2026-03-07 |
-| [0056](TODO-0056.md) | Verify .mdvs/ is not a symlink before clean | todo | medium | 2026-03-07 |
-| [0057](TODO-0057.md) | Refactor build::run() — extract model loading helper | todo | medium | 2026-03-07 |
-| [0058](TODO-0058.md) | Replace unwrap on path to_str in search | todo | medium | 2026-03-07 |
-| [0059](TODO-0059.md) | Replace unwrap on JSON serialization in output | todo | medium | 2026-03-07 |
-| [0060](TODO-0060.md) | Add tests for update command | todo | high | 2026-03-07 |
-| [0061](TODO-0061.md) | Add test for build validation abort | todo | high | 2026-03-07 |
-| [0062](TODO-0062.md) | Add test for null value parquet roundtrip | todo | high | 2026-03-07 |
-| [0063](TODO-0063.md) | Add search edge case tests | todo | high | 2026-03-07 |
-| [0064](TODO-0064.md) | Add parquet roundtrip tests for complex types | todo | medium | 2026-03-07 |
-| [0065](TODO-0065.md) | Add tests for table.rs and output.rs | todo | low | 2026-03-07 |
-| [0066](TODO-0066.md) | Add YAML nesting depth limit | todo | medium | 2026-03-07 |
-| [0067](TODO-0067.md) | Add frontmatter field count limit | todo | medium | 2026-03-07 |
-| [0068](TODO-0068.md) | Add context to parquet read error messages | todo | low | 2026-03-07 |
-| [0069](TODO-0069.md) | Warn when search verbose chunk text is unavailable | todo | low | 2026-03-07 |
-| [0070](TODO-0070.md) | Extract shared inference logic from init and update | todo | low | 2026-03-07 |
+| [0050](TODO-0050.md) | Fix String null serialization to Arrow NULL | done | high | 2026-03-07 |
+| [0051](TODO-0051.md) | Replace panic! in model loading with error propagation | done | high | 2026-03-07 |
+| [0052](TODO-0052.md) | Handle unreadable files gracefully in scan | done | high | 2026-03-07 |
+| [0053](TODO-0053.md) | Handle symlink escape in scan strip_prefix | done | high | 2026-03-07 |
+| [0054](TODO-0054.md) | Handle invalid glob pattern without panicking | done | high | 2026-03-07 |
+| [0055](TODO-0055.md) | Add file size limit to scan | done | medium | 2026-03-07 |
+| [0056](TODO-0056.md) | Verify .mdvs/ is not a symlink before clean | done | medium | 2026-03-07 |
+| [0057](TODO-0057.md) | Refactor build::run() — extract model loading helper | done | medium | 2026-03-07 |
+| [0058](TODO-0058.md) | Replace unwrap on path to_str in search | done | medium | 2026-03-07 |
+| [0059](TODO-0059.md) | Replace unwrap on JSON serialization in output | done | medium | 2026-03-07 |
+| [0060](TODO-0060.md) | Add tests for update command | done | high | 2026-03-07 |
+| [0061](TODO-0061.md) | Add test for build validation abort | done | high | 2026-03-07 |
+| [0062](TODO-0062.md) | Add test for null value parquet roundtrip | done | high | 2026-03-07 |
+| [0063](TODO-0063.md) | Add search edge case tests | done | high | 2026-03-07 |
+| [0064](TODO-0064.md) | Add parquet roundtrip tests for complex types | done | medium | 2026-03-07 |
+| [0065](TODO-0065.md) | Add tests for table.rs and output.rs | done | low | 2026-03-07 |
+| [0066](TODO-0066.md) | Add YAML nesting depth limit | done | medium | 2026-03-07 |
+| [0067](TODO-0067.md) | Add frontmatter field count limit | done | medium | 2026-03-07 |
+| [0068](TODO-0068.md) | Add context to parquet read error messages | done | low | 2026-03-07 |
+| [0069](TODO-0069.md) | Warn when search verbose chunk text is unavailable | done | low | 2026-03-07 |
+| [0070](TODO-0070.md) | Extract shared inference logic from init and update | done | low | 2026-03-07 |
 | [0071](TODO-0071.md) | Break up monolithic validate() function | todo | low | 2026-03-07 |
