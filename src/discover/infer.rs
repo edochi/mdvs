@@ -374,6 +374,7 @@ impl InferredField {
             } else {
                 None
             },
+            hints: crate::output::field_hints(&self.name),
         }
     }
 }

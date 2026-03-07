@@ -1,6 +1,6 @@
 use crate::discover::scan::ScannedFiles;
 use crate::index::backend::Backend;
-use crate::output::CommandOutput;
+use crate::output::{field_hints, format_hints, CommandOutput, FieldHint};
 use crate::schema::config::MdvsToml;
 use crate::table::{style_compact, style_record, Builder};
 use serde::Serialize;
@@ -27,6 +27,9 @@ pub struct InfoField {
     /// Total scanned files for computing prevalence (verbose only).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_files: Option<usize>,
+    /// Hints about special characters in the field name.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub hints: Vec<FieldHint>,
 }
 
 /// Metadata and statistics about a built search index.
@@ -139,6 +142,9 @@ impl CommandOutput for InfoResult {
                     for g in &f.allowed {
                         detail_lines.push(format!("    - \"{g}\""));
                     }
+                    if !f.hints.is_empty() {
+                        detail_lines.push(format!("  hints: {}", format_hints(&f.hints)));
+                    }
 
                     builder.push_record([detail_lines.join("\n"), String::new(), String::new()]);
                     let mut table = builder.build();
@@ -160,12 +166,17 @@ impl CommandOutput for InfoResult {
                             f.allowed.iter().map(|g| format!("\"{g}\"")).collect();
                         format!("allowed: {}", globs.join(", "))
                     };
-                    builder.push_record([
+                    let mut row = vec![
                         format!("\"{}\"", f.name),
                         f.field_type.clone(),
                         required_str,
                         allowed_str,
-                    ]);
+                    ];
+                    let hints_str = format_hints(&f.hints);
+                    if !hints_str.is_empty() {
+                        row.push(hints_str);
+                    }
+                    builder.push_record(row);
                 }
                 let mut table = builder.build();
                 style_compact(&mut table);
@@ -228,6 +239,7 @@ pub fn run(path: &Path, verbose: bool) -> anyhow::Result<InfoResult> {
                 None
             },
             total_files: if verbose { Some(total_files) } else { None },
+            hints: field_hints(&f.name),
         })
         .collect();
 
@@ -423,5 +435,46 @@ mod tests {
         assert!(result.index.is_some());
         let idx = result.index.unwrap();
         assert_eq!(idx.config_status, "changed — rebuild recommended");
+    }
+
+    #[test]
+    fn info_hints_for_special_char_field_names() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("note.md"),
+            "---\nauthor's_note: hello\n---\n# Note\nBody.",
+        )
+        .unwrap();
+
+        let config = MdvsToml {
+            scan: ScanConfig {
+                glob: "**".into(),
+                include_bare_files: false,
+                skip_gitignore: false,
+            },
+            update: UpdateConfig { auto_build: true },
+            fields: FieldsConfig {
+                ignore: vec![],
+                field: vec![crate::schema::config::TomlField {
+                    name: "author's_note".into(),
+                    field_type: FieldTypeSerde::Scalar("String".into()),
+                    allowed: vec!["**".into()],
+                    required: vec![],
+                }],
+            },
+            embedding_model: None,
+            chunking: None,
+            search: None,
+            storage: None,
+        };
+        config.write(&tmp.path().join("mdvs.toml")).unwrap();
+
+        let result = run(tmp.path(), false).unwrap();
+
+        assert_eq!(result.fields.len(), 1);
+        assert_eq!(result.fields[0].name, "author's_note");
+        assert!(result.fields[0]
+            .hints
+            .contains(&FieldHint::EscapeSingleQuotes));
     }
 }

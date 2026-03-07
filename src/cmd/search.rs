@@ -118,6 +118,20 @@ pub async fn run(
     where_clause: Option<&str>,
     verbose: bool,
 ) -> anyhow::Result<SearchResult> {
+    // Validate --where clause: unmatched quotes indicate unescaped special characters
+    if let Some(w) = where_clause {
+        if w.chars().filter(|&c| c == '\'').count() % 2 != 0 {
+            anyhow::bail!(
+                "unmatched single quote in --where clause — escape with '' (e.g. O''Brien)"
+            );
+        }
+        if w.chars().filter(|&c| c == '"').count() % 2 != 0 {
+            anyhow::bail!(
+                "unmatched double quote in --where clause — escape with \"\" (e.g. \"\"field\"\")"
+            );
+        }
+    }
+
     let start = std::time::Instant::now();
     let config_path = path.join("mdvs.toml");
 
@@ -362,5 +376,65 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("model mismatch"));
+    }
+
+    #[tokio::test]
+    async fn where_unmatched_single_quote() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_test_vault(tmp.path());
+        init_and_build(tmp.path()).await;
+
+        let result = run(tmp.path(), "test", 10, Some("author = 'O'Brien'"), false).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("unmatched single quote"));
+        assert!(err.contains("O''Brien"));
+    }
+
+    #[tokio::test]
+    async fn where_unmatched_double_quote() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_test_vault(tmp.path());
+        init_and_build(tmp.path()).await;
+
+        let result = run(tmp.path(), "test", 10, Some("x = \"bad"), false).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("unmatched double quote"));
+    }
+
+    #[tokio::test]
+    async fn where_even_but_malformed_quotes() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_test_vault(tmp.path());
+        init_and_build(tmp.path()).await;
+
+        // 2 single quotes (even) — passes parity check but DataFusion rejects it
+        let result = run(
+            tmp.path(),
+            "test",
+            10,
+            Some("author's name = O'Brien"),
+            false,
+        )
+        .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn where_balanced_quotes_pass() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_test_vault(tmp.path());
+        init_and_build(tmp.path()).await;
+
+        // Properly escaped single quotes should pass validation
+        let result = run(tmp.path(), "test", 10, Some("title = 'O''Brien'"), false).await;
+        // Should not fail with quote parity error (may fail for other reasons like no match)
+        if let Err(e) = &result {
+            assert!(
+                !e.to_string().contains("unmatched"),
+                "balanced quotes should not trigger parity check"
+            );
+        }
     }
 }

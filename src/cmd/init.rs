@@ -2,7 +2,7 @@ use crate::cmd::build::BuildResult;
 use crate::discover::infer::InferredSchema;
 use crate::discover::scan::ScannedFiles;
 use crate::index::storage::check_reserved_names;
-use crate::output::{format_file_count, CommandOutput, DiscoveredField};
+use crate::output::{format_file_count, format_hints, CommandOutput, DiscoveredField};
 use crate::schema::config::MdvsToml;
 use crate::schema::shared::ScanConfig;
 use crate::table::{style_compact, style_record, Builder};
@@ -77,6 +77,9 @@ impl CommandOutput for InitResult {
                             detail_lines.push(format!("    - \"{g}\""));
                         }
                     }
+                    if !field.hints.is_empty() {
+                        detail_lines.push(format!("  hints: {}", format_hints(&field.hints)));
+                    }
                     builder.push_record([detail_lines.join("\n"), String::new(), String::new()]);
                     let mut table = builder.build();
                     style_record(&mut table, 3);
@@ -86,11 +89,16 @@ impl CommandOutput for InitResult {
                 // Compact table
                 let mut builder = Builder::default();
                 for field in &self.fields {
-                    builder.push_record([
+                    let mut row = vec![
                         format!("\"{}\"", field.name),
                         field.field_type.clone(),
                         format!("{}/{}", field.files_found, field.total_files),
-                    ]);
+                    ];
+                    let hints_str = format_hints(&field.hints);
+                    if !hints_str.is_empty() {
+                        row.push(hints_str);
+                    }
+                    builder.push_record(row);
                 }
                 let mut table = builder.build();
                 style_compact(&mut table);
@@ -516,6 +524,52 @@ mod tests {
         assert!(toml_doc.embedding_model.is_none());
         assert!(toml_doc.chunking.is_none());
         assert!(toml_doc.search.is_none());
+    }
+
+    #[tokio::test]
+    async fn hints_for_special_char_field_names() {
+        use crate::output::FieldHint;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("notes");
+        fs::create_dir_all(&dir).unwrap();
+
+        fs::write(
+            dir.join("note.md"),
+            "---\nauthor's_note: hello\ntitle: world\n---\n# Note\nBody.",
+        )
+        .unwrap();
+
+        let result = run(
+            tmp.path(),
+            None,
+            None,
+            "**",
+            false,
+            true, // dry_run
+            true,
+            None,
+            false, // no auto_build
+            false,
+            false,
+        )
+        .await
+        .unwrap();
+
+        let sq_field = result
+            .fields
+            .iter()
+            .find(|f| f.name == "author's_note")
+            .expect("field with single quote should be discovered");
+        assert!(sq_field.hints.contains(&FieldHint::EscapeSingleQuotes));
+
+        // Normal fields should have no hints
+        let title_field = result
+            .fields
+            .iter()
+            .find(|f| f.name == "title")
+            .expect("title field should be discovered");
+        assert!(title_field.hints.is_empty());
     }
 
     #[tokio::test]

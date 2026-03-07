@@ -1,4 +1,5 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::path::PathBuf;
 
 /// Controls whether command output is rendered as plain text or machine-readable JSON.
@@ -8,6 +9,47 @@ pub enum OutputFormat {
     Text,
     /// Structured JSON for piping into other tools.
     Json,
+}
+
+/// Hint about special characters in a field name that affect `--where` clause usage.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum FieldHint {
+    /// Field name contains single quotes — escape with `''` in `--where`.
+    #[serde(rename = "escape single quotes")]
+    EscapeSingleQuotes,
+    /// Field name contains double quotes — escape with `""` in `--where`.
+    #[serde(rename = "escape double quotes")]
+    EscapeDoubleQuotes,
+}
+
+impl fmt::Display for FieldHint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            FieldHint::EscapeSingleQuotes => write!(f, "' → '' in --where"),
+            FieldHint::EscapeDoubleQuotes => write!(f, "\" → \"\" in --where"),
+        }
+    }
+}
+
+/// Compute hints for a field name based on special characters it contains.
+pub fn field_hints(name: &str) -> Vec<FieldHint> {
+    let mut hints = Vec::new();
+    if name.contains('\'') {
+        hints.push(FieldHint::EscapeSingleQuotes);
+    }
+    if name.contains('"') {
+        hints.push(FieldHint::EscapeDoubleQuotes);
+    }
+    hints
+}
+
+/// Format a list of hints as a comma-separated string for table display.
+pub fn format_hints(hints: &[FieldHint]) -> String {
+    hints
+        .iter()
+        .map(|h| h.to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// A frontmatter field discovered during scanning, with its inferred type and prevalence.
@@ -27,6 +69,9 @@ pub struct DiscoveredField {
     /// Glob patterns where this field is required in every file (verbose only).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub required: Option<Vec<String>>,
+    /// Hints about special characters in the field name.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub hints: Vec<FieldHint>,
 }
 
 /// A field whose inferred type changed between the previous and current scan.
@@ -181,10 +226,79 @@ mod tests {
             total_files: 10,
             allowed: Some(vec!["**".into()]),
             required: None,
+            hints: vec![],
         };
         let json = serde_json::to_string(&field).unwrap();
         assert!(json.contains("\"title\""));
         assert!(json.contains("\"String\""));
         assert!(!json.contains("required")); // skip_serializing_if = None
+        assert!(!json.contains("hints")); // skip_serializing_if = Vec::is_empty
+    }
+
+    #[test]
+    fn json_serialization_with_hints() {
+        let field = DiscoveredField {
+            name: "author's".into(),
+            field_type: "String".into(),
+            files_found: 1,
+            total_files: 1,
+            allowed: None,
+            required: None,
+            hints: vec![FieldHint::EscapeSingleQuotes],
+        };
+        let json = serde_json::to_string(&field).unwrap();
+        assert!(json.contains("\"hints\""));
+        assert!(json.contains("escape single quotes"));
+    }
+
+    #[test]
+    fn field_hints_no_special_chars() {
+        assert!(field_hints("title").is_empty());
+    }
+
+    #[test]
+    fn field_hints_single_quote() {
+        let hints = field_hints("author's_note");
+        assert_eq!(hints, vec![FieldHint::EscapeSingleQuotes]);
+    }
+
+    #[test]
+    fn field_hints_double_quote() {
+        let hints = field_hints("field\"name");
+        assert_eq!(hints, vec![FieldHint::EscapeDoubleQuotes]);
+    }
+
+    #[test]
+    fn field_hints_both_quotes() {
+        let hints = field_hints("it's a \"test\"");
+        assert_eq!(hints.len(), 2);
+        assert!(hints.contains(&FieldHint::EscapeSingleQuotes));
+        assert!(hints.contains(&FieldHint::EscapeDoubleQuotes));
+    }
+
+    #[test]
+    fn format_hints_empty() {
+        assert_eq!(format_hints(&[]), "");
+    }
+
+    #[test]
+    fn format_hints_single() {
+        let s = format_hints(&[FieldHint::EscapeSingleQuotes]);
+        assert!(s.contains("'"));
+        assert!(s.contains("''"));
+    }
+
+    #[test]
+    fn format_hints_multiple() {
+        let s = format_hints(&[FieldHint::EscapeSingleQuotes, FieldHint::EscapeDoubleQuotes]);
+        assert!(s.contains(", "));
+    }
+
+    #[test]
+    fn field_hint_serde_roundtrip() {
+        let hints = vec![FieldHint::EscapeSingleQuotes, FieldHint::EscapeDoubleQuotes];
+        let json = serde_json::to_string(&hints).unwrap();
+        let parsed: Vec<FieldHint> = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, hints);
     }
 }

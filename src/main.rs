@@ -92,8 +92,11 @@ enum Command {
         /// Maximum number of results
         #[arg(long, short = 'n', default_value = "10")]
         limit: usize,
-        /// SQL WHERE clause for filtering (e.g. "draft = false")
-        #[arg(long = "where")]
+        /// SQL WHERE clause for filtering
+        #[arg(
+            long = "where",
+            long_help = "SQL WHERE clause for filtering.\n\nExamples:\n  --where \"draft = false\"\n  --where \"tags = 'rust'\"\n  --where \"author = 'O''Brien'\"  (escape ' by doubling)\n\nField names with special characters require SQL quoting:\n  --where \"\\\"author's note\\\" = 'value'\""
+        )]
         where_clause: Option<String>,
     },
     /// Validate frontmatter against schema

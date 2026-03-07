@@ -168,10 +168,10 @@ impl SearchContext {
             if field.name() == &data_col {
                 if let DataType::Struct(children) = field.data_type() {
                     for child in children {
+                        let escaped_accessor = child.name().replace('\'', "''");
+                        let escaped_alias = child.name().replace('"', "\"\"");
                         projections.push(format!(
-                            "{data_col}['{}'] AS \"{}\"",
-                            child.name(),
-                            child.name(),
+                            "{data_col}['{escaped_accessor}'] AS \"{escaped_alias}\"",
                         ));
                     }
                 }
@@ -204,7 +204,7 @@ mod tests {
     use crate::index::storage::{
         build_chunks_batch, build_files_batch, write_parquet, ChunkRow, FileRow,
     };
-    use datafusion::arrow::array::{Array, Float64Array, Int64Array, StringViewArray};
+    use datafusion::arrow::array::{Array, Float64Array, Int64Array, StringArray, StringViewArray};
 
     fn test_files() -> (Vec<(String, FieldType)>, Vec<FileRow>) {
         let schema_fields = vec![
@@ -465,6 +465,111 @@ mod tests {
         let batches = sc.query(sql).await.unwrap();
         let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
         assert_eq!(total_rows, 6); // returns all, doesn't crash
+    }
+
+    #[tokio::test]
+    async fn field_name_with_single_quote() {
+        let schema_fields = vec![
+            ("author's_note".into(), FieldType::String),
+            ("draft".into(), FieldType::Boolean),
+        ];
+        let files = vec![FileRow {
+            file_id: "f1".into(),
+            filename: "post.md".into(),
+            frontmatter: Some(serde_json::json!({"author's_note": "hello world", "draft": false})),
+            content_hash: "h1".into(),
+            built_at: 1_700_000_000_000_000,
+        }];
+        let chunks = vec![ChunkRow {
+            chunk_id: "c1".into(),
+            file_id: "f1".into(),
+            chunk_index: 0,
+            start_line: 1,
+            end_line: 3,
+            embedding: vec![1.0, 0.0, 0.0, 0.0],
+        }];
+
+        let tmp = tempfile::tempdir().unwrap();
+        let files_path = tmp.path().join("files.parquet");
+        let chunks_path = tmp.path().join("chunks.parquet");
+        let files_batch = build_files_batch(&schema_fields, &files, "_");
+        write_parquet(&files_path, &files_batch).unwrap();
+        let chunks_batch = build_chunks_batch(&chunks, 4, "_");
+        write_parquet(&chunks_path, &chunks_batch).unwrap();
+
+        let query_vec = vec![1.0, 0.0, 0.0, 0.0];
+        let sc = SearchContext::new(&files_path, &chunks_path, query_vec, "_")
+            .await
+            .unwrap();
+
+        // The view should properly escape the single quote in the field name
+        let sql = "
+            SELECT f.\"author's_note\"
+            FROM files_v f
+        ";
+        let batches = sc.query(sql).await.unwrap();
+        let batch = &batches[0];
+        assert_eq!(batch.num_rows(), 1);
+        // Struct accessor returns Utf8, not StringView
+        let values = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert_eq!(values.value(0), "hello world");
+    }
+
+    #[tokio::test]
+    async fn field_name_with_double_quote() {
+        let schema_fields = vec![
+            ("field\"name".into(), FieldType::String),
+            ("draft".into(), FieldType::Boolean),
+        ];
+        let files = vec![FileRow {
+            file_id: "f1".into(),
+            filename: "post.md".into(),
+            frontmatter: Some(serde_json::json!({"field\"name": "test value", "draft": false})),
+            content_hash: "h1".into(),
+            built_at: 1_700_000_000_000_000,
+        }];
+        let chunks = vec![ChunkRow {
+            chunk_id: "c1".into(),
+            file_id: "f1".into(),
+            chunk_index: 0,
+            start_line: 1,
+            end_line: 3,
+            embedding: vec![1.0, 0.0, 0.0, 0.0],
+        }];
+
+        let tmp = tempfile::tempdir().unwrap();
+        let files_path = tmp.path().join("files.parquet");
+        let chunks_path = tmp.path().join("chunks.parquet");
+        let files_batch = build_files_batch(&schema_fields, &files, "_");
+        write_parquet(&files_path, &files_batch).unwrap();
+        let chunks_batch = build_chunks_batch(&chunks, 4, "_");
+        write_parquet(&chunks_path, &chunks_batch).unwrap();
+
+        let query_vec = vec![1.0, 0.0, 0.0, 0.0];
+        let sc = SearchContext::new(&files_path, &chunks_path, query_vec, "_")
+            .await
+            .unwrap();
+
+        // The view should properly escape the double quote in the alias
+        // To reference it in SQL, we also double the quote
+        let sql = "
+            SELECT f.\"field\"\"name\"
+            FROM files_v f
+        ";
+        let batches = sc.query(sql).await.unwrap();
+        let batch = &batches[0];
+        assert_eq!(batch.num_rows(), 1);
+        // Struct accessor returns Utf8, not StringView
+        let values = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert_eq!(values.value(0), "test value");
     }
 
     #[tokio::test]

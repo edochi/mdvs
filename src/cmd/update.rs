@@ -3,7 +3,7 @@ use crate::discover::infer::InferredSchema;
 use crate::discover::scan::ScannedFiles;
 use crate::index::storage::check_reserved_names;
 use crate::output::{
-    format_file_count, ChangedField, CommandOutput, DiscoveredField, RemovedField,
+    format_file_count, format_hints, ChangedField, CommandOutput, DiscoveredField, RemovedField,
 };
 use crate::schema::config::{MdvsToml, TomlField};
 use crate::schema::shared::FieldTypeSerde;
@@ -89,17 +89,17 @@ impl CommandOutput for UpdateResult {
                     "added".to_string(),
                     field.field_type.clone(),
                 ]);
-                let detail = match &field.allowed {
-                    Some(globs) => {
-                        let mut lines = vec!["  found in:".to_string()];
-                        for g in globs {
-                            lines.push(format!("    - \"{g}\""));
-                        }
-                        lines.join("\n")
+                let mut detail_lines = Vec::new();
+                if let Some(ref globs) = field.allowed {
+                    detail_lines.push("  found in:".to_string());
+                    for g in globs {
+                        detail_lines.push(format!("    - \"{g}\""));
                     }
-                    None => String::new(),
-                };
-                builder.push_record([detail, String::new(), String::new()]);
+                }
+                if !field.hints.is_empty() {
+                    detail_lines.push(format!("  hints: {}", format_hints(&field.hints)));
+                }
+                builder.push_record([detail_lines.join("\n"), String::new(), String::new()]);
                 let mut table = builder.build();
                 style_record(&mut table, 3);
                 out.push_str(&format!("{table}\n"));
@@ -162,11 +162,16 @@ impl CommandOutput for UpdateResult {
                             .join(", ")
                     })
                     .unwrap_or_default();
-                builder.push_record([
+                let mut row = vec![
                     format!("\"{}\"", field.name),
                     format!("added      {}", field.field_type),
                     globs_summary,
-                ]);
+                ];
+                let hints_str = format_hints(&field.hints);
+                if !hints_str.is_empty() {
+                    row.push(hints_str);
+                }
+                builder.push_record(row);
             }
             for field in &self.changed {
                 let globs_summary = field
