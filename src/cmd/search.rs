@@ -6,7 +6,7 @@ use crate::table::{style_compact, style_record, Builder};
 use anyhow::Context;
 use serde::Serialize;
 use std::path::Path;
-use tracing::{info, instrument};
+use tracing::{info, instrument, warn};
 
 /// Result of the `search` command: ranked list of matching files.
 #[derive(Debug, Serialize)]
@@ -148,7 +148,7 @@ pub async fn run(
     info!(model = %embedding.name, "loading model");
     let t = std::time::Instant::now();
     let model_config = ModelConfig::try_from(embedding)?;
-    let embedder = Embedder::load(&model_config);
+    let embedder = Embedder::load(&model_config)?;
     info!(elapsed_ms = t.elapsed().as_millis() as u64, "model loaded");
 
     // Embed query
@@ -167,7 +167,13 @@ pub async fn run(
     if verbose {
         for hit in &mut hits {
             if let (Some(start), Some(end)) = (hit.start_line, hit.end_line) {
-                hit.chunk_text = read_lines(&path.join(&hit.filename), start, end);
+                match read_lines(&path.join(&hit.filename), start, end) {
+                    Some(text) => hit.chunk_text = Some(text),
+                    None => warn!(
+                        file = %hit.filename,
+                        "could not read chunk text (file may have changed since build)"
+                    ),
+                }
             }
         }
     }
@@ -312,7 +318,7 @@ mod tests {
         let backend = Backend::parquet(tmp.path(), config.internal_prefix());
         let embedding = config.embedding_model.as_ref().unwrap();
         let model_config = ModelConfig::try_from(embedding).unwrap();
-        let embedder = Embedder::load(&model_config);
+        let embedder = Embedder::load(&model_config).unwrap();
         let query_embedding = embedder.embed("rust programming").await;
 
         let hits = backend.search(query_embedding, None, 1).await.unwrap();
@@ -329,7 +335,7 @@ mod tests {
         let backend = Backend::parquet(tmp.path(), config.internal_prefix());
         let embedding = config.embedding_model.as_ref().unwrap();
         let model_config = ModelConfig::try_from(embedding).unwrap();
-        let embedder = Embedder::load(&model_config);
+        let embedder = Embedder::load(&model_config).unwrap();
         let query_embedding = embedder.embed("cooking recipes").await;
 
         let hits = backend

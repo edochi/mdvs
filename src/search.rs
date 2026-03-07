@@ -144,9 +144,15 @@ impl SearchContext {
         prefix: &str,
     ) -> anyhow::Result<Self> {
         let ctx = SessionContext::new();
-        ctx.register_parquet("files", files_path.to_str().unwrap(), Default::default())
+        let files_str = files_path
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("non-UTF-8 path: {}", files_path.display()))?;
+        let chunks_str = chunks_path
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("non-UTF-8 path: {}", chunks_path.display()))?;
+        ctx.register_parquet("files", files_str, Default::default())
             .await?;
-        ctx.register_parquet("chunks", chunks_path.to_str().unwrap(), Default::default())
+        ctx.register_parquet("chunks", chunks_str, Default::default())
             .await?;
 
         let udf = ScalarUDF::from(CosineSimilarityUDF::new(query_embedding));
@@ -411,6 +417,54 @@ mod tests {
         let batches = sc.query(sql).await.unwrap();
         let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
         assert_eq!(total_rows, 2);
+    }
+
+    #[tokio::test]
+    async fn zero_query_vector_returns_zero_scores() {
+        let idx = setup_test_index();
+        let query_vec = vec![0.0, 0.0, 0.0, 0.0]; // zero vector
+        let sc = SearchContext::new(&idx.files_path, &idx.chunks_path, query_vec, "_")
+            .await
+            .unwrap();
+
+        let sql = "
+            SELECT cosine_similarity(c._embedding) AS score
+            FROM chunks c
+        ";
+
+        let batches = sc.query(sql).await.unwrap();
+        let scores = batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+
+        for i in 0..scores.len() {
+            let score = scores.value(i);
+            assert_eq!(score, 0.0, "zero query vector should produce 0.0, not NaN");
+            assert!(!score.is_nan());
+        }
+    }
+
+    #[tokio::test]
+    async fn limit_exceeds_chunk_count() {
+        let idx = setup_test_index();
+        let query_vec = vec![1.0, 0.0, 0.0, 0.0];
+        let sc = SearchContext::new(&idx.files_path, &idx.chunks_path, query_vec, "_")
+            .await
+            .unwrap();
+
+        // LIMIT 1000 but only 6 chunks exist
+        let sql = "
+            SELECT f._filename, cosine_similarity(c._embedding) AS score
+            FROM chunks c JOIN files f ON c._file_id = f._file_id
+            ORDER BY score DESC
+            LIMIT 1000
+        ";
+
+        let batches = sc.query(sql).await.unwrap();
+        let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+        assert_eq!(total_rows, 6); // returns all, doesn't crash
     }
 
     #[tokio::test]

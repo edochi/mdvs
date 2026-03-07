@@ -307,6 +307,25 @@ fn classify_files<'a>(
     }
 }
 
+/// Load the embedding model and verify its dimension matches any existing index.
+fn load_embedder(embedding: &EmbeddingModelConfig, backend: &Backend) -> anyhow::Result<Embedder> {
+    info!(model = %embedding.name, "loading model");
+    let t = Instant::now();
+    let model_config = ModelConfig::try_from(embedding)?;
+    let embedder = Embedder::load(&model_config)?;
+    info!(elapsed_ms = t.elapsed().as_millis() as u64, "model loaded");
+
+    if let Some(existing_dim) = backend.embedding_dimension()? {
+        let model_dim = embedder.dimension() as i32;
+        anyhow::ensure!(
+            existing_dim == model_dim,
+            "dimension mismatch: model produces {model_dim}-dim embeddings but existing index has {existing_dim}-dim",
+        );
+    }
+
+    Ok(embedder)
+}
+
 /// Validate frontmatter, chunk, embed, and write Parquet files to `.mdvs/`.
 #[instrument(name = "build", skip_all)]
 pub async fn run(
@@ -416,7 +435,7 @@ pub async fn run(
     }
 
     // Scan files
-    let scanned = ScannedFiles::scan(path, &config.scan);
+    let scanned = ScannedFiles::scan(path, &config.scan)?;
 
     anyhow::ensure!(
         !scanned.files.is_empty(),
@@ -456,19 +475,7 @@ pub async fn run(
 
     let (file_rows, chunk_rows, files_embedded, files_unchanged, files_removed) = if full_rebuild {
         // === FULL REBUILD ===
-        info!(model = %embedding.name, "loading model");
-        let t = Instant::now();
-        let model_config = ModelConfig::try_from(embedding)?;
-        let embedder = Embedder::load(&model_config);
-        info!(elapsed_ms = t.elapsed().as_millis() as u64, "model loaded");
-
-        if let Some(existing_dim) = backend.embedding_dimension()? {
-            let model_dim = embedder.dimension() as i32;
-            anyhow::ensure!(
-                existing_dim == model_dim,
-                "dimension mismatch: model produces {model_dim}-dim embeddings but existing index has {existing_dim}-dim",
-            );
-        }
+        let embedder = load_embedder(embedding, &backend)?;
 
         let mut file_rows = Vec::new();
         let mut chunk_rows = Vec::new();
@@ -559,19 +566,7 @@ pub async fn run(
             .collect();
 
         if !classification.needs_embedding.is_empty() {
-            info!(model = %embedding.name, "loading model");
-            let t = Instant::now();
-            let model_config = ModelConfig::try_from(embedding)?;
-            let embedder = Embedder::load(&model_config);
-            info!(elapsed_ms = t.elapsed().as_millis() as u64, "model loaded");
-
-            if let Some(existing_dim) = backend.embedding_dimension()? {
-                let model_dim = embedder.dimension() as i32;
-                anyhow::ensure!(
-                    existing_dim == model_dim,
-                    "dimension mismatch: model produces {model_dim}-dim embeddings but existing index has {existing_dim}-dim",
-                );
-            }
+            let embedder = load_embedder(embedding, &backend)?;
 
             {
                 let t = Instant::now();

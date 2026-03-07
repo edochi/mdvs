@@ -5,6 +5,7 @@ use crate::index::storage::{
     ChunkRow, FileIndexEntry, FileRow,
 };
 use crate::search::SearchContext;
+use anyhow::Context;
 use datafusion::arrow::array::{Array, Float64Array, Int32Array, StringViewArray};
 use datafusion::arrow::datatypes::DataType;
 use serde::Serialize;
@@ -167,20 +168,21 @@ impl ParquetBackend {
             return Ok(None);
         }
         read_build_metadata(&self.files_parquet())
+            .context("reading build metadata from files.parquet")
     }
 
     fn read_file_index(&self) -> anyhow::Result<Vec<FileIndexEntry>> {
         if !self.files_parquet().exists() {
             return Ok(vec![]);
         }
-        read_file_index(&self.files_parquet())
+        read_file_index(&self.files_parquet()).context("reading file index from files.parquet")
     }
 
     fn read_chunk_rows(&self) -> anyhow::Result<Vec<ChunkRow>> {
         if !self.chunks_parquet().exists() {
             return Ok(vec![]);
         }
-        read_chunk_rows(&self.chunks_parquet())
+        read_chunk_rows(&self.chunks_parquet()).context("reading chunk rows from chunks.parquet")
     }
 
     fn embedding_dimension(&self) -> anyhow::Result<Option<i32>> {

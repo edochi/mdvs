@@ -66,6 +66,12 @@ fn walk_dir_stats(dir: &Path) -> anyhow::Result<(usize, u64)> {
 pub fn run(path: &Path) -> anyhow::Result<CleanResult> {
     let start = std::time::Instant::now();
     let mdvs_dir = path.join(".mdvs");
+    if mdvs_dir.is_symlink() {
+        anyhow::bail!(
+            "'{}' is a symlink — refusing to delete for safety",
+            mdvs_dir.display()
+        );
+    }
     if mdvs_dir.exists() {
         let (files_removed, size_bytes) = walk_dir_stats(&mdvs_dir)?;
         let backend = Backend::parquet(path, "_");

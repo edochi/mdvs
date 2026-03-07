@@ -100,7 +100,7 @@ fn main() {
         model_id: TEST_MODEL.into(),
         revision: None,
     };
-    let embedder = Embedder::load(&config);
+    let embedder = Embedder::load(&config).expect("failed to load model");
     println!("  1. Loaded from ModelConfig (no revision)  ✓");
 
     // --- Test 2: Resolve revision from cache ---
@@ -119,7 +119,7 @@ fn main() {
             model_id: TEST_MODEL.into(),
             revision: Some(rev.clone()),
         };
-        let pinned_embedder = Embedder::load(&pinned_config);
+        let pinned_embedder = Embedder::load(&pinned_config).expect("failed to load pinned model");
         // Should produce same embeddings as unpinned
         let a = embedder.embed("test");
         let b = pinned_embedder.embed("test");

@@ -138,7 +138,53 @@ pub trait CommandOutput: Serialize {
     fn print(&self, format: &OutputFormat, verbose: bool) {
         match format {
             OutputFormat::Text => print!("{}", self.format_text(verbose)),
-            OutputFormat::Json => print!("{}", serde_json::to_string_pretty(self).unwrap()),
+            OutputFormat::Json => {
+                print!(
+                    "{}",
+                    serde_json::to_string_pretty(self)
+                        .expect("CommandOutput types must be JSON-serializable")
+                )
+            }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_file_count_singular() {
+        assert_eq!(format_file_count(1), "1 file");
+    }
+
+    #[test]
+    fn format_file_count_plural() {
+        assert_eq!(format_file_count(0), "0 files");
+        assert_eq!(format_file_count(5), "5 files");
+    }
+
+    #[test]
+    fn format_size_units() {
+        assert_eq!(format_size(512), "512 B");
+        assert_eq!(format_size(1024), "1.0 KB");
+        assert_eq!(format_size(1_048_576), "1.0 MB");
+        assert_eq!(format_size(1_073_741_824), "1.0 GB");
+    }
+
+    #[test]
+    fn json_serialization_roundtrip() {
+        let field = DiscoveredField {
+            name: "title".into(),
+            field_type: "String".into(),
+            files_found: 5,
+            total_files: 10,
+            allowed: Some(vec!["**".into()]),
+            required: None,
+        };
+        let json = serde_json::to_string(&field).unwrap();
+        assert!(json.contains("\"title\""));
+        assert!(json.contains("\"String\""));
+        assert!(!json.contains("required")); // skip_serializing_if = None
     }
 }

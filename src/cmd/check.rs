@@ -166,7 +166,7 @@ impl CommandOutput for CheckResult {
 pub fn run(path: &Path, verbose: bool) -> anyhow::Result<CheckResult> {
     let start = Instant::now();
     let config = MdvsToml::read(&path.join("mdvs.toml"))?;
-    let scanned = ScannedFiles::scan(path, &config.scan);
+    let scanned = ScannedFiles::scan(path, &config.scan)?;
     let mut result = validate(&scanned, &config, verbose)?;
     if verbose {
         result.glob = Some(config.scan.glob.clone());

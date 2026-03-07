@@ -244,7 +244,7 @@ pub async fn run(
     }
 
     // Scan and infer
-    let scanned = ScannedFiles::scan(path, &config.scan);
+    let scanned = ScannedFiles::scan(path, &config.scan)?;
     let schema = InferredSchema::infer(&scanned);
     let total_files = scanned.files.len();
 
@@ -309,18 +309,7 @@ pub async fn run(
             new_fields.push(toml_field);
         } else {
             // Genuinely new field
-            added.push(DiscoveredField {
-                name: inf.name.clone(),
-                field_type: new_type.to_string(),
-                files_found: inf.files.len(),
-                total_files,
-                allowed: if verbose {
-                    Some(inf.allowed.clone())
-                } else {
-                    None
-                },
-                required: None,
-            });
+            added.push(inf.to_discovered(total_files, verbose));
             new_fields.push(toml_field);
         }
     }

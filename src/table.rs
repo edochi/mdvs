@@ -36,3 +36,48 @@ pub fn style_record(table: &mut tabled::Table, cols: isize) {
     table.with(Width::increase(w));
     table.with(Width::wrap(w).priority(PriorityMax::left()));
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn style_compact_smoke() {
+        let mut builder = Builder::default();
+        builder.push_record(["name", "type", "count"]);
+        builder.push_record(["title", "String", "5/5"]);
+        builder.push_record(["draft", "Boolean", "3/5"]);
+        let mut table = builder.build();
+        style_compact(&mut table);
+        let rendered = table.to_string();
+        assert!(rendered.contains("title"));
+        assert!(rendered.contains("Boolean"));
+    }
+
+    #[test]
+    fn style_record_smoke() {
+        let mut builder = Builder::default();
+        builder.push_record(["\"title\"", "String", "5/5"]);
+        builder.push_record(["  required:\n    - \"**\"", "", ""]);
+        let mut table = builder.build();
+        style_record(&mut table, 3);
+        let rendered = table.to_string();
+        assert!(rendered.contains("title"));
+        assert!(rendered.contains("required"));
+    }
+
+    #[test]
+    fn style_compact_empty_table() {
+        let builder = Builder::default();
+        let mut table = builder.build();
+        style_compact(&mut table);
+        // Should not panic on empty table
+        let _ = table.to_string();
+    }
+
+    #[test]
+    fn term_width_returns_positive() {
+        let w = term_width();
+        assert!(w > 0);
+    }
+}

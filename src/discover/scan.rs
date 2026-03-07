@@ -1,4 +1,5 @@
 use crate::schema::shared::ScanConfig;
+use anyhow::Context;
 use globset::Glob;
 use gray_matter::engine::YAML;
 use gray_matter::{Matter, Pod};
@@ -6,7 +7,25 @@ use ignore::WalkBuilder;
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
-use tracing::{info, instrument};
+use tracing::{info, instrument, warn};
+
+const MAX_NESTING_DEPTH: usize = 50;
+const MAX_FIELD_COUNT: usize = 1000;
+
+/// Check that a JSON value doesn't exceed the maximum nesting depth.
+fn check_depth(val: &Value, max: usize) -> bool {
+    fn recurse(val: &Value, depth: usize, max: usize) -> bool {
+        if depth > max {
+            return false;
+        }
+        match val {
+            Value::Object(map) => map.values().all(|v| recurse(v, depth + 1, max)),
+            Value::Array(arr) => arr.iter().all(|v| recurse(v, depth + 1, max)),
+            _ => true,
+        }
+    }
+    recurse(val, 0, max)
+}
 
 /// A single markdown file with its parsed frontmatter and body content.
 #[derive(Debug)]
@@ -29,9 +48,9 @@ pub struct ScannedFiles {
 impl ScannedFiles {
     /// Walk a directory, parse frontmatter, and collect matching markdown files.
     #[instrument(name = "scan", skip_all)]
-    pub fn scan(root: &Path, config: &ScanConfig) -> Self {
+    pub fn scan(root: &Path, config: &ScanConfig) -> anyhow::Result<Self> {
         let matcher = Glob::new(&config.glob)
-            .expect("invalid glob pattern")
+            .context(format!("invalid glob pattern '{}'", config.glob))?
             .compile_matcher();
         let matter = Matter::<YAML>::new();
 
@@ -51,13 +70,43 @@ impl ScannedFiles {
             })
         {
             let abs_path = entry.path();
-            let rel_path = abs_path.strip_prefix(root).unwrap().to_path_buf();
+            let rel_path = match abs_path.strip_prefix(root) {
+                Ok(p) => p.to_path_buf(),
+                Err(_) => {
+                    warn!(path = %abs_path.display(), "file is outside root directory, skipping");
+                    continue;
+                }
+            };
 
             if !matcher.is_match(&rel_path) {
                 continue;
             }
 
-            let raw = fs::read_to_string(abs_path).expect("failed to read file");
+            // Skip files larger than 100MB to prevent OOM
+            const MAX_FILE_SIZE: u64 = 100 * 1024 * 1024;
+            match fs::metadata(abs_path) {
+                Ok(meta) if meta.len() > MAX_FILE_SIZE => {
+                    warn!(
+                        path = %rel_path.display(),
+                        size_bytes = meta.len(),
+                        "file exceeds 100MB limit, skipping"
+                    );
+                    continue;
+                }
+                Err(e) => {
+                    warn!(path = %abs_path.display(), error = %e, "failed to stat file, skipping");
+                    continue;
+                }
+                _ => {}
+            }
+
+            let raw = match fs::read_to_string(abs_path) {
+                Ok(content) => content,
+                Err(e) => {
+                    warn!(path = %abs_path.display(), error = %e, "failed to read file, skipping");
+                    continue;
+                }
+            };
             let Ok(parsed) = matter.parse(&raw) else {
                 if !config.include_bare_files {
                     continue;
@@ -79,6 +128,27 @@ impl ScannedFiles {
                 }
             });
 
+            // Safety limits on frontmatter complexity
+            if let Some(ref val) = data {
+                if let Value::Object(map) = val {
+                    if map.len() > MAX_FIELD_COUNT {
+                        warn!(
+                            path = %rel_path.display(),
+                            fields = map.len(),
+                            "frontmatter exceeds {MAX_FIELD_COUNT} fields, skipping"
+                        );
+                        continue;
+                    }
+                }
+                if !check_depth(val, MAX_NESTING_DEPTH) {
+                    warn!(
+                        path = %rel_path.display(),
+                        "frontmatter exceeds {MAX_NESTING_DEPTH} levels of nesting, skipping"
+                    );
+                    continue;
+                }
+            }
+
             if data.is_none() && !config.include_bare_files {
                 continue;
             }
@@ -96,7 +166,7 @@ impl ScannedFiles {
 
         info!(files = files.len(), "scan complete");
 
-        ScannedFiles { files }
+        Ok(ScannedFiles { files })
     }
 }
 
@@ -150,7 +220,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         setup_fixtures(tmp.path());
 
-        let scanned = ScannedFiles::scan(tmp.path(), &scan_config("**", false));
+        let scanned = ScannedFiles::scan(tmp.path(), &scan_config("**", false)).unwrap();
         assert_eq!(scanned.files.len(), 4);
     }
 
@@ -159,7 +229,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         setup_fixtures(tmp.path());
 
-        let scanned = ScannedFiles::scan(tmp.path(), &scan_config("**", false));
+        let scanned = ScannedFiles::scan(tmp.path(), &scan_config("**", false)).unwrap();
         let paths: Vec<&str> = scanned
             .files
             .iter()
@@ -181,7 +251,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         setup_fixtures(tmp.path());
 
-        let scanned = ScannedFiles::scan(tmp.path(), &scan_config("**", false));
+        let scanned = ScannedFiles::scan(tmp.path(), &scan_config("**", false)).unwrap();
         let post1 = scanned
             .files
             .iter()
@@ -198,7 +268,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         setup_fixtures(tmp.path());
 
-        let scanned = ScannedFiles::scan(tmp.path(), &scan_config("**", false));
+        let scanned = ScannedFiles::scan(tmp.path(), &scan_config("**", false)).unwrap();
         let post1 = scanned
             .files
             .iter()
@@ -212,7 +282,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         setup_fixtures(tmp.path());
 
-        let scanned = ScannedFiles::scan(tmp.path(), &scan_config("**", false));
+        let scanned = ScannedFiles::scan(tmp.path(), &scan_config("**", false)).unwrap();
         let post2 = scanned
             .files
             .iter()
@@ -226,7 +296,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         setup_fixtures(tmp.path());
 
-        let scanned = ScannedFiles::scan(tmp.path(), &scan_config("**", false));
+        let scanned = ScannedFiles::scan(tmp.path(), &scan_config("**", false)).unwrap();
         let d1 = scanned
             .files
             .iter()
@@ -240,7 +310,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         setup_fixtures(tmp.path());
 
-        let scanned = ScannedFiles::scan(tmp.path(), &scan_config("**", true));
+        let scanned = ScannedFiles::scan(tmp.path(), &scan_config("**", true)).unwrap();
         assert_eq!(scanned.files.len(), 5);
         let bare = scanned
             .files
@@ -256,13 +326,13 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         setup_fixtures(tmp.path());
 
-        let blog = ScannedFiles::scan(tmp.path(), &scan_config("blog/**", false));
+        let blog = ScannedFiles::scan(tmp.path(), &scan_config("blog/**", false)).unwrap();
         assert_eq!(blog.files.len(), 3);
         for f in &blog.files {
             assert!(f.path.starts_with("blog/"));
         }
 
-        let notes = ScannedFiles::scan(tmp.path(), &scan_config("notes/**", false));
+        let notes = ScannedFiles::scan(tmp.path(), &scan_config("notes/**", false)).unwrap();
         assert_eq!(notes.files.len(), 1);
         assert_eq!(notes.files[0].path.to_str().unwrap(), "notes/idea.md");
     }
@@ -272,7 +342,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         setup_fixtures(tmp.path());
 
-        let scanned = ScannedFiles::scan(tmp.path(), &scan_config("papers/**", false));
+        let scanned = ScannedFiles::scan(tmp.path(), &scan_config("papers/**", false)).unwrap();
         assert_eq!(scanned.files.len(), 0);
     }
 
@@ -281,7 +351,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         write_file(tmp.path(), "scalar.md", "---\njust a string\n---\nBody.");
 
-        let scanned = ScannedFiles::scan(tmp.path(), &scan_config("**", true));
+        let scanned = ScannedFiles::scan(tmp.path(), &scan_config("**", true)).unwrap();
         assert_eq!(scanned.files.len(), 1);
         assert!(scanned.files[0].data.is_none());
     }
@@ -295,7 +365,7 @@ mod tests {
             "---\ntitle: Nested\nmeta:\n  author: me\n  version: 2\n---\nNested content.",
         );
 
-        let scanned = ScannedFiles::scan(tmp.path(), &scan_config("**", false));
+        let scanned = ScannedFiles::scan(tmp.path(), &scan_config("**", false)).unwrap();
         let meta = &scanned.files[0].data.as_ref().unwrap()["meta"];
         assert_eq!(meta["author"], "me");
         assert_eq!(meta["version"], 2);
@@ -306,7 +376,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         write_file(tmp.path(), "empty.md", "---\n---\nBody only.");
 
-        let scanned = ScannedFiles::scan(tmp.path(), &scan_config("**", true));
+        let scanned = ScannedFiles::scan(tmp.path(), &scan_config("**", true)).unwrap();
         assert_eq!(scanned.files.len(), 1);
         if let Some(data) = &scanned.files[0].data {
             assert!(data.as_object().unwrap().is_empty());
@@ -318,7 +388,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         setup_fixtures(tmp.path());
 
-        let scanned = ScannedFiles::scan(tmp.path(), &scan_config("**", false));
+        let scanned = ScannedFiles::scan(tmp.path(), &scan_config("**", false)).unwrap();
         let d1 = scanned
             .files
             .iter()
@@ -338,7 +408,7 @@ mod tests {
         );
         write_file(tmp.path(), ".mdvsignore", "secret/\n");
 
-        let scanned = ScannedFiles::scan(tmp.path(), &scan_config("**", false));
+        let scanned = ScannedFiles::scan(tmp.path(), &scan_config("**", false)).unwrap();
         assert_eq!(scanned.files.len(), 1);
         assert_eq!(scanned.files[0].path.to_str().unwrap(), "blog/post1.md");
     }

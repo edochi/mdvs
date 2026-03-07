@@ -4,7 +4,7 @@ use crate::discover::scan::ScannedFiles;
 use crate::index::storage::check_reserved_names;
 use crate::output::{format_file_count, CommandOutput, DiscoveredField};
 use crate::schema::config::MdvsToml;
-use crate::schema::shared::{FieldTypeSerde, ScanConfig};
+use crate::schema::shared::ScanConfig;
 use crate::table::{style_compact, style_record, Builder};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -180,7 +180,7 @@ pub async fn run(
         include_bare_files: !ignore_bare_files,
         skip_gitignore,
     };
-    let scanned = ScannedFiles::scan(path, &scan_config);
+    let scanned = ScannedFiles::scan(path, &scan_config)?;
 
     anyhow::ensure!(
         !scanned.files.is_empty(),
@@ -199,22 +199,7 @@ pub async fn run(
         fields: schema
             .fields
             .iter()
-            .map(|f| DiscoveredField {
-                name: f.name.clone(),
-                field_type: FieldTypeSerde::from(&f.field_type).to_string(),
-                files_found: f.files.len(),
-                total_files,
-                allowed: if verbose {
-                    Some(f.allowed.clone())
-                } else {
-                    None
-                },
-                required: if verbose {
-                    Some(f.required.clone())
-                } else {
-                    None
-                },
-            })
+            .map(|f| f.to_discovered(total_files, verbose))
             .collect(),
         auto_build,
         dry_run,

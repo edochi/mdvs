@@ -175,9 +175,10 @@ fn build_array(values: &[Option<&Value>], ft: &FieldType) -> ArrayRef {
             let arr: StringArray = values
                 .iter()
                 .map(|v| {
-                    v.map(|v| match v {
-                        Value::String(s) => s.clone(),
-                        other => other.to_string(),
+                    v.and_then(|v| match v {
+                        Value::Null => None,
+                        Value::String(s) => Some(s.clone()),
+                        other => Some(other.to_string()),
                     })
                 })
                 .collect();
@@ -680,6 +681,82 @@ mod tests {
     }
 
     #[test]
+    fn null_values_become_arrow_null() {
+        let schema_fields = vec![
+            ("title".into(), FieldType::String),
+            ("count".into(), FieldType::Integer),
+            ("score".into(), FieldType::Float),
+            ("draft".into(), FieldType::Boolean),
+        ];
+
+        let files = vec![
+            FileRow {
+                file_id: "id-1".into(),
+                filename: "a.md".into(),
+                frontmatter: Some(
+                    serde_json::json!({"title": null, "count": null, "score": null, "draft": null}),
+                ),
+                content_hash: "h1".into(),
+                built_at: 1_700_000_000_000_000,
+            },
+            FileRow {
+                file_id: "id-2".into(),
+                filename: "b.md".into(),
+                frontmatter: Some(
+                    serde_json::json!({"title": "hello", "count": 5, "score": 3.14, "draft": true}),
+                ),
+                content_hash: "h2".into(),
+                built_at: 1_700_000_000_000_000,
+            },
+        ];
+
+        let batch = build_files_batch(&schema_fields, &files, "_");
+
+        let data = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+
+        let title = data
+            .column_by_name("title")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        let count = data
+            .column_by_name("count")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
+        let score = data
+            .column_by_name("score")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+        let draft = data
+            .column_by_name("draft")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<BooleanArray>()
+            .unwrap();
+
+        // Row 0: all null values → Arrow NULL
+        assert!(title.is_null(0), "null title should be Arrow NULL");
+        assert!(count.is_null(0), "null count should be Arrow NULL");
+        assert!(score.is_null(0), "null score should be Arrow NULL");
+        assert!(draft.is_null(0), "null draft should be Arrow NULL");
+
+        // Row 1: real values preserved
+        assert_eq!(title.value(1), "hello");
+        assert_eq!(count.value(1), 5);
+        assert!((score.value(1) - 3.14).abs() < f64::EPSILON);
+        assert!(draft.value(1));
+    }
+
+    #[test]
     fn chunks_parquet_roundtrip() {
         let dimension = 4;
         let chunks = vec![
@@ -1118,5 +1195,92 @@ mod tests {
         assert_eq!(rows[2].chunk_id, "c3");
         assert_eq!(rows[2].file_id, "f2");
         assert!((rows[2].embedding[0] - 0.9).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn nested_object_roundtrip() {
+        use std::collections::BTreeMap;
+
+        let mut inner = BTreeMap::new();
+        inner.insert("author".into(), FieldType::String);
+        inner.insert("version".into(), FieldType::Integer);
+        let schema_fields = vec![("meta".into(), FieldType::Object(inner))];
+
+        let files = vec![FileRow {
+            file_id: "id-1".into(),
+            filename: "nested.md".into(),
+            frontmatter: Some(serde_json::json!({"meta": {"author": "Alice", "version": 2}})),
+            content_hash: "h1".into(),
+            built_at: 1_700_000_000_000_000,
+        }];
+
+        let batch = build_files_batch(&schema_fields, &files, "_");
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("files.parquet");
+        write_parquet(&path, &batch).unwrap();
+
+        let batches = read_parquet(&path).unwrap();
+        assert_eq!(batches[0].num_rows(), 1);
+    }
+
+    #[test]
+    fn unicode_frontmatter_roundtrip() {
+        let schema_fields = vec![("title".into(), FieldType::String)];
+        let files = vec![FileRow {
+            file_id: "id-1".into(),
+            filename: "unicode.md".into(),
+            frontmatter: Some(serde_json::json!({"title": "こんにちは 🦀 Émojis"})),
+            content_hash: "h1".into(),
+            built_at: 1_700_000_000_000_000,
+        }];
+
+        let batch = build_files_batch(&schema_fields, &files, "_");
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("files.parquet");
+        write_parquet(&path, &batch).unwrap();
+
+        let batches = read_parquet(&path).unwrap();
+        let data_col = batches[0]
+            .column_by_name("_data")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<datafusion::arrow::array::StructArray>()
+            .unwrap();
+        let titles = data_col
+            .column_by_name("title")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<datafusion::arrow::array::StringArray>()
+            .unwrap();
+        assert_eq!(titles.value(0), "こんにちは 🦀 Émojis");
+    }
+
+    #[test]
+    fn content_hash_determinism() {
+        let h1 = content_hash("hello world");
+        let h2 = content_hash("hello world");
+        let h3 = content_hash("different content");
+        assert_eq!(h1, h2, "same content should produce same hash");
+        assert_ne!(h1, h3, "different content should produce different hash");
+    }
+
+    #[test]
+    fn empty_array_roundtrip() {
+        let schema_fields = vec![("tags".into(), FieldType::Array(Box::new(FieldType::String)))];
+        let files = vec![FileRow {
+            file_id: "id-1".into(),
+            filename: "empty.md".into(),
+            frontmatter: Some(serde_json::json!({"tags": []})),
+            content_hash: "h1".into(),
+            built_at: 1_700_000_000_000_000,
+        }];
+
+        let batch = build_files_batch(&schema_fields, &files, "_");
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("files.parquet");
+        write_parquet(&path, &batch).unwrap();
+
+        let batches = read_parquet(&path).unwrap();
+        assert_eq!(batches[0].num_rows(), 1);
     }
 }

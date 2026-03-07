@@ -39,12 +39,12 @@ pub enum Embedder {
 impl Embedder {
     /// Download (if needed) and load the model into memory.
     #[instrument(name = "load_model", skip_all, fields(model = ?config))]
-    pub fn load(config: &ModelConfig) -> Self {
+    pub fn load(config: &ModelConfig) -> anyhow::Result<Self> {
         match config {
             ModelConfig::Model2Vec { model_id, revision } => {
                 let model = StaticModel::from_pretrained(model_id, revision.as_deref(), None, None)
-                    .unwrap_or_else(|e| panic!("failed to load model {model_id}: {e}"));
-                Embedder::Model2Vec(model)
+                    .map_err(|e| anyhow::anyhow!("failed to load model '{model_id}': {e}"))?;
+                Ok(Embedder::Model2Vec(model))
             }
         }
     }
@@ -118,7 +118,7 @@ mod tests {
             model_id: TEST_MODEL.into(),
             revision: None,
         };
-        Embedder::load(&config)
+        Embedder::load(&config).expect("test model should load")
     }
 
     #[test]
@@ -142,7 +142,7 @@ mod tests {
             model_id: TEST_MODEL.into(),
             revision: Some(rev),
         };
-        let pinned_embedder = Embedder::load(&pinned_config);
+        let pinned_embedder = Embedder::load(&pinned_config).expect("pinned model should load");
         let a = embedder.embed("test").await;
         let b = pinned_embedder.embed("test").await;
         assert_eq!(a, b);

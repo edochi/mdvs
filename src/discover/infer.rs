@@ -1,5 +1,7 @@
 use crate::discover::field_type::{widen, FieldType};
 use crate::discover::scan::ScannedFiles;
+use crate::output::DiscoveredField;
+use crate::schema::shared::FieldTypeSerde;
 use indextree::{Arena, NodeEdge, NodeId};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -352,6 +354,28 @@ pub struct InferredField {
     pub allowed: Vec<String>,
     /// Glob patterns where this field is present in every file.
     pub required: Vec<String>,
+}
+
+impl InferredField {
+    /// Convert to a [`DiscoveredField`] for command output.
+    pub fn to_discovered(&self, total_files: usize, verbose: bool) -> DiscoveredField {
+        DiscoveredField {
+            name: self.name.clone(),
+            field_type: FieldTypeSerde::from(&self.field_type).to_string(),
+            files_found: self.files.len(),
+            total_files,
+            allowed: if verbose {
+                Some(self.allowed.clone())
+            } else {
+                None
+            },
+            required: if verbose {
+                Some(self.required.clone())
+            } else {
+                None
+            },
+        }
+    }
 }
 
 /// Complete inferred schema: all fields with types and path constraints.

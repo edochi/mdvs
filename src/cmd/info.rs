@@ -194,7 +194,7 @@ pub fn run(path: &Path, verbose: bool) -> anyhow::Result<InfoResult> {
     let config = MdvsToml::read(&path.join("mdvs.toml"))?;
 
     // Scan file count
-    let scanned = ScannedFiles::scan(path, &config.scan);
+    let scanned = ScannedFiles::scan(path, &config.scan)?;
     let total_files = scanned.files.len();
 
     // Count files per field (verbose only)
