@@ -73,3 +73,7 @@
 | [0069](TODO-0069.md) | Warn when search verbose chunk text is unavailable | done | low | 2026-03-07 |
 | [0070](TODO-0070.md) | Extract shared inference logic from init and update | done | low | 2026-03-07 |
 | [0071](TODO-0071.md) | Break up monolithic validate() function | done | low | 2026-03-07 |
+| [0072](TODO-0072.md) | Escape special characters in search SQL construction | todo | medium | 2026-03-07 |
+| [0073](TODO-0073.md) | Build violation output goes to stderr instead of stdout | todo | high | 2026-03-07 |
+| [0074](TODO-0074.md) | Replace DefaultHasher with stable hash for content_hash | todo | low | 2026-03-07 |
+| [0075](TODO-0075.md) | Support array containment queries in --where | todo | medium | 2026-03-07 |
