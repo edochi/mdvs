@@ -79,7 +79,7 @@
 | [0075](TODO-0075.md) | Support array containment queries in --where | todo | medium | 2026-03-07 |
 | [0076](TODO-0076.md) | Ergonomic --where queries for field names with spaces | todo | medium | 2026-03-07 |
 | [0077](TODO-0077.md) | Filter info command output by field name | todo | medium | 2026-03-08 |
-| [0078](TODO-0078.md) | Structured error output for all commands | todo | medium | 2026-03-08 |
+| [0078](TODO-0078.md) | Structured error output for all commands | done | medium | 2026-03-08 |
 | [0079](TODO-0079.md) | Core pipeline abstractions | done | medium | 2026-03-08 |
 | [0080](TODO-0080.md) | Shared step output structs | done | medium | 2026-03-08 |
 | [0081](TODO-0081.md) | Rework check command pipeline | done | medium | 2026-03-08 |
