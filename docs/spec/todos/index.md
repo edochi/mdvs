@@ -78,3 +78,4 @@
 | [0074](TODO-0074.md) | Replace DefaultHasher with stable hash for content_hash | todo | low | 2026-03-07 |
 | [0075](TODO-0075.md) | Support array containment queries in --where | todo | medium | 2026-03-07 |
 | [0076](TODO-0076.md) | Ergonomic --where queries for field names with spaces | todo | medium | 2026-03-07 |
+| [0077](TODO-0077.md) | Filter info command output by field name | todo | medium | 2026-03-08 |
