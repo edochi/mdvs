@@ -13,6 +13,8 @@ pub mod discover;
 pub mod index;
 /// Output formatting types and the `CommandOutput` trait.
 pub mod output;
+/// Core pipeline abstractions for structured command output.
+pub mod pipeline;
 /// Configuration file types (`mdvs.toml`) and shared data structures.
 pub mod schema;
 /// DataFusion-based search context with cosine similarity UDF.
