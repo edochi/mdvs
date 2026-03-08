@@ -2,7 +2,7 @@ use crate::discover::field_type::FieldType;
 use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::hash::{DefaultHasher, Hasher};
+use xxhash_rust::xxh3::xxh3_64;
 
 use datafusion::arrow::array::{
     ArrayRef, BooleanArray, FixedSizeListArray, Float32Array, Float64Array, Int32Array, Int64Array,
@@ -47,11 +47,9 @@ pub fn check_reserved_names(field_names: &[String], prefix: &str) -> anyhow::Res
     Ok(())
 }
 
-/// Compute a deterministic hex-encoded hash of the given content using SipHash.
+/// Compute a deterministic hex-encoded hash of the given content using xxh3.
 pub fn content_hash(content: &str) -> String {
-    let mut hasher = DefaultHasher::new();
-    hasher.write(content.as_bytes());
-    format!("{:016x}", hasher.finish())
+    format!("{:016x}", xxh3_64(content.as_bytes()))
 }
 
 /// A single file's metadata, ready to be written into `files.parquet`.
@@ -430,7 +428,7 @@ pub struct FileIndexEntry {
     pub file_id: String,
     /// Path relative to the project root.
     pub filename: String,
-    /// SipHash of the markdown body, used to detect content changes.
+    /// xxh3 hash of the markdown body, used to detect content changes.
     pub content_hash: String,
 }
 
