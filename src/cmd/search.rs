@@ -1,12 +1,15 @@
 use crate::index::backend::{Backend, SearchHit};
-use crate::index::embed::{Embedder, ModelConfig};
 use crate::output::CommandOutput;
-use crate::schema::config::MdvsToml;
+use crate::pipeline::embed::EmbedQueryOutput;
+use crate::pipeline::execute_search::ExecuteSearchOutput;
+use crate::pipeline::load_model::LoadModelOutput;
+use crate::pipeline::read_config::ReadConfigOutput;
+use crate::pipeline::read_index::ReadIndexOutput;
+use crate::pipeline::{ErrorKind, ProcessingStepError, ProcessingStepResult};
 use crate::table::{style_compact, style_record, Builder};
-use anyhow::Context;
 use serde::Serialize;
 use std::path::Path;
-use tracing::{info, instrument, warn};
+use tracing::{instrument, warn};
 
 /// Result of the `search` command: ranked list of matching files.
 #[derive(Debug, Serialize)]
@@ -19,8 +22,6 @@ pub struct SearchResult {
     pub model_name: String,
     /// Result limit that was applied.
     pub limit: usize,
-    /// Wall-clock time for the search operation in milliseconds.
-    pub elapsed_ms: u64,
 }
 
 impl CommandOutput for SearchResult {
@@ -72,12 +73,11 @@ impl CommandOutput for SearchResult {
 
             // Footer
             out.push_str(&format!(
-                "{} {} | model: \"{}\" | limit: {} | {}ms\n",
+                "{} {} | model: \"{}\" | limit: {}\n",
                 self.hits.len(),
                 hit_word,
                 self.model_name,
                 self.limit,
-                self.elapsed_ms
             ));
         } else {
             // Compact table
@@ -109,6 +109,82 @@ fn read_lines(path: &Path, start: i32, end: i32) -> Option<String> {
     Some(lines[start..end].join("\n"))
 }
 
+// ============================================================================
+// SearchCommandOutput (pipeline-based)
+// ============================================================================
+
+/// Pipeline record for the search command.
+#[derive(Debug, Serialize)]
+pub struct SearchProcessOutput {
+    /// Read config step result.
+    pub read_config: ProcessingStepResult<ReadConfigOutput>,
+    /// Read index step result.
+    pub read_index: ProcessingStepResult<ReadIndexOutput>,
+    /// Load model step result.
+    pub load_model: ProcessingStepResult<LoadModelOutput>,
+    /// Embed query step result.
+    pub embed_query: ProcessingStepResult<EmbedQueryOutput>,
+    /// Execute search step result.
+    pub execute_search: ProcessingStepResult<ExecuteSearchOutput>,
+}
+
+/// Full output of the search command: pipeline steps + command result.
+#[derive(Debug, Serialize)]
+pub struct SearchCommandOutput {
+    /// Processing steps and their outcomes.
+    pub process: SearchProcessOutput,
+    /// Command result (None if pipeline didn't complete).
+    pub result: Option<SearchResult>,
+}
+
+impl SearchCommandOutput {
+    /// Returns `true` if any processing step failed.
+    pub fn has_failed_step(&self) -> bool {
+        matches!(self.process.read_config, ProcessingStepResult::Failed(_))
+            || matches!(self.process.read_index, ProcessingStepResult::Failed(_))
+            || matches!(self.process.load_model, ProcessingStepResult::Failed(_))
+            || matches!(self.process.embed_query, ProcessingStepResult::Failed(_))
+            || matches!(self.process.execute_search, ProcessingStepResult::Failed(_))
+    }
+}
+
+impl CommandOutput for SearchCommandOutput {
+    fn format_text(&self, verbose: bool) -> String {
+        if let Some(result) = &self.result {
+            if verbose {
+                let mut out = String::new();
+                out.push_str(&format!("{}\n", self.process.read_config.format_line()));
+                out.push_str(&format!("{}\n", self.process.read_index.format_line()));
+                out.push_str(&format!("{}\n", self.process.load_model.format_line()));
+                out.push_str(&format!("{}\n", self.process.embed_query.format_line()));
+                out.push_str(&format!("{}\n", self.process.execute_search.format_line()));
+                out.push('\n');
+                out.push_str(&result.format_text(verbose));
+                out
+            } else {
+                result.format_text(verbose)
+            }
+        } else {
+            // Pipeline didn't complete — show steps up to the failure
+            let mut out = String::new();
+            out.push_str(&format!("{}\n", self.process.read_config.format_line()));
+            if !matches!(self.process.read_index, ProcessingStepResult::Skipped) {
+                out.push_str(&format!("{}\n", self.process.read_index.format_line()));
+            }
+            if !matches!(self.process.load_model, ProcessingStepResult::Skipped) {
+                out.push_str(&format!("{}\n", self.process.load_model.format_line()));
+            }
+            if !matches!(self.process.embed_query, ProcessingStepResult::Skipped) {
+                out.push_str(&format!("{}\n", self.process.embed_query.format_line()));
+            }
+            if !matches!(self.process.execute_search, ProcessingStepResult::Skipped) {
+                out.push_str(&format!("{}\n", self.process.execute_search.format_line()));
+            }
+            out
+        }
+    }
+}
+
 /// Embed a query, search the index, and return ranked results.
 #[instrument(name = "search", skip_all)]
 pub async fn run(
@@ -117,96 +193,112 @@ pub async fn run(
     limit: usize,
     where_clause: Option<&str>,
     verbose: bool,
-) -> anyhow::Result<SearchResult> {
-    // Validate --where clause: unmatched quotes indicate unescaped special characters
-    if let Some(w) = where_clause {
-        if w.chars().filter(|&c| c == '\'').count() % 2 != 0 {
-            anyhow::bail!(
-                "unmatched single quote in --where clause — escape with '' (e.g. O''Brien)"
-            );
-        }
-        if w.chars().filter(|&c| c == '"').count() % 2 != 0 {
-            anyhow::bail!(
-                "unmatched double quote in --where clause — escape with \"\" (e.g. \"\"field\"\")"
-            );
-        }
-    }
+) -> SearchCommandOutput {
+    use crate::pipeline::embed::run_embed_query;
+    use crate::pipeline::execute_search::run_execute_search;
+    use crate::pipeline::load_model::run_load_model;
+    use crate::pipeline::read_config::run_read_config;
+    use crate::pipeline::read_index::run_read_index;
 
-    let start = std::time::Instant::now();
-    let config_path = path.join("mdvs.toml");
+    let (read_config_step, config) = run_read_config(path);
 
-    // Read config
-    let config = MdvsToml::read(&config_path)?;
-    let embedding = config
-        .embedding_model
-        .as_ref()
-        .context("missing [embedding_model] in mdvs.toml (run `mdvs build` first)")?;
+    let embedding = config.as_ref().and_then(|c| c.embedding_model.as_ref());
 
-    let backend = Backend::parquet(path, config.internal_prefix());
+    let (read_index_step, index_data) = match &config {
+        Some(cfg) => run_read_index(path, cfg.internal_prefix()),
+        None => (ProcessingStepResult::Skipped, None),
+    };
 
-    // Index existence check (before loading model to fail fast)
-    anyhow::ensure!(backend.exists(), "index not found (run `mdvs build` first)",);
-
-    // Verify model matches index
-    if let Some(ref meta) = backend.read_metadata()? {
-        if meta.embedding_model != *embedding {
-            anyhow::bail!(
+    // Pre-checks before loading model (fail fast on user errors)
+    let pre_check_error: Option<String> = if config.is_none() {
+        None // already failed at read_config
+    } else if embedding.is_none() {
+        Some("missing [embedding_model] in mdvs.toml (run `mdvs build` first)".to_string())
+    } else if matches!(read_index_step, ProcessingStepResult::Failed(_)) {
+        None // already failed at read_index
+    } else if index_data.is_none() {
+        Some("index not found (run `mdvs build` first)".to_string())
+    } else {
+        // Model mismatch check
+        let data = index_data.as_ref().unwrap();
+        let emb = embedding.unwrap();
+        if data.metadata.embedding_model != *emb {
+            Some(format!(
                 "model mismatch: config has '{}' (rev {:?}) but index was built with '{}' (rev {:?}) — run 'mdvs build' to rebuild",
-                embedding.name, embedding.revision,
-                meta.embedding_model.name, meta.embedding_model.revision,
-            );
+                emb.name, emb.revision,
+                data.metadata.embedding_model.name, data.metadata.embedding_model.revision,
+            ))
+        } else {
+            None
         }
-    }
+    };
 
-    // Load model
-    info!(model = %embedding.name, "loading model");
-    let t = std::time::Instant::now();
-    let model_config = ModelConfig::try_from(embedding)?;
-    let embedder = Embedder::load(&model_config)?;
-    info!(elapsed_ms = t.elapsed().as_millis() as u64, "model loaded");
+    let (load_model_step, embedder) = match (embedding, &pre_check_error) {
+        (Some(emb), None) => run_load_model(emb),
+        (_, Some(msg)) => {
+            let err = ProcessingStepError {
+                kind: ErrorKind::User,
+                message: msg.clone(),
+            };
+            (ProcessingStepResult::Failed(err), None)
+        }
+        _ => (ProcessingStepResult::Skipped, None),
+    };
 
-    // Embed query
-    let query_embedding = embedder.embed(query).await;
+    let (embed_query_step, query_embedding) = match &embedder {
+        Some(emb) => run_embed_query(emb, query).await,
+        None => (ProcessingStepResult::Skipped, None),
+    };
 
-    // Search via backend
-    let t = std::time::Instant::now();
-    let mut hits = backend.search(query_embedding, where_clause, limit).await?;
-    info!(
-        hits = hits.len(),
-        elapsed_ms = t.elapsed().as_millis() as u64,
-        "search complete"
-    );
+    let (execute_search_step, hits) = match (&config, query_embedding) {
+        (Some(cfg), Some(qe)) => {
+            let backend = Backend::parquet(path, cfg.internal_prefix());
+            run_execute_search(&backend, qe, where_clause, limit).await
+        }
+        _ => (ProcessingStepResult::Skipped, None),
+    };
 
-    // Populate chunk text from disk when verbose
-    if verbose {
-        for hit in &mut hits {
-            if let (Some(start), Some(end)) = (hit.start_line, hit.end_line) {
-                match read_lines(&path.join(&hit.filename), start, end) {
-                    Some(text) => hit.chunk_text = Some(text),
-                    None => warn!(
-                        file = %hit.filename,
-                        "could not read chunk text (file may have changed since build)"
-                    ),
+    // Build result with chunk text populated if verbose
+    let result = hits.map(|mut hits| {
+        if verbose {
+            for hit in &mut hits {
+                if let (Some(start), Some(end)) = (hit.start_line, hit.end_line) {
+                    match read_lines(&path.join(&hit.filename), start, end) {
+                        Some(text) => hit.chunk_text = Some(text),
+                        None => warn!(
+                            file = %hit.filename,
+                            "could not read chunk text (file may have changed since build)"
+                        ),
+                    }
                 }
             }
         }
+        let model_name = embedding.map(|e| e.name.clone()).unwrap_or_default();
+        SearchResult {
+            query: query.to_string(),
+            hits,
+            model_name,
+            limit,
+        }
+    });
+
+    SearchCommandOutput {
+        process: SearchProcessOutput {
+            read_config: read_config_step,
+            read_index: read_index_step,
+            load_model: load_model_step,
+            embed_query: embed_query_step,
+            execute_search: execute_search_step,
+        },
+        result,
     }
-
-    let model_name = embedding.name.clone();
-
-    Ok(SearchResult {
-        query: query.to_string(),
-        hits,
-        model_name,
-        limit,
-        elapsed_ms: start.elapsed().as_millis() as u64,
-    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::config::{FieldsConfig, SearchConfig, UpdateConfig};
+    use crate::index::embed::{Embedder, ModelConfig};
+    use crate::schema::config::{FieldsConfig, MdvsToml, SearchConfig, UpdateConfig};
     use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig, ScanConfig};
     use std::fs;
 
@@ -274,8 +366,9 @@ mod tests {
     #[tokio::test]
     async fn missing_config() {
         let tmp = tempfile::tempdir().unwrap();
-        let result = run(tmp.path(), "test query", 10, None, false).await;
-        assert!(result.is_err());
+        let output = run(tmp.path(), "test query", 10, None, false).await;
+        assert!(output.has_failed_step());
+        assert!(output.result.is_none());
     }
 
     #[tokio::test]
@@ -283,10 +376,14 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         write_config(tmp.path(), "test-model");
 
-        let result = run(tmp.path(), "test query", 10, None, false).await;
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("index not found"));
+        let output = run(tmp.path(), "test query", 10, None, false).await;
+        assert!(output.has_failed_step());
+        assert!(output.result.is_none());
+        if let ProcessingStepResult::Failed(err) = &output.process.load_model {
+            assert!(err.message.contains("index not found"));
+        } else {
+            panic!("expected load_model to fail");
+        }
     }
 
     #[tokio::test]
@@ -295,9 +392,9 @@ mod tests {
         create_test_vault(tmp.path());
         init_and_build(tmp.path()).await;
 
-        let result = run(tmp.path(), "rust programming", 10, None, false).await;
-        assert!(result.is_ok(), "search failed: {:?}", result);
-        let result = result.unwrap();
+        let output = run(tmp.path(), "rust programming", 10, None, false).await;
+        assert!(!output.has_failed_step(), "search failed: {:?}", output);
+        let result = output.result.unwrap();
         assert_eq!(result.query, "rust programming");
         assert!(!result.model_name.is_empty());
         assert!(!result.hits.is_empty());
@@ -314,9 +411,9 @@ mod tests {
         create_test_vault(tmp.path());
         init_and_build(tmp.path()).await;
 
-        let result = run(tmp.path(), "rust programming", 10, None, true)
-            .await
-            .unwrap();
+        let output = run(tmp.path(), "rust programming", 10, None, true).await;
+        assert!(!output.has_failed_step());
+        let result = output.result.unwrap();
         assert!(!result.hits.is_empty());
         // chunk_text populated in verbose mode
         assert!(result.hits[0].chunk_text.is_some());
@@ -372,10 +469,13 @@ mod tests {
         config.embedding_model.as_mut().unwrap().name = "some-other-model".into();
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
 
-        let result = run(tmp.path(), "test query", 10, None, false).await;
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("model mismatch"));
+        let output = run(tmp.path(), "test query", 10, None, false).await;
+        assert!(output.has_failed_step());
+        if let ProcessingStepResult::Failed(err) = &output.process.load_model {
+            assert!(err.message.contains("model mismatch"));
+        } else {
+            panic!("expected load_model to fail");
+        }
     }
 
     #[tokio::test]
@@ -384,11 +484,14 @@ mod tests {
         create_test_vault(tmp.path());
         init_and_build(tmp.path()).await;
 
-        let result = run(tmp.path(), "test", 10, Some("author = 'O'Brien'"), false).await;
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("unmatched single quote"));
-        assert!(err.contains("O''Brien"));
+        let output = run(tmp.path(), "test", 10, Some("author = 'O'Brien'"), false).await;
+        assert!(output.has_failed_step());
+        if let ProcessingStepResult::Failed(err) = &output.process.execute_search {
+            assert!(err.message.contains("unmatched single quote"));
+            assert!(err.message.contains("O''Brien"));
+        } else {
+            panic!("expected execute_search to fail");
+        }
     }
 
     #[tokio::test]
@@ -397,10 +500,13 @@ mod tests {
         create_test_vault(tmp.path());
         init_and_build(tmp.path()).await;
 
-        let result = run(tmp.path(), "test", 10, Some("x = \"bad"), false).await;
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("unmatched double quote"));
+        let output = run(tmp.path(), "test", 10, Some("x = \"bad"), false).await;
+        assert!(output.has_failed_step());
+        if let ProcessingStepResult::Failed(err) = &output.process.execute_search {
+            assert!(err.message.contains("unmatched double quote"));
+        } else {
+            panic!("expected execute_search to fail");
+        }
     }
 
     #[tokio::test]
@@ -410,7 +516,7 @@ mod tests {
         init_and_build(tmp.path()).await;
 
         // 2 single quotes (even) — passes parity check but DataFusion rejects it
-        let result = run(
+        let output = run(
             tmp.path(),
             "test",
             10,
@@ -418,7 +524,7 @@ mod tests {
             false,
         )
         .await;
-        assert!(result.is_err());
+        assert!(output.has_failed_step());
     }
 
     #[tokio::test]
@@ -428,11 +534,11 @@ mod tests {
         init_and_build(tmp.path()).await;
 
         // Properly escaped single quotes should pass validation
-        let result = run(tmp.path(), "test", 10, Some("title = 'O''Brien'"), false).await;
+        let output = run(tmp.path(), "test", 10, Some("title = 'O''Brien'"), false).await;
         // Should not fail with quote parity error (may fail for other reasons like no match)
-        if let Err(e) = &result {
+        if let ProcessingStepResult::Failed(err) = &output.process.execute_search {
             assert!(
-                !e.to_string().contains("unmatched"),
+                !err.message.contains("unmatched"),
                 "balanced quotes should not trigger parity check"
             );
         }

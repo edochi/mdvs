@@ -224,10 +224,13 @@ async fn main() -> anyhow::Result<()> {
             limit,
             where_clause,
         } => {
-            let result =
+            let output =
                 mdvs::cmd::search::run(&path, &query, limit, where_clause.as_deref(), cli.verbose)
-                    .await?;
-            result.print(&cli.output, cli.verbose);
+                    .await;
+            output.print(&cli.output, cli.verbose);
+            if output.has_failed_step() {
+                std::process::exit(2);
+            }
             Ok(())
         }
         Command::Check { path } => {

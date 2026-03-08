@@ -5,6 +5,9 @@
 //! compose.
 
 pub mod delete_index;
+pub mod embed;
+pub mod execute_search;
+pub mod load_model;
 pub mod read_config;
 pub mod read_index;
 pub mod scan;
