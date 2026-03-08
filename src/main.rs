@@ -198,7 +198,7 @@ async fn main() -> anyhow::Result<()> {
             set_chunk_size,
             force,
         } => {
-            let result = mdvs::cmd::build::run(
+            let outcome = mdvs::cmd::build::run(
                 &path,
                 set_model.as_deref(),
                 set_revision.as_deref(),
@@ -207,7 +207,15 @@ async fn main() -> anyhow::Result<()> {
                 cli.verbose,
             )
             .await?;
-            result.print(&cli.output, cli.verbose);
+            match outcome {
+                mdvs::cmd::build::BuildOutcome::Success(result) => {
+                    result.print(&cli.output, cli.verbose);
+                }
+                mdvs::cmd::build::BuildOutcome::ValidationFailed(result) => {
+                    result.print(&cli.output, cli.verbose);
+                    std::process::exit(1);
+                }
+            }
             Ok(())
         }
         Command::Search {

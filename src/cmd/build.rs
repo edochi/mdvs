@@ -30,6 +30,15 @@ pub struct BuildFileDetail {
     pub chunks: usize,
 }
 
+/// Outcome of the `build` command: either a successful build or a validation failure.
+#[derive(Debug)]
+pub enum BuildOutcome {
+    /// Build completed successfully.
+    Success(BuildResult),
+    /// Build aborted due to validation violations.
+    ValidationFailed(crate::cmd::check::CheckResult),
+}
+
 /// Result of the `build` command: embedding and index statistics.
 #[derive(Debug, Serialize)]
 pub struct BuildResult {
@@ -335,7 +344,7 @@ pub async fn run(
     set_chunk_size: Option<usize>,
     force: bool,
     verbose: bool,
-) -> anyhow::Result<BuildResult> {
+) -> anyhow::Result<BuildOutcome> {
     let start = Instant::now();
     let config_path = path.join("mdvs.toml");
 
@@ -446,8 +455,7 @@ pub async fn run(
     // Validate frontmatter against schema (abort on violations)
     let check_result = crate::cmd::check::validate(&scanned, &config, false)?;
     if check_result.has_violations() {
-        let report = crate::output::CommandOutput::format_text(&check_result, false);
-        anyhow::bail!("{report}build aborted due to validation errors");
+        return Ok(BuildOutcome::ValidationFailed(check_result));
     }
     let new_fields = check_result.new_fields;
 
@@ -623,7 +631,7 @@ pub async fn run(
     let chunks_total = chunk_rows.len();
     let chunks_unchanged = chunks_total - chunks_embedded;
 
-    Ok(BuildResult {
+    Ok(BuildOutcome::Success(BuildResult {
         full_rebuild,
         files_total: file_rows.len(),
         files_embedded,
@@ -659,7 +667,7 @@ pub async fn run(
         } else {
             None
         },
-    })
+    }))
 }
 
 #[instrument(name = "embed_file", skip_all, fields(file = %file.path.display()), level = "debug")]
@@ -1073,11 +1081,10 @@ mod tests {
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
 
         let result = run(tmp.path(), None, None, None, false, false).await;
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
+        assert!(result.is_ok());
         assert!(
-            err.contains("validation errors"),
-            "expected validation abort, got: {err}"
+            matches!(result.unwrap(), BuildOutcome::ValidationFailed(_)),
+            "expected ValidationFailed outcome"
         );
     }
 
@@ -1143,11 +1150,10 @@ mod tests {
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
 
         let result = run(tmp.path(), None, None, None, false, false).await;
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
+        assert!(result.is_ok());
         assert!(
-            err.contains("validation errors"),
-            "expected validation abort, got: {err}"
+            matches!(result.unwrap(), BuildOutcome::ValidationFailed(_)),
+            "expected ValidationFailed outcome"
         );
     }
 
