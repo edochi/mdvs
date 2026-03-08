@@ -90,3 +90,4 @@
 | [0086](TODO-0086.md) | Rework info command pipeline | done | medium | 2026-03-08 |
 | [0087](TODO-0087.md) | Rework clean command pipeline | done | medium | 2026-03-08 |
 | [0088](TODO-0088.md) | main.rs error handling and exit codes | todo | medium | 2026-03-08 |
+| [0089](TODO-0089.md) | Warn on stale index during search | todo | medium | 2026-03-08 |
