@@ -278,40 +278,52 @@ impl CommandOutput for UpdateCommandOutput {
 
     fn format_text(&self, verbose: bool) -> String {
         if let Some(result) = &self.result {
-            result.format_text(verbose)
-        } else {
-            // Pipeline failed — show first failed step
-            let steps: &[(&str, &dyn StepFormatLine)] = &[
-                ("read_config", &self.process.read_config),
-                ("scan", &self.process.scan),
-                ("infer", &self.process.infer),
-                ("write_config", &self.process.write_config),
-                ("validate", &self.process.validate),
-                ("classify", &self.process.classify),
-                ("load_model", &self.process.load_model),
-                ("embed_files", &self.process.embed_files),
-                ("write_index", &self.process.write_index),
-            ];
-            for (name, step) in steps {
-                if let Some(msg) = step.failed_message() {
-                    return format!("Update failed at {name}: {msg}\n");
-                }
+            if verbose {
+                let mut out = String::new();
+                out.push_str(&format!("{}\n", self.process.read_config.format_line()));
+                out.push_str(&format!("{}\n", self.process.scan.format_line()));
+                out.push_str(&format!("{}\n", self.process.infer.format_line()));
+                out.push_str(&format!("{}\n", self.process.write_config.format_line()));
+                out.push_str(&format!("{}\n", self.process.validate.format_line()));
+                out.push_str(&format!("{}\n", self.process.classify.format_line()));
+                out.push_str(&format!("{}\n", self.process.load_model.format_line()));
+                out.push_str(&format!("{}\n", self.process.embed_files.format_line()));
+                out.push_str(&format!("{}\n", self.process.write_index.format_line()));
+                out.push('\n');
+                out.push_str(&result.format_text(verbose));
+                out
+            } else {
+                result.format_text(verbose)
             }
-            "Update failed\n".to_string()
-        }
-    }
-}
-
-/// Helper trait to extract failure messages from heterogeneous step types.
-trait StepFormatLine {
-    fn failed_message(&self) -> Option<&str>;
-}
-
-impl<T: Serialize> StepFormatLine for ProcessingStepResult<T> {
-    fn failed_message(&self) -> Option<&str> {
-        match self {
-            ProcessingStepResult::Failed(err) => Some(&err.message),
-            _ => None,
+        } else {
+            // Pipeline didn't complete — show steps up to the failure
+            let mut out = String::new();
+            out.push_str(&format!("{}\n", self.process.read_config.format_line()));
+            if !matches!(self.process.scan, ProcessingStepResult::Skipped) {
+                out.push_str(&format!("{}\n", self.process.scan.format_line()));
+            }
+            if !matches!(self.process.infer, ProcessingStepResult::Skipped) {
+                out.push_str(&format!("{}\n", self.process.infer.format_line()));
+            }
+            if !matches!(self.process.write_config, ProcessingStepResult::Skipped) {
+                out.push_str(&format!("{}\n", self.process.write_config.format_line()));
+            }
+            if !matches!(self.process.validate, ProcessingStepResult::Skipped) {
+                out.push_str(&format!("{}\n", self.process.validate.format_line()));
+            }
+            if !matches!(self.process.classify, ProcessingStepResult::Skipped) {
+                out.push_str(&format!("{}\n", self.process.classify.format_line()));
+            }
+            if !matches!(self.process.load_model, ProcessingStepResult::Skipped) {
+                out.push_str(&format!("{}\n", self.process.load_model.format_line()));
+            }
+            if !matches!(self.process.embed_files, ProcessingStepResult::Skipped) {
+                out.push_str(&format!("{}\n", self.process.embed_files.format_line()));
+            }
+            if !matches!(self.process.write_index, ProcessingStepResult::Skipped) {
+                out.push_str(&format!("{}\n", self.process.write_index.format_line()));
+            }
+            out
         }
     }
 }

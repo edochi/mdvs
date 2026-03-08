@@ -247,8 +247,8 @@ impl CommandOutput for BuildCommandOutput {
 
     fn format_text(&self, verbose: bool) -> String {
         if self.has_violations() {
-            // Validation found violations — direct user to mdvs check
-            match &self.process.validate {
+            // Validation found violations — show step lines + violation message
+            let violation_msg = match &self.process.validate {
                 ProcessingStepResult::Completed(step) => {
                     format!(
                         "Build aborted — {} violation(s) found. Run `mdvs check` for details.\n",
@@ -256,41 +256,57 @@ impl CommandOutput for BuildCommandOutput {
                     )
                 }
                 _ => "Build aborted — validation failed.\n".to_string(),
+            };
+            if verbose {
+                let mut out = String::new();
+                out.push_str(&format!("{}\n", self.process.read_config.format_line()));
+                out.push_str(&format!("{}\n", self.process.scan.format_line()));
+                out.push_str(&format!("{}\n", self.process.validate.format_line()));
+                out.push('\n');
+                out.push_str(&violation_msg);
+                out
+            } else {
+                violation_msg
             }
         } else if let Some(result) = &self.result {
-            // Success — show build result
-            result.format_text(verbose)
-        } else {
-            // Pipeline failed — show the first failed step
-            let steps: &[(&str, &dyn StepFormatLine)] = &[
-                ("read_config", &self.process.read_config),
-                ("scan", &self.process.scan),
-                ("validate", &self.process.validate),
-                ("classify", &self.process.classify),
-                ("load_model", &self.process.load_model),
-                ("embed_files", &self.process.embed_files),
-                ("write_index", &self.process.write_index),
-            ];
-            for (name, step) in steps {
-                if let Some(msg) = step.failed_message() {
-                    return format!("Build failed at {name}: {msg}\n");
-                }
+            if verbose {
+                let mut out = String::new();
+                out.push_str(&format!("{}\n", self.process.read_config.format_line()));
+                out.push_str(&format!("{}\n", self.process.scan.format_line()));
+                out.push_str(&format!("{}\n", self.process.validate.format_line()));
+                out.push_str(&format!("{}\n", self.process.classify.format_line()));
+                out.push_str(&format!("{}\n", self.process.load_model.format_line()));
+                out.push_str(&format!("{}\n", self.process.embed_files.format_line()));
+                out.push_str(&format!("{}\n", self.process.write_index.format_line()));
+                out.push('\n');
+                out.push_str(&result.format_text(verbose));
+                out
+            } else {
+                result.format_text(verbose)
             }
-            "Build failed\n".to_string()
-        }
-    }
-}
-
-/// Helper trait to extract failure messages from heterogeneous step types.
-trait StepFormatLine {
-    fn failed_message(&self) -> Option<&str>;
-}
-
-impl<T: Serialize> StepFormatLine for ProcessingStepResult<T> {
-    fn failed_message(&self) -> Option<&str> {
-        match self {
-            ProcessingStepResult::Failed(err) => Some(&err.message),
-            _ => None,
+        } else {
+            // Pipeline didn't complete — show steps up to the failure
+            let mut out = String::new();
+            out.push_str(&format!("{}\n", self.process.read_config.format_line()));
+            if !matches!(self.process.scan, ProcessingStepResult::Skipped) {
+                out.push_str(&format!("{}\n", self.process.scan.format_line()));
+            }
+            if !matches!(self.process.validate, ProcessingStepResult::Skipped) {
+                out.push_str(&format!("{}\n", self.process.validate.format_line()));
+            }
+            if !matches!(self.process.classify, ProcessingStepResult::Skipped) {
+                out.push_str(&format!("{}\n", self.process.classify.format_line()));
+            }
+            if !matches!(self.process.load_model, ProcessingStepResult::Skipped) {
+                out.push_str(&format!("{}\n", self.process.load_model.format_line()));
+            }
+            if !matches!(self.process.embed_files, ProcessingStepResult::Skipped) {
+                out.push_str(&format!("{}\n", self.process.embed_files.format_line()));
+            }
+            if !matches!(self.process.write_index, ProcessingStepResult::Skipped) {
+                out.push_str(&format!("{}\n", self.process.write_index.format_line()));
+            }
+            out
         }
     }
 }
