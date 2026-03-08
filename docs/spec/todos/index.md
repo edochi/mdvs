@@ -32,7 +32,7 @@
 | [0028](TODO-0028.md) | Bare field names in --where clauses | done | medium | 2026-03-03 |
 | [0029](TODO-0029.md) | User documentation site with mdBook | todo | medium | 2026-03-03 |
 | [0030](TODO-0030.md) | Homebrew tap and prebuilt binaries | superseded | medium | 2026-03-03 |
-| [0031](TODO-0031.md) | Example vault repository | todo | medium | 2026-03-04 |
+| [0031](TODO-0031.md) | Example vault repository | done | medium | 2026-03-04 |
 | [0032](TODO-0032.md) | Fix verbose tracing output — show timing and useful info | done | high | 2026-03-04 |
 | [0033](TODO-0033.md) | Unified output format (umbrella) | done | high | 2026-03-04 |
 | [0034](TODO-0034.md) | Flag rework — rename human→text, add --logs, repurpose -v | done | high | 2026-03-05 |
