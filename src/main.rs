@@ -174,7 +174,7 @@ async fn main() -> anyhow::Result<()> {
             suppress_auto_build,
             skip_gitignore,
         } => {
-            let result = mdvs::cmd::init::run(
+            let output = mdvs::cmd::init::run(
                 &path,
                 model.as_deref(),
                 revision.as_deref(),
@@ -187,8 +187,11 @@ async fn main() -> anyhow::Result<()> {
                 skip_gitignore,
                 cli.verbose,
             )
-            .await?;
-            result.print(&cli.output, cli.verbose);
+            .await;
+            output.print(&cli.output, cli.verbose);
+            if output.has_failed_step() {
+                std::process::exit(2);
+            }
             Ok(())
         }
         Command::Build {

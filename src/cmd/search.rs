@@ -346,7 +346,7 @@ mod tests {
     }
 
     async fn init_and_build(dir: &Path) {
-        crate::cmd::init::run(
+        let output = crate::cmd::init::run(
             dir,
             Some("minishlab/potion-base-8M"),
             None,
@@ -359,8 +359,8 @@ mod tests {
             false,
             false, // verbose
         )
-        .await
-        .unwrap();
+        .await;
+        assert!(!output.has_failed_step());
     }
 
     #[tokio::test]

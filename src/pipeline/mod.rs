@@ -8,11 +8,13 @@ pub mod classify;
 pub mod delete_index;
 pub mod embed;
 pub mod execute_search;
+pub mod infer;
 pub mod load_model;
 pub mod read_config;
 pub mod read_index;
 pub mod scan;
 pub mod validate;
+pub mod write_config;
 pub mod write_index;
 
 use serde::Serialize;

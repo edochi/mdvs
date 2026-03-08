@@ -423,14 +423,14 @@ mod tests {
     }
 
     async fn init_no_build(dir: &Path) {
-        crate::cmd::init::run(
+        let output = crate::cmd::init::run(
             dir, None, None, "**", false, false, true, // ignore bare files
             None, false, // no auto_build
             false, // skip_gitignore
             false, // verbose
         )
-        .await
-        .unwrap();
+        .await;
+        assert!(!output.has_failed_step());
     }
 
     #[tokio::test]
@@ -646,7 +646,7 @@ mod tests {
         create_test_vault(tmp.path());
 
         // Init with auto_build (writes config with auto_build=true)
-        crate::cmd::init::run(
+        let output = crate::cmd::init::run(
             tmp.path(),
             None,
             None,
@@ -659,8 +659,8 @@ mod tests {
             false, // skip_gitignore
             false, // verbose
         )
-        .await
-        .unwrap();
+        .await;
+        assert!(!output.has_failed_step());
 
         // Add a new field
         fs::write(
@@ -698,7 +698,7 @@ mod tests {
         fs::write(blog_dir.join("bare.md"), "# No frontmatter\nJust content.").unwrap();
 
         // Init with ignore_bare_files=true → title required=["**"]
-        crate::cmd::init::run(
+        let output = crate::cmd::init::run(
             tmp.path(),
             None,
             None,
@@ -711,8 +711,8 @@ mod tests {
             false,
             false, // verbose
         )
-        .await
-        .unwrap();
+        .await;
+        assert!(!output.has_failed_step());
 
         let toml_before = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
         let title_before = toml_before

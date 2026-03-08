@@ -912,7 +912,7 @@ mod tests {
         create_test_vault(tmp.path());
 
         // Run init (auto_build calls build internally)
-        crate::cmd::init::run(
+        let output = crate::cmd::init::run(
             tmp.path(),
             Some("minishlab/potion-base-8M"),
             None,
@@ -925,8 +925,8 @@ mod tests {
             false, // skip_gitignore
             false, // verbose
         )
-        .await
-        .unwrap();
+        .await;
+        assert!(!output.has_failed_step());
 
         // Run build again (tests standalone rebuild)
         let output = run(tmp.path(), None, None, None, false, false).await;
@@ -981,7 +981,7 @@ mod tests {
         create_test_vault(tmp.path());
 
         // Run init (auto_build calls build internally)
-        crate::cmd::init::run(
+        let output = crate::cmd::init::run(
             tmp.path(),
             Some("minishlab/potion-base-8M"),
             None,
@@ -994,8 +994,8 @@ mod tests {
             false, // skip_gitignore
             false, // verbose
         )
-        .await
-        .unwrap();
+        .await;
+        assert!(!output.has_failed_step());
 
         // Overwrite chunks.parquet with wrong dimension (2 instead of actual)
         let bad_chunks = vec![ChunkRow {
@@ -1032,7 +1032,7 @@ mod tests {
         create_test_vault(tmp.path());
 
         // Init without auto-build (no build sections in toml)
-        crate::cmd::init::run(
+        let output = crate::cmd::init::run(
             tmp.path(),
             None,
             None,
@@ -1045,8 +1045,8 @@ mod tests {
             false,
             false, // verbose
         )
-        .await
-        .unwrap();
+        .await;
+        assert!(!output.has_failed_step());
 
         // Verify no build sections
         let config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
@@ -1083,7 +1083,7 @@ mod tests {
         create_test_vault(tmp.path());
 
         // Init with auto-build (sections exist)
-        crate::cmd::init::run(
+        let output = crate::cmd::init::run(
             tmp.path(),
             Some("minishlab/potion-base-8M"),
             None,
@@ -1096,8 +1096,8 @@ mod tests {
             false,
             false, // verbose
         )
-        .await
-        .unwrap();
+        .await;
+        assert!(!output.has_failed_step());
 
         // Try to change model without --force
         let output = run(tmp.path(), Some("other-model"), None, None, false, false).await;
@@ -1114,7 +1114,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
-        crate::cmd::init::run(
+        let init_output = crate::cmd::init::run(
             tmp.path(),
             Some("minishlab/potion-base-8M"),
             None,
@@ -1127,8 +1127,8 @@ mod tests {
             false,
             false, // verbose
         )
-        .await
-        .unwrap();
+        .await;
+        assert!(!init_output.has_failed_step());
 
         let output = run(tmp.path(), None, None, Some(512), false, false).await;
         assert!(output.has_failed_step());
@@ -1144,7 +1144,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
-        crate::cmd::init::run(
+        let init_output = crate::cmd::init::run(
             tmp.path(),
             Some("minishlab/potion-base-8M"),
             None,
@@ -1157,8 +1157,8 @@ mod tests {
             false,
             false, // verbose
         )
-        .await
-        .unwrap();
+        .await;
+        assert!(!init_output.has_failed_step());
 
         // Change chunk size with --force (same model so no dimension mismatch)
         let output = run(tmp.path(), None, None, Some(512), true, false).await;
@@ -1177,7 +1177,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
-        crate::cmd::init::run(
+        let init_output = crate::cmd::init::run(
             tmp.path(),
             Some("minishlab/potion-base-8M"),
             None,
@@ -1190,8 +1190,8 @@ mod tests {
             false,
             false, // verbose
         )
-        .await
-        .unwrap();
+        .await;
+        assert!(!init_output.has_failed_step());
 
         // Manually change chunk_size in toml (simulates user editing)
         let mut config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
@@ -1422,7 +1422,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
-        crate::cmd::init::run(
+        let init_output = crate::cmd::init::run(
             tmp.path(),
             Some("minishlab/potion-base-8M"),
             None,
@@ -1435,8 +1435,8 @@ mod tests {
             false,
             false, // verbose
         )
-        .await
-        .unwrap();
+        .await;
+        assert!(!init_output.has_failed_step());
 
         let (files_before, chunks_before) = read_index_state(tmp.path());
 
@@ -1465,7 +1465,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
-        crate::cmd::init::run(
+        let init_output = crate::cmd::init::run(
             tmp.path(),
             Some("minishlab/potion-base-8M"),
             None,
@@ -1478,8 +1478,8 @@ mod tests {
             false,
             false, // verbose
         )
-        .await
-        .unwrap();
+        .await;
+        assert!(!init_output.has_failed_step());
 
         let (files_before, chunks_before) = read_index_state(tmp.path());
         // Add a new file
@@ -1520,7 +1520,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
-        crate::cmd::init::run(
+        let init_output = crate::cmd::init::run(
             tmp.path(),
             Some("minishlab/potion-base-8M"),
             None,
@@ -1533,8 +1533,8 @@ mod tests {
             false,
             false, // verbose
         )
-        .await
-        .unwrap();
+        .await;
+        assert!(!init_output.has_failed_step());
 
         let (files_before, chunks_before) = read_index_state(tmp.path());
         let post1_id = files_before["blog/post1.md"].clone();
@@ -1594,7 +1594,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
-        crate::cmd::init::run(
+        let init_output = crate::cmd::init::run(
             tmp.path(),
             Some("minishlab/potion-base-8M"),
             None,
@@ -1607,8 +1607,8 @@ mod tests {
             false,
             false, // verbose
         )
-        .await
-        .unwrap();
+        .await;
+        assert!(!init_output.has_failed_step());
 
         let (files_before, _) = read_index_state(tmp.path());
         assert_eq!(files_before.len(), 2);
@@ -1635,7 +1635,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
-        crate::cmd::init::run(
+        let init_output = crate::cmd::init::run(
             tmp.path(),
             Some("minishlab/potion-base-8M"),
             None,
@@ -1648,8 +1648,8 @@ mod tests {
             false,
             false, // verbose
         )
-        .await
-        .unwrap();
+        .await;
+        assert!(!init_output.has_failed_step());
 
         let (_, chunks_before) = read_index_state(tmp.path());
         let old_chunk_ids: HashSet<String> =
@@ -1677,7 +1677,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
-        crate::cmd::init::run(
+        let init_output = crate::cmd::init::run(
             tmp.path(),
             Some("minishlab/potion-base-8M"),
             None,
@@ -1690,8 +1690,8 @@ mod tests {
             false,
             false, // verbose
         )
-        .await
-        .unwrap();
+        .await;
+        assert!(!init_output.has_failed_step());
 
         let (files_before, chunks_before) = read_index_state(tmp.path());
         let old_file_ids: HashSet<String> = files_before.values().cloned().collect();
