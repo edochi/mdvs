@@ -817,7 +817,7 @@ fn mutate_config(
 
 /// Detect manual config changes against the existing parquet metadata.
 /// Returns `Some(error_message)` if config changed and --force not given.
-fn detect_config_changes(
+pub(crate) fn detect_config_changes(
     backend: &Backend,
     embedding: &EmbeddingModelConfig,
     chunking: &ChunkingConfig,

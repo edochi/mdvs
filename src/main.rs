@@ -252,10 +252,13 @@ async fn main() -> anyhow::Result<()> {
             build,
             dry_run,
         } => {
-            let result =
+            let output =
                 mdvs::cmd::update::run(&path, &reinfer, reinfer_all, build, dry_run, cli.verbose)
-                    .await?;
-            result.print(&cli.output, cli.verbose);
+                    .await;
+            output.print(&cli.output, cli.verbose);
+            if output.has_failed_step() {
+                std::process::exit(2);
+            }
             Ok(())
         }
         Command::Clean { path } => {

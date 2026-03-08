@@ -1,11 +1,21 @@
-use crate::cmd::build::BuildResult;
-use crate::discover::infer::InferredSchema;
-use crate::discover::scan::ScannedFiles;
-use crate::index::storage::check_reserved_names;
+use crate::cmd::build::{detect_config_changes, BuildResult};
+use crate::discover::field_type::FieldType;
+use crate::index::backend::Backend;
+use crate::index::storage::{check_reserved_names, content_hash, BuildMetadata, FileRow};
 use crate::output::{
     format_file_count, format_hints, ChangedField, CommandOutput, DiscoveredField, RemovedField,
 };
-use crate::schema::config::{MdvsToml, TomlField};
+use crate::pipeline::classify::{run_classify, ClassifyOutput};
+use crate::pipeline::embed::{run_embed_files, EmbedFilesOutput};
+use crate::pipeline::infer::{run_infer, InferOutput};
+use crate::pipeline::load_model::{run_load_model, LoadModelOutput};
+use crate::pipeline::read_config::{run_read_config, ReadConfigOutput};
+use crate::pipeline::scan::{run_scan, ScanOutput};
+use crate::pipeline::validate::{run_validate, ValidateOutput};
+use crate::pipeline::write_config::WriteConfigOutput;
+use crate::pipeline::write_index::{run_write_index, WriteIndexOutput};
+use crate::pipeline::{ErrorKind, ProcessingStep, ProcessingStepError, ProcessingStepResult};
+use crate::schema::config::TomlField;
 use crate::schema::shared::FieldTypeSerde;
 use crate::table::{style_compact, style_record, Builder};
 use serde::Serialize;
@@ -13,6 +23,10 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::time::Instant;
 use tracing::{info, instrument};
+
+// ============================================================================
+// UpdateResult
+// ============================================================================
 
 /// Result of the `update` command: field changes discovered by re-inference.
 #[derive(Debug, Serialize)]
@@ -34,12 +48,6 @@ pub struct UpdateResult {
     /// Build result, if a build was triggered.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub build_result: Option<BuildResult>,
-    /// Scan glob pattern (verbose only).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub glob: Option<String>,
-    /// Wall-clock time for the update operation in milliseconds (verbose only).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub elapsed_ms: Option<u64>,
 }
 
 impl UpdateResult {
@@ -66,15 +74,6 @@ impl CommandOutput for UpdateResult {
         ));
 
         if !self.has_changes() {
-            // Verbose footer for no-changes case
-            if verbose {
-                if let (Some(glob), Some(ms)) = (&self.glob, self.elapsed_ms) {
-                    out.push_str(&format!(
-                        "\n{} | glob: \"{glob}\" | {ms}ms\n",
-                        format_file_count(self.files_scanned)
-                    ));
-                }
-            }
             return out;
         }
 
@@ -210,16 +209,6 @@ impl CommandOutput for UpdateResult {
             out.push_str(&format!("{table}\n"));
         }
 
-        // Verbose footer
-        if verbose {
-            if let (Some(glob), Some(ms)) = (&self.glob, self.elapsed_ms) {
-                out.push_str(&format!(
-                    "\n{} | glob: \"{glob}\" | {ms}ms\n",
-                    format_file_count(self.files_scanned)
-                ));
-            }
-        }
-
         // Build result
         if let Some(ref br) = self.build_result {
             out.push('\n');
@@ -228,6 +217,144 @@ impl CommandOutput for UpdateResult {
 
         out
     }
+}
+
+// ============================================================================
+// UpdateCommandOutput (pipeline)
+// ============================================================================
+
+/// Step records for each phase of the update pipeline.
+#[derive(Debug, Serialize)]
+pub struct UpdateProcessOutput {
+    /// Read and parse `mdvs.toml`.
+    pub read_config: ProcessingStepResult<ReadConfigOutput>,
+    /// Scan the project directory for markdown files.
+    pub scan: ProcessingStepResult<ScanOutput>,
+    /// Infer field types and glob patterns.
+    pub infer: ProcessingStepResult<InferOutput>,
+    /// Write updated `mdvs.toml` to disk.
+    pub write_config: ProcessingStepResult<WriteConfigOutput>,
+    /// Validate frontmatter against the schema.
+    pub validate: ProcessingStepResult<ValidateOutput>,
+    /// Classify files as new/edited/unchanged/removed.
+    pub classify: ProcessingStepResult<ClassifyOutput>,
+    /// Load the embedding model.
+    pub load_model: ProcessingStepResult<LoadModelOutput>,
+    /// Embed files that need embedding.
+    pub embed_files: ProcessingStepResult<EmbedFilesOutput>,
+    /// Write the index to disk.
+    pub write_index: ProcessingStepResult<WriteIndexOutput>,
+}
+
+/// Complete output of the `update` command.
+#[derive(Debug, Serialize)]
+pub struct UpdateCommandOutput {
+    /// Step-by-step process records.
+    pub process: UpdateProcessOutput,
+    /// Update result (present when update completes successfully).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<UpdateResult>,
+}
+
+impl UpdateCommandOutput {
+    /// Returns `true` if any step failed.
+    pub fn has_failed_step(&self) -> bool {
+        matches!(self.process.read_config, ProcessingStepResult::Failed(_))
+            || matches!(self.process.scan, ProcessingStepResult::Failed(_))
+            || matches!(self.process.infer, ProcessingStepResult::Failed(_))
+            || matches!(self.process.write_config, ProcessingStepResult::Failed(_))
+            || matches!(self.process.validate, ProcessingStepResult::Failed(_))
+            || matches!(self.process.classify, ProcessingStepResult::Failed(_))
+            || matches!(self.process.load_model, ProcessingStepResult::Failed(_))
+            || matches!(self.process.embed_files, ProcessingStepResult::Failed(_))
+            || matches!(self.process.write_index, ProcessingStepResult::Failed(_))
+    }
+}
+
+impl CommandOutput for UpdateCommandOutput {
+    fn format_text(&self, verbose: bool) -> String {
+        if let Some(result) = &self.result {
+            result.format_text(verbose)
+        } else {
+            // Pipeline failed — show first failed step
+            let steps: &[(&str, &dyn StepFormatLine)] = &[
+                ("read_config", &self.process.read_config),
+                ("scan", &self.process.scan),
+                ("infer", &self.process.infer),
+                ("write_config", &self.process.write_config),
+                ("validate", &self.process.validate),
+                ("classify", &self.process.classify),
+                ("load_model", &self.process.load_model),
+                ("embed_files", &self.process.embed_files),
+                ("write_index", &self.process.write_index),
+            ];
+            for (name, step) in steps {
+                if let Some(msg) = step.failed_message() {
+                    return format!("Update failed at {name}: {msg}\n");
+                }
+            }
+            "Update failed\n".to_string()
+        }
+    }
+}
+
+/// Helper trait to extract failure messages from heterogeneous step types.
+trait StepFormatLine {
+    fn failed_message(&self) -> Option<&str>;
+}
+
+impl<T: Serialize> StepFormatLine for ProcessingStepResult<T> {
+    fn failed_message(&self) -> Option<&str> {
+        match self {
+            ProcessingStepResult::Failed(err) => Some(&err.message),
+            _ => None,
+        }
+    }
+}
+
+// ============================================================================
+// run()
+// ============================================================================
+
+/// Helper to build a skipped-everything output with a failed read_config step.
+fn fail_at_read_config(message: String) -> UpdateCommandOutput {
+    UpdateCommandOutput {
+        process: UpdateProcessOutput {
+            read_config: ProcessingStepResult::Failed(ProcessingStepError {
+                kind: ErrorKind::User,
+                message,
+            }),
+            scan: ProcessingStepResult::Skipped,
+            infer: ProcessingStepResult::Skipped,
+            write_config: ProcessingStepResult::Skipped,
+            validate: ProcessingStepResult::Skipped,
+            classify: ProcessingStepResult::Skipped,
+            load_model: ProcessingStepResult::Skipped,
+            embed_files: ProcessingStepResult::Skipped,
+            write_index: ProcessingStepResult::Skipped,
+        },
+        result: None,
+    }
+}
+
+/// All build step types bundled to avoid clippy `type_complexity` on tuple returns.
+type BuildSteps = (
+    ProcessingStepResult<ValidateOutput>,
+    ProcessingStepResult<ClassifyOutput>,
+    ProcessingStepResult<LoadModelOutput>,
+    ProcessingStepResult<EmbedFilesOutput>,
+    ProcessingStepResult<WriteIndexOutput>,
+);
+
+/// Helper to build a skipped-rest output from given step results.
+fn all_build_steps_skipped() -> BuildSteps {
+    (
+        ProcessingStepResult::Skipped,
+        ProcessingStepResult::Skipped,
+        ProcessingStepResult::Skipped,
+        ProcessingStepResult::Skipped,
+        ProcessingStepResult::Skipped,
+    )
 }
 
 /// Re-scan files, infer field changes, and update `mdvs.toml`.
@@ -239,29 +366,104 @@ pub async fn run(
     build_flag: Option<bool>,
     dry_run: bool,
     verbose: bool,
-) -> anyhow::Result<UpdateResult> {
-    let start = Instant::now();
-    let config_path = path.join("mdvs.toml");
-    let mut config = MdvsToml::read(&config_path)?;
-
-    // Validate flag combinations
+) -> UpdateCommandOutput {
+    // Pre-check: flag conflict (lands on read_config)
     if !reinfer.is_empty() && reinfer_all {
-        anyhow::bail!("cannot use --reinfer and --reinfer-all together");
+        return fail_at_read_config("cannot use --reinfer and --reinfer-all together".to_string());
     }
 
-    // Validate reinfer field names exist in toml
+    // 1. read_config
+    let (read_config_step, config) = run_read_config(path);
+    let mut config = match config {
+        Some(c) => c,
+        None => {
+            return UpdateCommandOutput {
+                process: UpdateProcessOutput {
+                    read_config: read_config_step,
+                    scan: ProcessingStepResult::Skipped,
+                    infer: ProcessingStepResult::Skipped,
+                    write_config: ProcessingStepResult::Skipped,
+                    validate: ProcessingStepResult::Skipped,
+                    classify: ProcessingStepResult::Skipped,
+                    load_model: ProcessingStepResult::Skipped,
+                    embed_files: ProcessingStepResult::Skipped,
+                    write_index: ProcessingStepResult::Skipped,
+                },
+                result: None,
+            };
+        }
+    };
+
+    // Pre-check: reinfer field names exist in config (lands on read_config)
     for name in reinfer {
         if !config.fields.field.iter().any(|f| f.name == *name) {
-            anyhow::bail!("field '{name}' is not in mdvs.toml");
+            return UpdateCommandOutput {
+                process: UpdateProcessOutput {
+                    read_config: ProcessingStepResult::Failed(ProcessingStepError {
+                        kind: ErrorKind::User,
+                        message: format!("field '{name}' is not in mdvs.toml"),
+                    }),
+                    scan: ProcessingStepResult::Skipped,
+                    infer: ProcessingStepResult::Skipped,
+                    write_config: ProcessingStepResult::Skipped,
+                    validate: ProcessingStepResult::Skipped,
+                    classify: ProcessingStepResult::Skipped,
+                    load_model: ProcessingStepResult::Skipped,
+                    embed_files: ProcessingStepResult::Skipped,
+                    write_index: ProcessingStepResult::Skipped,
+                },
+                result: None,
+            };
         }
     }
 
-    // Scan and infer
-    let scanned = ScannedFiles::scan(path, &config.scan)?;
-    let schema = InferredSchema::infer(&scanned);
+    // 2. scan
+    let (scan_step, scanned) = run_scan(path, &config.scan);
+    let scanned = match scanned {
+        Some(s) => s,
+        None => {
+            return UpdateCommandOutput {
+                process: UpdateProcessOutput {
+                    read_config: read_config_step,
+                    scan: scan_step,
+                    infer: ProcessingStepResult::Skipped,
+                    write_config: ProcessingStepResult::Skipped,
+                    validate: ProcessingStepResult::Skipped,
+                    classify: ProcessingStepResult::Skipped,
+                    load_model: ProcessingStepResult::Skipped,
+                    embed_files: ProcessingStepResult::Skipped,
+                    write_index: ProcessingStepResult::Skipped,
+                },
+                result: None,
+            };
+        }
+    };
+
+    // 3. infer
+    let (infer_step, schema) = run_infer(&scanned);
+    let schema = match schema {
+        Some(s) => s,
+        None => {
+            return UpdateCommandOutput {
+                process: UpdateProcessOutput {
+                    read_config: read_config_step,
+                    scan: scan_step,
+                    infer: infer_step,
+                    write_config: ProcessingStepResult::Skipped,
+                    validate: ProcessingStepResult::Skipped,
+                    classify: ProcessingStepResult::Skipped,
+                    load_model: ProcessingStepResult::Skipped,
+                    embed_files: ProcessingStepResult::Skipped,
+                    write_index: ProcessingStepResult::Skipped,
+                },
+                result: None,
+            };
+        }
+    };
+
     let total_files = scanned.files.len();
 
-    // Partition existing fields into protected + targets
+    // --- Field comparison logic (inline) ---
     let (protected, targets): (Vec<TomlField>, Vec<TomlField>) = if reinfer_all {
         (vec![], config.fields.field.drain(..).collect())
     } else if !reinfer.is_empty() {
@@ -275,7 +477,6 @@ pub async fn run(
         (config.fields.field.drain(..).collect(), vec![])
     };
 
-    // Build old_fields map from targets for comparison (type + globs)
     let old_fields: HashMap<&str, &TomlField> =
         targets.iter().map(|f| (f.name.as_str(), f)).collect();
 
@@ -284,13 +485,10 @@ pub async fn run(
     let mut changed = Vec::new();
     let mut unchanged = protected.len();
 
-    // Walk inferred fields
     for inf in &schema.fields {
-        // Skip if protected (already in new_fields)
         if protected.iter().any(|f| f.name == inf.name) {
             continue;
         }
-        // Skip if in ignore list
         if config.fields.ignore.contains(&inf.name) {
             continue;
         }
@@ -305,7 +503,6 @@ pub async fn run(
         };
 
         if let Some(old_field) = old_fields.get(inf.name.as_str()) {
-            // Was a target for reinference — compare full field (type + globs)
             if **old_field == toml_field {
                 unchanged += 1;
             } else {
@@ -322,13 +519,11 @@ pub async fn run(
             }
             new_fields.push(toml_field);
         } else {
-            // Genuinely new field
             added.push(inf.to_discovered(total_files, verbose));
             new_fields.push(toml_field);
         }
     }
 
-    // Removed = target names not found in inferred
     let mut removed: Vec<RemovedField> = old_fields
         .iter()
         .filter(|(name, _)| !schema.fields.iter().any(|f| f.name == **name))
@@ -352,7 +547,7 @@ pub async fn run(
 
     let should_build = build_flag.unwrap_or(config.update.auto_build);
 
-    let mut result = UpdateResult {
+    let mut update_result = UpdateResult {
         files_scanned: total_files,
         added,
         changed,
@@ -361,42 +556,458 @@ pub async fn run(
         auto_build: should_build && !dry_run,
         dry_run,
         build_result: None,
-        glob: if verbose {
-            Some(config.scan.glob.clone())
-        } else {
-            None
-        },
-        elapsed_ms: if verbose {
-            Some(start.elapsed().as_millis() as u64)
-        } else {
-            None
-        },
     };
 
-    if dry_run || !result.has_changes() {
-        return Ok(result);
+    // 4. write_config (Skipped if dry_run or no changes)
+    let write_config_step = if dry_run || !update_result.has_changes() {
+        ProcessingStepResult::Skipped
+    } else {
+        let start = Instant::now();
+        let config_path = path.join("mdvs.toml");
+
+        // Check reserved names
+        let field_names: Vec<String> = new_fields.iter().map(|f| f.name.clone()).collect();
+        if let Err(e) = check_reserved_names(&field_names, config.internal_prefix()) {
+            let (validate_step, classify_step, load_model_step, embed_files_step, write_index_step) =
+                all_build_steps_skipped();
+            return UpdateCommandOutput {
+                process: UpdateProcessOutput {
+                    read_config: read_config_step,
+                    scan: scan_step,
+                    infer: infer_step,
+                    write_config: ProcessingStepResult::Failed(ProcessingStepError {
+                        kind: ErrorKind::User,
+                        message: e.to_string(),
+                    }),
+                    validate: validate_step,
+                    classify: classify_step,
+                    load_model: load_model_step,
+                    embed_files: embed_files_step,
+                    write_index: write_index_step,
+                },
+                result: None,
+            };
+        }
+
+        config.fields.field = new_fields;
+        if let Err(e) = config.write(&config_path) {
+            let (validate_step, classify_step, load_model_step, embed_files_step, write_index_step) =
+                all_build_steps_skipped();
+            return UpdateCommandOutput {
+                process: UpdateProcessOutput {
+                    read_config: read_config_step,
+                    scan: scan_step,
+                    infer: infer_step,
+                    write_config: ProcessingStepResult::Failed(ProcessingStepError {
+                        kind: ErrorKind::Application,
+                        message: e.to_string(),
+                    }),
+                    validate: validate_step,
+                    classify: classify_step,
+                    load_model: load_model_step,
+                    embed_files: embed_files_step,
+                    write_index: write_index_step,
+                },
+                result: None,
+            };
+        }
+
+        ProcessingStepResult::Completed(ProcessingStep {
+            elapsed_ms: start.elapsed().as_millis() as u64,
+            output: WriteConfigOutput {
+                config_path: config_path.display().to_string(),
+                fields_written: config.fields.field.len(),
+            },
+        })
+    };
+
+    // Steps 5-9: build (Skipped if !should_build or dry_run or no changes)
+    let should_run_build = should_build
+        && !dry_run
+        && update_result.has_changes()
+        && matches!(write_config_step, ProcessingStepResult::Completed(_));
+
+    if !should_run_build {
+        let (validate_step, classify_step, load_model_step, embed_files_step, write_index_step) =
+            all_build_steps_skipped();
+        return UpdateCommandOutput {
+            process: UpdateProcessOutput {
+                read_config: read_config_step,
+                scan: scan_step,
+                infer: infer_step,
+                write_config: write_config_step,
+                validate: validate_step,
+                classify: classify_step,
+                load_model: load_model_step,
+                embed_files: embed_files_step,
+                write_index: write_index_step,
+            },
+            result: Some(update_result),
+        };
     }
 
-    // Validate field names don't collide with internal column names
-    let field_names: Vec<String> = new_fields.iter().map(|f| f.name.clone()).collect();
-    check_reserved_names(&field_names, config.internal_prefix())?;
+    // === Build steps (5-9) ===
 
-    // Update fields and write
-    config.fields.field = new_fields;
-    config.write(&config_path)?;
+    // 5. validate
+    let (validate_step, validation_data) = run_validate(&scanned, &config, false);
+    let validation_data = match validation_data {
+        Some(d) => d,
+        None => {
+            return UpdateCommandOutput {
+                process: UpdateProcessOutput {
+                    read_config: read_config_step,
+                    scan: scan_step,
+                    infer: infer_step,
+                    write_config: write_config_step,
+                    validate: validate_step,
+                    classify: ProcessingStepResult::Skipped,
+                    load_model: ProcessingStepResult::Skipped,
+                    embed_files: ProcessingStepResult::Skipped,
+                    write_index: ProcessingStepResult::Skipped,
+                },
+                result: None,
+            };
+        }
+    };
 
-    if should_build {
-        let build_output = crate::cmd::build::run(path, None, None, None, false, false).await;
-        if build_output.has_failed_step() {
-            anyhow::bail!("build failed");
-        }
-        if build_output.has_violations() {
-            anyhow::bail!("build aborted: validation failed after update (this is a bug)");
-        }
-        result.build_result = build_output.result;
+    let (violations, _new_fields) = validation_data;
+    // Violations after update are a bug — the config was just written from the same scan data
+    if !violations.is_empty() {
+        return UpdateCommandOutput {
+            process: UpdateProcessOutput {
+                read_config: read_config_step,
+                scan: scan_step,
+                infer: infer_step,
+                write_config: write_config_step,
+                validate: ProcessingStepResult::Failed(ProcessingStepError {
+                    kind: ErrorKind::Application,
+                    message: "validation failed after update — this is a bug".to_string(),
+                }),
+                classify: ProcessingStepResult::Skipped,
+                load_model: ProcessingStepResult::Skipped,
+                embed_files: ProcessingStepResult::Skipped,
+                write_index: ProcessingStepResult::Skipped,
+            },
+            result: None,
+        };
     }
 
-    Ok(result)
+    // Convert schema fields for write_index
+    let schema_fields: Vec<(String, FieldType)> = match config
+        .fields
+        .field
+        .iter()
+        .map(|f| {
+            let ft = FieldType::try_from(&f.field_type)
+                .map_err(|e| format!("invalid field type for '{}': {}", f.name, e))?;
+            Ok((f.name.clone(), ft))
+        })
+        .collect::<Result<Vec<_>, String>>()
+    {
+        Ok(sf) => sf,
+        Err(msg) => {
+            return UpdateCommandOutput {
+                process: UpdateProcessOutput {
+                    read_config: read_config_step,
+                    scan: scan_step,
+                    infer: infer_step,
+                    write_config: write_config_step,
+                    validate: validate_step,
+                    classify: ProcessingStepResult::Failed(ProcessingStepError {
+                        kind: ErrorKind::Application,
+                        message: msg,
+                    }),
+                    load_model: ProcessingStepResult::Skipped,
+                    embed_files: ProcessingStepResult::Skipped,
+                    write_index: ProcessingStepResult::Skipped,
+                },
+                result: None,
+            };
+        }
+    };
+
+    let embedding = config.embedding_model.as_ref().unwrap();
+    let chunking = config.chunking.as_ref().unwrap();
+    let backend = Backend::parquet(path, config.internal_prefix());
+
+    // Config change detection (pre-check for classify step)
+    let config_change_error = detect_config_changes(&backend, embedding, chunking, &config, false);
+
+    // 6. classify — incremental by default
+    let full_rebuild = !backend.exists();
+
+    let (classify_step, classify_data) = if let Some(msg) = config_change_error {
+        (
+            ProcessingStepResult::Failed(ProcessingStepError {
+                kind: ErrorKind::User,
+                message: msg,
+            }),
+            None,
+        )
+    } else {
+        // Read existing index for classification
+        let existing_index = if full_rebuild {
+            vec![]
+        } else {
+            match backend.read_file_index() {
+                Ok(idx) => idx,
+                Err(e) => {
+                    return UpdateCommandOutput {
+                        process: UpdateProcessOutput {
+                            read_config: read_config_step,
+                            scan: scan_step,
+                            infer: infer_step,
+                            write_config: write_config_step,
+                            validate: validate_step,
+                            classify: ProcessingStepResult::Failed(ProcessingStepError {
+                                kind: ErrorKind::Application,
+                                message: e.to_string(),
+                            }),
+                            load_model: ProcessingStepResult::Skipped,
+                            embed_files: ProcessingStepResult::Skipped,
+                            write_index: ProcessingStepResult::Skipped,
+                        },
+                        result: None,
+                    };
+                }
+            }
+        };
+        let existing_chunks = if full_rebuild {
+            vec![]
+        } else {
+            match backend.read_chunk_rows() {
+                Ok(crs) => crs,
+                Err(e) => {
+                    return UpdateCommandOutput {
+                        process: UpdateProcessOutput {
+                            read_config: read_config_step,
+                            scan: scan_step,
+                            infer: infer_step,
+                            write_config: write_config_step,
+                            validate: validate_step,
+                            classify: ProcessingStepResult::Failed(ProcessingStepError {
+                                kind: ErrorKind::Application,
+                                message: e.to_string(),
+                            }),
+                            load_model: ProcessingStepResult::Skipped,
+                            embed_files: ProcessingStepResult::Skipped,
+                            write_index: ProcessingStepResult::Skipped,
+                        },
+                        result: None,
+                    };
+                }
+            }
+        };
+        run_classify(&scanned, &existing_index, existing_chunks, full_rebuild)
+    };
+
+    let classify_data = match classify_data {
+        Some(d) => d,
+        None => {
+            return UpdateCommandOutput {
+                process: UpdateProcessOutput {
+                    read_config: read_config_step,
+                    scan: scan_step,
+                    infer: infer_step,
+                    write_config: write_config_step,
+                    validate: validate_step,
+                    classify: classify_step,
+                    load_model: ProcessingStepResult::Skipped,
+                    embed_files: ProcessingStepResult::Skipped,
+                    write_index: ProcessingStepResult::Skipped,
+                },
+                result: None,
+            };
+        }
+    };
+
+    let needs_embedding = !classify_data.needs_embedding.is_empty();
+
+    // 7. load_model (skip if nothing to embed)
+    let (load_model_step, embedder) = if needs_embedding {
+        run_load_model(embedding)
+    } else {
+        (ProcessingStepResult::Skipped, None)
+    };
+
+    // If load_model failed, skip embed_files and write_index
+    if needs_embedding && embedder.is_none() {
+        return UpdateCommandOutput {
+            process: UpdateProcessOutput {
+                read_config: read_config_step,
+                scan: scan_step,
+                infer: infer_step,
+                write_config: write_config_step,
+                validate: validate_step,
+                classify: classify_step,
+                load_model: load_model_step,
+                embed_files: ProcessingStepResult::Skipped,
+                write_index: ProcessingStepResult::Skipped,
+            },
+            result: None,
+        };
+    }
+
+    // Dimension check (pre-check for embed_files)
+    let dim_error = match &embedder {
+        Some(emb) => match backend.embedding_dimension() {
+            Ok(Some(existing_dim)) => {
+                let model_dim = emb.dimension() as i32;
+                if existing_dim != model_dim {
+                    Some(format!(
+                        "dimension mismatch: model produces {model_dim}-dim embeddings but existing index has {existing_dim}-dim"
+                    ))
+                } else {
+                    None
+                }
+            }
+            Ok(None) => None,
+            Err(e) => Some(e.to_string()),
+        },
+        None if needs_embedding => None, // load_model failed — handled above
+        None => None,
+    };
+
+    // 8. embed_files
+    let max_chunk_size = chunking.max_chunk_size;
+    let built_at = chrono::Utc::now().timestamp_micros();
+
+    let (embed_files_step, embed_data) = if let Some(msg) = dim_error {
+        (
+            ProcessingStepResult::Failed(ProcessingStepError {
+                kind: ErrorKind::User,
+                message: msg,
+            }),
+            None,
+        )
+    } else if needs_embedding {
+        let emb = embedder.as_ref().unwrap();
+        run_embed_files(&classify_data.needs_embedding, emb, max_chunk_size).await
+    } else {
+        (ProcessingStepResult::Skipped, None)
+    };
+
+    // If embed_files failed, skip write_index
+    if needs_embedding
+        && embed_data.is_none()
+        && !matches!(embed_files_step, ProcessingStepResult::Skipped)
+    {
+        return UpdateCommandOutput {
+            process: UpdateProcessOutput {
+                read_config: read_config_step,
+                scan: scan_step,
+                infer: infer_step,
+                write_config: write_config_step,
+                validate: validate_step,
+                classify: classify_step,
+                load_model: load_model_step,
+                embed_files: embed_files_step,
+                write_index: ProcessingStepResult::Skipped,
+            },
+            result: None,
+        };
+    }
+
+    // 9. write_index — assemble file_rows + chunk_rows
+    let file_rows: Vec<FileRow> = scanned
+        .files
+        .iter()
+        .map(|f| {
+            let filename = f.path.display().to_string();
+            let file_id = classify_data.file_id_map[&filename].clone();
+            FileRow {
+                file_id,
+                filename,
+                frontmatter: f.data.clone(),
+                content_hash: content_hash(&f.content),
+                built_at,
+            }
+        })
+        .collect();
+
+    let mut chunk_rows = classify_data.retained_chunks;
+    let mut embedded_details = Vec::new();
+
+    if let Some(ed) = embed_data {
+        chunk_rows.extend(ed.chunk_rows);
+        embedded_details = ed.details;
+    }
+
+    let build_meta = BuildMetadata {
+        embedding_model: embedding.clone(),
+        chunking: chunking.clone(),
+        glob: config.scan.glob.clone(),
+        built_at: chrono::Utc::now().to_rfc3339(),
+        internal_prefix: config.internal_prefix().to_string(),
+    };
+
+    let write_index_step = run_write_index(
+        &backend,
+        &schema_fields,
+        &file_rows,
+        &chunk_rows,
+        build_meta,
+    );
+
+    if matches!(write_index_step, ProcessingStepResult::Failed(_)) {
+        return UpdateCommandOutput {
+            process: UpdateProcessOutput {
+                read_config: read_config_step,
+                scan: scan_step,
+                infer: infer_step,
+                write_config: write_config_step,
+                validate: validate_step,
+                classify: classify_step,
+                load_model: load_model_step,
+                embed_files: embed_files_step,
+                write_index: write_index_step,
+            },
+            result: None,
+        };
+    }
+
+    // Assemble BuildResult
+    let chunks_embedded: usize = embedded_details.iter().map(|d| d.chunks).sum();
+    let chunks_total = chunk_rows.len();
+    let chunks_unchanged = chunks_total - chunks_embedded;
+
+    update_result.build_result = Some(BuildResult {
+        full_rebuild,
+        files_total: file_rows.len(),
+        files_embedded: classify_data.needs_embedding.len(),
+        files_unchanged: file_rows.len() - classify_data.needs_embedding.len(),
+        files_removed: classify_data.removed_count,
+        chunks_total,
+        chunks_embedded,
+        chunks_unchanged,
+        chunks_removed: classify_data.chunks_removed,
+        new_fields: vec![],
+        embedded_files: if verbose {
+            Some(embedded_details)
+        } else {
+            None
+        },
+        removed_files: if verbose && !classify_data.removed_details.is_empty() {
+            Some(classify_data.removed_details)
+        } else {
+            None
+        },
+    });
+
+    UpdateCommandOutput {
+        process: UpdateProcessOutput {
+            read_config: read_config_step,
+            scan: scan_step,
+            infer: infer_step,
+            write_config: write_config_step,
+            validate: validate_step,
+            classify: classify_step,
+            load_model: load_model_step,
+            embed_files: embed_files_step,
+            write_index: write_index_step,
+        },
+        result: Some(update_result),
+    }
 }
 
 #[cfg(test)]
@@ -439,9 +1050,9 @@ mod tests {
         create_test_vault(tmp.path());
         init_no_build(tmp.path()).await;
 
-        let result = run(tmp.path(), &[], false, Some(false), false, false)
-            .await
-            .unwrap();
+        let output = run(tmp.path(), &[], false, Some(false), false, false).await;
+        assert!(!output.has_failed_step());
+        let result = output.result.unwrap();
 
         assert!(!result.has_changes());
         assert_eq!(result.files_scanned, 2);
@@ -461,9 +1072,9 @@ mod tests {
         )
         .unwrap();
 
-        let result = run(tmp.path(), &[], false, Some(false), false, false)
-            .await
-            .unwrap();
+        let output = run(tmp.path(), &[], false, Some(false), false, false).await;
+        assert!(!output.has_failed_step());
+        let result = output.result.unwrap();
 
         assert_eq!(result.added.len(), 1);
         assert_eq!(result.added[0].name, "author");
@@ -492,7 +1103,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = run(
+        let output = run(
             tmp.path(),
             &["tags".to_string()],
             false,
@@ -500,8 +1111,9 @@ mod tests {
             false,
             false,
         )
-        .await
-        .unwrap();
+        .await;
+        assert!(!output.has_failed_step());
+        let result = output.result.unwrap();
 
         assert_eq!(result.changed.len(), 1);
         assert_eq!(result.changed[0].name, "tags");
@@ -523,7 +1135,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = run(
+        let output = run(
             tmp.path(),
             &["tags".to_string()],
             false,
@@ -531,8 +1143,9 @@ mod tests {
             false,
             false,
         )
-        .await
-        .unwrap();
+        .await;
+        assert!(!output.has_failed_step());
+        let result = output.result.unwrap();
 
         assert_eq!(result.removed.len(), 1);
         assert_eq!(result.removed[0].name, "tags");
@@ -550,7 +1163,7 @@ mod tests {
         create_test_vault(tmp.path());
         init_no_build(tmp.path()).await;
 
-        let result = run(
+        let output = run(
             tmp.path(),
             &["nonexistent".to_string()],
             false,
@@ -560,9 +1173,12 @@ mod tests {
         )
         .await;
 
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("field 'nonexistent' is not in mdvs.toml"));
+        assert!(output.has_failed_step());
+        let msg = match &output.process.read_config {
+            ProcessingStepResult::Failed(err) => &err.message,
+            _ => panic!("expected read_config step to fail"),
+        };
+        assert!(msg.contains("field 'nonexistent' is not in mdvs.toml"));
     }
 
     #[tokio::test]
@@ -571,7 +1187,7 @@ mod tests {
         create_test_vault(tmp.path());
         init_no_build(tmp.path()).await;
 
-        let result = run(
+        let output = run(
             tmp.path(),
             &["tags".to_string()],
             true, // reinfer_all
@@ -581,9 +1197,12 @@ mod tests {
         )
         .await;
 
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("cannot use --reinfer and --reinfer-all together"));
+        assert!(output.has_failed_step());
+        let msg = match &output.process.read_config {
+            ProcessingStepResult::Failed(err) => &err.message,
+            _ => panic!("expected read_config step to fail"),
+        };
+        assert!(msg.contains("cannot use --reinfer and --reinfer-all together"));
     }
 
     #[tokio::test]
@@ -594,9 +1213,9 @@ mod tests {
 
         let toml_before = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
 
-        let result = run(tmp.path(), &[], true, Some(false), false, false)
-            .await
-            .unwrap();
+        let output = run(tmp.path(), &[], true, Some(false), false, false).await;
+        assert!(!output.has_failed_step());
+        let result = output.result.unwrap();
 
         // All fields are re-inferred with same types → unchanged
         assert_eq!(result.unchanged, 3);
@@ -628,12 +1247,18 @@ mod tests {
 
         let toml_before = fs::read_to_string(tmp.path().join("mdvs.toml")).unwrap();
 
-        let result = run(tmp.path(), &[], false, Some(false), true, false)
-            .await
-            .unwrap();
+        let output = run(tmp.path(), &[], false, Some(false), true, false).await;
+        assert!(!output.has_failed_step());
+        let result = output.result.unwrap();
 
         assert!(result.dry_run);
         assert_eq!(result.added.len(), 1);
+
+        // write_config should be Skipped
+        assert!(matches!(
+            output.process.write_config,
+            ProcessingStepResult::Skipped
+        ));
 
         // Toml unchanged
         let toml_after = fs::read_to_string(tmp.path().join("mdvs.toml")).unwrap();
@@ -670,9 +1295,9 @@ mod tests {
         .unwrap();
 
         // --build false should skip build even if auto_build is true in toml
-        let result = run(tmp.path(), &[], false, Some(false), false, false)
-            .await
-            .unwrap();
+        let output = run(tmp.path(), &[], false, Some(false), false, false).await;
+        assert!(!output.has_failed_step());
+        let result = output.result.unwrap();
 
         assert!(!result.auto_build);
         assert!(!tmp.path().join(".mdvs").exists());
@@ -729,9 +1354,9 @@ mod tests {
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
 
         // Reinfer all — globs should change even though types don't
-        let result = run(tmp.path(), &[], true, Some(false), false, false)
-            .await
-            .unwrap();
+        let output = run(tmp.path(), &[], true, Some(false), false, false).await;
+        assert!(!output.has_failed_step());
+        let result = output.result.unwrap();
         assert!(result.has_changes());
         assert_eq!(result.changed.len(), 1);
         assert_eq!(result.changed[0].name, "title");
@@ -761,9 +1386,9 @@ mod tests {
         .unwrap();
 
         // Default mode: tags should stay in toml even though it disappeared
-        let result = run(tmp.path(), &[], false, Some(false), false, false)
-            .await
-            .unwrap();
+        let output = run(tmp.path(), &[], false, Some(false), false, false).await;
+        assert!(!output.has_failed_step());
+        let result = output.result.unwrap();
 
         assert!(!result.has_changes());
 
