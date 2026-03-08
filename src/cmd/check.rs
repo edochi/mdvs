@@ -1,7 +1,8 @@
 use crate::discover::field_type::FieldType;
 use crate::discover::scan::ScannedFiles;
 use crate::output::{
-    format_file_count, CommandOutput, FieldViolation, NewField, ViolatingFile, ViolationKind,
+    format_file_count, format_json_compact, CommandOutput, FieldViolation, NewField, ViolatingFile,
+    ViolationKind,
 };
 use crate::pipeline::read_config::ReadConfigOutput;
 use crate::pipeline::scan::ScanOutput;
@@ -184,6 +185,10 @@ impl CheckCommandOutput {
 }
 
 impl CommandOutput for CheckCommandOutput {
+    fn format_json(&self, verbose: bool) -> String {
+        format_json_compact(self, self.result.as_ref(), verbose)
+    }
+
     fn format_text(&self, verbose: bool) -> String {
         // If pipeline completed successfully, delegate to CheckResult
         if let Some(result) = &self.result {

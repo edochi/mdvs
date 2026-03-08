@@ -182,19 +182,37 @@ pub trait CommandOutput: Serialize {
     /// When `verbose` is true, output includes expanded details and a metadata footer.
     fn format_text(&self, verbose: bool) -> String;
 
+    /// Render this result as JSON. Default serializes the full struct.
+    /// Command output wrappers override this to omit `process` in compact mode.
+    fn format_json(&self, verbose: bool) -> String {
+        let _ = verbose;
+        serde_json::to_string_pretty(self).expect("CommandOutput types must be JSON-serializable")
+    }
+
     /// Print to stdout in the requested format.
     /// Default implementation handles dispatch — commands don't need to override this.
     fn print(&self, format: &OutputFormat, verbose: bool) {
         match format {
             OutputFormat::Text => print!("{}", self.format_text(verbose)),
-            OutputFormat::Json => {
-                print!(
-                    "{}",
-                    serde_json::to_string_pretty(self)
-                        .expect("CommandOutput types must be JSON-serializable")
-                )
-            }
+            OutputFormat::Json => print!("{}", self.format_json(verbose)),
         }
+    }
+}
+
+/// Serialize command output as JSON, omitting process steps in compact mode.
+///
+/// In compact mode (not verbose), only the result is emitted: `{"result": ...}`.
+/// In verbose mode or when the result is absent (error), the full struct is serialized.
+pub fn format_json_compact<T: Serialize, R: Serialize>(
+    full: &T,
+    result: Option<&R>,
+    verbose: bool,
+) -> String {
+    if result.is_some() && !verbose {
+        serde_json::to_string_pretty(&serde_json::json!({ "result": result }))
+            .expect("CommandOutput types must be JSON-serializable")
+    } else {
+        serde_json::to_string_pretty(full).expect("CommandOutput types must be JSON-serializable")
     }
 }
 

@@ -1,4 +1,4 @@
-use crate::output::{format_file_count, format_size, CommandOutput};
+use crate::output::{format_file_count, format_json_compact, format_size, CommandOutput};
 use crate::pipeline::delete_index::DeleteIndexOutput;
 use crate::pipeline::ProcessingStepResult;
 use serde::Serialize;
@@ -68,6 +68,10 @@ impl CleanCommandOutput {
 }
 
 impl CommandOutput for CleanCommandOutput {
+    fn format_json(&self, verbose: bool) -> String {
+        format_json_compact(self, self.result.as_ref(), verbose)
+    }
+
     fn format_text(&self, verbose: bool) -> String {
         if let Some(result) = &self.result {
             if verbose {

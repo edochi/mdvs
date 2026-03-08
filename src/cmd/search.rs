@@ -1,5 +1,5 @@
 use crate::index::backend::{Backend, SearchHit};
-use crate::output::CommandOutput;
+use crate::output::{format_json_compact, CommandOutput};
 use crate::pipeline::embed::EmbedQueryOutput;
 use crate::pipeline::execute_search::ExecuteSearchOutput;
 use crate::pipeline::load_model::LoadModelOutput;
@@ -149,6 +149,10 @@ impl SearchCommandOutput {
 }
 
 impl CommandOutput for SearchCommandOutput {
+    fn format_json(&self, verbose: bool) -> String {
+        format_json_compact(self, self.result.as_ref(), verbose)
+    }
+
     fn format_text(&self, verbose: bool) -> String {
         if let Some(result) = &self.result {
             if verbose {

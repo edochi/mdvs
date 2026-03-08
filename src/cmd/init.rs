@@ -2,7 +2,9 @@ use crate::cmd::build::BuildResult;
 use crate::discover::field_type::FieldType;
 use crate::index::backend::Backend;
 use crate::index::storage::{content_hash, BuildMetadata, FileRow};
-use crate::output::{format_file_count, format_hints, CommandOutput, DiscoveredField};
+use crate::output::{
+    format_file_count, format_hints, format_json_compact, CommandOutput, DiscoveredField,
+};
 use crate::pipeline::classify::{run_classify, ClassifyOutput};
 use crate::pipeline::embed::{run_embed_files, EmbedFilesOutput};
 use crate::pipeline::infer::{run_infer, InferOutput};
@@ -171,7 +173,6 @@ pub struct InitCommandOutput {
     /// Step-by-step process records.
     pub process: InitProcessOutput,
     /// Init result (present when init completes successfully).
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<InitResult>,
 }
 
@@ -190,6 +191,10 @@ impl InitCommandOutput {
 }
 
 impl CommandOutput for InitCommandOutput {
+    fn format_json(&self, verbose: bool) -> String {
+        format_json_compact(self, self.result.as_ref(), verbose)
+    }
+
     fn format_text(&self, verbose: bool) -> String {
         if let Some(result) = &self.result {
             result.format_text(verbose)

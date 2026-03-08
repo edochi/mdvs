@@ -3,7 +3,8 @@ use crate::discover::field_type::FieldType;
 use crate::index::backend::Backend;
 use crate::index::storage::{check_reserved_names, content_hash, BuildMetadata, FileRow};
 use crate::output::{
-    format_file_count, format_hints, ChangedField, CommandOutput, DiscoveredField, RemovedField,
+    format_file_count, format_hints, format_json_compact, ChangedField, CommandOutput,
+    DiscoveredField, RemovedField,
 };
 use crate::pipeline::classify::{run_classify, ClassifyOutput};
 use crate::pipeline::embed::{run_embed_files, EmbedFilesOutput};
@@ -252,7 +253,6 @@ pub struct UpdateCommandOutput {
     /// Step-by-step process records.
     pub process: UpdateProcessOutput,
     /// Update result (present when update completes successfully).
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<UpdateResult>,
 }
 
@@ -272,6 +272,10 @@ impl UpdateCommandOutput {
 }
 
 impl CommandOutput for UpdateCommandOutput {
+    fn format_json(&self, verbose: bool) -> String {
+        format_json_compact(self, self.result.as_ref(), verbose)
+    }
+
     fn format_text(&self, verbose: bool) -> String {
         if let Some(result) = &self.result {
             result.format_text(verbose)

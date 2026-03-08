@@ -1,7 +1,7 @@
 use crate::discover::field_type::FieldType;
 use crate::index::backend::Backend;
 use crate::index::storage::{content_hash, BuildMetadata, FileRow};
-use crate::output::{format_file_count, CommandOutput, NewField};
+use crate::output::{format_file_count, format_json_compact, CommandOutput, NewField};
 use crate::pipeline::classify::{run_classify, ClassifyOutput};
 use crate::pipeline::embed::{run_embed_files, EmbedFilesOutput};
 use crate::pipeline::load_model::{run_load_model, LoadModelOutput};
@@ -216,7 +216,6 @@ pub struct BuildCommandOutput {
     /// Step-by-step process records.
     pub process: BuildProcessOutput,
     /// Build statistics (present when build completes successfully).
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<BuildResult>,
 }
 
@@ -242,6 +241,10 @@ impl BuildCommandOutput {
 }
 
 impl CommandOutput for BuildCommandOutput {
+    fn format_json(&self, verbose: bool) -> String {
+        format_json_compact(self, self.result.as_ref(), verbose)
+    }
+
     fn format_text(&self, verbose: bool) -> String {
         if self.has_violations() {
             // Validation found violations — direct user to mdvs check

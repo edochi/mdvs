@@ -1,4 +1,4 @@
-use crate::output::{field_hints, format_hints, CommandOutput, FieldHint};
+use crate::output::{field_hints, format_hints, format_json_compact, CommandOutput, FieldHint};
 use crate::pipeline::read_config::ReadConfigOutput;
 use crate::pipeline::read_index::ReadIndexOutput;
 use crate::pipeline::scan::ScanOutput;
@@ -226,6 +226,10 @@ impl InfoCommandOutput {
 }
 
 impl CommandOutput for InfoCommandOutput {
+    fn format_json(&self, verbose: bool) -> String {
+        format_json_compact(self, self.result.as_ref(), verbose)
+    }
+
     fn format_text(&self, verbose: bool) -> String {
         if let Some(result) = &self.result {
             if verbose {
