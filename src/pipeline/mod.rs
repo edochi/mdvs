@@ -6,6 +6,7 @@
 
 pub mod delete_index;
 pub mod read_config;
+pub mod read_index;
 pub mod scan;
 pub mod validate;
 
