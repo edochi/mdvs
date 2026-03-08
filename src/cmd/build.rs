@@ -1,4 +1,3 @@
-use crate::cmd::check::CheckResult;
 use crate::discover::field_type::FieldType;
 use crate::index::backend::Backend;
 use crate::index::storage::{content_hash, BuildMetadata, FileRow};
@@ -219,9 +218,6 @@ pub struct BuildCommandOutput {
     /// Build statistics (present when build completes successfully).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<BuildResult>,
-    /// Validation result (present when validation found violations).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub check_result: Option<CheckResult>,
 }
 
 impl BuildCommandOutput {
@@ -238,17 +234,26 @@ impl BuildCommandOutput {
 
     /// Returns `true` if validation found violations (build aborted).
     pub fn has_violations(&self) -> bool {
-        self.check_result
-            .as_ref()
-            .is_some_and(|cr| cr.has_violations())
+        match &self.process.validate {
+            ProcessingStepResult::Completed(step) => step.output.violation_count > 0,
+            _ => false,
+        }
     }
 }
 
 impl CommandOutput for BuildCommandOutput {
     fn format_text(&self, verbose: bool) -> String {
-        if let Some(check_result) = &self.check_result {
-            // Validation failed — show check result (violations)
-            check_result.format_text(verbose)
+        if self.has_violations() {
+            // Validation found violations — direct user to mdvs check
+            match &self.process.validate {
+                ProcessingStepResult::Completed(step) => {
+                    format!(
+                        "Build aborted — {} violation(s) found. Run `mdvs check` for details.\n",
+                        step.output.violation_count
+                    )
+                }
+                _ => "Build aborted — validation failed.\n".to_string(),
+            }
         } else if let Some(result) = &self.result {
             // Success — show build result
             result.format_text(verbose)
@@ -317,7 +322,6 @@ pub async fn run(
                     write_index: ProcessingStepResult::Skipped,
                 },
                 result: None,
-                check_result: None,
             };
         }
     };
@@ -360,7 +364,6 @@ pub async fn run(
                     write_index: ProcessingStepResult::Skipped,
                 },
                 result: None,
-                check_result: None,
             };
         }
     };
@@ -392,7 +395,6 @@ pub async fn run(
                     write_index: ProcessingStepResult::Skipped,
                 },
                 result: None,
-                check_result: None,
             };
         }
     };
@@ -402,11 +404,6 @@ pub async fn run(
 
     // If violations found, abort — remaining steps skipped
     if has_violations {
-        let check_result = CheckResult {
-            files_checked: scanned.files.len(),
-            field_violations: violations,
-            new_fields,
-        };
         return BuildCommandOutput {
             process: BuildProcessOutput {
                 read_config: read_config_step,
@@ -418,7 +415,6 @@ pub async fn run(
                 write_index: ProcessingStepResult::Skipped,
             },
             result: None,
-            check_result: Some(check_result),
         };
     }
 
@@ -450,7 +446,6 @@ pub async fn run(
                     write_index: ProcessingStepResult::Skipped,
                 },
                 result: None,
-                check_result: None,
             };
         }
     };
@@ -495,7 +490,6 @@ pub async fn run(
                             write_index: ProcessingStepResult::Skipped,
                         },
                         result: None,
-                        check_result: None,
                     };
                 }
             }
@@ -520,7 +514,6 @@ pub async fn run(
                             write_index: ProcessingStepResult::Skipped,
                         },
                         result: None,
-                        check_result: None,
                     };
                 }
             }
@@ -542,7 +535,6 @@ pub async fn run(
                     write_index: ProcessingStepResult::Skipped,
                 },
                 result: None,
-                check_result: None,
             };
         }
     };
@@ -592,7 +584,6 @@ pub async fn run(
                 write_index: ProcessingStepResult::Skipped,
             },
             result: None,
-            check_result: None,
         };
     }
 
@@ -631,7 +622,6 @@ pub async fn run(
                 write_index: ProcessingStepResult::Skipped,
             },
             result: None,
-            check_result: None,
         };
     }
 
@@ -690,7 +680,6 @@ pub async fn run(
                 write_index: write_index_step,
             },
             result: None,
-            check_result: None,
         };
     }
 
@@ -733,7 +722,6 @@ pub async fn run(
             write_index: write_index_step,
         },
         result: Some(result),
-        check_result: None,
     }
 }
 
@@ -1272,7 +1260,6 @@ mod tests {
 
         let output = run(tmp.path(), None, None, None, false, false).await;
         assert!(output.has_violations(), "expected validation violations");
-        assert!(output.check_result.is_some());
     }
 
     #[tokio::test]
@@ -1338,7 +1325,6 @@ mod tests {
 
         let output = run(tmp.path(), None, None, None, false, false).await;
         assert!(output.has_violations(), "expected validation violations");
-        assert!(output.check_result.is_some());
     }
 
     #[tokio::test]

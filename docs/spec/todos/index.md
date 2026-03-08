@@ -91,3 +91,5 @@
 | [0087](TODO-0087.md) | Rework clean command pipeline | done | medium | 2026-03-08 |
 | [0088](TODO-0088.md) | main.rs error handling and exit codes | paused | medium | 2026-03-08 |
 | [0089](TODO-0089.md) | Warn on stale index during search | todo | medium | 2026-03-08 |
+| [0090](TODO-0090.md) | Remove check_result from BuildCommandOutput | done | medium | 2026-03-08 |
+| [0091](TODO-0091.md) | Consistent output rules for text and JSON formats | todo | medium | 2026-03-08 |
