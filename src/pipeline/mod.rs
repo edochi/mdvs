@@ -4,6 +4,7 @@
 //! result. These types are the building blocks that step modules and commands
 //! compose.
 
+pub mod classify;
 pub mod delete_index;
 pub mod embed;
 pub mod execute_search;
@@ -12,6 +13,7 @@ pub mod read_config;
 pub mod read_index;
 pub mod scan;
 pub mod validate;
+pub mod write_index;
 
 use serde::Serialize;
 

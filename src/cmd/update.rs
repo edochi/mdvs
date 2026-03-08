@@ -1,4 +1,4 @@
-use crate::cmd::build::{BuildOutcome, BuildResult};
+use crate::cmd::build::BuildResult;
 use crate::discover::infer::InferredSchema;
 use crate::discover::scan::ScannedFiles;
 use crate::index::storage::check_reserved_names;
@@ -386,14 +386,14 @@ pub async fn run(
     config.write(&config_path)?;
 
     if should_build {
-        match crate::cmd::build::run(path, None, None, None, false, false).await? {
-            BuildOutcome::Success(build_result) => {
-                result.build_result = Some(build_result);
-            }
-            BuildOutcome::ValidationFailed(_) => {
-                anyhow::bail!("build aborted: validation failed after update (this is a bug)");
-            }
+        let build_output = crate::cmd::build::run(path, None, None, None, false, false).await;
+        if build_output.has_failed_step() {
+            anyhow::bail!("build failed");
         }
+        if build_output.has_violations() {
+            anyhow::bail!("build aborted: validation failed after update (this is a bug)");
+        }
+        result.build_result = build_output.result;
     }
 
     Ok(result)
