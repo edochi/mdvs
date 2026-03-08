@@ -81,7 +81,7 @@
 | [0077](TODO-0077.md) | Filter info command output by field name | todo | medium | 2026-03-08 |
 | [0078](TODO-0078.md) | Structured error output for all commands | todo | medium | 2026-03-08 |
 | [0079](TODO-0079.md) | Core pipeline abstractions | done | medium | 2026-03-08 |
-| [0080](TODO-0080.md) | Shared step output structs | in-progress | medium | 2026-03-08 |
+| [0080](TODO-0080.md) | Shared step output structs | done | medium | 2026-03-08 |
 | [0081](TODO-0081.md) | Rework check command pipeline | done | medium | 2026-03-08 |
 | [0082](TODO-0082.md) | Rework build command pipeline | done | medium | 2026-03-08 |
 | [0083](TODO-0083.md) | Rework init command pipeline | done | medium | 2026-03-08 |
@@ -89,5 +89,5 @@
 | [0085](TODO-0085.md) | Rework search command pipeline | done | medium | 2026-03-08 |
 | [0086](TODO-0086.md) | Rework info command pipeline | done | medium | 2026-03-08 |
 | [0087](TODO-0087.md) | Rework clean command pipeline | done | medium | 2026-03-08 |
-| [0088](TODO-0088.md) | main.rs error handling and exit codes | todo | medium | 2026-03-08 |
+| [0088](TODO-0088.md) | main.rs error handling and exit codes | paused | medium | 2026-03-08 |
 | [0089](TODO-0089.md) | Warn on stale index during search | todo | medium | 2026-03-08 |
