@@ -1,5 +1,6 @@
-use crate::index::backend::Backend;
 use crate::output::{format_file_count, format_size, CommandOutput};
+use crate::pipeline::delete_index::DeleteIndexOutput;
+use crate::pipeline::ProcessingStepResult;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use tracing::instrument;
@@ -15,8 +16,6 @@ pub struct CleanResult {
     pub files_removed: usize,
     /// Total size of `.mdvs/` in bytes before deletion.
     pub size_bytes: u64,
-    /// Wall-clock time for the operation in milliseconds.
-    pub elapsed_ms: u64,
 }
 
 impl CommandOutput for CleanResult {
@@ -26,10 +25,9 @@ impl CommandOutput for CleanResult {
             out.push_str(&format!("Cleaned \"{}\"\n", self.path.display()));
             if verbose {
                 out.push_str(&format!(
-                    "\n{} | {} | {}ms\n",
+                    "\n{} | {}\n",
                     format_file_count(self.files_removed),
                     format_size(self.size_bytes),
-                    self.elapsed_ms
                 ));
             }
         } else {
@@ -42,55 +40,74 @@ impl CommandOutput for CleanResult {
     }
 }
 
-/// Count files and sum their sizes in a directory (recursively).
-fn walk_dir_stats(dir: &Path) -> anyhow::Result<(usize, u64)> {
-    let mut count = 0usize;
-    let mut size = 0u64;
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        let meta = entry.metadata()?;
-        if meta.is_dir() {
-            let (c, s) = walk_dir_stats(&entry.path())?;
-            count += c;
-            size += s;
+// ============================================================================
+// CleanCommandOutput (pipeline-based)
+// ============================================================================
+
+/// Pipeline record for the clean command.
+#[derive(Debug, Serialize)]
+pub struct CleanProcessOutput {
+    /// Delete index step result.
+    pub delete_index: ProcessingStepResult<DeleteIndexOutput>,
+}
+
+/// Full output of the clean command: pipeline steps + command result.
+#[derive(Debug, Serialize)]
+pub struct CleanCommandOutput {
+    /// Processing steps and their outcomes.
+    pub process: CleanProcessOutput,
+    /// Command result (None if pipeline didn't complete).
+    pub result: Option<CleanResult>,
+}
+
+impl CleanCommandOutput {
+    /// Returns `true` if any processing step failed.
+    pub fn has_failed_step(&self) -> bool {
+        matches!(self.process.delete_index, ProcessingStepResult::Failed(_))
+    }
+}
+
+impl CommandOutput for CleanCommandOutput {
+    fn format_text(&self, verbose: bool) -> String {
+        if let Some(result) = &self.result {
+            if verbose {
+                let mut out = String::new();
+                out.push_str(&format!("{}\n", self.process.delete_index.format_line()));
+                out.push('\n');
+                out.push_str(&result.format_text(verbose));
+                out
+            } else {
+                result.format_text(verbose)
+            }
         } else {
-            count += 1;
-            size += meta.len();
+            // Pipeline failed — show the step error
+            format!("{}\n", self.process.delete_index.format_line())
         }
     }
-    Ok((count, size))
 }
 
 /// Delete the `.mdvs/` index directory if it exists.
 #[instrument(name = "clean", skip_all)]
-pub fn run(path: &Path) -> anyhow::Result<CleanResult> {
-    let start = std::time::Instant::now();
-    let mdvs_dir = path.join(".mdvs");
-    if mdvs_dir.is_symlink() {
-        anyhow::bail!(
-            "'{}' is a symlink — refusing to delete for safety",
-            mdvs_dir.display()
-        );
-    }
-    if mdvs_dir.exists() {
-        let (files_removed, size_bytes) = walk_dir_stats(&mdvs_dir)?;
-        let backend = Backend::parquet(path, "_");
-        backend.clean()?;
-        Ok(CleanResult {
-            removed: true,
-            path: mdvs_dir,
-            files_removed,
-            size_bytes,
-            elapsed_ms: start.elapsed().as_millis() as u64,
-        })
-    } else {
-        Ok(CleanResult {
-            removed: false,
-            path: mdvs_dir,
-            files_removed: 0,
-            size_bytes: 0,
-            elapsed_ms: start.elapsed().as_millis() as u64,
-        })
+pub fn run(path: &Path) -> CleanCommandOutput {
+    use crate::pipeline::delete_index::run_delete_index;
+
+    let delete_step = run_delete_index(path);
+
+    let result = match &delete_step {
+        ProcessingStepResult::Completed(step) => Some(CleanResult {
+            removed: step.output.removed,
+            path: PathBuf::from(&step.output.path),
+            files_removed: step.output.files_removed,
+            size_bytes: step.output.size_bytes,
+        }),
+        _ => None,
+    };
+
+    CleanCommandOutput {
+        process: CleanProcessOutput {
+            delete_index: delete_step,
+        },
+        result,
     }
 }
 
@@ -109,7 +126,9 @@ mod tests {
         fs::create_dir_all(&mdvs_dir).unwrap();
         fs::write(mdvs_dir.join("files.parquet"), "dummy").unwrap();
 
-        let result = run(tmp.path()).unwrap();
+        let output = run(tmp.path());
+        assert!(!output.has_failed_step());
+        let result = output.result.unwrap();
         assert!(result.removed);
         assert!(!mdvs_dir.exists());
         assert_eq!(result.files_removed, 1);
@@ -122,7 +141,9 @@ mod tests {
     fn clean_nothing_to_clean() {
         let tmp = tempfile::tempdir().unwrap();
 
-        let result = run(tmp.path()).unwrap();
+        let output = run(tmp.path());
+        assert!(!output.has_failed_step());
+        let result = output.result.unwrap();
         assert!(!result.removed);
         assert_eq!(result.files_removed, 0);
         assert_eq!(result.size_bytes, 0);

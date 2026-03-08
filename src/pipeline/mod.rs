@@ -4,6 +4,7 @@
 //! result. These types are the building blocks that step modules and commands
 //! compose.
 
+pub mod delete_index;
 pub mod read_config;
 pub mod scan;
 pub mod validate;

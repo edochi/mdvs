@@ -88,5 +88,5 @@
 | [0084](TODO-0084.md) | Rework update command pipeline | todo | medium | 2026-03-08 |
 | [0085](TODO-0085.md) | Rework search command pipeline | todo | medium | 2026-03-08 |
 | [0086](TODO-0086.md) | Rework info command pipeline | todo | medium | 2026-03-08 |
-| [0087](TODO-0087.md) | Rework clean command pipeline | todo | medium | 2026-03-08 |
+| [0087](TODO-0087.md) | Rework clean command pipeline | done | medium | 2026-03-08 |
 | [0088](TODO-0088.md) | main.rs error handling and exit codes | todo | medium | 2026-03-08 |

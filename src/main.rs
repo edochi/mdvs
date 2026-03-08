@@ -255,8 +255,11 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
         Command::Clean { path } => {
-            let result = mdvs::cmd::clean::run(&path)?;
-            result.print(&cli.output, cli.verbose);
+            let output = mdvs::cmd::clean::run(&path);
+            output.print(&cli.output, cli.verbose);
+            if output.has_failed_step() {
+                std::process::exit(2);
+            }
             Ok(())
         }
         Command::Info { path } => {
