@@ -4,6 +4,10 @@
 //! result. These types are the building blocks that step modules and commands
 //! compose.
 
+pub mod read_config;
+pub mod scan;
+pub mod validate;
+
 use serde::Serialize;
 
 /// Trait for step output types — provides a one-liner text description.

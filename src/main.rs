@@ -231,9 +231,12 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
         Command::Check { path } => {
-            let result = mdvs::cmd::check::run(&path, cli.verbose)?;
-            result.print(&cli.output, cli.verbose);
-            if result.has_violations() {
+            let output = mdvs::cmd::check::run(&path, cli.verbose);
+            output.print(&cli.output, cli.verbose);
+            if output.has_failed_step() {
+                std::process::exit(2);
+            }
+            if output.result.as_ref().is_some_and(|r| r.has_violations()) {
                 std::process::exit(1);
             }
             Ok(())

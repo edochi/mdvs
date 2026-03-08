@@ -3,6 +3,10 @@ use crate::discover::scan::ScannedFiles;
 use crate::output::{
     format_file_count, CommandOutput, FieldViolation, NewField, ViolatingFile, ViolationKind,
 };
+use crate::pipeline::read_config::ReadConfigOutput;
+use crate::pipeline::scan::ScanOutput;
+use crate::pipeline::validate::ValidateOutput;
+use crate::pipeline::ProcessingStepResult;
 use crate::schema::config::MdvsToml;
 use crate::schema::shared::FieldTypeSerde;
 use crate::table::{style_compact, style_record, Builder};
@@ -11,7 +15,6 @@ use serde::Serialize;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::time::Instant;
 use tracing::{info, instrument};
 
 /// Result of the `check` command: validation violations and unknown fields.
@@ -23,12 +26,6 @@ pub struct CheckResult {
     pub field_violations: Vec<FieldViolation>,
     /// Fields found in frontmatter but not defined in `mdvs.toml`.
     pub new_fields: Vec<NewField>,
-    /// Scan glob pattern (verbose only).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub glob: Option<String>,
-    /// Wall-clock time for the check operation in milliseconds (verbose only).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub elapsed_ms: Option<u64>,
 }
 
 impl CheckResult {
@@ -149,32 +146,111 @@ impl CommandOutput for CheckResult {
             }
         }
 
-        // Verbose footer
-        if verbose {
-            if let (Some(glob), Some(ms)) = (&self.glob, self.elapsed_ms) {
-                out.push_str(&format!(
-                    "\n{} | glob: \"{glob}\" | {ms}ms\n",
-                    format_file_count(self.files_checked)
-                ));
-            }
-        }
-
         out
     }
 }
 
-/// Read config and scan files, then validate frontmatter against the schema.
-#[instrument(name = "check", skip_all)]
-pub fn run(path: &Path, verbose: bool) -> anyhow::Result<CheckResult> {
-    let start = Instant::now();
-    let config = MdvsToml::read(&path.join("mdvs.toml"))?;
-    let scanned = ScannedFiles::scan(path, &config.scan)?;
-    let mut result = validate(&scanned, &config, verbose)?;
-    if verbose {
-        result.glob = Some(config.scan.glob.clone());
-        result.elapsed_ms = Some(start.elapsed().as_millis() as u64);
+// ============================================================================
+// CheckCommandOutput (pipeline-based)
+// ============================================================================
+
+/// Pipeline record for the check command.
+#[derive(Debug, Serialize)]
+pub struct CheckProcessOutput {
+    /// Read config step result.
+    pub read_config: ProcessingStepResult<ReadConfigOutput>,
+    /// Scan step result.
+    pub scan: ProcessingStepResult<ScanOutput>,
+    /// Validate step result.
+    pub validate: ProcessingStepResult<ValidateOutput>,
+}
+
+/// Full output of the check command: pipeline steps + command result.
+#[derive(Debug, Serialize)]
+pub struct CheckCommandOutput {
+    /// Processing steps and their outcomes.
+    pub process: CheckProcessOutput,
+    /// Command result (None if pipeline didn't complete).
+    pub result: Option<CheckResult>,
+}
+
+impl CheckCommandOutput {
+    /// Returns `true` if any processing step failed.
+    pub fn has_failed_step(&self) -> bool {
+        matches!(self.process.read_config, ProcessingStepResult::Failed(_))
+            || matches!(self.process.scan, ProcessingStepResult::Failed(_))
+            || matches!(self.process.validate, ProcessingStepResult::Failed(_))
     }
-    Ok(result)
+}
+
+impl CommandOutput for CheckCommandOutput {
+    fn format_text(&self, verbose: bool) -> String {
+        // If pipeline completed successfully, delegate to CheckResult
+        if let Some(result) = &self.result {
+            if verbose {
+                // Show step lines before the result
+                let mut out = String::new();
+                out.push_str(&format!("{}\n", self.process.read_config.format_line()));
+                out.push_str(&format!("{}\n", self.process.scan.format_line()));
+                out.push_str(&format!("{}\n", self.process.validate.format_line()));
+                out.push('\n');
+                out.push_str(&result.format_text(verbose));
+                out
+            } else {
+                result.format_text(verbose)
+            }
+        } else {
+            // Pipeline didn't complete — show steps up to the failure
+            let mut out = String::new();
+            out.push_str(&format!("{}\n", self.process.read_config.format_line()));
+            if !matches!(self.process.scan, ProcessingStepResult::Skipped) {
+                out.push_str(&format!("{}\n", self.process.scan.format_line()));
+            }
+            if !matches!(self.process.validate, ProcessingStepResult::Skipped) {
+                out.push_str(&format!("{}\n", self.process.validate.format_line()));
+            }
+            out
+        }
+    }
+}
+
+/// Read config, scan files, and validate frontmatter against the schema.
+#[instrument(name = "check", skip_all)]
+pub fn run(path: &Path, verbose: bool) -> CheckCommandOutput {
+    use crate::pipeline::read_config::run_read_config;
+    use crate::pipeline::scan::run_scan;
+    use crate::pipeline::validate::run_validate;
+
+    let (read_config_step, config) = run_read_config(path);
+
+    let (scan_step, scanned) = match &config {
+        Some(cfg) => run_scan(path, &cfg.scan),
+        None => (ProcessingStepResult::Skipped, None),
+    };
+
+    let (validate_step, validation_data) = match (&scanned, &config) {
+        (Some(scanned), Some(cfg)) => run_validate(scanned, cfg, verbose),
+        _ => (ProcessingStepResult::Skipped, None),
+    };
+
+    // Build CheckResult from validation data (if completed)
+    let result = validation_data.map(|(field_violations, new_fields)| {
+        let files_checked = scanned.as_ref().map_or(0, |s| s.files.len());
+        CheckResult {
+            files_checked,
+            field_violations,
+            new_fields,
+        }
+    });
+
+    CheckCommandOutput {
+        process: CheckProcessOutput {
+            read_config: read_config_step,
+            scan: scan_step,
+            validate: validate_step,
+        },
+        result,
+    }
 }
 
 /// Accumulator key for grouping violations by field, kind, and rule.
@@ -223,8 +299,6 @@ pub fn validate(
         files_checked: scanned.files.len(),
         field_violations,
         new_fields,
-        glob: None,
-        elapsed_ms: None,
     })
 }
 
@@ -496,7 +570,7 @@ mod tests {
             vec![],
         );
 
-        let result = run(tmp.path(), false).unwrap();
+        let result = run(tmp.path(), false).result.unwrap();
 
         assert!(!result.has_violations());
         assert!(result.new_fields.is_empty());
@@ -527,7 +601,7 @@ mod tests {
             vec![],
         );
 
-        let result = run(tmp.path(), false).unwrap();
+        let result = run(tmp.path(), false).result.unwrap();
 
         assert!(result.has_violations());
         let v = &result.field_violations[0];
@@ -556,7 +630,7 @@ mod tests {
             vec![],
         );
 
-        let result = run(tmp.path(), false).unwrap();
+        let result = run(tmp.path(), false).result.unwrap();
 
         assert!(result.has_violations());
         let v = &result.field_violations[0];
@@ -589,7 +663,7 @@ mod tests {
             vec![],
         );
 
-        let result = run(tmp.path(), false).unwrap();
+        let result = run(tmp.path(), false).result.unwrap();
 
         assert!(!result.has_violations());
     }
@@ -619,7 +693,7 @@ mod tests {
             vec![],
         );
 
-        let result = run(tmp.path(), false).unwrap();
+        let result = run(tmp.path(), false).result.unwrap();
 
         assert!(result.has_violations());
         let v = &result.field_violations[0];
@@ -636,7 +710,7 @@ mod tests {
         // Only declare title — tags and draft are new
         write_toml(tmp.path(), vec![string_field("title")], vec![]);
 
-        let result = run(tmp.path(), false).unwrap();
+        let result = run(tmp.path(), false).result.unwrap();
 
         assert!(!result.has_violations());
         assert_eq!(result.new_fields.len(), 2);
@@ -670,7 +744,7 @@ mod tests {
 
         write_toml(tmp.path(), vec![string_field("field")], vec![]);
 
-        let result = run(tmp.path(), false).unwrap();
+        let result = run(tmp.path(), false).result.unwrap();
 
         assert!(!result.has_violations());
         assert_eq!(result.files_checked, 4);
@@ -713,7 +787,7 @@ mod tests {
         };
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
 
-        let result = run(tmp.path(), false).unwrap();
+        let result = run(tmp.path(), false).result.unwrap();
 
         // Bare files missing required fields are violations
         assert!(result.has_violations());
@@ -731,7 +805,7 @@ mod tests {
             vec!["draft".into(), "tags".into()],
         );
 
-        let result = run(tmp.path(), false).unwrap();
+        let result = run(tmp.path(), false).result.unwrap();
 
         assert!(!result.has_violations());
         assert!(result.new_fields.is_empty()); // draft and tags are ignored, not new
@@ -789,7 +863,7 @@ mod tests {
             vec![],
         );
 
-        let result = run(tmp.path(), false).unwrap();
+        let result = run(tmp.path(), false).result.unwrap();
 
         assert!(result.has_violations());
         // Should have: draft wrong type, tags missing required, draft disallowed
