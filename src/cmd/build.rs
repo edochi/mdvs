@@ -1047,6 +1047,7 @@ mod tests {
                         field_type: crate::schema::shared::FieldTypeSerde::Scalar("String".into()),
                         allowed: vec!["**".into()],
                         required: vec![],
+                        nullable: false,
                     },
                     crate::schema::config::TomlField {
                         name: "draft".into(),
@@ -1054,6 +1055,7 @@ mod tests {
                         field_type: crate::schema::shared::FieldTypeSerde::Scalar("Boolean".into()),
                         allowed: vec!["**".into()],
                         required: vec![],
+                        nullable: false,
                     },
                 ],
             },
@@ -1112,6 +1114,7 @@ mod tests {
                         field_type: crate::schema::shared::FieldTypeSerde::Scalar("String".into()),
                         allowed: vec!["**".into()],
                         required: vec![],
+                        nullable: false,
                     },
                     crate::schema::config::TomlField {
                         name: "tags".into(),
@@ -1122,6 +1125,7 @@ mod tests {
                         },
                         allowed: vec!["**".into()],
                         required: vec!["blog/**".into()],
+                        nullable: false,
                     },
                 ],
             },
@@ -1175,6 +1179,7 @@ mod tests {
                     field_type: crate::schema::shared::FieldTypeSerde::Scalar("String".into()),
                     allowed: vec!["**".into()],
                     required: vec![],
+                    nullable: false,
                 }],
             },
             embedding_model: Some(EmbeddingModelConfig {

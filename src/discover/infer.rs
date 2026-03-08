@@ -19,6 +19,8 @@ pub struct FieldTypeInfo {
     pub field_type: FieldType,
     /// Paths of files containing this field.
     pub files: Vec<PathBuf>,
+    /// Whether any file had a null value for this field.
+    pub nullable: bool,
 }
 
 /// Infer field types by scanning all files and widening across occurrences.
@@ -26,6 +28,7 @@ pub struct FieldTypeInfo {
 pub fn infer_field_types(scanned: &ScannedFiles) -> BTreeMap<String, FieldTypeInfo> {
     let mut types: BTreeMap<String, FieldType> = BTreeMap::new();
     let mut files: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
+    let mut nulls: HashSet<String> = HashSet::new();
 
     for file in &scanned.files {
         if let Some(Value::Object(map)) = &file.data {
@@ -38,6 +41,7 @@ pub fn infer_field_types(scanned: &ScannedFiles) -> BTreeMap<String, FieldTypeIn
 
                 // Skip null — transparent in type inference
                 if val.is_null() {
+                    nulls.insert(key.clone());
                     continue;
                 }
 
@@ -61,6 +65,7 @@ pub fn infer_field_types(scanned: &ScannedFiles) -> BTreeMap<String, FieldTypeIn
             let info = FieldTypeInfo {
                 field_type,
                 files: files.remove(&name).unwrap_or_default(),
+                nullable: nulls.contains(&name),
             };
             (name, info)
         })
@@ -354,6 +359,8 @@ pub struct InferredField {
     pub allowed: Vec<String>,
     /// Glob patterns where this field is present in every file.
     pub required: Vec<String>,
+    /// Whether any file had a null value for this field.
+    pub nullable: bool,
 }
 
 impl InferredField {
@@ -374,6 +381,7 @@ impl InferredField {
             } else {
                 None
             },
+            nullable: self.nullable,
             hints: crate::output::field_hints(&self.name),
         }
     }
@@ -407,6 +415,7 @@ impl InferredSchema {
                     files: ti.files,
                     allowed: pi.map(|p| p.allowed.clone()).unwrap_or_default(),
                     required: pi.map(|p| p.required.clone()).unwrap_or_default(),
+                    nullable: ti.nullable,
                     name,
                 }
             })

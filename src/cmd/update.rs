@@ -96,6 +96,9 @@ impl CommandOutput for UpdateResult {
                         detail_lines.push(format!("    - \"{g}\""));
                     }
                 }
+                if field.nullable {
+                    detail_lines.push("  nullable: true".to_string());
+                }
                 if !field.hints.is_empty() {
                     detail_lines.push(format!("  hints: {}", format_hints(&field.hints)));
                 }
@@ -162,9 +165,14 @@ impl CommandOutput for UpdateResult {
                             .join(", ")
                     })
                     .unwrap_or_default();
+                let type_str = if field.nullable {
+                    format!("{}?", field.field_type)
+                } else {
+                    field.field_type.clone()
+                };
                 let mut row = vec![
                     format!("\"{}\"", field.name),
-                    format!("added      {}", field.field_type),
+                    format!("added      {type_str}"),
                     globs_summary,
                 ];
                 let hints_str = format_hints(&field.hints);
@@ -293,6 +301,7 @@ pub async fn run(
             field_type: new_type.clone(),
             allowed: inf.allowed.clone(),
             required: inf.required.clone(),
+            nullable: inf.nullable,
         };
 
         if let Some(old_field) = old_fields.get(inf.name.as_str()) {

@@ -34,17 +34,38 @@ fn default_internal_prefix() -> String {
 
 /// A single field definition in `[[fields.field]]`, specifying its type
 /// and the glob patterns that constrain where it may or must appear.
+///
+/// All fields except `name` have permissive defaults: `type = "String"`,
+/// `allowed = ["**"]`, `required = []`, `nullable = true`. A bare
+/// `[[fields.field]]` with just a name is effectively unconstrained.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TomlField {
     /// Frontmatter key this definition applies to.
     pub name: String,
     /// Expected type (scalar, array, or object).
-    #[serde(rename = "type")]
+    #[serde(rename = "type", default = "default_field_type")]
     pub field_type: FieldTypeSerde,
     /// Glob patterns for files where this field is allowed.
+    #[serde(default = "default_allowed")]
     pub allowed: Vec<String>,
     /// Glob patterns for files where this field is required.
+    #[serde(default)]
     pub required: Vec<String>,
+    /// Whether null values are accepted for this field.
+    #[serde(default = "default_nullable")]
+    pub nullable: bool,
+}
+
+fn default_field_type() -> FieldTypeSerde {
+    FieldTypeSerde::Scalar("String".into())
+}
+
+fn default_allowed() -> Vec<String> {
+    vec!["**".into()]
+}
+
+fn default_nullable() -> bool {
+    true
 }
 
 /// The `[fields]` section: ignore list and per-field definitions.
@@ -127,6 +148,7 @@ impl MdvsToml {
                         field_type: FieldTypeSerde::from(&f.field_type),
                         allowed: f.allowed.clone(),
                         required: f.required.clone(),
+                        nullable: f.nullable,
                     })
                     .collect(),
             },
@@ -239,6 +261,7 @@ mod tests {
                         field_type: FieldTypeSerde::Scalar("String".into()),
                         allowed: vec!["**".into()],
                         required: vec!["**".into()],
+                        nullable: false,
                     },
                     TomlField {
                         name: "tags".into(),
@@ -247,12 +270,14 @@ mod tests {
                         },
                         allowed: vec!["blog/**".into(), "notes/**".into()],
                         required: vec!["blog/drafts/**".into(), "notes/**".into()],
+                        nullable: false,
                     },
                     TomlField {
                         name: "draft".into(),
                         field_type: FieldTypeSerde::Scalar("Boolean".into()),
                         allowed: vec!["blog/**".into()],
                         required: vec![],
+                        nullable: false,
                     },
                     TomlField {
                         name: "meta".into(),
@@ -264,6 +289,7 @@ mod tests {
                         },
                         allowed: vec!["**".into()],
                         required: vec!["**".into()],
+                        nullable: false,
                     },
                 ],
             },
@@ -365,6 +391,7 @@ default_limit = 10
                     files: vec![PathBuf::from("blog/a.md")],
                     allowed: vec!["blog/**".into()],
                     required: vec!["blog/**".into()],
+                    nullable: false,
                 },
                 InferredField {
                     name: "tags".into(),
@@ -372,6 +399,7 @@ default_limit = 10
                     files: vec![PathBuf::from("blog/a.md"), PathBuf::from("notes/b.md")],
                     allowed: vec!["blog/**".into(), "notes/**".into()],
                     required: vec!["notes/**".into()],
+                    nullable: false,
                 },
                 InferredField {
                     name: "title".into(),
@@ -379,6 +407,7 @@ default_limit = 10
                     files: vec![PathBuf::from("blog/a.md"), PathBuf::from("notes/b.md")],
                     allowed: vec!["**".into()],
                     required: vec!["**".into()],
+                    nullable: false,
                 },
             ],
         };
@@ -474,6 +503,7 @@ default_limit = 10
                 files: vec![PathBuf::from("a.md")],
                 allowed: vec!["**".into()],
                 required: vec!["**".into()],
+                nullable: false,
             }],
         };
         let scan = ScanConfig {
@@ -502,6 +532,7 @@ default_limit = 10
                 },
                 allowed: vec!["**".into()],
                 required: vec![],
+                nullable: false,
             },
             TomlField {
                 name: "meta".into(),
@@ -513,6 +544,7 @@ default_limit = 10
                 },
                 allowed: vec!["**".into()],
                 required: vec![],
+                nullable: false,
             },
         ]);
 
@@ -607,5 +639,89 @@ ignore = ["notes", "internal_id"]
         let toml_str = toml::to_string(&parsed).unwrap();
         let reparsed: MdvsToml = toml::from_str(&toml_str).unwrap();
         assert_eq!(reparsed, parsed);
+    }
+
+    #[test]
+    fn bare_field_definition_defaults() {
+        let toml_str = r#"
+[scan]
+glob = "**"
+include_bare_files = false
+
+[update]
+auto_build = false
+
+[fields]
+
+[[fields.field]]
+name = "title"
+"#;
+        let parsed: MdvsToml = toml::from_str(toml_str).unwrap();
+        assert_eq!(parsed.fields.field.len(), 1);
+
+        let f = &parsed.fields.field[0];
+        assert_eq!(f.name, "title");
+        assert_eq!(f.field_type, FieldTypeSerde::Scalar("String".into()));
+        assert_eq!(f.allowed, vec!["**"]);
+        assert!(f.required.is_empty());
+        assert!(f.nullable);
+    }
+
+    #[test]
+    fn bare_field_partial_override() {
+        let toml_str = r#"
+[scan]
+glob = "**"
+include_bare_files = false
+
+[update]
+auto_build = false
+
+[fields]
+
+[[fields.field]]
+name = "draft"
+type = "Boolean"
+"#;
+        let parsed: MdvsToml = toml::from_str(toml_str).unwrap();
+        let f = &parsed.fields.field[0];
+        assert_eq!(f.name, "draft");
+        assert_eq!(f.field_type, FieldTypeSerde::Scalar("Boolean".into()));
+        assert_eq!(f.allowed, vec!["**"]);
+        assert!(f.required.is_empty());
+        assert!(f.nullable);
+    }
+
+    #[test]
+    fn bare_field_with_explicit_non_defaults() {
+        let toml_str = r#"
+[scan]
+glob = "**"
+include_bare_files = false
+
+[update]
+auto_build = false
+
+[fields]
+
+[[fields.field]]
+name = "tags"
+type = { array = "String" }
+allowed = ["blog/**"]
+required = ["blog/**"]
+nullable = false
+"#;
+        let parsed: MdvsToml = toml::from_str(toml_str).unwrap();
+        let f = &parsed.fields.field[0];
+        assert_eq!(f.name, "tags");
+        assert_eq!(
+            f.field_type,
+            FieldTypeSerde::Array {
+                array: Box::new(FieldTypeSerde::Scalar("String".into()))
+            }
+        );
+        assert_eq!(f.allowed, vec!["blog/**"]);
+        assert_eq!(f.required, vec!["blog/**"]);
+        assert!(!f.nullable);
     }
 }

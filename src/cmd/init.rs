@@ -77,6 +77,9 @@ impl CommandOutput for InitResult {
                             detail_lines.push(format!("    - \"{g}\""));
                         }
                     }
+                    if field.nullable {
+                        detail_lines.push("  nullable: true".to_string());
+                    }
                     if !field.hints.is_empty() {
                         detail_lines.push(format!("  hints: {}", format_hints(&field.hints)));
                     }
@@ -89,9 +92,14 @@ impl CommandOutput for InitResult {
                 // Compact table
                 let mut builder = Builder::default();
                 for field in &self.fields {
+                    let type_str = if field.nullable {
+                        format!("{}?", field.field_type)
+                    } else {
+                        field.field_type.clone()
+                    };
                     let mut row = vec![
                         format!("\"{}\"", field.name),
-                        field.field_type.clone(),
+                        type_str,
                         format!("{}/{}", field.files_found, field.total_files),
                     ];
                     let hints_str = format_hints(&field.hints);

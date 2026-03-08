@@ -69,6 +69,8 @@ pub struct DiscoveredField {
     /// Glob patterns where this field is required in every file (verbose only).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub required: Option<Vec<String>>,
+    /// Whether null values are accepted for this field.
+    pub nullable: bool,
     /// Hints about special characters in the field name.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub hints: Vec<FieldHint>,
@@ -107,6 +109,8 @@ pub enum ViolationKind {
     WrongType,
     /// The field is not declared in `mdvs.toml` and is not in the ignore list.
     Disallowed,
+    /// A non-nullable field has a null value.
+    NullNotAllowed,
 }
 
 /// A single file that failed a particular field validation rule.
@@ -226,6 +230,7 @@ mod tests {
             total_files: 10,
             allowed: Some(vec!["**".into()]),
             required: None,
+            nullable: false,
             hints: vec![],
         };
         let json = serde_json::to_string(&field).unwrap();
@@ -244,6 +249,7 @@ mod tests {
             total_files: 1,
             allowed: None,
             required: None,
+            nullable: false,
             hints: vec![FieldHint::EscapeSingleQuotes],
         };
         let json = serde_json::to_string(&field).unwrap();

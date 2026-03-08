@@ -21,6 +21,8 @@ pub struct InfoField {
     pub allowed: Vec<String>,
     /// Glob patterns where this field must appear.
     pub required: Vec<String>,
+    /// Whether null values are accepted for this field.
+    pub nullable: bool,
     /// Number of files containing this field (verbose only).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub count: Option<usize>,
@@ -142,6 +144,9 @@ impl CommandOutput for InfoResult {
                     for g in &f.allowed {
                         detail_lines.push(format!("    - \"{g}\""));
                     }
+                    if f.nullable {
+                        detail_lines.push("  nullable: true".to_string());
+                    }
                     if !f.hints.is_empty() {
                         detail_lines.push(format!("  hints: {}", format_hints(&f.hints)));
                     }
@@ -166,9 +171,14 @@ impl CommandOutput for InfoResult {
                             f.allowed.iter().map(|g| format!("\"{g}\"")).collect();
                         format!("allowed: {}", globs.join(", "))
                     };
+                    let type_str = if f.nullable {
+                        format!("{}?", f.field_type)
+                    } else {
+                        f.field_type.clone()
+                    };
                     let mut row = vec![
                         format!("\"{}\"", f.name),
-                        f.field_type.clone(),
+                        type_str,
                         required_str,
                         allowed_str,
                     ];
@@ -233,6 +243,7 @@ pub fn run(path: &Path, verbose: bool) -> anyhow::Result<InfoResult> {
             field_type: f.field_type.to_string(),
             allowed: f.allowed.clone(),
             required: f.required.clone(),
+            nullable: f.nullable,
             count: if verbose {
                 Some(*field_counts.get(&f.name).unwrap_or(&0))
             } else {
@@ -332,6 +343,7 @@ mod tests {
                         field_type: FieldTypeSerde::Scalar("String".into()),
                         allowed: vec!["**".into()],
                         required: vec!["**".into()],
+                        nullable: false,
                     },
                     crate::schema::config::TomlField {
                         name: "tags".into(),
@@ -340,12 +352,14 @@ mod tests {
                         },
                         allowed: vec!["blog/**".into()],
                         required: vec![],
+                        nullable: false,
                     },
                     crate::schema::config::TomlField {
                         name: "draft".into(),
                         field_type: FieldTypeSerde::Scalar("Boolean".into()),
                         allowed: vec!["**".into()],
                         required: vec![],
+                        nullable: false,
                     },
                 ],
             },
@@ -460,6 +474,7 @@ mod tests {
                     field_type: FieldTypeSerde::Scalar("String".into()),
                     allowed: vec!["**".into()],
                     required: vec![],
+                    nullable: false,
                 }],
             },
             embedding_model: None,

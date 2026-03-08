@@ -68,6 +68,7 @@ impl CommandOutput for CheckResult {
                         ViolationKind::MissingRequired => "MissingRequired",
                         ViolationKind::WrongType => "WrongType",
                         ViolationKind::Disallowed => "Disallowed",
+                        ViolationKind::NullNotAllowed => "NullNotAllowed",
                     };
                     builder.push_record([
                         format!("\"{}\"", v.field),
@@ -95,6 +96,7 @@ impl CommandOutput for CheckResult {
                         ViolationKind::MissingRequired => "MissingRequired",
                         ViolationKind::WrongType => "WrongType",
                         ViolationKind::Disallowed => "Disallowed",
+                        ViolationKind::NullNotAllowed => "NullNotAllowed",
                     };
                     builder.push_record([
                         format!("\"{}\"", v.field),
@@ -308,23 +310,40 @@ fn check_required_fields(
                 continue;
             }
 
-            let has_field = file
+            let value = file
                 .data
                 .as_ref()
                 .and_then(|v| v.as_object())
-                .and_then(|map| map.get(&toml_field.name))
-                .is_some_and(|v| !v.is_null());
+                .and_then(|map| map.get(&toml_field.name));
 
-            if !has_field {
-                let key = ViolationKey {
-                    field: toml_field.name.clone(),
-                    kind: ViolationKind::MissingRequired,
-                    rule: format!("required in {:?}", toml_field.required),
-                };
-                violations.entry(key).or_default().push(ViolatingFile {
-                    path: file.path.clone(),
-                    detail: None,
-                });
+            match value {
+                None => {
+                    // Key absent → MissingRequired
+                    let key = ViolationKey {
+                        field: toml_field.name.clone(),
+                        kind: ViolationKind::MissingRequired,
+                        rule: format!("required in {:?}", toml_field.required),
+                    };
+                    violations.entry(key).or_default().push(ViolatingFile {
+                        path: file.path.clone(),
+                        detail: None,
+                    });
+                }
+                Some(v) if v.is_null() && !toml_field.nullable => {
+                    // Key present but null on non-nullable field → NullNotAllowed
+                    let key = ViolationKey {
+                        field: toml_field.name.clone(),
+                        kind: ViolationKind::NullNotAllowed,
+                        rule: format!("not nullable, required in {:?}", toml_field.required),
+                    };
+                    violations.entry(key).or_default().push(ViolatingFile {
+                        path: file.path.clone(),
+                        detail: None,
+                    });
+                }
+                _ => {
+                    // Key present with value (or null on nullable field) → pass
+                }
             }
         }
     }
@@ -441,6 +460,7 @@ mod tests {
             field_type: FieldTypeSerde::Scalar("String".into()),
             allowed: vec!["**".into()],
             required: vec![],
+            nullable: false,
         }
     }
 
@@ -450,6 +470,7 @@ mod tests {
             field_type: FieldTypeSerde::Scalar("Boolean".into()),
             allowed: vec!["**".into()],
             required: vec![],
+            nullable: false,
         }
     }
 
@@ -468,6 +489,7 @@ mod tests {
                     },
                     allowed: vec!["**".into()],
                     required: vec![],
+                    nullable: false,
                 },
                 bool_field("draft"),
             ],
@@ -498,6 +520,7 @@ mod tests {
                     },
                     allowed: vec!["**".into()],
                     required: vec!["blog/**".into()],
+                    nullable: false,
                 },
                 bool_field("draft"),
             ],
@@ -561,6 +584,7 @@ mod tests {
                 field_type: FieldTypeSerde::Scalar("Float".into()),
                 allowed: vec!["**".into()],
                 required: vec![],
+                nullable: false,
             }],
             vec![],
         );
@@ -590,6 +614,7 @@ mod tests {
                 field_type: FieldTypeSerde::Scalar("Boolean".into()),
                 allowed: vec!["blog/**".into()],
                 required: vec![],
+                nullable: false,
             }],
             vec![],
         );
@@ -678,6 +703,7 @@ mod tests {
                     field_type: FieldTypeSerde::Scalar("String".into()),
                     allowed: vec!["**".into()],
                     required: vec!["blog/**".into()],
+                    nullable: false,
                 }],
             },
             embedding_model: None,
@@ -741,6 +767,7 @@ mod tests {
                     field_type: FieldTypeSerde::Scalar("String".into()),
                     allowed: vec!["**".into()],
                     required: vec!["**".into()],
+                    nullable: false,
                 },
                 TomlField {
                     name: "tags".into(),
@@ -749,12 +776,14 @@ mod tests {
                     },
                     allowed: vec!["**".into()],
                     required: vec!["blog/**".into()],
+                    nullable: false,
                 },
                 TomlField {
                     name: "draft".into(),
                     field_type: FieldTypeSerde::Scalar("Boolean".into()),
                     allowed: vec!["blog/**".into()],
                     required: vec![],
+                    nullable: false,
                 },
             ],
             vec![],
