@@ -1,6 +1,13 @@
 # mdvs — Markdown Validation & Search
 
-**Not a document DB — a DB of documents.**
+<div align="center">
+  
+  :x: A Document Database
+  
+  :white_check_mark: A Database for Documents
+
+</div>
+
 mdvs infers a schema from your frontmatter, validates it, and gives you semantic search with SQL filtering. Single binary, no cloud, no setup.
 
 ## Install
