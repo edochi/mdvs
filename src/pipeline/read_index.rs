@@ -24,12 +24,9 @@ pub struct ReadIndexOutput {
 impl StepOutput for ReadIndexOutput {
     fn format_line(&self) -> String {
         if self.exists {
-            format!(
-                "Read index ({} files, {} chunks)",
-                self.files_indexed, self.chunks
-            )
+            format!("{} files, {} chunks", self.files_indexed, self.chunks)
         } else {
-            "No index found".to_string()
+            "no index found".to_string()
         }
     }
 }

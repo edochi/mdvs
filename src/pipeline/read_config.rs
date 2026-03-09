@@ -18,7 +18,7 @@ pub struct ReadConfigOutput {
 
 impl StepOutput for ReadConfigOutput {
     fn format_line(&self) -> String {
-        format!("Read config {}", self.config_path)
+        self.config_path.clone()
     }
 }
 

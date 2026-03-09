@@ -20,7 +20,7 @@ pub struct LoadModelOutput {
 
 impl StepOutput for LoadModelOutput {
     fn format_line(&self) -> String {
-        format!("Loaded model \"{}\" ({}d)", self.model_name, self.dimension)
+        format!("\"{}\" ({}d)", self.model_name, self.dimension)
     }
 }
 

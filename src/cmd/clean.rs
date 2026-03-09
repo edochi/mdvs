@@ -76,7 +76,10 @@ impl CommandOutput for CleanCommandOutput {
         if let Some(result) = &self.result {
             if verbose {
                 let mut out = String::new();
-                out.push_str(&format!("{}\n", self.process.delete_index.format_line()));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.delete_index.format_line("Delete index")
+                ));
                 out.push('\n');
                 out.push_str(&result.format_text(verbose));
                 out
@@ -85,7 +88,10 @@ impl CommandOutput for CleanCommandOutput {
             }
         } else {
             // Pipeline failed — show the step error
-            format!("{}\n", self.process.delete_index.format_line())
+            format!(
+                "{}\n",
+                self.process.delete_index.format_line("Delete index")
+            )
         }
     }
 }

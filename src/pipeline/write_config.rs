@@ -23,7 +23,7 @@ pub struct WriteConfigOutput {
 
 impl StepOutput for WriteConfigOutput {
     fn format_line(&self) -> String {
-        format!("Wrote config {}", self.config_path)
+        self.config_path.clone()
     }
 }
 

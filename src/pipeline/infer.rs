@@ -17,9 +17,9 @@ pub struct InferOutput {
 impl StepOutput for InferOutput {
     fn format_line(&self) -> String {
         if self.fields_inferred == 0 {
-            "Inferred schema — no fields found".to_string()
+            "no fields found".to_string()
         } else {
-            format!("Inferred {} field(s)", self.fields_inferred)
+            format!("{} field(s)", self.fields_inferred)
         }
     }
 }

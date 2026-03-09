@@ -234,9 +234,15 @@ impl CommandOutput for InfoCommandOutput {
         if let Some(result) = &self.result {
             if verbose {
                 let mut out = String::new();
-                out.push_str(&format!("{}\n", self.process.read_config.format_line()));
-                out.push_str(&format!("{}\n", self.process.scan.format_line()));
-                out.push_str(&format!("{}\n", self.process.read_index.format_line()));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.read_config.format_line("Read config")
+                ));
+                out.push_str(&format!("{}\n", self.process.scan.format_line("Scan")));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.read_index.format_line("Read index")
+                ));
                 out.push('\n');
                 out.push_str(&result.format_text(verbose));
                 out
@@ -246,12 +252,18 @@ impl CommandOutput for InfoCommandOutput {
         } else {
             // Pipeline didn't complete — show steps up to the failure
             let mut out = String::new();
-            out.push_str(&format!("{}\n", self.process.read_config.format_line()));
+            out.push_str(&format!(
+                "{}\n",
+                self.process.read_config.format_line("Read config")
+            ));
             if !matches!(self.process.scan, ProcessingStepResult::Skipped) {
-                out.push_str(&format!("{}\n", self.process.scan.format_line()));
+                out.push_str(&format!("{}\n", self.process.scan.format_line("Scan")));
             }
             if !matches!(self.process.read_index, ProcessingStepResult::Skipped) {
-                out.push_str(&format!("{}\n", self.process.read_index.format_line()));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.read_index.format_line("Read index")
+                ));
             }
             out
         }

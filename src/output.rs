@@ -76,18 +76,79 @@ pub struct DiscoveredField {
     pub hints: Vec<FieldHint>,
 }
 
-/// A field whose inferred type changed between the previous and current scan.
+/// A field whose definition changed between the previous and current scan.
 #[derive(Debug, Serialize)]
 pub struct ChangedField {
     /// Field name.
     pub name: String,
-    /// Type recorded in the existing `mdvs.toml`.
-    pub old_type: String,
-    /// Newly inferred type after re-scanning.
-    pub new_type: String,
-    /// Current glob patterns where this field appears (verbose only).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub allowed: Option<Vec<String>>,
+    /// Which aspects of the field definition changed.
+    pub changes: Vec<FieldChange>,
+}
+
+/// A single aspect of a field definition that changed.
+#[derive(Debug, Serialize)]
+#[serde(tag = "aspect", rename_all = "snake_case")]
+pub enum FieldChange {
+    /// The inferred type changed.
+    Type {
+        /// Previous type.
+        old: String,
+        /// New type.
+        new: String,
+    },
+    /// The allowed glob patterns changed.
+    Allowed {
+        /// Previous allowed patterns.
+        old: Vec<String>,
+        /// New allowed patterns.
+        new: Vec<String>,
+    },
+    /// The required glob patterns changed.
+    Required {
+        /// Previous required patterns.
+        old: Vec<String>,
+        /// New required patterns.
+        new: Vec<String>,
+    },
+    /// The nullable flag changed.
+    Nullable {
+        /// Previous value.
+        old: bool,
+        /// New value.
+        new: bool,
+    },
+}
+
+impl FieldChange {
+    /// Short label for this change aspect.
+    pub fn label(&self) -> &'static str {
+        match self {
+            FieldChange::Type { .. } => "type",
+            FieldChange::Allowed { .. } => "allowed",
+            FieldChange::Required { .. } => "required",
+            FieldChange::Nullable { .. } => "nullable",
+        }
+    }
+
+    /// Return `(old, new)` strings for verbose table columns.
+    pub fn format_old_new(&self) -> (String, String) {
+        match self {
+            FieldChange::Type { old, new } => (old.clone(), new.clone()),
+            FieldChange::Allowed { old, new } => (format_globs(old), format_globs(new)),
+            FieldChange::Required { old, new } => (format_globs(old), format_globs(new)),
+            FieldChange::Nullable { old, new } => (old.to_string(), new.to_string()),
+        }
+    }
+}
+
+/// Format glob patterns as a bracketed list: `["a", "b"]`.
+fn format_globs(globs: &[String]) -> String {
+    if globs.is_empty() {
+        "[]".to_string()
+    } else {
+        let items: Vec<String> = globs.iter().map(|g| format!("\"{g}\"")).collect();
+        format!("[{}]", items.join(", "))
+    }
 }
 
 /// A field that disappeared from all files during re-inference.

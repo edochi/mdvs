@@ -27,13 +27,10 @@ pub struct ClassifyOutput {
 impl StepOutput for ClassifyOutput {
     fn format_line(&self) -> String {
         if self.full_rebuild {
-            format!(
-                "Classified {} (full rebuild)",
-                format_file_count(self.needs_embedding)
-            )
+            format!("{} (full rebuild)", format_file_count(self.needs_embedding))
         } else {
             format!(
-                "Classified {} ({} to embed, {} unchanged, {} removed)",
+                "{} ({} to embed, {} unchanged, {} removed)",
                 format_file_count(self.needs_embedding + self.unchanged),
                 self.needs_embedding,
                 self.unchanged,

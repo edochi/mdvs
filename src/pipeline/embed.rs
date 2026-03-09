@@ -21,7 +21,7 @@ pub struct EmbedQueryOutput {
 
 impl StepOutput for EmbedQueryOutput {
     fn format_line(&self) -> String {
-        format!("Embedded query \"{}\"", self.query)
+        format!("\"{}\"", self.query)
     }
 }
 
@@ -55,7 +55,7 @@ pub struct EmbedFilesOutput {
 impl StepOutput for EmbedFilesOutput {
     fn format_line(&self) -> String {
         format!(
-            "Embedded {} ({} chunks)",
+            "{} ({} chunks)",
             format_file_count(self.files_embedded),
             self.chunks_produced
         )

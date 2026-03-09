@@ -157,11 +157,26 @@ impl CommandOutput for SearchCommandOutput {
         if let Some(result) = &self.result {
             if verbose {
                 let mut out = String::new();
-                out.push_str(&format!("{}\n", self.process.read_config.format_line()));
-                out.push_str(&format!("{}\n", self.process.read_index.format_line()));
-                out.push_str(&format!("{}\n", self.process.load_model.format_line()));
-                out.push_str(&format!("{}\n", self.process.embed_query.format_line()));
-                out.push_str(&format!("{}\n", self.process.execute_search.format_line()));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.read_config.format_line("Read config")
+                ));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.read_index.format_line("Read index")
+                ));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.load_model.format_line("Load model")
+                ));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.embed_query.format_line("Embed query")
+                ));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.execute_search.format_line("Search")
+                ));
                 out.push('\n');
                 out.push_str(&result.format_text(verbose));
                 out
@@ -171,18 +186,33 @@ impl CommandOutput for SearchCommandOutput {
         } else {
             // Pipeline didn't complete — show steps up to the failure
             let mut out = String::new();
-            out.push_str(&format!("{}\n", self.process.read_config.format_line()));
+            out.push_str(&format!(
+                "{}\n",
+                self.process.read_config.format_line("Read config")
+            ));
             if !matches!(self.process.read_index, ProcessingStepResult::Skipped) {
-                out.push_str(&format!("{}\n", self.process.read_index.format_line()));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.read_index.format_line("Read index")
+                ));
             }
             if !matches!(self.process.load_model, ProcessingStepResult::Skipped) {
-                out.push_str(&format!("{}\n", self.process.load_model.format_line()));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.load_model.format_line("Load model")
+                ));
             }
             if !matches!(self.process.embed_query, ProcessingStepResult::Skipped) {
-                out.push_str(&format!("{}\n", self.process.embed_query.format_line()));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.embed_query.format_line("Embed query")
+                ));
             }
             if !matches!(self.process.execute_search, ProcessingStepResult::Skipped) {
-                out.push_str(&format!("{}\n", self.process.execute_search.format_line()));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.execute_search.format_line("Search")
+                ));
             }
             out
         }

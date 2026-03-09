@@ -27,13 +27,13 @@ impl StepOutput for DeleteIndexOutput {
     fn format_line(&self) -> String {
         if self.removed {
             format!(
-                "Deleted \"{}\" ({}, {})",
+                "\"{}\" ({}, {})",
                 self.path,
                 format_file_count(self.files_removed),
                 format_size(self.size_bytes)
             )
         } else {
-            format!("Nothing to clean — \"{}\" does not exist", self.path)
+            format!("\"{}\" does not exist", self.path)
         }
     }
 }

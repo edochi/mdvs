@@ -22,7 +22,7 @@ pub struct ScanOutput {
 
 impl StepOutput for ScanOutput {
     fn format_line(&self) -> String {
-        format!("Scanned {}", format_file_count(self.files_found))
+        format_file_count(self.files_found)
     }
 }
 

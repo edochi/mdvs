@@ -18,7 +18,7 @@ pub struct ExecuteSearchOutput {
 impl StepOutput for ExecuteSearchOutput {
     fn format_line(&self) -> String {
         let word = if self.hits == 1 { "hit" } else { "hits" };
-        format!("Found {} {word}", self.hits)
+        format!("{} {word}", self.hits)
     }
 }
 

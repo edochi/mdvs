@@ -199,14 +199,32 @@ impl CommandOutput for InitCommandOutput {
         if let Some(result) = &self.result {
             if verbose {
                 let mut out = String::new();
-                out.push_str(&format!("{}\n", self.process.scan.format_line()));
-                out.push_str(&format!("{}\n", self.process.infer.format_line()));
-                out.push_str(&format!("{}\n", self.process.write_config.format_line()));
-                out.push_str(&format!("{}\n", self.process.validate.format_line()));
-                out.push_str(&format!("{}\n", self.process.classify.format_line()));
-                out.push_str(&format!("{}\n", self.process.load_model.format_line()));
-                out.push_str(&format!("{}\n", self.process.embed_files.format_line()));
-                out.push_str(&format!("{}\n", self.process.write_index.format_line()));
+                out.push_str(&format!("{}\n", self.process.scan.format_line("Scan")));
+                out.push_str(&format!("{}\n", self.process.infer.format_line("Infer")));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.write_config.format_line("Write config")
+                ));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.validate.format_line("Validate")
+                ));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.classify.format_line("Classify")
+                ));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.load_model.format_line("Load model")
+                ));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.embed_files.format_line("Embed")
+                ));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.write_index.format_line("Write index")
+                ));
                 out.push('\n');
                 out.push_str(&result.format_text(verbose));
                 out
@@ -216,27 +234,45 @@ impl CommandOutput for InitCommandOutput {
         } else {
             // Pipeline didn't complete — show steps up to the failure
             let mut out = String::new();
-            out.push_str(&format!("{}\n", self.process.scan.format_line()));
+            out.push_str(&format!("{}\n", self.process.scan.format_line("Scan")));
             if !matches!(self.process.infer, ProcessingStepResult::Skipped) {
-                out.push_str(&format!("{}\n", self.process.infer.format_line()));
+                out.push_str(&format!("{}\n", self.process.infer.format_line("Infer")));
             }
             if !matches!(self.process.write_config, ProcessingStepResult::Skipped) {
-                out.push_str(&format!("{}\n", self.process.write_config.format_line()));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.write_config.format_line("Write config")
+                ));
             }
             if !matches!(self.process.validate, ProcessingStepResult::Skipped) {
-                out.push_str(&format!("{}\n", self.process.validate.format_line()));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.validate.format_line("Validate")
+                ));
             }
             if !matches!(self.process.classify, ProcessingStepResult::Skipped) {
-                out.push_str(&format!("{}\n", self.process.classify.format_line()));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.classify.format_line("Classify")
+                ));
             }
             if !matches!(self.process.load_model, ProcessingStepResult::Skipped) {
-                out.push_str(&format!("{}\n", self.process.load_model.format_line()));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.load_model.format_line("Load model")
+                ));
             }
             if !matches!(self.process.embed_files, ProcessingStepResult::Skipped) {
-                out.push_str(&format!("{}\n", self.process.embed_files.format_line()));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.embed_files.format_line("Embed")
+                ));
             }
             if !matches!(self.process.write_index, ProcessingStepResult::Skipped) {
-                out.push_str(&format!("{}\n", self.process.write_index.format_line()));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.write_index.format_line("Write index")
+                ));
             }
             out
         }

@@ -32,7 +32,7 @@ pub struct WriteIndexOutput {
 impl StepOutput for WriteIndexOutput {
     fn format_line(&self) -> String {
         format!(
-            "Wrote index ({}, {} chunks)",
+            "{}, {} chunks",
             format_file_count(self.files_written),
             self.chunks_written
         )

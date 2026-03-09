@@ -24,13 +24,10 @@ pub struct ValidateOutput {
 impl StepOutput for ValidateOutput {
     fn format_line(&self) -> String {
         if self.violation_count == 0 {
-            format!(
-                "Validated {} — no violations",
-                format_file_count(self.files_checked)
-            )
+            format!("{} — no violations", format_file_count(self.files_checked))
         } else {
             format!(
-                "Validated {} — {} violation(s)",
+                "{} — {} violation(s)",
                 format_file_count(self.files_checked),
                 self.violation_count
             )

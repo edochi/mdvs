@@ -56,11 +56,14 @@ pub enum ProcessingStepResult<T: Serialize> {
 
 impl<T: Serialize + StepOutput> ProcessingStepResult<T> {
     /// Render this step as a single line for text output.
-    pub fn format_line(&self) -> String {
+    ///
+    /// The `label` identifies the step (e.g. "Scan", "Load model") and is
+    /// prepended to the description: `"Scan: 43 files"`, `"Load model: skipped"`.
+    pub fn format_line(&self, label: &str) -> String {
         match self {
-            Self::Completed(step) => step.output.format_line(),
-            Self::Failed(err) => format!("failed: {}", err.message),
-            Self::Skipped => "skipped".to_string(),
+            Self::Completed(step) => format!("{label}: {}", step.output.format_line()),
+            Self::Failed(err) => format!("{label}: failed — {}", err.message),
+            Self::Skipped => format!("{label}: skipped"),
         }
     }
 }
@@ -96,7 +99,7 @@ mod tests {
 
     impl StepOutput for DummyOutput {
         fn format_line(&self) -> String {
-            format!("Processed {} files", self.files)
+            format!("{} files", self.files)
         }
     }
 
@@ -155,7 +158,7 @@ mod tests {
                 elapsed_ms: 100,
                 output: DummyOutput { files: 3 },
             });
-        assert_eq!(result.format_line(), "Processed 3 files");
+        assert_eq!(result.format_line("Process"), "Process: 3 files");
     }
 
     #[test]
@@ -165,12 +168,15 @@ mod tests {
                 kind: ErrorKind::User,
                 message: "model not found".into(),
             });
-        assert_eq!(result.format_line(), "failed: model not found");
+        assert_eq!(
+            result.format_line("Load model"),
+            "Load model: failed — model not found"
+        );
     }
 
     #[test]
     fn format_line_skipped() {
         let result: ProcessingStepResult<DummyOutput> = ProcessingStepResult::Skipped;
-        assert_eq!(result.format_line(), "skipped");
+        assert_eq!(result.format_line("Embed"), "Embed: skipped");
     }
 }

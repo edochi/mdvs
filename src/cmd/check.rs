@@ -195,9 +195,15 @@ impl CommandOutput for CheckCommandOutput {
             if verbose {
                 // Show step lines before the result
                 let mut out = String::new();
-                out.push_str(&format!("{}\n", self.process.read_config.format_line()));
-                out.push_str(&format!("{}\n", self.process.scan.format_line()));
-                out.push_str(&format!("{}\n", self.process.validate.format_line()));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.read_config.format_line("Read config")
+                ));
+                out.push_str(&format!("{}\n", self.process.scan.format_line("Scan")));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.validate.format_line("Validate")
+                ));
                 out.push('\n');
                 out.push_str(&result.format_text(verbose));
                 out
@@ -207,12 +213,18 @@ impl CommandOutput for CheckCommandOutput {
         } else {
             // Pipeline didn't complete — show steps up to the failure
             let mut out = String::new();
-            out.push_str(&format!("{}\n", self.process.read_config.format_line()));
+            out.push_str(&format!(
+                "{}\n",
+                self.process.read_config.format_line("Read config")
+            ));
             if !matches!(self.process.scan, ProcessingStepResult::Skipped) {
-                out.push_str(&format!("{}\n", self.process.scan.format_line()));
+                out.push_str(&format!("{}\n", self.process.scan.format_line("Scan")));
             }
             if !matches!(self.process.validate, ProcessingStepResult::Skipped) {
-                out.push_str(&format!("{}\n", self.process.validate.format_line()));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.validate.format_line("Validate")
+                ));
             }
             out
         }

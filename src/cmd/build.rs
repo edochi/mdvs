@@ -259,9 +259,15 @@ impl CommandOutput for BuildCommandOutput {
             };
             if verbose {
                 let mut out = String::new();
-                out.push_str(&format!("{}\n", self.process.read_config.format_line()));
-                out.push_str(&format!("{}\n", self.process.scan.format_line()));
-                out.push_str(&format!("{}\n", self.process.validate.format_line()));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.read_config.format_line("Read config")
+                ));
+                out.push_str(&format!("{}\n", self.process.scan.format_line("Scan")));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.validate.format_line("Validate")
+                ));
                 out.push('\n');
                 out.push_str(&violation_msg);
                 out
@@ -271,13 +277,31 @@ impl CommandOutput for BuildCommandOutput {
         } else if let Some(result) = &self.result {
             if verbose {
                 let mut out = String::new();
-                out.push_str(&format!("{}\n", self.process.read_config.format_line()));
-                out.push_str(&format!("{}\n", self.process.scan.format_line()));
-                out.push_str(&format!("{}\n", self.process.validate.format_line()));
-                out.push_str(&format!("{}\n", self.process.classify.format_line()));
-                out.push_str(&format!("{}\n", self.process.load_model.format_line()));
-                out.push_str(&format!("{}\n", self.process.embed_files.format_line()));
-                out.push_str(&format!("{}\n", self.process.write_index.format_line()));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.read_config.format_line("Read config")
+                ));
+                out.push_str(&format!("{}\n", self.process.scan.format_line("Scan")));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.validate.format_line("Validate")
+                ));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.classify.format_line("Classify")
+                ));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.load_model.format_line("Load model")
+                ));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.embed_files.format_line("Embed")
+                ));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.write_index.format_line("Write index")
+                ));
                 out.push('\n');
                 out.push_str(&result.format_text(verbose));
                 out
@@ -287,24 +311,42 @@ impl CommandOutput for BuildCommandOutput {
         } else {
             // Pipeline didn't complete — show steps up to the failure
             let mut out = String::new();
-            out.push_str(&format!("{}\n", self.process.read_config.format_line()));
+            out.push_str(&format!(
+                "{}\n",
+                self.process.read_config.format_line("Read config")
+            ));
             if !matches!(self.process.scan, ProcessingStepResult::Skipped) {
-                out.push_str(&format!("{}\n", self.process.scan.format_line()));
+                out.push_str(&format!("{}\n", self.process.scan.format_line("Scan")));
             }
             if !matches!(self.process.validate, ProcessingStepResult::Skipped) {
-                out.push_str(&format!("{}\n", self.process.validate.format_line()));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.validate.format_line("Validate")
+                ));
             }
             if !matches!(self.process.classify, ProcessingStepResult::Skipped) {
-                out.push_str(&format!("{}\n", self.process.classify.format_line()));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.classify.format_line("Classify")
+                ));
             }
             if !matches!(self.process.load_model, ProcessingStepResult::Skipped) {
-                out.push_str(&format!("{}\n", self.process.load_model.format_line()));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.load_model.format_line("Load model")
+                ));
             }
             if !matches!(self.process.embed_files, ProcessingStepResult::Skipped) {
-                out.push_str(&format!("{}\n", self.process.embed_files.format_line()));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.embed_files.format_line("Embed")
+                ));
             }
             if !matches!(self.process.write_index, ProcessingStepResult::Skipped) {
-                out.push_str(&format!("{}\n", self.process.write_index.format_line()));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.write_index.format_line("Write index")
+                ));
             }
             out
         }

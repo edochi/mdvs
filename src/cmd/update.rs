@@ -4,7 +4,7 @@ use crate::index::backend::Backend;
 use crate::index::storage::{check_reserved_names, content_hash, BuildMetadata, FileRow};
 use crate::output::{
     format_file_count, format_hints, format_json_compact, ChangedField, CommandOutput,
-    DiscoveredField, RemovedField,
+    DiscoveredField, FieldChange, RemovedField,
 };
 use crate::pipeline::classify::{run_classify, ClassifyOutput};
 use crate::pipeline::embed::{run_embed_files, EmbedFilesOutput};
@@ -109,24 +109,18 @@ impl CommandOutput for UpdateResult {
             }
             for field in &self.changed {
                 let mut builder = Builder::default();
-                builder.push_record([
-                    format!("\"{}\"", field.name),
-                    "changed".to_string(),
-                    format!("{} → {}", field.old_type, field.new_type),
-                ]);
-                let detail = match &field.allowed {
-                    Some(globs) => {
-                        let mut lines = vec!["  found in:".to_string()];
-                        for g in globs {
-                            lines.push(format!("    - \"{g}\""));
-                        }
-                        lines.join("\n")
-                    }
-                    None => String::new(),
-                };
-                builder.push_record([detail, String::new(), String::new()]);
+                builder.push_record(["field", "aspect", "old", "new"]);
+                for (i, change) in field.changes.iter().enumerate() {
+                    let name_col = if i == 0 {
+                        format!("\"{}\"", field.name)
+                    } else {
+                        String::new()
+                    };
+                    let (old, new) = change.format_old_new();
+                    builder.push_record([name_col, change.label().to_string(), old, new]);
+                }
                 let mut table = builder.build();
-                style_record(&mut table, 3);
+                style_compact(&mut table);
                 out.push_str(&format!("{table}\n"));
             }
             for field in &self.removed {
@@ -152,62 +146,60 @@ impl CommandOutput for UpdateResult {
                 out.push_str(&format!("{table}\n"));
             }
         } else {
-            // Compact: single table with all changes
-            let mut builder = Builder::default();
-            for field in &self.added {
-                let globs_summary = field
-                    .allowed
-                    .as_ref()
-                    .map(|g| {
-                        g.iter()
-                            .map(|s| format!("\"{s}\""))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    })
-                    .unwrap_or_default();
-                let type_str = if field.nullable {
-                    format!("{}?", field.field_type)
-                } else {
-                    field.field_type.clone()
-                };
-                let mut row = vec![
-                    format!("\"{}\"", field.name),
-                    format!("added      {type_str}"),
-                    globs_summary,
-                ];
-                let hints_str = format_hints(&field.hints);
-                if !hints_str.is_empty() {
-                    row.push(hints_str);
+            // Compact: separate tables per category to avoid empty trailing columns
+            if !self.added.is_empty() {
+                let mut builder = Builder::default();
+                for field in &self.added {
+                    let globs_summary = field
+                        .allowed
+                        .as_ref()
+                        .map(|g| {
+                            g.iter()
+                                .map(|s| format!("\"{s}\""))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        })
+                        .unwrap_or_default();
+                    let type_str = if field.nullable {
+                        format!("{}?", field.field_type)
+                    } else {
+                        field.field_type.clone()
+                    };
+                    let mut row = vec![
+                        format!("\"{}\"", field.name),
+                        "added".to_string(),
+                        type_str,
+                        globs_summary,
+                    ];
+                    let hints_str = format_hints(&field.hints);
+                    if !hints_str.is_empty() {
+                        row.push(hints_str);
+                    }
+                    builder.push_record(row);
                 }
-                builder.push_record(row);
+                let mut table = builder.build();
+                style_compact(&mut table);
+                out.push_str(&format!("{table}\n"));
             }
-            for field in &self.changed {
-                let globs_summary = field
-                    .allowed
-                    .as_ref()
-                    .map(|g| {
-                        g.iter()
-                            .map(|s| format!("\"{s}\""))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    })
-                    .unwrap_or_default();
-                builder.push_record([
-                    format!("\"{}\"", field.name),
-                    format!("changed    {} → {}", field.old_type, field.new_type),
-                    globs_summary,
-                ]);
+            if !self.changed.is_empty() {
+                let mut builder = Builder::default();
+                for field in &self.changed {
+                    let aspects: Vec<&str> = field.changes.iter().map(FieldChange::label).collect();
+                    builder.push_record([format!("\"{}\"", field.name), aspects.join(", ")]);
+                }
+                let mut table = builder.build();
+                style_compact(&mut table);
+                out.push_str(&format!("{table}\n"));
             }
-            for field in &self.removed {
-                builder.push_record([
-                    format!("\"{}\"", field.name),
-                    "removed".to_string(),
-                    String::new(),
-                ]);
+            if !self.removed.is_empty() {
+                let mut builder = Builder::default();
+                for field in &self.removed {
+                    builder.push_record([format!("\"{}\"", field.name), "removed".to_string()]);
+                }
+                let mut table = builder.build();
+                style_compact(&mut table);
+                out.push_str(&format!("{table}\n"));
             }
-            let mut table = builder.build();
-            style_compact(&mut table);
-            out.push_str(&format!("{table}\n"));
         }
 
         // Build result
@@ -280,15 +272,36 @@ impl CommandOutput for UpdateCommandOutput {
         if let Some(result) = &self.result {
             if verbose {
                 let mut out = String::new();
-                out.push_str(&format!("{}\n", self.process.read_config.format_line()));
-                out.push_str(&format!("{}\n", self.process.scan.format_line()));
-                out.push_str(&format!("{}\n", self.process.infer.format_line()));
-                out.push_str(&format!("{}\n", self.process.write_config.format_line()));
-                out.push_str(&format!("{}\n", self.process.validate.format_line()));
-                out.push_str(&format!("{}\n", self.process.classify.format_line()));
-                out.push_str(&format!("{}\n", self.process.load_model.format_line()));
-                out.push_str(&format!("{}\n", self.process.embed_files.format_line()));
-                out.push_str(&format!("{}\n", self.process.write_index.format_line()));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.read_config.format_line("Read config")
+                ));
+                out.push_str(&format!("{}\n", self.process.scan.format_line("Scan")));
+                out.push_str(&format!("{}\n", self.process.infer.format_line("Infer")));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.write_config.format_line("Write config")
+                ));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.validate.format_line("Validate")
+                ));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.classify.format_line("Classify")
+                ));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.load_model.format_line("Load model")
+                ));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.embed_files.format_line("Embed")
+                ));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.write_index.format_line("Write index")
+                ));
                 out.push('\n');
                 out.push_str(&result.format_text(verbose));
                 out
@@ -298,30 +311,51 @@ impl CommandOutput for UpdateCommandOutput {
         } else {
             // Pipeline didn't complete — show steps up to the failure
             let mut out = String::new();
-            out.push_str(&format!("{}\n", self.process.read_config.format_line()));
+            out.push_str(&format!(
+                "{}\n",
+                self.process.read_config.format_line("Read config")
+            ));
             if !matches!(self.process.scan, ProcessingStepResult::Skipped) {
-                out.push_str(&format!("{}\n", self.process.scan.format_line()));
+                out.push_str(&format!("{}\n", self.process.scan.format_line("Scan")));
             }
             if !matches!(self.process.infer, ProcessingStepResult::Skipped) {
-                out.push_str(&format!("{}\n", self.process.infer.format_line()));
+                out.push_str(&format!("{}\n", self.process.infer.format_line("Infer")));
             }
             if !matches!(self.process.write_config, ProcessingStepResult::Skipped) {
-                out.push_str(&format!("{}\n", self.process.write_config.format_line()));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.write_config.format_line("Write config")
+                ));
             }
             if !matches!(self.process.validate, ProcessingStepResult::Skipped) {
-                out.push_str(&format!("{}\n", self.process.validate.format_line()));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.validate.format_line("Validate")
+                ));
             }
             if !matches!(self.process.classify, ProcessingStepResult::Skipped) {
-                out.push_str(&format!("{}\n", self.process.classify.format_line()));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.classify.format_line("Classify")
+                ));
             }
             if !matches!(self.process.load_model, ProcessingStepResult::Skipped) {
-                out.push_str(&format!("{}\n", self.process.load_model.format_line()));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.load_model.format_line("Load model")
+                ));
             }
             if !matches!(self.process.embed_files, ProcessingStepResult::Skipped) {
-                out.push_str(&format!("{}\n", self.process.embed_files.format_line()));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.embed_files.format_line("Embed")
+                ));
             }
             if !matches!(self.process.write_index, ProcessingStepResult::Skipped) {
-                out.push_str(&format!("{}\n", self.process.write_index.format_line()));
+                out.push_str(&format!(
+                    "{}\n",
+                    self.process.write_index.format_line("Write index")
+                ));
             }
             out
         }
@@ -522,15 +556,34 @@ pub async fn run(
             if **old_field == toml_field {
                 unchanged += 1;
             } else {
+                let mut changes = Vec::new();
+                if old_field.field_type != toml_field.field_type {
+                    changes.push(FieldChange::Type {
+                        old: old_field.field_type.to_string(),
+                        new: new_type.to_string(),
+                    });
+                }
+                if old_field.allowed != toml_field.allowed {
+                    changes.push(FieldChange::Allowed {
+                        old: old_field.allowed.clone(),
+                        new: toml_field.allowed.clone(),
+                    });
+                }
+                if old_field.required != toml_field.required {
+                    changes.push(FieldChange::Required {
+                        old: old_field.required.clone(),
+                        new: toml_field.required.clone(),
+                    });
+                }
+                if old_field.nullable != toml_field.nullable {
+                    changes.push(FieldChange::Nullable {
+                        old: old_field.nullable,
+                        new: toml_field.nullable,
+                    });
+                }
                 changed.push(ChangedField {
                     name: inf.name.clone(),
-                    old_type: old_field.field_type.to_string(),
-                    new_type: new_type.to_string(),
-                    allowed: if verbose {
-                        Some(inf.allowed.clone())
-                    } else {
-                        None
-                    },
+                    changes,
                 });
             }
             new_fields.push(toml_field);
@@ -1133,7 +1186,10 @@ mod tests {
 
         assert_eq!(result.changed.len(), 1);
         assert_eq!(result.changed[0].name, "tags");
-        assert_eq!(result.changed[0].new_type, "String");
+        assert!(result.changed[0].changes.iter().any(|c| matches!(
+            c,
+            FieldChange::Type { new, .. } if new == "String"
+        )));
         assert!(result.added.is_empty());
         assert!(result.removed.is_empty());
     }
