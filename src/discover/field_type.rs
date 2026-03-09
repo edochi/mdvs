@@ -20,33 +20,41 @@ pub enum FieldType {
     Object(BTreeMap<std::string::String, FieldType>),
 }
 
-/// Widen two field types into their least upper bound.
-pub fn widen(a: FieldType, b: FieldType) -> FieldType {
-    if a == b {
-        return a;
-    }
-    match (a, b) {
-        (FieldType::Integer, FieldType::Float) | (FieldType::Float, FieldType::Integer) => {
-            FieldType::Float
+impl FieldType {
+    /// Widen two field types into their least upper bound.
+    ///
+    /// Symmetric: `from_widen(A, B) == from_widen(B, A)`. Rules: same types stay,
+    /// `Integer + Float → Float`, mismatched scalars → `String`, arrays
+    /// widen inner types, objects merge keys (widening shared keys).
+    pub fn from_widen(a: Self, b: Self) -> Self {
+        if a == b {
+            return a;
         }
-        (FieldType::Array(x), FieldType::Array(y)) => FieldType::Array(Box::new(widen(*x, *y))),
-        (FieldType::Object(a), FieldType::Object(b)) => {
-            let mut merged = BTreeMap::new();
-            for (k, v) in &a {
-                if let Some(bv) = b.get(k) {
-                    merged.insert(k.clone(), widen(v.clone(), bv.clone()));
-                } else {
-                    merged.insert(k.clone(), v.clone());
-                }
+        match (a, b) {
+            (FieldType::Integer, FieldType::Float) | (FieldType::Float, FieldType::Integer) => {
+                FieldType::Float
             }
-            for (k, v) in &b {
-                if !a.contains_key(k) {
-                    merged.insert(k.clone(), v.clone());
-                }
+            (FieldType::Array(x), FieldType::Array(y)) => {
+                FieldType::Array(Box::new(Self::from_widen(*x, *y)))
             }
-            FieldType::Object(merged)
+            (FieldType::Object(a), FieldType::Object(b)) => {
+                let mut merged = BTreeMap::new();
+                for (k, v) in &a {
+                    if let Some(bv) = b.get(k) {
+                        merged.insert(k.clone(), Self::from_widen(v.clone(), bv.clone()));
+                    } else {
+                        merged.insert(k.clone(), v.clone());
+                    }
+                }
+                for (k, v) in &b {
+                    if !a.contains_key(k) {
+                        merged.insert(k.clone(), v.clone());
+                    }
+                }
+                FieldType::Object(merged)
+            }
+            _ => FieldType::String,
         }
-        _ => FieldType::String,
     }
 }
 
@@ -68,7 +76,7 @@ impl From<&Value> for FieldType {
                 } else {
                     let mut t = FieldType::from(&arr[0]);
                     for v in &arr[1..] {
-                        t = widen(t, FieldType::from(v));
+                        t = Self::from_widen(t, FieldType::from(v));
                     }
                     FieldType::Array(Box::new(t))
                 }
@@ -116,15 +124,15 @@ mod tests {
     #[test]
     fn widen_same_type() {
         assert_eq!(
-            widen(FieldType::Integer, FieldType::Integer),
+            FieldType::from_widen(FieldType::Integer, FieldType::Integer),
             FieldType::Integer
         );
         assert_eq!(
-            widen(FieldType::Boolean, FieldType::Boolean),
+            FieldType::from_widen(FieldType::Boolean, FieldType::Boolean),
             FieldType::Boolean
         );
         assert_eq!(
-            widen(FieldType::String, FieldType::String),
+            FieldType::from_widen(FieldType::String, FieldType::String),
             FieldType::String
         );
     }
@@ -132,11 +140,11 @@ mod tests {
     #[test]
     fn widen_integer_float() {
         assert_eq!(
-            widen(FieldType::Integer, FieldType::Float),
+            FieldType::from_widen(FieldType::Integer, FieldType::Float),
             FieldType::Float
         );
         assert_eq!(
-            widen(FieldType::Float, FieldType::Integer),
+            FieldType::from_widen(FieldType::Float, FieldType::Integer),
             FieldType::Float
         );
     }
@@ -144,23 +152,23 @@ mod tests {
     #[test]
     fn widen_incompatible_scalars_to_string() {
         assert_eq!(
-            widen(FieldType::Boolean, FieldType::Integer),
+            FieldType::from_widen(FieldType::Boolean, FieldType::Integer),
             FieldType::String
         );
         assert_eq!(
-            widen(FieldType::Boolean, FieldType::String),
+            FieldType::from_widen(FieldType::Boolean, FieldType::String),
             FieldType::String
         );
         assert_eq!(
-            widen(FieldType::Boolean, FieldType::Float),
+            FieldType::from_widen(FieldType::Boolean, FieldType::Float),
             FieldType::String
         );
         assert_eq!(
-            widen(FieldType::Integer, FieldType::String),
+            FieldType::from_widen(FieldType::Integer, FieldType::String),
             FieldType::String
         );
         assert_eq!(
-            widen(FieldType::Float, FieldType::String),
+            FieldType::from_widen(FieldType::Float, FieldType::String),
             FieldType::String
         );
     }
@@ -168,14 +176,14 @@ mod tests {
     #[test]
     fn widen_array_inner() {
         assert_eq!(
-            widen(
+            FieldType::from_widen(
                 FieldType::Array(Box::new(FieldType::Integer)),
                 FieldType::Array(Box::new(FieldType::Float)),
             ),
             FieldType::Array(Box::new(FieldType::Float)),
         );
         assert_eq!(
-            widen(
+            FieldType::from_widen(
                 FieldType::Array(Box::new(FieldType::Integer)),
                 FieldType::Array(Box::new(FieldType::String)),
             ),
@@ -186,7 +194,7 @@ mod tests {
     #[test]
     fn widen_array_plus_scalar_to_string() {
         assert_eq!(
-            widen(
+            FieldType::from_widen(
                 FieldType::Array(Box::new(FieldType::String)),
                 FieldType::Integer,
             ),
@@ -205,7 +213,7 @@ mod tests {
             ("tags".into(), FieldType::Array(Box::new(FieldType::String))),
         ]));
         assert_eq!(
-            widen(obj_a, obj_b),
+            FieldType::from_widen(obj_a, obj_b),
             FieldType::Object(BTreeMap::from([
                 ("author".into(), FieldType::String),
                 ("count".into(), FieldType::Integer),
@@ -219,7 +227,7 @@ mod tests {
         let obj_c = FieldType::Object(BTreeMap::from([("val".into(), FieldType::Integer)]));
         let obj_d = FieldType::Object(BTreeMap::from([("val".into(), FieldType::Float)]));
         assert_eq!(
-            widen(obj_c, obj_d),
+            FieldType::from_widen(obj_c, obj_d),
             FieldType::Object(BTreeMap::from([("val".into(), FieldType::Float)])),
         );
     }
@@ -227,7 +235,7 @@ mod tests {
     #[test]
     fn widen_object_plus_array_to_string() {
         assert_eq!(
-            widen(
+            FieldType::from_widen(
                 FieldType::Object(BTreeMap::new()),
                 FieldType::Array(Box::new(FieldType::String)),
             ),
@@ -246,7 +254,7 @@ mod tests {
             ("D".into(), FieldType::Integer),
         ]));
         assert_eq!(
-            widen(obj_x, obj_y),
+            FieldType::from_widen(obj_x, obj_y),
             FieldType::Object(BTreeMap::from([
                 ("A".into(), FieldType::Integer),
                 ("B".into(), FieldType::String),
@@ -265,7 +273,7 @@ mod tests {
             ("z".into(), FieldType::String),
         ]));
         assert_eq!(
-            widen(widen(o1, o2), o3),
+            FieldType::from_widen(FieldType::from_widen(o1, o2), o3),
             FieldType::Object(BTreeMap::from([
                 ("x".into(), FieldType::Float),
                 ("y".into(), FieldType::Boolean),
@@ -292,7 +300,7 @@ mod tests {
             ])),
         )]));
         assert_eq!(
-            widen(nested_a, nested_b),
+            FieldType::from_widen(nested_a, nested_b),
             FieldType::Object(BTreeMap::from([(
                 "meta".into(),
                 FieldType::Object(BTreeMap::from([
@@ -312,7 +320,7 @@ mod tests {
             FieldType::Array(Box::new(FieldType::Integer)),
         )]));
         assert_eq!(
-            widen(oa, ob),
+            FieldType::from_widen(oa, ob),
             FieldType::Object(BTreeMap::from([("val".into(), FieldType::String)])),
         );
     }
@@ -320,7 +328,7 @@ mod tests {
     #[test]
     fn widen_array_of_arrays() {
         assert_eq!(
-            widen(
+            FieldType::from_widen(
                 FieldType::Array(Box::new(FieldType::Array(Box::new(FieldType::Integer)))),
                 FieldType::Array(Box::new(FieldType::Array(Box::new(FieldType::Float)))),
             ),
@@ -339,7 +347,7 @@ mod tests {
             ("label".into(), FieldType::String),
         ]))));
         assert_eq!(
-            widen(arr_obj_a, arr_obj_b),
+            FieldType::from_widen(arr_obj_a, arr_obj_b),
             FieldType::Array(Box::new(FieldType::Object(BTreeMap::from([
                 ("id".into(), FieldType::Integer),
                 ("label".into(), FieldType::String),
@@ -367,8 +375,8 @@ mod tests {
         ];
         for (a, b) in &pairs {
             assert_eq!(
-                widen(a.clone(), b.clone()),
-                widen(b.clone(), a.clone()),
+                FieldType::from_widen(a.clone(), b.clone()),
+                FieldType::from_widen(b.clone(), a.clone()),
                 "symmetry failed for {:?} and {:?}",
                 a,
                 b,
@@ -508,7 +516,9 @@ mod tests {
                     let ft = FieldType::from(val);
                     field_types
                         .entry(key.clone())
-                        .and_modify(|existing| *existing = widen(existing.clone(), ft.clone()))
+                        .and_modify(|existing| {
+                            *existing = FieldType::from_widen(existing.clone(), ft.clone())
+                        })
                         .or_insert(ft);
                 }
             }

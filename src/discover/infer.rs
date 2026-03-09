@@ -1,4 +1,4 @@
-use crate::discover::field_type::{widen, FieldType};
+use crate::discover::field_type::FieldType;
 use crate::discover::scan::ScannedFiles;
 use crate::output::DiscoveredField;
 use crate::schema::shared::FieldTypeSerde;
@@ -48,7 +48,9 @@ pub fn infer_field_types(scanned: &ScannedFiles) -> BTreeMap<String, FieldTypeIn
                 let ft = FieldType::from(val);
                 types
                     .entry(key.clone())
-                    .and_modify(|existing| *existing = widen(existing.clone(), ft.clone()))
+                    .and_modify(|existing| {
+                        *existing = FieldType::from_widen(existing.clone(), ft.clone())
+                    })
                     .or_insert(ft);
             }
         }
