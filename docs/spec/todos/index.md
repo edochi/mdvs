@@ -95,3 +95,4 @@
 | [0091](TODO-0091.md) | Consistent output rules for text and JSON formats | done | medium | 2026-03-08 |
 | [0092](TODO-0092.md) | Compact JSON output — result-only when no errors | done | medium | 2026-03-08 |
 | [0093](TODO-0093.md) | Verbose text output — process step lines on success | done | medium | 2026-03-08 |
+| [0094](TODO-0094.md) | Hard error on scan safety limits instead of silent skip | todo | medium | 2026-03-09 |
