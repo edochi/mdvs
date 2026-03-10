@@ -51,7 +51,78 @@ The `--where` flag accepts a raw SQL expression on frontmatter fields.
 Field names are used directly — no prefix or bracket notation needed.
 
 ```bash
-mdvs search "rust async" --where "tags = 'rust' AND draft = false"
+mdvs search "rust async" --where "draft = false"
+```
+
+#### Scalar fields
+
+Standard SQL comparisons work on scalar fields (String, Integer, Float, Boolean):
+
+```bash
+# String equality
+--where "status = 'published'"
+
+# Numeric comparison
+--where "sample_count > 20"
+
+# Boolean
+--where "draft = false"
+
+# Combined
+--where "status = 'active' AND sample_count >= 16"
+```
+
+#### Array fields
+
+Array fields (e.g. `tags: String[]`) support containment queries via DataFusion's built-in array functions:
+
+```bash
+# Check if array contains a value
+--where "array_has(tags, 'calibration')"
+
+# SQL standard syntax (equivalent)
+--where "'calibration' = ANY(tags)"
+
+# Multiple containment checks (AND = all must match)
+--where "array_has(tags, 'calibration') AND array_has(tags, 'SPR-A1')"
+
+# Array length
+--where "array_length(tags) > 2"
+
+# Combined with scalar filter
+--where "array_has(tags, 'calibration') AND status = 'completed'"
+```
+
+#### Nested object fields
+
+Object fields promoted through the view are accessible as Struct columns. Use bracket notation to reach nested children:
+
+```bash
+# Access nested field
+--where "calibration['baseline']['wavelength'] = 632.8"
+
+# Combine with other filters
+--where "calibration['adjusted']['intensity'] > 0.96 AND sensor_type = 'SPR-B2'"
+```
+
+#### Field names with special characters
+
+Field names containing spaces require double-quoted SQL identifiers. Field names with single quotes use `''` escaping in bracket accessors. `mdvs info` shows hints for fields that need special quoting.
+
+```bash
+# Field with spaces (double-quote the identifier)
+--where "\"my field\" = 'value'"
+
+# Field with single quote (escaped in accessor)
+--where "\"author's_note\" IS NOT NULL"
+```
+
+#### Legacy bracket syntax
+
+The old bracket syntax on the raw `_data` column still works:
+
+```bash
+--where "_data['draft'] = false"
 ```
 
 ---
@@ -125,19 +196,36 @@ See also [Prerequisites](check.md#prerequisites) for toml validation errors.
 
 ## Examples
 
+All examples use `example_kb/` (Prismatiq Lab fixture).
+
 ```bash
 # Basic search
-mdvs search "how to handle errors in rust"
+mdvs search "calibration drift" example_kb
 
 # Limit results
-mdvs search "async patterns" --limit 5
+mdvs search "humidity sensor" example_kb --limit 5
 
-# Filter by frontmatter
-mdvs search "testing" --where "tags = 'rust'"
+# Filter by scalar field
+mdvs search "experiment results" example_kb --where "status = 'completed'"
+
+# Filter by boolean
+mdvs search "equipment" example_kb --where "draft = false"
+
+# Filter by array containment
+mdvs search "calibration" example_kb --where "array_has(tags, 'SPR-A1')"
+
+# Multiple array checks
+mdvs search "sensor" example_kb --where "array_has(tags, 'calibration') AND array_has(tags, 'environment')"
+
+# Nested object query
+mdvs search "wavelength sweep" example_kb --where "calibration['baseline']['wavelength'] = 632.8"
+
+# Combined scalar + array
+mdvs search "results" example_kb --where "array_has(tags, 'calibration') AND status = 'completed'"
 
 # JSON output (global flag)
-mdvs search "authentication" --output json
+mdvs search "metamaterial" example_kb --output json
 
-# Search a specific directory
+# Search specific directory
 mdvs search "deployment" ~/notes
 ```

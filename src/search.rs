@@ -573,6 +573,118 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn array_field_filter() {
+        let schema_fields = vec![
+            ("title".into(), FieldType::String),
+            ("tags".into(), FieldType::Array(Box::new(FieldType::String))),
+        ];
+        let files = vec![
+            FileRow {
+                file_id: "f1".into(),
+                filename: "alpha/experiment-1.md".into(),
+                frontmatter: Some(
+                    serde_json::json!({"title": "Baseline calibration", "tags": ["calibration", "SPR-A1"]}),
+                ),
+                content_hash: "h1".into(),
+                built_at: 1_700_000_000_000_000,
+            },
+            FileRow {
+                file_id: "f2".into(),
+                filename: "alpha/experiment-3.md".into(),
+                frontmatter: Some(
+                    serde_json::json!({"title": "Environmental sensitivity", "tags": ["calibration", "environment"]}),
+                ),
+                content_hash: "h2".into(),
+                built_at: 1_700_000_000_000_000,
+            },
+            FileRow {
+                file_id: "f3".into(),
+                filename: "beta/initial-findings.md".into(),
+                frontmatter: Some(
+                    serde_json::json!({"title": "Kalman filter benchmarks", "tags": ["benchmarks"]}),
+                ),
+                content_hash: "h3".into(),
+                built_at: 1_700_000_000_000_000,
+            },
+        ];
+        let chunks = vec![
+            ChunkRow {
+                chunk_id: "c1".into(),
+                file_id: "f1".into(),
+                chunk_index: 0,
+                start_line: 1,
+                end_line: 3,
+                embedding: vec![1.0, 0.0, 0.0, 0.0],
+            },
+            ChunkRow {
+                chunk_id: "c2".into(),
+                file_id: "f2".into(),
+                chunk_index: 0,
+                start_line: 1,
+                end_line: 3,
+                embedding: vec![0.0, 1.0, 0.0, 0.0],
+            },
+            ChunkRow {
+                chunk_id: "c3".into(),
+                file_id: "f3".into(),
+                chunk_index: 0,
+                start_line: 1,
+                end_line: 3,
+                embedding: vec![0.0, 0.0, 1.0, 0.0],
+            },
+        ];
+
+        let tmp = tempfile::tempdir().unwrap();
+        let files_path = tmp.path().join("files.parquet");
+        let chunks_path = tmp.path().join("chunks.parquet");
+        let files_batch = build_files_batch(&schema_fields, &files, "_");
+        write_parquet(&files_path, &files_batch).unwrap();
+        let chunks_batch = build_chunks_batch(&chunks, 4, "_");
+        write_parquet(&chunks_path, &chunks_batch).unwrap();
+
+        let query_vec = vec![1.0, 0.0, 0.0, 0.0];
+        let sc = SearchContext::new(&files_path, &chunks_path, query_vec, "_")
+            .await
+            .unwrap();
+
+        // array_has through the files_v view — should match f1 and f2
+        let sql = "
+            SELECT f._filename
+            FROM chunks c JOIN files_v f ON c._file_id = f._file_id
+            WHERE array_has(tags, 'calibration')
+            GROUP BY f._file_id, f._filename
+            ORDER BY f._filename
+        ";
+        let batches = sc.query(sql).await.unwrap();
+        let batch = &batches[0];
+        assert_eq!(batch.num_rows(), 2);
+        let filenames = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringViewArray>()
+            .unwrap();
+        assert_eq!(filenames.value(0), "alpha/experiment-1.md");
+        assert_eq!(filenames.value(1), "alpha/experiment-3.md");
+
+        // Multiple array_has — should match only f1
+        let sql = "
+            SELECT f._filename
+            FROM chunks c JOIN files_v f ON c._file_id = f._file_id
+            WHERE array_has(tags, 'calibration') AND array_has(tags, 'SPR-A1')
+            GROUP BY f._file_id, f._filename
+        ";
+        let batches = sc.query(sql).await.unwrap();
+        let batch = &batches[0];
+        assert_eq!(batch.num_rows(), 1);
+        let filenames = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringViewArray>()
+            .unwrap();
+        assert_eq!(filenames.value(0), "alpha/experiment-1.md");
+    }
+
+    #[tokio::test]
     async fn frontmatter_filter_backward_compat() {
         let idx = setup_test_index();
         let query_vec = vec![0.0, 0.0, 0.0, 1.0];

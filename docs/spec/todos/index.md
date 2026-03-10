@@ -76,7 +76,7 @@
 | [0072](TODO-0072.md) | Escape special characters in search SQL construction | done | medium | 2026-03-07 |
 | [0073](TODO-0073.md) | Build violation output goes to stderr instead of stdout | done | high | 2026-03-07 |
 | [0074](TODO-0074.md) | Replace DefaultHasher with stable hash for content_hash | done | low | 2026-03-07 |
-| [0075](TODO-0075.md) | Support array containment queries in --where | todo | medium | 2026-03-07 |
+| [0075](TODO-0075.md) | Support array containment queries in --where | done | medium | 2026-03-07 |
 | [0076](TODO-0076.md) | Ergonomic --where queries for field names with spaces | todo | medium | 2026-03-07 |
 | [0077](TODO-0077.md) | Filter info command output by field name | todo | medium | 2026-03-08 |
 | [0078](TODO-0078.md) | Structured error output for all commands | done | medium | 2026-03-08 |
