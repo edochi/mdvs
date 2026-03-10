@@ -30,7 +30,7 @@
 | [0026](TODO-0026.md) | Fix clippy collapsible_if warnings | done | low | 2026-03-03 |
 | [0027](TODO-0027.md) | Prefix internal parquet columns to avoid frontmatter collisions | done | medium | 2026-03-03 |
 | [0028](TODO-0028.md) | Bare field names in --where clauses | done | medium | 2026-03-03 |
-| [0029](TODO-0029.md) | User documentation site with mdBook | todo | medium | 2026-03-03 |
+| [0029](TODO-0029.md) | User documentation site with mdBook | todo | high | 2026-03-03 |
 | [0030](TODO-0030.md) | Homebrew tap and prebuilt binaries | superseded | medium | 2026-03-03 |
 | [0031](TODO-0031.md) | Example vault repository | done | medium | 2026-03-04 |
 | [0032](TODO-0032.md) | Fix verbose tracing output — show timing and useful info | done | high | 2026-03-04 |
