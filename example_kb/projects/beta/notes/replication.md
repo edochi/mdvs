@@ -7,6 +7,7 @@ tags:
   - 3
 algorithm: Wavelet Decomposition
 dataset: alpha-calibration-2031-q3
+notes"v2": true
 ---
 # Wavelet Denoising — Replication Attempt
 

@@ -5,6 +5,7 @@ email: g.ferretti@prismatiq.it
 joined: "2029-03-01"
 specialization: Optical biosensors
 publications: 47
+lab section: "Photonics"
 ---
 # Dr. Giulia Ferretti
 

@@ -5,6 +5,7 @@ joined: "2030-11-20"
 unit_id: REMO-42
 firmware_version: "3.2.1"
 commission_date: "2030-11-20"
+lab section: "Environmental Systems"
 ---
 # REMO
 

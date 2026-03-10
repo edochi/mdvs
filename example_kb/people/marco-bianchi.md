@@ -5,6 +5,7 @@ email: m.bianchi@prismatiq.it
 joined: "2029-06-15"
 specialization: Signal processing and control theory
 publications: 23
+lab section: "Signal Processing"
 ---
 # Marco Bianchi
 

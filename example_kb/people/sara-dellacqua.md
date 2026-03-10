@@ -4,6 +4,7 @@ role: Lab Manager
 email: s.dellacqua@prismatiq.it
 joined: "2029-09-01"
 author's_note: I introduced the frontmatter conventions in this journal. Please follow them. I am tired of chasing people.
+lab section: "Operations"
 ---
 # Sara Dell'Acqua
 

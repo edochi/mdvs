@@ -20,6 +20,9 @@ pub enum FieldHint {
     /// Field name contains double quotes — escape with `""` in `--where`.
     #[serde(rename = "escape double quotes")]
     EscapeDoubleQuotes,
+    /// Field name contains spaces — requires double-quoted identifier in `--where`.
+    #[serde(rename = "contains spaces")]
+    ContainsSpaces,
 }
 
 impl fmt::Display for FieldHint {
@@ -27,6 +30,7 @@ impl fmt::Display for FieldHint {
         match self {
             FieldHint::EscapeSingleQuotes => write!(f, "' → '' in --where"),
             FieldHint::EscapeDoubleQuotes => write!(f, "\" → \"\" in --where"),
+            FieldHint::ContainsSpaces => write!(f, "use \"field name\" in --where"),
         }
     }
 }
@@ -39,6 +43,9 @@ pub fn field_hints(name: &str) -> Vec<FieldHint> {
     }
     if name.contains('"') {
         hints.push(FieldHint::EscapeDoubleQuotes);
+    }
+    if name.contains(' ') {
+        hints.push(FieldHint::ContainsSpaces);
     }
     hints
 }
@@ -356,9 +363,10 @@ mod tests {
     #[test]
     fn field_hints_both_quotes() {
         let hints = field_hints("it's a \"test\"");
-        assert_eq!(hints.len(), 2);
+        assert_eq!(hints.len(), 3);
         assert!(hints.contains(&FieldHint::EscapeSingleQuotes));
         assert!(hints.contains(&FieldHint::EscapeDoubleQuotes));
+        assert!(hints.contains(&FieldHint::ContainsSpaces));
     }
 
     #[test]
@@ -380,8 +388,27 @@ mod tests {
     }
 
     #[test]
+    fn field_hints_spaces() {
+        let hints = field_hints("my field");
+        assert_eq!(hints, vec![FieldHint::ContainsSpaces]);
+    }
+
+    #[test]
+    fn field_hints_spaces_and_quotes() {
+        let hints = field_hints("author's field");
+        assert_eq!(
+            hints,
+            vec![FieldHint::EscapeSingleQuotes, FieldHint::ContainsSpaces]
+        );
+    }
+
+    #[test]
     fn field_hint_serde_roundtrip() {
-        let hints = vec![FieldHint::EscapeSingleQuotes, FieldHint::EscapeDoubleQuotes];
+        let hints = vec![
+            FieldHint::EscapeSingleQuotes,
+            FieldHint::EscapeDoubleQuotes,
+            FieldHint::ContainsSpaces,
+        ];
         let json = serde_json::to_string(&hints).unwrap();
         let parsed: Vec<FieldHint> = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, hints);
