@@ -97,3 +97,5 @@
 | [0093](TODO-0093.md) | Verbose text output — process step lines on success | done | medium | 2026-03-08 |
 | [0094](TODO-0094.md) | Hard error on scan safety limits instead of silent skip | todo | medium | 2026-03-09 |
 | [0095](TODO-0095.md) | GitHub Actions workflow for mdBook deployment to GitHub Pages | todo | medium | 2026-03-12 |
+| [0096](TODO-0096.md) | Change array type display from String[] to Array(String) | todo | medium | 2026-03-12 |
+| [0097](TODO-0097.md) | Explode nested Object fields into dot-separated leaf keys | todo | medium | 2026-03-12 |

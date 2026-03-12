@@ -40,11 +40,12 @@ Initialized 43 files — 37 field(s)
 │ "attendees"         │ String[]              │ 10/43 │                        │
 │ "author"            │ String                │ 18/43 │                        │
 │ "author's_note"     │ String                │ 3/43  │ ' → '' in --where      │
-│ "calibration"       │ {adjusted: {intensity │ 1/43  │                        │
+│ "calibration"       │ {adjusted: {intensity │ 2/43  │                        │
 │                     │ : Float, wavelength:  │       │                        │
 │                     │ Float}, baseline: {in │       │                        │
-│                     │ tensity: Float, wavel │       │                        │
-│                     │ ength: Float}}        │       │                        │
+│                     │ tensity: Float, notes │       │                        │
+│                     │ : String, wavelength: │       │                        │
+│                     │  Float}}              │       │                        │
 │ "commission_date"   │ String                │ 1/43  │                        │
 │ "convergence_ms"    │ Integer               │ 1/43  │                        │
 │ "dataset"           │ String                │ 2/43  │                        │

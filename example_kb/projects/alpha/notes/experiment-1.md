@@ -11,6 +11,11 @@ sensor_type: SPR-A1
 wavelength_nm: 850
 sample_count: 24
 drift_rate: 0.023
+calibration:
+  baseline:
+    wavelength: 850
+    intensity: 1
+    notes: "initial reference"
 ---
 # Experiment A-017: SPR-A1 Baseline Calibration
 
