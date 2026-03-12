@@ -9,3 +9,9 @@ build-dir = "book"
 
 [output.html]
 git-repository-url = "https://github.com/edochi/mdvs"
+additional-js = ["mermaid.min.js", "mermaid-init.js"]
+
+[preprocessor]
+
+[preprocessor.mermaid]
+command = "mdbook-mermaid"

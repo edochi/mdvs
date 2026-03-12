@@ -96,3 +96,4 @@
 | [0092](TODO-0092.md) | Compact JSON output — result-only when no errors | done | medium | 2026-03-08 |
 | [0093](TODO-0093.md) | Verbose text output — process step lines on success | done | medium | 2026-03-08 |
 | [0094](TODO-0094.md) | Hard error on scan safety limits instead of silent skip | todo | medium | 2026-03-09 |
+| [0095](TODO-0095.md) | GitHub Actions workflow for mdBook deployment to GitHub Pages | todo | medium | 2026-03-12 |
