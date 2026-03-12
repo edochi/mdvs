@@ -93,7 +93,7 @@ This doesn't happen in `example_kb` because booleans (`draft`) are used consiste
 
 ### Array element widening
 
-The `tags` field is a string array in most files, but Chiara accidentally used integers in one:
+The `tags` field is a string array in most files, but one file accidentally used integers:
 
 ```yaml
 # projects/alpha/overview.md
