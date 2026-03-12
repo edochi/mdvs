@@ -6,6 +6,10 @@
 
 - [Getting Started](./getting-started.md)
 - [Concepts](./concepts.md)
+  - [Types & Widening](./concepts/types.md)
+  - [Schema Inference](./concepts/schema.md)
+  - [Validation](./concepts/validation.md)
+  - [Search & Indexing](./concepts/search.md)
 
 # Commands
 
