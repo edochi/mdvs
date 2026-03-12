@@ -10,19 +10,45 @@ Markdown directories grow organically. You start with a few notes, add frontmatt
 
 mdvs gives you structure without forcing you to change how you write.
 
+## Frontmatter
+
+Frontmatter is the YAML block between `---` fences at the top of a markdown file. It stores structured metadata alongside your content:
+
+```yaml
+---
+title: "Experiment A-017: SPR-A1 baseline calibration"    # String
+status: completed                                         # String
+author: Giulia Ferretti                                   # String
+draft: false                                              # Boolean
+priority: 2                                               # Integer
+drift_rate: 0.023                                         # Float
+tags:                                                     # String[]
+  - calibration
+  - SPR-A1
+  - baseline
+---
+# Your markdown content starts here...
+```
+
+mdvs recognizes these types automatically. When it scans your files, it infers the type of each field from the values it finds — no configuration needed.
+
 ## Two layers
 
 mdvs has two distinct capabilities that work independently:
 
 **Validation** — Scan your files, infer what frontmatter fields exist, where they appear, and what types they have. Write the result to `mdvs.toml`. Then validate files against that schema. No model, no index, nothing to download.
 
-**Search** — Chunk your markdown, embed it with a lightweight local model (8MB, no GPU), store the vectors in Parquet files, and query with natural language. Filter results on any frontmatter field using SQL.
+**Search** — Chunk your markdown, embed it with a lightweight local model, store the vectors in Parquet files in `.mdvs/`, and query with natural language. Filter results on any frontmatter field using standard SQL.
 
-You can use validation without search. Many workflows only need `init`, `check`, and `update`.
+You need validation without search? Run `mdvs init --suppress-auto-build`, customise the fields in `mdvs.toml`, and run `mdvs check` to validate your files. 
 
-## The database analogy
+You want search without validation? Just run `mdvs init` and `mdvs search` to get going. The inferred schema is used to extract metadata for search results, but you don't have to worry about it if you don't want to.
 
-If your markdown directory is a database:
+Use them together for the best experience, or separately if that's what you need.
+
+## Using a nested directory of markdown files as a database
+
+You can think of mdvs as a layer on top of your markdown files that gives you database-like capabilities. Here's a rough mapping of concepts and commands:
 
 | Concept | Database | mdvs |
 |---|---|---|
@@ -32,7 +58,7 @@ If your markdown directory is a database:
 | Create an index | `CREATE INDEX` | `mdvs build` |
 | Query | `SELECT ... WHERE ... ORDER BY` | `mdvs search --where` |
 
-Two artifacts: `mdvs.toml` (your schema, committed) and `.mdvs/` (the search index, gitignored).
+Two artifacts: `mdvs.toml` (your schema, to be committed) and `.mdvs/` (the search index, can be ignored by version control).
 
 ## What this book covers
 
