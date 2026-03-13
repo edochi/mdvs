@@ -62,7 +62,7 @@ The output of this step is a list of fields, each with:
 The most interesting part of inference is how mdvs computes **where** each field belongs. It produces two sets of glob patterns per field:
 
 - **`allowed`** — where the field *may* appear. Any file matching these patterns can have the field without triggering a violation.
-- **`required`** — where the field *must* appear. Any file matching these patterns that's missing the field triggers a MissingRequired violation.
+- **`required`** — where the field *must* appear. Any file matching these patterns that's missing the field triggers a `MissingRequired` violation.
 
 ### How patterns are computed
 

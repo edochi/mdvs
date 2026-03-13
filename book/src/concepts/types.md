@@ -210,13 +210,13 @@ Result: `review_score` is inferred as **String?**.
 - Null is **transparent** in widening — it doesn't affect the inferred type
 - Null-only fields default to String (the safest fallback)
 - `nullable` is a separate boolean, not part of the type itself
-- In validation: null values skip type checks, but a non-nullable required field with a null value triggers a **NullNotAllowed** violation (see [Validation](./validation.md))
+- In validation: null values skip type checks, but a non-nullable required field with a null value triggers a `NullNotAllowed` violation (see [Validation](./validation.md))
 
 ## String is the top type
 
 This has two important consequences:
 
-**In validation** — a field typed as String **never** triggers a WrongType violation. If `priority` is String, then `priority: 1`, `priority: true`, and `priority: [a, b]` all pass. The value is stored as-is.
+**In validation** — a field typed as String **never** triggers a `WrongType` violation. If `priority` is String, then `priority: 1`, `priority: true`, and `priority: [a, b]` all pass. The value is stored as-is.
 
 **In storage** — when building the search index, non-string values in String-typed fields are serialized to JSON. So `priority: 1` in a String field is stored as `"1"`, not silently dropped as NULL. No data is ever lost.
 

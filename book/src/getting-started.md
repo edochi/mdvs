@@ -143,10 +143,10 @@ Four violation types, each catching a different kind of problem:
 
 | Violation | Meaning |
 |---|---|
-| **MissingRequired** | A file in a required path is missing the field |
-| **WrongType** | The value doesn't match the declared type |
-| **NullNotAllowed** | The field is present but `null`, and `nullable` is `false` |
-| **Disallowed** | The field appears in a file outside its `allowed` paths |
+| `MissingRequired` | A file in a required path is missing the field |
+| `WrongType` | The value doesn't match the declared type |
+| `NullNotAllowed` | The field is present but `null`, and `nullable` is `false` |
+| `Disallowed` | The field appears in a file outside its `allowed` paths |
 
 This is the compact output — it groups violations by field. Add `-v` for verbose output showing every affected file and the specific value that caused the violation. See [check](./commands/check.md) for the full reference.
 
