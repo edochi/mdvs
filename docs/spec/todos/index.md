@@ -99,3 +99,4 @@
 | [0095](TODO-0095.md) | GitHub Actions workflow for mdBook deployment to GitHub Pages | todo | medium | 2026-03-12 |
 | [0096](TODO-0096.md) | Change array type display from String[] to Array(String) | todo | medium | 2026-03-12 |
 | [0097](TODO-0097.md) | Explode nested Object fields into dot-separated leaf keys | todo | medium | 2026-03-12 |
+| [0098](TODO-0098.md) | Build --force should handle dimension mismatch without requiring clean | todo | medium | 2026-03-13 |

@@ -177,7 +177,7 @@ Searched "calibration" — 10 hits
 ╰────────────┴──────────────────────────────────────────────────┴──────────────╯
 ```
 
-Results are ranked by semantic similarity — not keyword matching. The score column is cosine distance (lower means more similar).
+Results are ranked by semantic similarity — not keyword matching. The score column is cosine similarity (higher means more similar).
 
 ### Filtering with `--where`
 
