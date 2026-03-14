@@ -136,6 +136,10 @@ mdvs treats your markdown directory like a database:
 
 Two artifacts: `mdvs.toml` (committed, your schema) and `.mdvs/` (gitignored, the search index).
 
+## Documentation
+
+Full documentation at [edochi.github.io/mdvs](https://edochi.github.io/mdvs/).
+
 ## License
 
 [MIT](LICENSE)
