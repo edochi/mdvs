@@ -11,15 +11,14 @@
   - [Validation](./concepts/validation.md)
   - [Search & Indexing](./concepts/search.md)
 
-# Commands
-
-- [init](./commands/init.md)
-- [check](./commands/check.md)
-- [update](./commands/update.md)
-- [build](./commands/build.md)
-- [search](./commands/search.md)
-- [info](./commands/info.md)
-- [clean](./commands/clean.md)
+- [Commands](./commands.md)
+  - [init](./commands/init.md)
+  - [check](./commands/check.md)
+  - [update](./commands/update.md)
+  - [build](./commands/build.md)
+  - [search](./commands/search.md)
+  - [info](./commands/info.md)
+  - [clean](./commands/clean.md)
 
 # Reference
 
