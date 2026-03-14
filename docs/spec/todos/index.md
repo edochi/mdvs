@@ -110,3 +110,4 @@
 | [0106](TODO-0106.md) | Link graph from internal links and wikilinks | todo | low | 2026-03-14 |
 | [0107](TODO-0107.md) | Pre-commit hook for mdvs check | todo | medium | 2026-03-14 |
 | [0108](TODO-0108.md) | --set-revision with empty string or "None" should clear the revision | todo | low | 2026-03-14 |
+| [0109](TODO-0109.md) | Clean up DataFusion error messages in --where | todo | low | 2026-03-14 |
