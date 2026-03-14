@@ -105,3 +105,4 @@
 | [0101](TODO-0101.md) | Add markdown output format, rename text to pretty | todo | high | 2026-03-13 |
 | [0102](TODO-0102.md) | Write and distribute SKILL.md for end-user projects | todo | medium | 2026-03-14 |
 | [0103](TODO-0103.md) | Validate config invariants on mdvs.toml load | todo | high | 2026-03-14 |
+| [0104](TODO-0104.md) | Expose filename as bare field in --where | todo | medium | 2026-03-14 |
