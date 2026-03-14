@@ -148,4 +148,4 @@ Verbose output shows each pipeline step with its result, and expands embedded fi
 | `config changed since last build` | Config differs from parquet metadata — use `--force` |
 | `--set-model requires --force` | Changing model triggers full re-embed |
 | `--set-chunk-size requires --force` | Changing chunk size triggers full re-embed |
-| `dimension mismatch` | Model produces different dimensions than existing index — run `mdvs clean` first (see [TODO-0098](https://github.com/edochi/mdvs)) |
+| `dimension mismatch` | Model produces different dimensions than existing index (incremental build only — `--force` bypasses this) |

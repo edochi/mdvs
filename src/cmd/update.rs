@@ -918,23 +918,28 @@ pub async fn run(
     }
 
     // Dimension check (pre-check for embed_files)
-    let dim_error = match &embedder {
-        Some(emb) => match backend.embedding_dimension() {
-            Ok(Some(existing_dim)) => {
-                let model_dim = emb.dimension() as i32;
-                if existing_dim != model_dim {
-                    Some(format!(
-                        "dimension mismatch: model produces {model_dim}-dim embeddings but existing index has {existing_dim}-dim"
-                    ))
-                } else {
-                    None
+    // Skip on full rebuild — old index is being discarded entirely.
+    let dim_error = if full_rebuild {
+        None
+    } else {
+        match &embedder {
+            Some(emb) => match backend.embedding_dimension() {
+                Ok(Some(existing_dim)) => {
+                    let model_dim = emb.dimension() as i32;
+                    if existing_dim != model_dim {
+                        Some(format!(
+                            "dimension mismatch: model produces {model_dim}-dim embeddings but existing index has {existing_dim}-dim"
+                        ))
+                    } else {
+                        None
+                    }
                 }
-            }
-            Ok(None) => None,
-            Err(e) => Some(e.to_string()),
-        },
-        None if needs_embedding => None, // load_model failed — handled above
-        None => None,
+                Ok(None) => None,
+                Err(e) => Some(e.to_string()),
+            },
+            None if needs_embedding => None, // load_model failed — handled above
+            None => None,
+        }
     };
 
     // 8. embed_files

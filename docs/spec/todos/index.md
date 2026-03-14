@@ -99,7 +99,7 @@
 | [0095](TODO-0095.md) | GitHub Actions workflow for mdBook deployment to GitHub Pages | todo | medium | 2026-03-12 |
 | [0096](TODO-0096.md) | Change array type display from String[] to Array(String) | todo | medium | 2026-03-12 |
 | [0097](TODO-0097.md) | Explode nested Object fields into dot-separated leaf keys | todo | medium | 2026-03-12 |
-| [0098](TODO-0098.md) | Build --force should handle dimension mismatch without requiring clean | todo | medium | 2026-03-13 |
+| [0098](TODO-0098.md) | Build --force should handle dimension mismatch without requiring clean | done | medium | 2026-03-13 |
 | [0099](TODO-0099.md) | Redesign auto-update/auto-build pipeline across commands | todo | high | 2026-03-13 |
 | [0100](TODO-0100.md) | Redesign text output format for all commands | todo | high | 2026-03-13 |
 | [0101](TODO-0101.md) | Add markdown output format, rename text to pretty | todo | high | 2026-03-13 |
@@ -109,3 +109,4 @@
 | [0105](TODO-0105.md) | Test and write CI recipe for mdvs check | todo | medium | 2026-03-14 |
 | [0106](TODO-0106.md) | Link graph from internal links and wikilinks | todo | low | 2026-03-14 |
 | [0107](TODO-0107.md) | Pre-commit hook for mdvs check | todo | medium | 2026-03-14 |
+| [0108](TODO-0108.md) | --set-revision with empty string or "None" should clear the revision | todo | low | 2026-03-14 |

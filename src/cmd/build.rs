@@ -610,26 +610,31 @@ pub async fn run(
     };
 
     // Dimension check (pre-check for embed_files)
-    let dim_error = match &embedder {
-        Some(emb) => match backend.embedding_dimension() {
-            Ok(Some(existing_dim)) => {
-                let model_dim = emb.dimension() as i32;
-                if existing_dim != model_dim {
-                    Some(format!(
-                        "dimension mismatch: model produces {model_dim}-dim embeddings but existing index has {existing_dim}-dim"
-                    ))
-                } else {
-                    None
+    // Skip on full rebuild — old index is being discarded entirely.
+    let dim_error = if full_rebuild {
+        None
+    } else {
+        match &embedder {
+            Some(emb) => match backend.embedding_dimension() {
+                Ok(Some(existing_dim)) => {
+                    let model_dim = emb.dimension() as i32;
+                    if existing_dim != model_dim {
+                        Some(format!(
+                            "dimension mismatch: model produces {model_dim}-dim embeddings but existing index has {existing_dim}-dim"
+                        ))
+                    } else {
+                        None
+                    }
                 }
+                Ok(None) => None,
+                Err(e) => Some(e.to_string()),
+            },
+            None if needs_embedding => {
+                // load_model failed — embed_files will be skipped via embedder check below
+                None
             }
-            Ok(None) => None,
-            Err(e) => Some(e.to_string()),
-        },
-        None if needs_embedding => {
-            // load_model failed — embed_files will be skipped via embedder check below
-            None
+            None => None,
         }
-        None => None,
     };
 
     // If load_model failed, skip embed_files and write_index
@@ -1073,6 +1078,53 @@ mod tests {
             other => panic!("expected embed_files Failed, got: {other:?}"),
         };
         assert!(err.contains("dimension mismatch"));
+    }
+
+    #[tokio::test]
+    async fn dimension_mismatch_with_force_succeeds() {
+        use crate::index::storage::{build_chunks_batch, write_parquet, ChunkRow};
+
+        let tmp = tempfile::tempdir().unwrap();
+        create_test_vault(tmp.path());
+
+        // Run init (auto_build calls build internally)
+        let output = crate::cmd::init::run(
+            tmp.path(),
+            Some("minishlab/potion-base-8M"),
+            None,
+            "**",
+            false,
+            false,
+            true,
+            None,
+            true,
+            false, // skip_gitignore
+            false, // verbose
+        )
+        .await;
+        assert!(!output.has_failed_step());
+
+        // Overwrite chunks.parquet with wrong dimension (2 instead of actual)
+        let bad_chunks = vec![ChunkRow {
+            chunk_id: "bad".into(),
+            file_id: "bad".into(),
+            chunk_index: 0,
+            start_line: 1,
+            end_line: 1,
+            embedding: vec![0.1, 0.2], // dim=2
+        }];
+        let bad_batch = build_chunks_batch(&bad_chunks, 2, "_");
+        write_parquet(&tmp.path().join(".mdvs/chunks.parquet"), &bad_batch).unwrap();
+
+        // Build with --force should succeed despite dimension mismatch
+        let output = run(tmp.path(), None, None, None, true, false).await;
+        assert!(
+            !output.has_failed_step(),
+            "expected success with --force, got failed step"
+        );
+        assert!(output.result.is_some());
+        let result = output.result.unwrap();
+        assert!(result.full_rebuild);
     }
 
     #[tokio::test]
