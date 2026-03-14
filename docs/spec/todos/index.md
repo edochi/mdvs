@@ -107,3 +107,5 @@
 | [0103](TODO-0103.md) | Validate config invariants on mdvs.toml load | todo | high | 2026-03-14 |
 | [0104](TODO-0104.md) | Expose filename as bare field in --where | todo | medium | 2026-03-14 |
 | [0105](TODO-0105.md) | Test and write CI recipe for mdvs check | todo | medium | 2026-03-14 |
+| [0106](TODO-0106.md) | Link graph from internal links and wikilinks | todo | low | 2026-03-14 |
+| [0107](TODO-0107.md) | Pre-commit hook for mdvs check | todo | medium | 2026-03-14 |
