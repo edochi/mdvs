@@ -218,7 +218,11 @@ allowed = ["blog/**", "projects/alpha/**"]
 required = ["blog/published/**"]
 ```
 
-The invariant is `required ⊆ allowed` — you can't require a field in a path where it's not allowed. See [Schema Inference](./concepts/schema.md#path-patterns) for how these patterns are computed.
+Patterns must end with `/*` (direct children) or `/**` (full subtree), or be exactly `*` or `**`. Bare paths like `blog` or file names like `blog/post.md` are not valid.
+
+The invariant `required ⊆ allowed` is enforced — every required glob must be covered by some allowed glob. For example, `allowed = ["meetings/**"]` covers `required = ["meetings/all-hands/**"]` because any path matching the required pattern also matches the allowed one.
+
+See [Schema Inference](./concepts/schema.md#path-patterns) for how these patterns are computed.
 
 ## Example
 

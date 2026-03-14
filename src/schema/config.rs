@@ -167,6 +167,51 @@ impl MdvsToml {
         Ok(config)
     }
 
+    /// Validate config invariants that can be broken by manual edits.
+    ///
+    /// Three invariants are checked:
+    /// 1. A field cannot appear in both `[fields].ignore` and `[[fields.field]]`.
+    /// 2. All globs in `allowed` and `required` must end with `/*` or `/**`, or be
+    ///    exactly `*` or `**`.
+    /// 3. Every required glob must be covered by some allowed glob.
+    pub fn validate(&self) -> anyhow::Result<()> {
+        // Invariant 1: ignore and [[fields.field]] are mutually exclusive
+        for ignored in &self.fields.ignore {
+            if self.fields.field.iter().any(|f| &f.name == ignored) {
+                anyhow::bail!(
+                    "field '{}' appears in both [fields].ignore and [[fields.field]] — remove it from one",
+                    ignored
+                );
+            }
+        }
+
+        for field in &self.fields.field {
+            // Invariant 2: valid glob format
+            for glob in field.allowed.iter().chain(field.required.iter()) {
+                if !is_valid_glob_format(glob) {
+                    anyhow::bail!(
+                        "field '{}': invalid glob pattern '{}' — must end with /* or /** (or be * or **)",
+                        field.name,
+                        glob
+                    );
+                }
+            }
+
+            // Invariant 3: required ⊆ allowed
+            for req in &field.required {
+                if !glob_is_covered(req, &field.allowed) {
+                    anyhow::bail!(
+                        "field '{}': required glob '{}' is not covered by any allowed pattern",
+                        field.name,
+                        req
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     /// Serialize this config to TOML and write it to disk.
     /// Complex field types are post-processed into inline tables for readability.
     #[instrument(name = "write_config", skip_all, level = "debug")]
@@ -175,6 +220,63 @@ impl MdvsToml {
         let content = inline_field_types(&content)?;
         fs::write(path, content)?;
         Ok(())
+    }
+}
+
+/// Check if a glob pattern has a valid format for allowed/required lists.
+/// Valid: `*`, `**`, `path/*`, `path/**`. Invalid: bare paths, `*.md`, etc.
+fn is_valid_glob_format(glob: &str) -> bool {
+    glob == "*" || glob == "**" || glob.ends_with("/*") || glob.ends_with("/**")
+}
+
+/// Check if a required glob is covered by any allowed glob.
+///
+/// A required glob `R` is covered by an allowed glob `A` if every path matching `R`
+/// also matches `A`. We check this by stripping the `/*` or `/**` suffix from `R`
+/// to get its directory path, then testing if that path matches any `A` via globset.
+fn glob_is_covered(required: &str, allowed: &[String]) -> bool {
+    for allowed_glob in allowed {
+        // "**" covers everything
+        if allowed_glob == "**" {
+            return true;
+        }
+
+        // Exact match (most common case from inference)
+        if allowed_glob == required {
+            return true;
+        }
+
+        // "*" covers "*" (root-level shallow)
+        if allowed_glob == "*" && required == "*" {
+            return true;
+        }
+
+        // Glob-based containment: strip suffix from required and test against allowed
+        let req_dir = strip_glob_suffix(required);
+        if !req_dir.is_empty() {
+            if let Ok(glob) = globset::Glob::new(allowed_glob) {
+                let matcher = glob.compile_matcher();
+                if matcher.is_match(req_dir) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
+}
+
+/// Strip the `/*` or `/**` suffix from a glob to get the directory path.
+/// Returns "" for root-level globs (`*`, `**`).
+fn strip_glob_suffix(glob: &str) -> &str {
+    if glob == "*" || glob == "**" {
+        ""
+    } else if let Some(dir) = glob.strip_suffix("/**") {
+        dir
+    } else if let Some(dir) = glob.strip_suffix("/*") {
+        dir
+    } else {
+        glob
     }
 }
 
@@ -723,5 +825,184 @@ nullable = false
         assert_eq!(f.allowed, vec!["blog/**"]);
         assert_eq!(f.required, vec!["blog/**"]);
         assert!(!f.nullable);
+    }
+
+    // --- Invariant 1: ignore vs field mutual exclusion ---
+
+    #[test]
+    fn validate_ignore_and_field_conflict() {
+        let mut config = full_toml(vec![TomlField {
+            name: "tags".into(),
+            field_type: FieldTypeSerde::Scalar("String".into()),
+            allowed: vec!["**".into()],
+            required: vec![],
+            nullable: true,
+        }]);
+        config.fields.ignore = vec!["tags".into()];
+        let err = config.validate().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("appears in both [fields].ignore and [[fields.field]]"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn validate_ignore_no_conflict_passes() {
+        let mut config = full_toml(vec![TomlField {
+            name: "tags".into(),
+            field_type: FieldTypeSerde::Scalar("String".into()),
+            allowed: vec!["**".into()],
+            required: vec![],
+            nullable: true,
+        }]);
+        config.fields.ignore = vec!["other_field".into()];
+        assert!(config.validate().is_ok());
+    }
+
+    // --- Invariant 2: valid glob format ---
+
+    #[test]
+    fn validate_invalid_glob_format_bare_path() {
+        let config = full_toml(vec![TomlField {
+            name: "title".into(),
+            field_type: FieldTypeSerde::Scalar("String".into()),
+            allowed: vec!["blog".into()],
+            required: vec![],
+            nullable: false,
+        }]);
+        let err = config.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("invalid glob pattern 'blog'"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn validate_invalid_glob_format_file_pattern() {
+        let config = full_toml(vec![TomlField {
+            name: "title".into(),
+            field_type: FieldTypeSerde::Scalar("String".into()),
+            allowed: vec!["**".into()],
+            required: vec!["blog/post.md".into()],
+            nullable: false,
+        }]);
+        let err = config.validate().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("invalid glob pattern 'blog/post.md'"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn validate_valid_glob_formats() {
+        let config = full_toml(vec![
+            TomlField {
+                name: "a".into(),
+                field_type: FieldTypeSerde::Scalar("String".into()),
+                allowed: vec!["**".into()],
+                required: vec!["*".into()],
+                nullable: false,
+            },
+            TomlField {
+                name: "b".into(),
+                field_type: FieldTypeSerde::Scalar("String".into()),
+                allowed: vec!["blog/**".into()],
+                required: vec!["blog/**".into()],
+                nullable: false,
+            },
+            TomlField {
+                name: "c".into(),
+                field_type: FieldTypeSerde::Scalar("String".into()),
+                allowed: vec!["people/*".into()],
+                required: vec![],
+                nullable: false,
+            },
+        ]);
+        assert!(config.validate().is_ok());
+    }
+
+    // --- Invariant 3: required ⊆ allowed ---
+
+    #[test]
+    fn validate_required_not_covered_by_allowed() {
+        let config = full_toml(vec![TomlField {
+            name: "title".into(),
+            field_type: FieldTypeSerde::Scalar("String".into()),
+            allowed: vec!["notes/**".into()],
+            required: vec!["blog/**".into()],
+            nullable: false,
+        }]);
+        let err = config.validate().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("required glob 'blog/**' is not covered by any allowed pattern"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn validate_wildcard_allowed_covers_any_required() {
+        let config = full_toml(vec![TomlField {
+            name: "title".into(),
+            field_type: FieldTypeSerde::Scalar("String".into()),
+            allowed: vec!["**".into()],
+            required: vec!["blog/**".into()],
+            nullable: false,
+        }]);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_parent_glob_covers_child_required() {
+        let config = full_toml(vec![TomlField {
+            name: "action_items".into(),
+            field_type: FieldTypeSerde::Scalar("String".into()),
+            allowed: vec!["meetings/**".into()],
+            required: vec!["meetings/all-hands/**".into()],
+            nullable: false,
+        }]);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_exact_match_required_allowed() {
+        let config = full_toml(vec![TomlField {
+            name: "tags".into(),
+            field_type: FieldTypeSerde::Scalar("String".into()),
+            allowed: vec!["blog/**".into(), "notes/**".into()],
+            required: vec!["blog/**".into()],
+            nullable: false,
+        }]);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_empty_required_passes() {
+        let config = full_toml(vec![TomlField {
+            name: "draft".into(),
+            field_type: FieldTypeSerde::Scalar("Boolean".into()),
+            allowed: vec!["**".into()],
+            required: vec![],
+            nullable: false,
+        }]);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_valid_config_passes() {
+        let config = full_toml(vec![TomlField {
+            name: "tags".into(),
+            field_type: FieldTypeSerde::Scalar("String".into()),
+            allowed: vec!["blog/**".into(), "notes/**".into()],
+            required: vec!["blog/**".into()],
+            nullable: false,
+        }]);
+        assert!(config.validate().is_ok());
     }
 }

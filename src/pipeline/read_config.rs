@@ -31,6 +31,16 @@ pub fn run_read_config(path: &Path) -> (ProcessingStepResult<ReadConfigOutput>, 
     let config_path = path.join("mdvs.toml");
     match MdvsToml::read(&config_path) {
         Ok(config) => {
+            if let Err(e) = config.validate() {
+                let err = ProcessingStepError {
+                    kind: ErrorKind::User,
+                    message: format!(
+                        "mdvs.toml is invalid: {} — fix the file or run 'mdvs init --force'",
+                        e
+                    ),
+                };
+                return (ProcessingStepResult::Failed(err), None);
+            }
             let step = ProcessingStep {
                 elapsed_ms: start.elapsed().as_millis() as u64,
                 output: ReadConfigOutput {
