@@ -1,9 +1,18 @@
 ---
 name: commit
-description: Use when the user asks to commit, commit and push, or make a git commit. Covers commit workflow, conventional commits, TODO updates, and push rules.
+description: Use when the user asks to commit, commit and push, or make a git commit. Covers branching, commit workflow, conventional commits, TODO updates, and push/PR rules.
 ---
 
-# Commit Conventions
+# Commit & Branching Conventions
+
+## Branching
+
+**Never push directly to `main`.** All work goes through feature branches + PRs.
+
+- One branch per TODO or feature: `feat/description`, `fix/description`, `docs/description`
+- Branch off `main`: `git checkout -b feat/my-feature main`
+- Always ask the user before creating a branch
+- Merge via PR (regular merge, not squash)
 
 ## When to Commit
 
@@ -42,8 +51,13 @@ EOF
 
 **Only push when the user explicitly asks.** "Commit" does not imply "push". Wait for "push", "commit and push", or similar.
 
+### Pull Requests
+
+After pushing a feature branch, create a PR to `main` when the user asks. Use `gh pr create` with a clear title and summary. CI must pass before merging. Use regular merge (not squash).
+
 ## Safety Rules
 
+- Never push directly to `main`
 - Never amend, force-push, or skip hooks — unless the user explicitly asks
 - Never rebase interactively (`git rebase -i`)
 - If a pre-commit hook fails, fix the issue and create a **new** commit (don't amend)
