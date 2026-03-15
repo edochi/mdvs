@@ -852,6 +852,15 @@ pub async fn run(
 // Helpers
 // ============================================================================
 
+/// Normalize a revision string: empty and "None" are treated as unset.
+fn normalize_revision(s: &str) -> Option<String> {
+    if s.is_empty() || s.eq_ignore_ascii_case("none") {
+        None
+    } else {
+        Some(s.to_string())
+    }
+}
+
 /// Apply config mutations: fill missing build sections, apply --set-* flags.
 /// Returns `Some(error_message)` if a flag requires --force but wasn't given.
 fn mutate_config(
@@ -870,7 +879,7 @@ fn mutate_config(
             config.embedding_model = Some(EmbeddingModelConfig {
                 provider: "model2vec".to_string(),
                 name: set_model.unwrap_or(DEFAULT_MODEL).to_string(),
-                revision: set_revision.map(|s| s.to_string()),
+                revision: set_revision.and_then(normalize_revision),
             });
             config_changed = true;
         }
@@ -885,7 +894,7 @@ fn mutate_config(
                 em.name = m.to_string();
             }
             if let Some(r) = set_revision {
-                em.revision = Some(r.to_string());
+                em.revision = normalize_revision(r);
             }
             config_changed = true;
         }
@@ -1878,6 +1887,19 @@ mod tests {
         assert!(
             old_chunk_ids.is_disjoint(&new_chunk_ids),
             "force rebuild should generate new chunk_ids"
+        );
+    }
+
+    #[test]
+    fn normalize_revision_clears_empty_and_none() {
+        assert_eq!(normalize_revision(""), None);
+        assert_eq!(normalize_revision("None"), None);
+        assert_eq!(normalize_revision("none"), None);
+        assert_eq!(normalize_revision("NONE"), None);
+        assert_eq!(normalize_revision("abc123"), Some("abc123".to_string()));
+        assert_eq!(
+            normalize_revision("abc123def"),
+            Some("abc123def".to_string())
         );
     }
 }
