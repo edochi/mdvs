@@ -1,0 +1,45 @@
+name: Version Bump
+
+on:
+  workflow_dispatch:
+    inputs:
+      level:
+        description: "Release level"
+        required: true
+        type: choice
+        options:
+          - auto
+          - patch
+          - minor
+          - major
+      pre:
+        description: "Pre-release label (e.g., rc, beta) — leave empty for stable"
+        required: false
+        type: string
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ssh-key: ${{ secrets.DEPLOY_KEY }}
+
+      - name: Install cocogitto
+        run: |
+          curl -sSL https://github.com/cocogitto/cocogitto/releases/download/7.0.0/cocogitto-7.0.0-x86_64-unknown-linux-musl.tar.gz | tar xz -C /usr/local/bin
+
+      - name: Configure git
+        run: |
+          git config user.name "release-bot"
+          git config user.email "release-bot@mdvs"
+
+      - name: Bump version
+        run: |
+          ARGS="--${{ inputs.level }}"
+          if [ -n "${{ inputs.pre }}" ]; then
+            ARGS="$ARGS --pre ${{ inputs.pre }}"
+          fi
+          echo "Running: cog bump $ARGS"
+          cog bump $ARGS
