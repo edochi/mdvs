@@ -1,5 +1,5 @@
 from_latest_tag = true
-ignore_merge_commits = false
+ignore_merge_commits = true
 branch_whitelist = []
 tag_prefix = "v"
 
