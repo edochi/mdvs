@@ -1,6 +1,6 @@
 [package]
 name = "mdvs"
-version = "0.1.0-rc.3"
+version = "0.1.0-rc.4"
 edition = "2021"
 description = "A database of markdown documents — schema validation and semantic search"
 license = "MIT"
