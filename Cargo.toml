@@ -11,7 +11,6 @@ readme = "README.md"
 keywords = ["markdown", "search", "embeddings", "semantic", "vector"]
 categories = ["command-line-utilities", "text-processing"]
 include = ["src/", "Cargo.toml", "Cargo.lock", "LICENSE", "README.md"]
-publish = false
 
 [dependencies]
 # CLI
@@ -74,9 +73,9 @@ dist = true
 installers = ["shell", "powershell"]
 targets = [
     "aarch64-apple-darwin",
-    "x86_64-apple-darwin",
+    # "x86_64-apple-darwin",
     "x86_64-unknown-linux-gnu",
-    "x86_64-pc-windows-msvc",
+    # "x86_64-pc-windows-msvc",
 ]
 
 [workspace.metadata.dist]

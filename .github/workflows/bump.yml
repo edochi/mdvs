@@ -26,6 +26,8 @@ jobs:
           fetch-depth: 0
           ssh-key: ${{ secrets.DEPLOY_KEY }}
 
+      - uses: dtolnay/rust-toolchain@stable
+
       - name: Install cocogitto
         run: |
           curl -sSL https://github.com/cocogitto/cocogitto/releases/download/7.0.0/cocogitto-7.0.0-x86_64-unknown-linux-musl.tar.gz | tar xz --strip-components=1 -C /usr/local/bin
@@ -43,3 +45,8 @@ jobs:
           fi
           echo "Running: cog bump $ARGS"
           cog bump $ARGS
+
+      - name: Publish to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish
