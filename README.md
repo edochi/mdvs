@@ -17,11 +17,19 @@ mdvs infers a schema from your frontmatter, validates it, and gives you semantic
 
 ## Install
 
+### Prebuilt binary (macOS / Linux)
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/edochi/mdvs/releases/latest/download/mdvs-installer.sh | sh
+```
+
+### From crates.io
+
 ```bash
 cargo install mdvs
 ```
 
-Or build from source:
+### From source
 
 ```bash
 git clone https://github.com/edochi/mdvs.git
