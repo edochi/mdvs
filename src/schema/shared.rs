@@ -73,6 +73,7 @@ impl TryFrom<&FieldTypeSerde> for FieldType {
 
 /// Configuration for file scanning (`[scan]` in `mdvs.toml`).
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct ScanConfig {
     /// Glob pattern for matching markdown files.
     pub glob: String,
@@ -85,6 +86,7 @@ pub struct ScanConfig {
 
 /// Embedding model identity (`[embedding_model]` in `mdvs.toml`).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct EmbeddingModelConfig {
     /// Provider name (e.g. `"model2vec"`).
     #[serde(default = "default_provider")]
@@ -102,6 +104,7 @@ fn default_provider() -> String {
 
 /// Chunking settings (`[chunking]` in `mdvs.toml`).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ChunkingConfig {
     /// Maximum chunk size in characters.
     pub max_chunk_size: usize,
