@@ -87,7 +87,7 @@ pub fn run_delete_index(path: &Path) -> ProcessingStepResult<DeleteIndexOutput> 
             }
         };
 
-        let backend = Backend::parquet(path, "_");
+        let backend = Backend::parquet(path);
         if let Err(e) = backend.clean() {
             return ProcessingStepResult::Failed(ProcessingStepError {
                 kind: ErrorKind::Application,

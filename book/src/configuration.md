@@ -14,9 +14,7 @@ All configuration lives in `mdvs.toml`, created by [init](./commands/init.md) an
 **Build** (optional — added by `init` with auto-build or by `build`):
 - [`[embedding_model]`](#embedding_model) — model identity
 - [`[chunking]`](#chunking) — chunk sizing
-- [`[search]`](#search) — search defaults
-
-There's also an optional [`[storage]`](#storage) section that's rarely needed.
+- [`[search]`](#search) — search defaults and internal column naming
 
 When build sections are absent, validation commands ([check](./commands/check.md), [update](./commands/update.md)) work normally. The [build](./commands/build.md) command adds missing build sections with defaults on first run.
 
@@ -103,7 +101,7 @@ The text splitter breaks each file's body into semantic chunks respecting markdo
 
 ## `[search]`
 
-Default settings for the [search](./commands/search.md) command.
+Settings for the [search](./commands/search.md) command, including how internal columns are named in `--where` queries.
 
 ```toml
 [search]
@@ -113,25 +111,45 @@ default_limit = 10
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `default_limit` | Integer | `10` | Maximum results when `--limit` is not specified |
+| `internal_prefix` | String | `""` | Prefix for internal column names in `--where` queries |
+| `aliases` | Map | `{}` | Per-column name overrides for internal columns |
 
-## `[storage]`
+### Internal column names
 
-Internal storage settings. This section is rarely needed and omitted from `mdvs.toml` by default.
+Beyond your frontmatter fields, the search index stores bookkeeping columns that mdvs uses internally. These *internal columns* are available in `--where` queries:
 
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `internal_prefix` | String | `"_"` | Prefix for internal parquet column names |
+| Column | Contains |
+|---|---|
+| `filepath` | Relative file path (e.g., `blog/post.md`) |
+| `file_id` | Unique identifier for each file |
+| `content_hash` | Hash of the file body |
+| `built_at` | Timestamp of last build |
 
-The search index stores your frontmatter fields alongside internal bookkeeping columns (`file_id`, `chunk_id`, `content_hash`, etc.) in the same Parquet files. To avoid name collisions, internal columns are prefixed — by default with `_`, producing names like `_file_id` and `_content_hash`.
+By default, these are exposed with their raw names:
 
-This means frontmatter fields starting with `_` could collide with internal columns. If that happens, `init` and `update` will report an error. You can resolve it by choosing a different prefix:
-
-```toml
-[storage]
-internal_prefix = "_mdvs_"
+```bash
+--where "filepath LIKE 'blog/%'"
 ```
 
-Changing the prefix requires `build --force`.
+If a frontmatter field name collides with an internal column (e.g., you have a field called `filepath`), search will error and suggest resolutions:
+
+1. **Set a prefix** to namespace all internal columns:
+   ```toml
+   [search]
+   internal_prefix = "_"
+   ```
+   Internal columns become `_filepath`, `_file_id`, etc.
+
+2. **Set a per-column alias** to rename just the colliding column:
+   ```toml
+   [search.aliases]
+   filepath = "path"
+   ```
+   The internal column becomes `path`, your frontmatter `filepath` stays bare.
+
+3. **Rename the frontmatter field** in your markdown files.
+
+Aliases take precedence over the prefix. See the [Search Guide](./search-guide.md) for full `--where` reference.
 
 ## `[fields]`
 

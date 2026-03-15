@@ -43,12 +43,9 @@ pub struct IndexData {
 ///
 /// Returns the step result and the full index data (for the command result).
 /// "No index found" is a normal `Completed` output with `exists=false`.
-pub fn run_read_index(
-    path: &Path,
-    internal_prefix: &str,
-) -> (ProcessingStepResult<ReadIndexOutput>, Option<IndexData>) {
+pub fn run_read_index(path: &Path) -> (ProcessingStepResult<ReadIndexOutput>, Option<IndexData>) {
     let start = Instant::now();
-    let backend = Backend::parquet(path, internal_prefix);
+    let backend = Backend::parquet(path);
 
     if !backend.exists() {
         let step = ProcessingStep {

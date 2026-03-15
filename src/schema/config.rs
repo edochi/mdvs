@@ -1,6 +1,7 @@
 use crate::discover::infer::InferredSchema;
 use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig, FieldTypeSerde, ScanConfig};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use tracing::instrument;
@@ -17,19 +18,15 @@ pub struct UpdateConfig {
 pub struct SearchConfig {
     /// Maximum number of results returned when `--limit` is not specified.
     pub default_limit: usize,
-}
-
-/// Storage-layer settings controlling how parquet columns are named.
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
-pub struct StorageConfig {
-    /// Prefix applied to internal parquet column names to avoid collisions
-    /// with frontmatter field names. Defaults to `"_"`.
-    #[serde(default = "default_internal_prefix")]
+    /// Prefix applied to internal column names in `--where` queries.
+    /// Default is empty (no prefix). Set to e.g. `"_"` to resolve collisions
+    /// with frontmatter fields that share names with internal columns.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub internal_prefix: String,
-}
-
-fn default_internal_prefix() -> String {
-    "_".into()
+    /// Per-column name overrides for internal columns in `--where` queries.
+    /// Takes precedence over `internal_prefix` for the specified columns.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub aliases: HashMap<String, String>,
 }
 
 /// A single field definition in `[[fields.field]]`, specifying its type
@@ -98,19 +95,11 @@ pub struct MdvsToml {
     /// Search defaults. Present only when build is configured.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub search: Option<SearchConfig>,
-    /// Storage-layer settings (column prefix). Hidden by default.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub storage: Option<StorageConfig>,
     /// Field definitions and ignore list.
     pub fields: FieldsConfig,
 }
 
 impl MdvsToml {
-    /// Return the internal column prefix, defaulting to `"_"` when no `[storage]` section is set.
-    pub fn internal_prefix(&self) -> &str {
-        self.storage.as_ref().map_or("_", |s| &s.internal_prefix)
-    }
-
     /// Build an `MdvsToml` from an inferred schema and the provided scan/model/chunking settings.
     /// When `auto_build` is false, the build sections are omitted.
     pub fn from_inferred(
@@ -129,7 +118,11 @@ impl MdvsToml {
                     revision: model_revision.map(|s| s.to_string()),
                 }),
                 Some(ChunkingConfig { max_chunk_size }),
-                Some(SearchConfig { default_limit: 10 }),
+                Some(SearchConfig {
+                    default_limit: 10,
+                    internal_prefix: String::new(),
+                    aliases: HashMap::new(),
+                }),
             )
         } else {
             (None, None, None)
@@ -152,7 +145,6 @@ impl MdvsToml {
                     })
                     .collect(),
             },
-            storage: None,
             embedding_model,
             chunking,
             search,
@@ -341,8 +333,11 @@ mod tests {
             chunking: Some(ChunkingConfig {
                 max_chunk_size: 1024,
             }),
-            search: Some(SearchConfig { default_limit: 10 }),
-            storage: None,
+            search: Some(SearchConfig {
+                default_limit: 10,
+                internal_prefix: String::new(),
+                aliases: HashMap::new(),
+            }),
         }
     }
 
@@ -403,8 +398,11 @@ mod tests {
             chunking: Some(ChunkingConfig {
                 max_chunk_size: 1024,
             }),
-            search: Some(SearchConfig { default_limit: 10 }),
-            storage: None,
+            search: Some(SearchConfig {
+                default_limit: 10,
+                internal_prefix: String::new(),
+                aliases: HashMap::new(),
+            }),
         };
 
         let toml_str = toml::to_string(&toml_doc).unwrap();
@@ -690,7 +688,6 @@ default_limit = 10
             embedding_model: None,
             chunking: None,
             search: None,
-            storage: None,
         };
         let toml_str = toml::to_string(&doc).unwrap();
         assert!(toml_str.contains("auto_build = true"));

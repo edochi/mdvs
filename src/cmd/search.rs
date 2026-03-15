@@ -239,7 +239,7 @@ pub async fn run(
     let embedding = config.as_ref().and_then(|c| c.embedding_model.as_ref());
 
     let (read_index_step, index_data) = match &config {
-        Some(cfg) => run_read_index(path, cfg.internal_prefix()),
+        Some(_) => run_read_index(path),
         None => (ProcessingStepResult::Skipped, None),
     };
 
@@ -286,8 +286,12 @@ pub async fn run(
 
     let (execute_search_step, hits) = match (&config, query_embedding) {
         (Some(cfg), Some(qe)) => {
-            let backend = Backend::parquet(path, cfg.internal_prefix());
-            run_execute_search(&backend, qe, where_clause, limit).await
+            let backend = Backend::parquet(path);
+            let (prefix, aliases) = match &cfg.search {
+                Some(sc) => (sc.internal_prefix.as_str(), &sc.aliases),
+                None => ("", &std::collections::HashMap::new()),
+            };
+            run_execute_search(&backend, qe, where_clause, limit, prefix, aliases).await
         }
         _ => (ProcessingStepResult::Skipped, None),
     };
@@ -373,8 +377,11 @@ mod tests {
             chunking: Some(ChunkingConfig {
                 max_chunk_size: 1024,
             }),
-            search: Some(SearchConfig { default_limit: 10 }),
-            storage: None,
+            search: Some(SearchConfig {
+                default_limit: 10,
+                internal_prefix: String::new(),
+                aliases: std::collections::HashMap::new(),
+            }),
         };
         config.write(&dir.join("mdvs.toml")).unwrap();
     }
@@ -460,13 +467,22 @@ mod tests {
         init_and_build(tmp.path()).await;
 
         let config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
-        let backend = Backend::parquet(tmp.path(), config.internal_prefix());
+        let backend = Backend::parquet(tmp.path());
         let embedding = config.embedding_model.as_ref().unwrap();
         let model_config = ModelConfig::try_from(embedding).unwrap();
         let embedder = Embedder::load(&model_config).unwrap();
         let query_embedding = embedder.embed("rust programming").await;
 
-        let hits = backend.search(query_embedding, None, 1).await.unwrap();
+        let hits = backend
+            .search(
+                query_embedding,
+                None,
+                1,
+                "",
+                &std::collections::HashMap::new(),
+            )
+            .await
+            .unwrap();
         assert_eq!(hits.len(), 1);
     }
 
@@ -477,14 +493,20 @@ mod tests {
         init_and_build(tmp.path()).await;
 
         let config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
-        let backend = Backend::parquet(tmp.path(), config.internal_prefix());
+        let backend = Backend::parquet(tmp.path());
         let embedding = config.embedding_model.as_ref().unwrap();
         let model_config = ModelConfig::try_from(embedding).unwrap();
         let embedder = Embedder::load(&model_config).unwrap();
         let query_embedding = embedder.embed("cooking recipes").await;
 
         let hits = backend
-            .search(query_embedding, Some("draft = false"), 10)
+            .search(
+                query_embedding,
+                Some("draft = false"),
+                10,
+                "",
+                &std::collections::HashMap::new(),
+            )
             .await
             .unwrap();
 

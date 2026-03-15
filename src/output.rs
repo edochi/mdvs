@@ -252,6 +252,9 @@ pub trait CommandOutput: Serialize {
 
     /// Render this result as JSON. Default serializes the full struct.
     /// Command output wrappers override this to omit `process` in compact mode.
+    /// Infallible: all CommandOutput types derive Serialize with simple field types
+    /// (strings, numbers, vecs, options). serde_json only fails on non-string map keys
+    /// or infinite recursion, neither of which applies here.
     fn format_json(&self, verbose: bool) -> String {
         let _ = verbose;
         serde_json::to_string_pretty(self).expect("CommandOutput types must be JSON-serializable")
@@ -271,6 +274,9 @@ pub trait CommandOutput: Serialize {
 ///
 /// In compact mode (not verbose), only the result is emitted: `{"result": ...}`.
 /// In verbose mode or when the result is absent (error), the full struct is serialized.
+/// Serialize command output as JSON, omitting process steps in compact mode.
+///
+/// Infallible: same reasoning as `format_json` — all types are simple Serialize derivations.
 pub fn format_json_compact<T: Serialize, R: Serialize>(
     full: &T,
     result: Option<&R>,

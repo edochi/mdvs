@@ -556,7 +556,7 @@ pub async fn run(
 
     let embedding = config.embedding_model.as_ref().unwrap();
     let chunking = config.chunking.as_ref().unwrap();
-    let backend = Backend::parquet(path, config.internal_prefix());
+    let backend = Backend::parquet(path);
 
     // 5. classify — always full rebuild (init is first-time)
     let (classify_step, classify_data) = run_classify(&scanned, &[], vec![], true);
@@ -666,7 +666,6 @@ pub async fn run(
         chunking: chunking.clone(),
         glob: config.scan.glob.clone(),
         built_at: chrono::Utc::now().to_rfc3339(),
-        internal_prefix: config.internal_prefix().to_string(),
     };
 
     let write_index_step = run_write_index(

@@ -1,7 +1,7 @@
 use crate::cmd::build::{detect_config_changes, BuildResult};
 use crate::discover::field_type::FieldType;
 use crate::index::backend::Backend;
-use crate::index::storage::{check_reserved_names, content_hash, BuildMetadata, FileRow};
+use crate::index::storage::{content_hash, BuildMetadata, FileRow};
 use crate::output::{
     format_file_count, format_hints, format_json_compact, ChangedField, CommandOutput,
     DiscoveredField, FieldChange, RemovedField,
@@ -634,30 +634,6 @@ pub async fn run(
         let start = Instant::now();
         let config_path = path.join("mdvs.toml");
 
-        // Check reserved names
-        let field_names: Vec<String> = new_fields.iter().map(|f| f.name.clone()).collect();
-        if let Err(e) = check_reserved_names(&field_names, config.internal_prefix()) {
-            let (validate_step, classify_step, load_model_step, embed_files_step, write_index_step) =
-                all_build_steps_skipped();
-            return UpdateCommandOutput {
-                process: UpdateProcessOutput {
-                    read_config: read_config_step,
-                    scan: scan_step,
-                    infer: infer_step,
-                    write_config: ProcessingStepResult::Failed(ProcessingStepError {
-                        kind: ErrorKind::User,
-                        message: e.to_string(),
-                    }),
-                    validate: validate_step,
-                    classify: classify_step,
-                    load_model: load_model_step,
-                    embed_files: embed_files_step,
-                    write_index: write_index_step,
-                },
-                result: None,
-            };
-        }
-
         config.fields.field = new_fields;
         if let Err(e) = config.write(&config_path) {
             let (validate_step, classify_step, load_model_step, embed_files_step, write_index_step) =
@@ -797,7 +773,7 @@ pub async fn run(
 
     let embedding = config.embedding_model.as_ref().unwrap();
     let chunking = config.chunking.as_ref().unwrap();
-    let backend = Backend::parquet(path, config.internal_prefix());
+    let backend = Backend::parquet(path);
 
     // Config change detection (pre-check for classify step)
     let config_change_error = detect_config_changes(&backend, embedding, chunking, &config, false);
@@ -1012,7 +988,6 @@ pub async fn run(
         chunking: chunking.clone(),
         glob: config.scan.glob.clone(),
         built_at: chrono::Utc::now().to_rfc3339(),
-        internal_prefix: config.internal_prefix().to_string(),
     };
 
     let write_index_step = run_write_index(

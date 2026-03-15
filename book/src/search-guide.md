@@ -100,10 +100,10 @@ mdvs search "meeting" --where "array_length(action_items) > 2"
 
 ## Filtering by file path
 
-You can filter results by file path using the `_filename` column. This is an internal column (prefixed with `_`), so it must be referenced with the prefix:
+Filter results by file path using the `filepath` column:
 
 ```bash
-mdvs search "experiment" --where "_filename LIKE 'projects/alpha/%'"
+mdvs search "experiment" --where "filepath LIKE 'projects/alpha/%'"
 ```
 
 ```
@@ -116,20 +116,18 @@ Searched "experiment" — 3 hits
 ╰────────────┴─────────────────────────────────────────────────┴───────────────╯
 ```
 
-Filenames are stored as relative paths (e.g., `projects/alpha/notes/experiment-1.md`), so use `LIKE` with `%` for path prefix matching:
+File paths are stored as relative paths (e.g., `projects/alpha/notes/experiment-1.md`), so use `LIKE` with `%` for path prefix matching:
 
 ```bash
 # All blog posts
---where "_filename LIKE 'blog/%'"
+--where "filepath LIKE 'blog/%'"
 
 # Only published blog posts
---where "_filename LIKE 'blog/published/%'"
+--where "filepath LIKE 'blog/published/%'"
 
 # Files in any meetings directory
---where "_filename LIKE '%/meetings/%'"
+--where "filepath LIKE '%/meetings/%'"
 ```
-
-> **Note:** bare `filename` doesn't work — use `_filename`. The `_` prefix applies to all internal columns (see [storage configuration](./configuration.md#storage)).
 
 ## Nested objects
 

@@ -31,6 +31,8 @@ pub(crate) async fn run_execute_search(
     query_embedding: Vec<f32>,
     where_clause: Option<&str>,
     limit: usize,
+    internal_prefix: &str,
+    aliases: &std::collections::HashMap<String, String>,
 ) -> (
     ProcessingStepResult<ExecuteSearchOutput>,
     Option<Vec<SearchHit>>,
@@ -58,7 +60,16 @@ pub(crate) async fn run_execute_search(
     }
 
     let start = Instant::now();
-    match backend.search(query_embedding, where_clause, limit).await {
+    match backend
+        .search(
+            query_embedding,
+            where_clause,
+            limit,
+            internal_prefix,
+            aliases,
+        )
+        .await
+    {
         Ok(hits) => {
             let step = ProcessingStep {
                 elapsed_ms: start.elapsed().as_millis() as u64,

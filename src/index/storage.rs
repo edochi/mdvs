@@ -21,30 +21,49 @@ use std::fs::File;
 use std::path::Path;
 use std::sync::Arc;
 
-/// Prepend `prefix` to a base column name (e.g. `col("_", "file_id")` → `"_file_id"`).
-pub fn col(prefix: &str, name: &str) -> String {
-    format!("{prefix}{name}")
-}
+/// File ID column in files.parquet.
+pub const COL_FILE_ID: &str = "file_id";
+/// File path column in files.parquet (relative to project root).
+pub const COL_FILEPATH: &str = "filepath";
+/// Frontmatter Struct column in files.parquet.
+pub const COL_DATA: &str = "data";
+/// Content hash column in files.parquet.
+pub const COL_CONTENT_HASH: &str = "content_hash";
+/// Build timestamp column in files.parquet.
+pub const COL_BUILT_AT: &str = "built_at";
 
-/// Internal column base names in `files.parquet` that must not collide with frontmatter fields.
-const RESERVED_BASE_NAMES: &[&str] = &["file_id", "filename", "data", "content_hash", "built_at"];
+/// Chunk ID column in chunks.parquet.
+pub const COL_CHUNK_ID: &str = "chunk_id";
+/// Chunk index column in chunks.parquet.
+pub const COL_CHUNK_INDEX: &str = "chunk_index";
+/// Start line column in chunks.parquet.
+pub const COL_START_LINE: &str = "start_line";
+/// End line column in chunks.parquet.
+pub const COL_END_LINE: &str = "end_line";
+/// Embedding vector column in chunks.parquet.
+pub const COL_EMBEDDING: &str = "embedding";
 
-/// Verify that no frontmatter field name collides with a reserved internal column name.
+/// Names of internal columns in files.parquet that are exposed in the search view
+/// and could collide with frontmatter fields. Used by search-time collision detection.
+/// (`data` is excluded — its children are promoted, but the column itself is not exposed.)
+pub const FILES_INTERNAL_COLUMNS: &[&str] =
+    &[COL_FILE_ID, COL_FILEPATH, COL_CONTENT_HASH, COL_BUILT_AT];
+
+/// Resolve the view name for an internal column: alias > prefix > raw name.
 ///
-/// Returns an error if any field name matches `{prefix}{base}` for any reserved base name.
-pub fn check_reserved_names(field_names: &[String], prefix: &str) -> anyhow::Result<()> {
-    for name in field_names {
-        for base in RESERVED_BASE_NAMES {
-            if *name == col(prefix, base) {
-                anyhow::bail!(
-                    "field '{}' conflicts with reserved internal column name \
-                     (set internal_prefix in [storage] in mdvs.toml to avoid this)",
-                    name
-                );
-            }
-        }
+/// Used by both search view creation (collision detection) and SQL query building.
+pub fn resolve_view_name(
+    col: &str,
+    internal_prefix: &str,
+    aliases: &HashMap<String, String>,
+) -> String {
+    if let Some(alias) = aliases.get(col) {
+        alias.clone()
+    } else if !internal_prefix.is_empty() {
+        format!("{internal_prefix}{col}")
+    } else {
+        col.to_string()
     }
-    Ok(())
 }
 
 /// Compute a deterministic hex-encoded hash of the given content using xxh3.
@@ -96,8 +115,6 @@ pub struct BuildMetadata {
     pub glob: String,
     /// ISO 8601 timestamp of when the build was produced.
     pub built_at: String,
-    /// Prefix applied to internal parquet column names.
-    pub internal_prefix: String,
 }
 
 impl BuildMetadata {
@@ -118,7 +135,6 @@ impl BuildMetadata {
         );
         m.insert("mdvs.glob".into(), self.glob.clone());
         m.insert("mdvs.built_at".into(), self.built_at.clone());
-        m.insert("mdvs.internal_prefix".into(), self.internal_prefix.clone());
         m
     }
 
@@ -138,12 +154,6 @@ impl BuildMetadata {
             },
             glob: meta.get("mdvs.glob")?.clone(),
             built_at: meta.get("mdvs.built_at")?.clone(),
-            // Missing key means pre-prefix parquet (old format) — use empty string
-            // so comparison with default "_" detects mismatch and requires --force
-            internal_prefix: meta
-                .get("mdvs.internal_prefix")
-                .cloned()
-                .unwrap_or_default(),
         })
     }
 }
@@ -247,11 +257,7 @@ fn build_array(values: &[Option<&Value>], ft: &FieldType) -> ArrayRef {
 ///
 /// Frontmatter values are packed into a single `data` Struct column whose
 /// child fields match `schema_fields`.
-pub fn build_files_batch(
-    schema_fields: &[(String, FieldType)],
-    files: &[FileRow],
-    prefix: &str,
-) -> RecordBatch {
+pub fn build_files_batch(schema_fields: &[(String, FieldType)], files: &[FileRow]) -> RecordBatch {
     let file_id_arr: StringArray = files.iter().map(|f| Some(f.file_id.as_str())).collect();
     let filename_arr: StringArray = files.iter().map(|f| Some(f.filename.as_str())).collect();
     let content_hash_arr: StringArray = files
@@ -290,12 +296,12 @@ pub fn build_files_batch(
     );
 
     let schema = Schema::new(vec![
-        Field::new(col(prefix, "file_id"), DataType::Utf8, false),
-        Field::new(col(prefix, "filename"), DataType::Utf8, false),
-        Field::new(col(prefix, "data"), data_struct_type, true),
-        Field::new(col(prefix, "content_hash"), DataType::Utf8, false),
+        Field::new(COL_FILE_ID, DataType::Utf8, false),
+        Field::new(COL_FILEPATH, DataType::Utf8, false),
+        Field::new(COL_DATA, data_struct_type, true),
+        Field::new(COL_CONTENT_HASH, DataType::Utf8, false),
         Field::new(
-            col(prefix, "built_at"),
+            COL_BUILT_AT,
             DataType::Timestamp(TimeUnit::Microsecond, None),
             false,
         ),
@@ -317,7 +323,7 @@ pub fn build_files_batch(
 /// Build an Arrow `RecordBatch` for `chunks.parquet` from chunk rows.
 ///
 /// Embeddings are stored as a `FixedSizeList<Float32>` with the given `dimension`.
-pub fn build_chunks_batch(chunks: &[ChunkRow], dimension: i32, prefix: &str) -> RecordBatch {
+pub fn build_chunks_batch(chunks: &[ChunkRow], dimension: i32) -> RecordBatch {
     let chunk_id_arr: StringArray = chunks.iter().map(|c| Some(c.chunk_id.as_str())).collect();
     let file_id_arr: StringArray = chunks.iter().map(|c| Some(c.file_id.as_str())).collect();
     let chunk_index_arr: Int32Array = chunks.iter().map(|c| Some(c.chunk_index)).collect();
@@ -337,13 +343,13 @@ pub fn build_chunks_batch(chunks: &[ChunkRow], dimension: i32, prefix: &str) -> 
     );
 
     let schema = Schema::new(vec![
-        Field::new(col(prefix, "chunk_id"), DataType::Utf8, false),
-        Field::new(col(prefix, "file_id"), DataType::Utf8, false),
-        Field::new(col(prefix, "chunk_index"), DataType::Int32, false),
-        Field::new(col(prefix, "start_line"), DataType::Int32, false),
-        Field::new(col(prefix, "end_line"), DataType::Int32, false),
+        Field::new(COL_CHUNK_ID, DataType::Utf8, false),
+        Field::new(COL_FILE_ID, DataType::Utf8, false),
+        Field::new(COL_CHUNK_INDEX, DataType::Int32, false),
+        Field::new(COL_START_LINE, DataType::Int32, false),
+        Field::new(COL_END_LINE, DataType::Int32, false),
         Field::new(
-            col(prefix, "embedding"),
+            COL_EMBEDDING,
             DataType::FixedSizeList(
                 Arc::new(Field::new("item", DataType::Float32, false)),
                 dimension,
@@ -565,7 +571,7 @@ mod tests {
             },
         ];
 
-        let batch = build_files_batch(&schema_fields, &files, "_");
+        let batch = build_files_batch(&schema_fields, &files);
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("files.parquet");
 
@@ -647,7 +653,7 @@ mod tests {
             },
         ];
 
-        let batch = build_files_batch(&schema_fields, &files, "_");
+        let batch = build_files_batch(&schema_fields, &files);
 
         let data = batch
             .column(2)
@@ -708,7 +714,7 @@ mod tests {
             },
         ];
 
-        let batch = build_files_batch(&schema_fields, &files, "_");
+        let batch = build_files_batch(&schema_fields, &files);
 
         let data = batch
             .column(2)
@@ -784,7 +790,7 @@ mod tests {
             },
         ];
 
-        let batch = build_chunks_batch(&chunks, dimension, "_");
+        let batch = build_chunks_batch(&chunks, dimension);
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("chunks.parquet");
 
@@ -828,7 +834,6 @@ mod tests {
                 content_hash: "h1".into(),
                 built_at: 1_700_000_000_000_000,
             }],
-            "_",
         );
         let batch2 = build_files_batch(
             &schema_fields,
@@ -839,7 +844,6 @@ mod tests {
                 content_hash: "h2".into(),
                 built_at: 1_700_000_000_000_000,
             }],
-            "_",
         );
 
         let tmp = tempfile::tempdir().unwrap();
@@ -885,7 +889,6 @@ mod tests {
                 content_hash: "h1".into(),
                 built_at: 1_700_000_000_000_000,
             }],
-            "_",
         );
         let batch2 = build_files_batch(
             &schema_fields,
@@ -896,7 +899,6 @@ mod tests {
                 content_hash: "h2".into(),
                 built_at: 1_700_000_000_000_000,
             }],
-            "_",
         );
 
         let tmp = tempfile::tempdir().unwrap();
@@ -950,7 +952,7 @@ mod tests {
             },
         ];
 
-        let batch = build_files_batch(&schema_fields, &files, "_");
+        let batch = build_files_batch(&schema_fields, &files);
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("files_proj.parquet");
 
@@ -967,8 +969,8 @@ mod tests {
         let batches: Vec<RecordBatch> = reader.map(|r| r.unwrap()).collect();
         let batch = &batches[0];
         assert_eq!(batch.num_columns(), 2);
-        assert_eq!(batch.schema().field(0).name(), "_filename");
-        assert_eq!(batch.schema().field(1).name(), "_content_hash");
+        assert_eq!(batch.schema().field(0).name(), "filepath");
+        assert_eq!(batch.schema().field(1).name(), "content_hash");
 
         let filenames = batch
             .column(0)
@@ -990,7 +992,7 @@ mod tests {
             built_at: 1_700_000_000_000_000,
         }];
 
-        let batch = build_files_batch(&schema_fields, &files, "_");
+        let batch = build_files_batch(&schema_fields, &files);
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("files_size.parquet");
 
@@ -1012,7 +1014,7 @@ mod tests {
             built_at: 1_700_000_000_000_000,
         }];
 
-        let batch = build_files_batch(&schema_fields, &files, "_");
+        let batch = build_files_batch(&schema_fields, &files);
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("files.parquet");
 
@@ -1027,7 +1029,6 @@ mod tests {
             },
             glob: "**".into(),
             built_at: "2026-03-02T12:00:00+00:00".into(),
-            internal_prefix: "_".into(),
         };
 
         write_parquet_with_metadata(&path, &batch, meta.to_hash_map()).unwrap();
@@ -1047,7 +1048,7 @@ mod tests {
             built_at: 1_700_000_000_000_000,
         }];
 
-        let batch = build_files_batch(&schema_fields, &files, "_");
+        let batch = build_files_batch(&schema_fields, &files);
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("files.parquet");
 
@@ -1062,7 +1063,6 @@ mod tests {
             },
             glob: "blog/**".into(),
             built_at: "2026-03-02T12:00:00+00:00".into(),
-            internal_prefix: "_".into(),
         };
 
         write_parquet_with_metadata(&path, &batch, meta.to_hash_map()).unwrap();
@@ -1082,7 +1082,7 @@ mod tests {
             built_at: 1_700_000_000_000_000,
         }];
 
-        let batch = build_files_batch(&schema_fields, &files, "_");
+        let batch = build_files_batch(&schema_fields, &files);
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("files.parquet");
 
@@ -1123,7 +1123,7 @@ mod tests {
             },
         ];
 
-        let batch = build_files_batch(&schema_fields, &files, "_");
+        let batch = build_files_batch(&schema_fields, &files);
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("files.parquet");
         write_parquet(&path, &batch).unwrap();
@@ -1173,7 +1173,7 @@ mod tests {
             },
         ];
 
-        let batch = build_chunks_batch(&original, 4, "_");
+        let batch = build_chunks_batch(&original, 4);
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("chunks.parquet");
         write_parquet(&path, &batch).unwrap();
@@ -1212,7 +1212,7 @@ mod tests {
             built_at: 1_700_000_000_000_000,
         }];
 
-        let batch = build_files_batch(&schema_fields, &files, "_");
+        let batch = build_files_batch(&schema_fields, &files);
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("files.parquet");
         write_parquet(&path, &batch).unwrap();
@@ -1232,14 +1232,14 @@ mod tests {
             built_at: 1_700_000_000_000_000,
         }];
 
-        let batch = build_files_batch(&schema_fields, &files, "_");
+        let batch = build_files_batch(&schema_fields, &files);
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("files.parquet");
         write_parquet(&path, &batch).unwrap();
 
         let batches = read_parquet(&path).unwrap();
         let data_col = batches[0]
-            .column_by_name("_data")
+            .column_by_name("data")
             .unwrap()
             .as_any()
             .downcast_ref::<datafusion::arrow::array::StructArray>()
@@ -1273,7 +1273,7 @@ mod tests {
             built_at: 1_700_000_000_000_000,
         }];
 
-        let batch = build_files_batch(&schema_fields, &files, "_");
+        let batch = build_files_batch(&schema_fields, &files);
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("files.parquet");
         write_parquet(&path, &batch).unwrap();

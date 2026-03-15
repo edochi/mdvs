@@ -1,4 +1,4 @@
-use crate::index::storage::col;
+use crate::index::storage::{resolve_view_name, COL_DATA, FILES_INTERNAL_COLUMNS};
 use datafusion::arrow::array::{Array, ArrayRef, FixedSizeListArray, Float32Array, Float64Array};
 use datafusion::arrow::datatypes::{DataType, Field};
 use datafusion::arrow::record_batch::RecordBatch;
@@ -101,6 +101,8 @@ impl ScalarUDFImpl for CosineSimilarityUDF {
                     return None;
                 }
                 let row = embeddings.value(i);
+                // Infallible: we wrote the embedding column as FixedSizeList<Float32>,
+                // so the inner array is always Float32Array.
                 let floats = row.as_any().downcast_ref::<Float32Array>().unwrap();
 
                 let mut dot = 0.0f32;
@@ -141,7 +143,8 @@ impl SearchContext {
         files_path: &Path,
         chunks_path: &Path,
         query_embedding: Vec<f32>,
-        prefix: &str,
+        internal_prefix: &str,
+        aliases: &std::collections::HashMap<String, String>,
     ) -> anyhow::Result<Self> {
         let ctx = SessionContext::new();
         let files_str = files_path
@@ -158,31 +161,74 @@ impl SearchContext {
         let udf = ScalarUDF::from(CosineSimilarityUDF::new(query_embedding));
         ctx.register_udf(udf);
 
-        // Create a view that promotes _data Struct children to top-level columns,
-        // so users can write `--where "draft = false"` instead of `_data['draft'] = false`.
-        let data_col = col(prefix, "data");
+        // Create a view that:
+        // 1. Aliases internal columns (applying prefix/aliases to avoid collisions)
+        // 2. Promotes data Struct children to top-level columns for bare --where names
         let files_table = ctx.table("files").await?;
         let schema = files_table.schema();
-        let mut projections = Vec::new();
+
+        // Collect frontmatter field names from the data Struct
+        let mut frontmatter_names: Vec<String> = Vec::new();
+        let mut frontmatter_projections = Vec::new();
         for field in schema.fields() {
-            if field.name() == &data_col {
+            if field.name() == COL_DATA {
                 if let DataType::Struct(children) = field.data_type() {
                     for child in children {
+                        frontmatter_names.push(child.name().clone());
                         let escaped_accessor = child.name().replace('\'', "''");
                         let escaped_alias = child.name().replace('"', "\"\"");
-                        projections.push(format!(
-                            "{data_col}['{escaped_accessor}'] AS \"{escaped_alias}\"",
+                        frontmatter_projections.push(format!(
+                            "{COL_DATA}['{escaped_accessor}'] AS \"{escaped_alias}\"",
                         ));
                     }
                 }
             }
         }
-        let extra = if projections.is_empty() {
-            String::new()
+
+        // Resolve view names for internal columns: alias > prefix > raw name
+        // Then check for collisions with frontmatter fields
+        let has_aliasing = !internal_prefix.is_empty() || !aliases.is_empty();
+        let mut column_projections = Vec::new();
+
+        for &col_name in FILES_INTERNAL_COLUMNS {
+            let view_name = resolve_view_name(col_name, internal_prefix, aliases);
+
+            if frontmatter_names.contains(&view_name) {
+                anyhow::bail!(
+                    "frontmatter field '{vn}' collides with internal column '{cn}' — resolve by:\n  \
+                     - setting [search].internal_prefix (e.g., \"_\") to prefix all internal columns\n  \
+                     - adding [search.aliases].{cn} = \"<alias>\" to rename just this column\n  \
+                     - renaming the frontmatter field",
+                    vn = view_name,
+                    cn = col_name,
+                );
+            }
+
+            if has_aliasing {
+                column_projections.push(format!("{col_name} AS \"{view_name}\""));
+            }
+        }
+
+        // When aliasing internal columns, we must build an explicit column list
+        // (SELECT * would include both raw and aliased names, causing ambiguity).
+        // When no aliasing, SELECT * is fine.
+        let view_sql = if has_aliasing {
+            // Explicit: aliased internal columns + data column + frontmatter promotions
+            column_projections.push(COL_DATA.to_string());
+            column_projections.extend(frontmatter_projections);
+            format!(
+                "CREATE VIEW files_v AS SELECT {} FROM files",
+                column_projections.join(", ")
+            )
         } else {
-            format!(", {}", projections.join(", "))
+            // Simple: SELECT * + frontmatter promotions
+            let extra = if frontmatter_projections.is_empty() {
+                String::new()
+            } else {
+                format!(", {}", frontmatter_projections.join(", "))
+            };
+            format!("CREATE VIEW files_v AS SELECT *{extra} FROM files")
         };
-        let view_sql = format!("CREATE VIEW files_v AS SELECT *{extra} FROM files");
         ctx.sql(&view_sql).await?;
 
         Ok(Self { ctx })
@@ -261,10 +307,10 @@ mod tests {
         let chunks_path = tmp.path().join("chunks.parquet");
 
         let (schema_fields, files) = test_files();
-        let files_batch = build_files_batch(&schema_fields, &files, "_");
+        let files_batch = build_files_batch(&schema_fields, &files);
         write_parquet(&files_path, &files_batch).unwrap();
 
-        let chunks_batch = build_chunks_batch(&test_chunks(), 4, "_");
+        let chunks_batch = build_chunks_batch(&test_chunks(), 4);
         write_parquet(&chunks_path, &chunks_batch).unwrap();
 
         TestIndex {
@@ -278,9 +324,15 @@ mod tests {
     async fn register_and_count() {
         let idx = setup_test_index();
         let query_vec = vec![1.0, 0.0, 0.0, 0.0];
-        let sc = SearchContext::new(&idx.files_path, &idx.chunks_path, query_vec, "_")
-            .await
-            .unwrap();
+        let sc = SearchContext::new(
+            &idx.files_path,
+            &idx.chunks_path,
+            query_vec,
+            "",
+            &std::collections::HashMap::new(),
+        )
+        .await
+        .unwrap();
 
         let batches = sc
             .query("SELECT COUNT(*) AS cnt FROM chunks")
@@ -299,14 +351,20 @@ mod tests {
     async fn chunk_level_search() {
         let idx = setup_test_index();
         let query_vec = vec![1.0, 0.0, 0.0, 0.0]; // rust-like
-        let sc = SearchContext::new(&idx.files_path, &idx.chunks_path, query_vec, "_")
-            .await
-            .unwrap();
+        let sc = SearchContext::new(
+            &idx.files_path,
+            &idx.chunks_path,
+            query_vec,
+            "",
+            &std::collections::HashMap::new(),
+        )
+        .await
+        .unwrap();
 
         let sql = "
-            SELECT f._filename, c._chunk_id, c._start_line, c._end_line,
-                   cosine_similarity(c._embedding) AS score
-            FROM chunks c JOIN files f ON c._file_id = f._file_id
+            SELECT f.filepath, c.chunk_id, c.start_line, c.end_line,
+                   cosine_similarity(c.embedding) AS score
+            FROM chunks c JOIN files f ON c.file_id = f.file_id
             ORDER BY score DESC
         ";
 
@@ -335,15 +393,21 @@ mod tests {
     async fn note_level_ranking() {
         let idx = setup_test_index();
         let query_vec = vec![1.0, 0.0, 0.0, 0.0];
-        let sc = SearchContext::new(&idx.files_path, &idx.chunks_path, query_vec, "_")
-            .await
-            .unwrap();
+        let sc = SearchContext::new(
+            &idx.files_path,
+            &idx.chunks_path,
+            query_vec,
+            "",
+            &std::collections::HashMap::new(),
+        )
+        .await
+        .unwrap();
 
         let sql = "
-            SELECT f._filename,
-                   MAX(cosine_similarity(c._embedding)) AS score
-            FROM chunks c JOIN files f ON c._file_id = f._file_id
-            GROUP BY f._file_id, f._filename
+            SELECT f.filepath,
+                   MAX(cosine_similarity(c.embedding)) AS score
+            FROM chunks c JOIN files f ON c.file_id = f.file_id
+            GROUP BY f.file_id, f.filepath
             ORDER BY score DESC
         ";
 
@@ -371,17 +435,23 @@ mod tests {
     async fn frontmatter_filter() {
         let idx = setup_test_index();
         let query_vec = vec![0.0, 0.0, 0.0, 1.0]; // cooking-like
-        let sc = SearchContext::new(&idx.files_path, &idx.chunks_path, query_vec, "_")
-            .await
-            .unwrap();
+        let sc = SearchContext::new(
+            &idx.files_path,
+            &idx.chunks_path,
+            query_vec,
+            "",
+            &std::collections::HashMap::new(),
+        )
+        .await
+        .unwrap();
 
         // Use bare field name via files_v view
         let sql = "
-            SELECT f._filename,
-                   MAX(cosine_similarity(c._embedding)) AS score
-            FROM chunks c JOIN files_v f ON c._file_id = f._file_id
+            SELECT f.filepath,
+                   MAX(cosine_similarity(c.embedding)) AS score
+            FROM chunks c JOIN files_v f ON c.file_id = f.file_id
             WHERE draft = false
-            GROUP BY f._file_id, f._filename
+            GROUP BY f.file_id, f.filepath
             ORDER BY score DESC
         ";
 
@@ -403,13 +473,19 @@ mod tests {
     async fn limit() {
         let idx = setup_test_index();
         let query_vec = vec![1.0, 0.0, 0.0, 0.0];
-        let sc = SearchContext::new(&idx.files_path, &idx.chunks_path, query_vec, "_")
-            .await
-            .unwrap();
+        let sc = SearchContext::new(
+            &idx.files_path,
+            &idx.chunks_path,
+            query_vec,
+            "",
+            &std::collections::HashMap::new(),
+        )
+        .await
+        .unwrap();
 
         let sql = "
-            SELECT f._filename, cosine_similarity(c._embedding) AS score
-            FROM chunks c JOIN files f ON c._file_id = f._file_id
+            SELECT f.filepath, cosine_similarity(c.embedding) AS score
+            FROM chunks c JOIN files f ON c.file_id = f.file_id
             ORDER BY score DESC
             LIMIT 2
         ";
@@ -423,12 +499,18 @@ mod tests {
     async fn zero_query_vector_returns_zero_scores() {
         let idx = setup_test_index();
         let query_vec = vec![0.0, 0.0, 0.0, 0.0]; // zero vector
-        let sc = SearchContext::new(&idx.files_path, &idx.chunks_path, query_vec, "_")
-            .await
-            .unwrap();
+        let sc = SearchContext::new(
+            &idx.files_path,
+            &idx.chunks_path,
+            query_vec,
+            "",
+            &std::collections::HashMap::new(),
+        )
+        .await
+        .unwrap();
 
         let sql = "
-            SELECT cosine_similarity(c._embedding) AS score
+            SELECT cosine_similarity(c.embedding) AS score
             FROM chunks c
         ";
 
@@ -450,14 +532,20 @@ mod tests {
     async fn limit_exceeds_chunk_count() {
         let idx = setup_test_index();
         let query_vec = vec![1.0, 0.0, 0.0, 0.0];
-        let sc = SearchContext::new(&idx.files_path, &idx.chunks_path, query_vec, "_")
-            .await
-            .unwrap();
+        let sc = SearchContext::new(
+            &idx.files_path,
+            &idx.chunks_path,
+            query_vec,
+            "",
+            &std::collections::HashMap::new(),
+        )
+        .await
+        .unwrap();
 
         // LIMIT 1000 but only 6 chunks exist
         let sql = "
-            SELECT f._filename, cosine_similarity(c._embedding) AS score
-            FROM chunks c JOIN files f ON c._file_id = f._file_id
+            SELECT f.filepath, cosine_similarity(c.embedding) AS score
+            FROM chunks c JOIN files f ON c.file_id = f.file_id
             ORDER BY score DESC
             LIMIT 1000
         ";
@@ -492,15 +580,21 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let files_path = tmp.path().join("files.parquet");
         let chunks_path = tmp.path().join("chunks.parquet");
-        let files_batch = build_files_batch(&schema_fields, &files, "_");
+        let files_batch = build_files_batch(&schema_fields, &files);
         write_parquet(&files_path, &files_batch).unwrap();
-        let chunks_batch = build_chunks_batch(&chunks, 4, "_");
+        let chunks_batch = build_chunks_batch(&chunks, 4);
         write_parquet(&chunks_path, &chunks_batch).unwrap();
 
         let query_vec = vec![1.0, 0.0, 0.0, 0.0];
-        let sc = SearchContext::new(&files_path, &chunks_path, query_vec, "_")
-            .await
-            .unwrap();
+        let sc = SearchContext::new(
+            &files_path,
+            &chunks_path,
+            query_vec,
+            "",
+            &std::collections::HashMap::new(),
+        )
+        .await
+        .unwrap();
 
         // The view should properly escape the single quote in the field name
         let sql = "
@@ -544,15 +638,21 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let files_path = tmp.path().join("files.parquet");
         let chunks_path = tmp.path().join("chunks.parquet");
-        let files_batch = build_files_batch(&schema_fields, &files, "_");
+        let files_batch = build_files_batch(&schema_fields, &files);
         write_parquet(&files_path, &files_batch).unwrap();
-        let chunks_batch = build_chunks_batch(&chunks, 4, "_");
+        let chunks_batch = build_chunks_batch(&chunks, 4);
         write_parquet(&chunks_path, &chunks_batch).unwrap();
 
         let query_vec = vec![1.0, 0.0, 0.0, 0.0];
-        let sc = SearchContext::new(&files_path, &chunks_path, query_vec, "_")
-            .await
-            .unwrap();
+        let sc = SearchContext::new(
+            &files_path,
+            &chunks_path,
+            query_vec,
+            "",
+            &std::collections::HashMap::new(),
+        )
+        .await
+        .unwrap();
 
         // The view should properly escape the double quote in the alias
         // To reference it in SQL, we also double the quote
@@ -637,23 +737,29 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let files_path = tmp.path().join("files.parquet");
         let chunks_path = tmp.path().join("chunks.parquet");
-        let files_batch = build_files_batch(&schema_fields, &files, "_");
+        let files_batch = build_files_batch(&schema_fields, &files);
         write_parquet(&files_path, &files_batch).unwrap();
-        let chunks_batch = build_chunks_batch(&chunks, 4, "_");
+        let chunks_batch = build_chunks_batch(&chunks, 4);
         write_parquet(&chunks_path, &chunks_batch).unwrap();
 
         let query_vec = vec![1.0, 0.0, 0.0, 0.0];
-        let sc = SearchContext::new(&files_path, &chunks_path, query_vec, "_")
-            .await
-            .unwrap();
+        let sc = SearchContext::new(
+            &files_path,
+            &chunks_path,
+            query_vec,
+            "",
+            &std::collections::HashMap::new(),
+        )
+        .await
+        .unwrap();
 
         // array_has through the files_v view — should match f1 and f2
         let sql = "
-            SELECT f._filename
-            FROM chunks c JOIN files_v f ON c._file_id = f._file_id
+            SELECT f.filepath
+            FROM chunks c JOIN files_v f ON c.file_id = f.file_id
             WHERE array_has(tags, 'calibration')
-            GROUP BY f._file_id, f._filename
-            ORDER BY f._filename
+            GROUP BY f.file_id, f.filepath
+            ORDER BY f.filepath
         ";
         let batches = sc.query(sql).await.unwrap();
         let batch = &batches[0];
@@ -668,10 +774,10 @@ mod tests {
 
         // Multiple array_has — should match only f1
         let sql = "
-            SELECT f._filename
-            FROM chunks c JOIN files_v f ON c._file_id = f._file_id
+            SELECT f.filepath
+            FROM chunks c JOIN files_v f ON c.file_id = f.file_id
             WHERE array_has(tags, 'calibration') AND array_has(tags, 'SPR-A1')
-            GROUP BY f._file_id, f._filename
+            GROUP BY f.file_id, f.filepath
         ";
         let batches = sc.query(sql).await.unwrap();
         let batch = &batches[0];
@@ -685,20 +791,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn frontmatter_filter_backward_compat() {
+    async fn frontmatter_filter_bracket_syntax() {
         let idx = setup_test_index();
         let query_vec = vec![0.0, 0.0, 0.0, 1.0];
-        let sc = SearchContext::new(&idx.files_path, &idx.chunks_path, query_vec, "_")
-            .await
-            .unwrap();
+        let sc = SearchContext::new(
+            &idx.files_path,
+            &idx.chunks_path,
+            query_vec,
+            "",
+            &std::collections::HashMap::new(),
+        )
+        .await
+        .unwrap();
 
-        // Old bracket syntax still works via files_v (SELECT * includes _data)
+        // Bracket syntax works via files_v (SELECT * includes data Struct)
         let sql = "
-            SELECT f._filename,
-                   MAX(cosine_similarity(c._embedding)) AS score
-            FROM chunks c JOIN files_v f ON c._file_id = f._file_id
-            WHERE f._data['draft'] = false
-            GROUP BY f._file_id, f._filename
+            SELECT f.filepath,
+                   MAX(cosine_similarity(c.embedding)) AS score
+            FROM chunks c JOIN files_v f ON c.file_id = f.file_id
+            WHERE f.data['draft'] = false
+            GROUP BY f.file_id, f.filepath
             ORDER BY score DESC
         ";
 
@@ -712,5 +824,143 @@ mod tests {
             .unwrap();
         let names: Vec<&str> = (0..filenames.len()).map(|i| filenames.value(i)).collect();
         assert!(!names.contains(&"recipes/cooking.md"));
+    }
+
+    #[tokio::test]
+    async fn collision_detected_when_frontmatter_field_matches_internal_column() {
+        use crate::index::storage::{build_chunks_batch, build_files_batch, write_parquet};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let files_path = tmp.path().join("files.parquet");
+        let chunks_path = tmp.path().join("chunks.parquet");
+
+        // Create a file with a frontmatter field called "filepath" — same as internal column
+        let schema_fields = vec![("filepath".into(), FieldType::String)];
+        let files = vec![FileRow {
+            file_id: "f1".into(),
+            filename: "test.md".into(),
+            frontmatter: Some(serde_json::json!({"filepath": "custom/path"})),
+            content_hash: "h1".into(),
+            built_at: 1_700_000_000_000_000,
+        }];
+        let chunks = vec![ChunkRow {
+            chunk_id: "c1".into(),
+            file_id: "f1".into(),
+            chunk_index: 0,
+            start_line: 1,
+            end_line: 1,
+            embedding: vec![1.0, 0.0, 0.0, 0.0],
+        }];
+
+        let files_batch = build_files_batch(&schema_fields, &files);
+        write_parquet(&files_path, &files_batch).unwrap();
+        let chunks_batch = build_chunks_batch(&chunks, 4);
+        write_parquet(&chunks_path, &chunks_batch).unwrap();
+
+        let query_vec = vec![1.0, 0.0, 0.0, 0.0];
+        let result = SearchContext::new(
+            &files_path,
+            &chunks_path,
+            query_vec,
+            "",
+            &std::collections::HashMap::new(),
+        )
+        .await;
+        assert!(result.is_err(), "expected collision error");
+        let err = result.err().unwrap().to_string();
+        assert!(
+            err.contains("collides with internal column"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn collision_resolved_with_prefix() {
+        use crate::index::storage::{build_chunks_batch, build_files_batch, write_parquet};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let files_path = tmp.path().join("files.parquet");
+        let chunks_path = tmp.path().join("chunks.parquet");
+
+        let schema_fields = vec![("filepath".into(), FieldType::String)];
+        let files = vec![FileRow {
+            file_id: "f1".into(),
+            filename: "test.md".into(),
+            frontmatter: Some(serde_json::json!({"filepath": "custom/path"})),
+            content_hash: "h1".into(),
+            built_at: 1_700_000_000_000_000,
+        }];
+        let chunks = vec![ChunkRow {
+            chunk_id: "c1".into(),
+            file_id: "f1".into(),
+            chunk_index: 0,
+            start_line: 1,
+            end_line: 1,
+            embedding: vec![1.0, 0.0, 0.0, 0.0],
+        }];
+
+        let files_batch = build_files_batch(&schema_fields, &files);
+        write_parquet(&files_path, &files_batch).unwrap();
+        let chunks_batch = build_chunks_batch(&chunks, 4);
+        write_parquet(&chunks_path, &chunks_batch).unwrap();
+
+        // Prefix "_" resolves collision: internal filepath → _filepath
+        let query_vec = vec![1.0, 0.0, 0.0, 0.0];
+        let result = SearchContext::new(
+            &files_path,
+            &chunks_path,
+            query_vec,
+            "_",
+            &std::collections::HashMap::new(),
+        )
+        .await;
+        assert!(
+            result.is_ok(),
+            "prefix should resolve collision: {:?}",
+            result.err()
+        );
+    }
+
+    #[tokio::test]
+    async fn collision_resolved_with_alias() {
+        use crate::index::storage::{build_chunks_batch, build_files_batch, write_parquet};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let files_path = tmp.path().join("files.parquet");
+        let chunks_path = tmp.path().join("chunks.parquet");
+
+        let schema_fields = vec![("filepath".into(), FieldType::String)];
+        let files = vec![FileRow {
+            file_id: "f1".into(),
+            filename: "test.md".into(),
+            frontmatter: Some(serde_json::json!({"filepath": "custom/path"})),
+            content_hash: "h1".into(),
+            built_at: 1_700_000_000_000_000,
+        }];
+        let chunks = vec![ChunkRow {
+            chunk_id: "c1".into(),
+            file_id: "f1".into(),
+            chunk_index: 0,
+            start_line: 1,
+            end_line: 1,
+            embedding: vec![1.0, 0.0, 0.0, 0.0],
+        }];
+
+        let files_batch = build_files_batch(&schema_fields, &files);
+        write_parquet(&files_path, &files_batch).unwrap();
+        let chunks_batch = build_chunks_batch(&chunks, 4);
+        write_parquet(&chunks_path, &chunks_batch).unwrap();
+
+        // Alias resolves collision: internal filepath → "path"
+        let query_vec = vec![1.0, 0.0, 0.0, 0.0];
+        let mut aliases = std::collections::HashMap::new();
+        aliases.insert("filepath".to_string(), "path".to_string());
+        let result = SearchContext::new(&files_path, &chunks_path, query_vec, "", &aliases).await;
+        assert!(
+            result.is_ok(),
+            "alias should resolve collision: {:?}",
+            result.err()
+        );
     }
 }

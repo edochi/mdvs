@@ -1,8 +1,9 @@
 use crate::discover::field_type::FieldType;
 use crate::index::storage::{
-    build_chunks_batch, build_files_batch, col, read_build_metadata, read_chunk_rows,
-    read_file_index, read_parquet, write_parquet, write_parquet_with_metadata, BuildMetadata,
-    ChunkRow, FileIndexEntry, FileRow,
+    build_chunks_batch, build_files_batch, read_build_metadata, read_chunk_rows, read_file_index,
+    read_parquet, resolve_view_name, write_parquet, write_parquet_with_metadata, BuildMetadata,
+    ChunkRow, FileIndexEntry, FileRow, COL_EMBEDDING, COL_END_LINE, COL_FILEPATH, COL_FILE_ID,
+    COL_START_LINE,
 };
 use crate::search::SearchContext;
 use anyhow::Context;
@@ -42,10 +43,9 @@ pub(crate) enum Backend {
 }
 
 impl Backend {
-    pub(crate) fn parquet(root: &Path, prefix: &str) -> Self {
+    pub(crate) fn parquet(root: &Path) -> Self {
         Backend::Parquet(ParquetBackend {
             root: root.to_path_buf(),
-            prefix: prefix.to_string(),
         })
     }
 
@@ -96,9 +96,20 @@ impl Backend {
         query_embedding: Vec<f32>,
         where_clause: Option<&str>,
         limit: usize,
+        internal_prefix: &str,
+        aliases: &std::collections::HashMap<String, String>,
     ) -> anyhow::Result<Vec<SearchHit>> {
         match self {
-            Backend::Parquet(b) => b.search(query_embedding, where_clause, limit).await,
+            Backend::Parquet(b) => {
+                b.search(
+                    query_embedding,
+                    where_clause,
+                    limit,
+                    internal_prefix,
+                    aliases,
+                )
+                .await
+            }
         }
     }
 
@@ -125,7 +136,6 @@ impl Backend {
 
 pub(crate) struct ParquetBackend {
     root: PathBuf,
-    prefix: String,
 }
 
 impl ParquetBackend {
@@ -150,14 +160,14 @@ impl ParquetBackend {
     ) -> anyhow::Result<()> {
         std::fs::create_dir_all(self.mdvs_dir())?;
 
-        let files_batch = build_files_batch(schema_fields, files, &self.prefix);
+        let files_batch = build_files_batch(schema_fields, files);
         write_parquet_with_metadata(&self.files_parquet(), &files_batch, metadata.to_hash_map())?;
 
         let dimension = chunks
             .first()
             .map(|c| c.embedding.len() as i32)
             .unwrap_or(0);
-        let chunks_batch = build_chunks_batch(chunks, dimension, &self.prefix);
+        let chunks_batch = build_chunks_batch(chunks, dimension);
         write_parquet(&self.chunks_parquet(), &chunks_batch)?;
 
         Ok(())
@@ -191,10 +201,7 @@ impl ParquetBackend {
         }
         let batches = read_parquet(&self.chunks_parquet())?;
         if let Some(batch) = batches.first() {
-            if let Ok(field) = batch
-                .schema()
-                .field_with_name(&col(&self.prefix, "embedding"))
-            {
+            if let Ok(field) = batch.schema().field_with_name(COL_EMBEDDING) {
                 if let DataType::FixedSizeList(_, dim) = field.data_type() {
                     return Ok(Some(*dim));
                 }
@@ -208,12 +215,15 @@ impl ParquetBackend {
         query_embedding: Vec<f32>,
         where_clause: Option<&str>,
         limit: usize,
+        internal_prefix: &str,
+        aliases: &std::collections::HashMap<String, String>,
     ) -> anyhow::Result<Vec<SearchHit>> {
         let sc = SearchContext::new(
             &self.files_parquet(),
             &self.chunks_parquet(),
             query_embedding,
-            &self.prefix,
+            internal_prefix,
+            aliases,
         )
         .await?;
 
@@ -221,9 +231,14 @@ impl ParquetBackend {
             Some(w) => format!("AND {w}"),
             None => String::new(),
         };
-        let p = &self.prefix;
+
+        // Resolve view names for internal columns used in the SQL JOIN.
+        // Chunks table uses raw parquet names; files_v uses aliased names.
+        let view_file_id = resolve_view_name(COL_FILE_ID, internal_prefix, aliases);
+        let view_filepath = resolve_view_name(COL_FILEPATH, internal_prefix, aliases);
+
         let sql = format!(
-            "SELECT f.{fn_col}, sub.score, sub.{sl_col}, sub.{el_col}
+            "SELECT f.\"{view_filepath}\", sub.score, sub.{sl_col}, sub.{el_col}
              FROM (
                  SELECT c.{c_fid},
                         cosine_similarity(c.{emb_col}) AS score,
@@ -235,17 +250,15 @@ impl ParquetBackend {
                         ) AS rn
                  FROM chunks c
              ) sub
-             JOIN files_v f ON sub.{c_fid} = f.{f_fid}
+             JOIN files_v f ON sub.{c_fid} = f.\"{view_file_id}\"
              WHERE sub.rn = 1
              {where_part}
              ORDER BY sub.score DESC
              LIMIT {limit}",
-            fn_col = col(p, "filename"),
-            emb_col = col(p, "embedding"),
-            c_fid = col(p, "file_id"),
-            f_fid = col(p, "file_id"),
-            sl_col = col(p, "start_line"),
-            el_col = col(p, "end_line"),
+            emb_col = COL_EMBEDDING,
+            c_fid = COL_FILE_ID,
+            sl_col = COL_START_LINE,
+            el_col = COL_END_LINE,
         );
 
         let batches = sc.query(&sql).await?;
@@ -386,14 +399,13 @@ mod tests {
             },
             glob: "**".into(),
             built_at: "2026-03-02T12:00:00+00:00".into(),
-            internal_prefix: "_".into(),
         }
     }
 
     #[test]
     fn write_and_read_metadata() {
         let tmp = tempfile::tempdir().unwrap();
-        let backend = Backend::parquet(tmp.path(), "_");
+        let backend = Backend::parquet(tmp.path());
 
         backend
             .write_index(
@@ -411,7 +423,7 @@ mod tests {
     #[test]
     fn write_and_stats() {
         let tmp = tempfile::tempdir().unwrap();
-        let backend = Backend::parquet(tmp.path(), "_");
+        let backend = Backend::parquet(tmp.path());
 
         backend
             .write_index(
@@ -430,7 +442,7 @@ mod tests {
     #[test]
     fn exists_false_then_true() {
         let tmp = tempfile::tempdir().unwrap();
-        let backend = Backend::parquet(tmp.path(), "_");
+        let backend = Backend::parquet(tmp.path());
 
         assert!(!backend.exists());
 
@@ -449,7 +461,7 @@ mod tests {
     #[test]
     fn clean_removes_index() {
         let tmp = tempfile::tempdir().unwrap();
-        let backend = Backend::parquet(tmp.path(), "_");
+        let backend = Backend::parquet(tmp.path());
 
         backend
             .write_index(
@@ -469,7 +481,7 @@ mod tests {
     #[test]
     fn embedding_dimension_correct() {
         let tmp = tempfile::tempdir().unwrap();
-        let backend = Backend::parquet(tmp.path(), "_");
+        let backend = Backend::parquet(tmp.path());
 
         assert_eq!(backend.embedding_dimension().unwrap(), None);
 
@@ -488,7 +500,7 @@ mod tests {
     #[tokio::test]
     async fn search_returns_hits() {
         let tmp = tempfile::tempdir().unwrap();
-        let backend = Backend::parquet(tmp.path(), "_");
+        let backend = Backend::parquet(tmp.path());
 
         backend
             .write_index(
@@ -501,7 +513,13 @@ mod tests {
 
         // Query vector close to rust.md's embedding
         let hits = backend
-            .search(vec![1.0, 0.0, 0.0, 0.0], None, 10)
+            .search(
+                vec![1.0, 0.0, 0.0, 0.0],
+                None,
+                10,
+                "",
+                &std::collections::HashMap::new(),
+            )
             .await
             .unwrap();
 

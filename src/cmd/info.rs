@@ -285,7 +285,7 @@ pub fn run(path: &Path, verbose: bool) -> InfoCommandOutput {
     };
 
     let (read_index_step, index_data) = match &config {
-        Some(cfg) => run_read_index(path, cfg.internal_prefix()),
+        Some(_) => run_read_index(path),
         None => (ProcessingStepResult::Skipped, None),
     };
 
@@ -440,8 +440,11 @@ mod tests {
             chunking: Some(ChunkingConfig {
                 max_chunk_size: 1024,
             }),
-            search: Some(SearchConfig { default_limit: 10 }),
-            storage: None,
+            search: Some(SearchConfig {
+                default_limit: 10,
+                internal_prefix: String::new(),
+                aliases: std::collections::HashMap::new(),
+            }),
         };
         config.write(&dir.join("mdvs.toml")).unwrap();
     }
@@ -555,7 +558,6 @@ mod tests {
             embedding_model: None,
             chunking: None,
             search: None,
-            storage: None,
         };
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
 

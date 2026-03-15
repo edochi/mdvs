@@ -540,7 +540,6 @@ mod tests {
             embedding_model: None,
             chunking: None,
             search: None,
-            storage: None,
         };
         config.write(&dir.join("mdvs.toml")).unwrap();
     }
@@ -800,7 +799,6 @@ mod tests {
             embedding_model: None,
             chunking: None,
             search: None,
-            storage: None,
         };
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
 

@@ -5,7 +5,6 @@ use std::path::Path;
 use std::time::Instant;
 
 use crate::discover::infer::InferredSchema;
-use crate::index::storage::check_reserved_names;
 use crate::pipeline::{
     ErrorKind, ProcessingStep, ProcessingStepError, ProcessingStepResult, StepOutput,
 };
@@ -51,18 +50,6 @@ pub fn run_write_config(
         max_chunk_size,
         auto_build,
     );
-
-    // Validate field names don't collide with internal column names
-    let field_names: Vec<String> = schema.fields.iter().map(|f| f.name.clone()).collect();
-    if let Err(e) = check_reserved_names(&field_names, toml_doc.internal_prefix()) {
-        return (
-            ProcessingStepResult::Failed(ProcessingStepError {
-                kind: ErrorKind::User,
-                message: e.to_string(),
-            }),
-            None,
-        );
-    }
 
     if let Err(e) = toml_doc.write(&config_path) {
         return (

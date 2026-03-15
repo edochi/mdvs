@@ -131,7 +131,7 @@ mdvs search "topic" path/to/vault --where "status = 'active'"
 mdvs search "topic" path/to/vault --where "array_has(tags, 'research')"
 
 # Notes in a specific directory
-mdvs search "topic" path/to/vault --where "_filename LIKE 'projects/%'"
+mdvs search "topic" path/to/vault --where "filepath LIKE 'projects/%'"
 ```
 
 See the [Search Guide](../search-guide.md) for the full `--where` reference.

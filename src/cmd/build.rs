@@ -511,9 +511,47 @@ pub async fn run(
         }
     };
 
-    let embedding = config.embedding_model.as_ref().unwrap();
-    let chunking = config.chunking.as_ref().unwrap();
-    let backend = Backend::parquet(path, config.internal_prefix());
+    let embedding = match config.embedding_model.as_ref() {
+        Some(e) => e,
+        None => {
+            return BuildCommandOutput {
+                process: BuildProcessOutput {
+                    read_config: read_config_step,
+                    scan: scan_step,
+                    validate: validate_step,
+                    classify: ProcessingStepResult::Failed(ProcessingStepError {
+                        kind: ErrorKind::User,
+                        message: "missing [embedding_model] in mdvs.toml".to_string(),
+                    }),
+                    load_model: ProcessingStepResult::Skipped,
+                    embed_files: ProcessingStepResult::Skipped,
+                    write_index: ProcessingStepResult::Skipped,
+                },
+                result: None,
+            };
+        }
+    };
+    let chunking = match config.chunking.as_ref() {
+        Some(c) => c,
+        None => {
+            return BuildCommandOutput {
+                process: BuildProcessOutput {
+                    read_config: read_config_step,
+                    scan: scan_step,
+                    validate: validate_step,
+                    classify: ProcessingStepResult::Failed(ProcessingStepError {
+                        kind: ErrorKind::User,
+                        message: "missing [chunking] in mdvs.toml".to_string(),
+                    }),
+                    load_model: ProcessingStepResult::Skipped,
+                    embed_files: ProcessingStepResult::Skipped,
+                    write_index: ProcessingStepResult::Skipped,
+                },
+                result: None,
+            };
+        }
+    };
+    let backend = Backend::parquet(path);
 
     // Config change detection (pre-check for classify step)
     let config_change_error = detect_config_changes(&backend, embedding, chunking, &config, force);
@@ -666,7 +704,27 @@ pub async fn run(
             None,
         )
     } else if needs_embedding {
-        let emb = embedder.as_ref().unwrap();
+        // Safe: we returned early above if needs_embedding && embedder.is_none()
+        let emb = match embedder.as_ref() {
+            Some(e) => e,
+            None => {
+                return BuildCommandOutput {
+                    process: BuildProcessOutput {
+                        read_config: read_config_step,
+                        scan: scan_step,
+                        validate: validate_step,
+                        classify: classify_step,
+                        load_model: load_model_step,
+                        embed_files: ProcessingStepResult::Failed(ProcessingStepError {
+                            kind: ErrorKind::Application,
+                            message: "embedder not loaded".to_string(),
+                        }),
+                        write_index: ProcessingStepResult::Skipped,
+                    },
+                    result: None,
+                };
+            }
+        };
         run_embed_files(&classify_data.needs_embedding, emb, max_chunk_size).await
     } else {
         (ProcessingStepResult::Skipped, None)
@@ -723,7 +781,6 @@ pub async fn run(
         chunking: chunking.clone(),
         glob: config.scan.glob.clone(),
         built_at: chrono::Utc::now().to_rfc3339(),
-        internal_prefix: config.internal_prefix().to_string(),
     };
 
     let write_index_step = run_write_index(
@@ -849,14 +906,19 @@ fn mutate_config(
                         .to_string(),
                 );
             }
-            ch.max_chunk_size = set_chunk_size.unwrap();
+            // Safe: match guard ensures set_chunk_size.is_some()
+            ch.max_chunk_size = set_chunk_size.expect("guarded by is_some()");
             config_changed = true;
         }
         Some(_) => {}
     }
 
     if config.search.is_none() {
-        config.search = Some(SearchConfig { default_limit: 10 });
+        config.search = Some(SearchConfig {
+            default_limit: 10,
+            internal_prefix: String::new(),
+            aliases: std::collections::HashMap::new(),
+        });
         config_changed = true;
     }
 
@@ -875,7 +937,7 @@ pub(crate) fn detect_config_changes(
     backend: &Backend,
     embedding: &EmbeddingModelConfig,
     chunking: &ChunkingConfig,
-    config: &MdvsToml,
+    _config: &MdvsToml,
     force: bool,
 ) -> Option<String> {
     if force {
@@ -901,13 +963,6 @@ pub(crate) fn detect_config_changes(
         mismatches.push(format!(
             "chunk_size: {} -> {}",
             meta.chunking.max_chunk_size, chunking.max_chunk_size,
-        ));
-    }
-    if meta.internal_prefix != config.internal_prefix() {
-        mismatches.push(format!(
-            "internal_prefix: '{}' -> '{}'",
-            meta.internal_prefix,
-            config.internal_prefix(),
         ));
     }
 
@@ -1009,7 +1064,7 @@ mod tests {
 
         let embedding_field = chunk_batches[0]
             .schema()
-            .field_with_name("_embedding")
+            .field_with_name("embedding")
             .unwrap()
             .clone();
         if let DataType::FixedSizeList(_, dim) = embedding_field.data_type() {
@@ -1060,7 +1115,7 @@ mod tests {
             end_line: 1,
             embedding: vec![0.1, 0.2], // dim=2
         }];
-        let bad_batch = build_chunks_batch(&bad_chunks, 2, "_");
+        let bad_batch = build_chunks_batch(&bad_chunks, 2);
         write_parquet(&tmp.path().join(".mdvs/chunks.parquet"), &bad_batch).unwrap();
 
         // Add a new file so model gets loaded (incremental detects new file)
@@ -1113,7 +1168,7 @@ mod tests {
             end_line: 1,
             embedding: vec![0.1, 0.2], // dim=2
         }];
-        let bad_batch = build_chunks_batch(&bad_chunks, 2, "_");
+        let bad_batch = build_chunks_batch(&bad_chunks, 2);
         write_parquet(&tmp.path().join(".mdvs/chunks.parquet"), &bad_batch).unwrap();
 
         // Build with --force should succeed despite dimension mismatch
@@ -1366,8 +1421,11 @@ mod tests {
             chunking: Some(ChunkingConfig {
                 max_chunk_size: 1024,
             }),
-            search: Some(SearchConfig { default_limit: 10 }),
-            storage: None,
+            search: Some(SearchConfig {
+                default_limit: 10,
+                internal_prefix: String::new(),
+                aliases: HashMap::new(),
+            }),
         };
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
 
@@ -1431,8 +1489,11 @@ mod tests {
             chunking: Some(ChunkingConfig {
                 max_chunk_size: 1024,
             }),
-            search: Some(SearchConfig { default_limit: 10 }),
-            storage: None,
+            search: Some(SearchConfig {
+                default_limit: 10,
+                internal_prefix: String::new(),
+                aliases: HashMap::new(),
+            }),
         };
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
 
@@ -1479,8 +1540,11 @@ mod tests {
             chunking: Some(ChunkingConfig {
                 max_chunk_size: 1024,
             }),
-            search: Some(SearchConfig { default_limit: 10 }),
-            storage: None,
+            search: Some(SearchConfig {
+                default_limit: 10,
+                internal_prefix: String::new(),
+                aliases: HashMap::new(),
+            }),
         };
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
 
