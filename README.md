@@ -1,9 +1,14 @@
 # mdvs — Markdown Validation & Search
 
+[![CI](https://github.com/edochi/mdvs/actions/workflows/ci.yml/badge.svg)](https://github.com/edochi/mdvs/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-2021-orange.svg)](https://www.rust-lang.org/)
+[![Docs](https://img.shields.io/badge/docs-mdBook-green.svg)](https://edochi.github.io/mdvs/)
+
 <div align="center">
-  
+
   :x: A Document Database
-  
+
   :white_check_mark: A Database for Documents
 
 </div>
