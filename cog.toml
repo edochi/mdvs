@@ -3,7 +3,10 @@ ignore_merge_commits = false
 branch_whitelist = []
 tag_prefix = "v"
 
-pre_bump_hooks = []
+pre_bump_hooks = [
+    """sed -i 's/^version = ".*"/version = "{{version}}"/' Cargo.toml""",
+    "git add Cargo.toml",
+]
 post_bump_hooks = [
     "git push origin",
     "git push origin {{version_tag}}"
