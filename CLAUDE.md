@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-mdvs (Markdown Validation & Search) is a Rust CLI that treats markdown directories as databases — schema inference, frontmatter validation, and semantic search with SQL filtering. Single binary, no external services, instant embeddings via Model2Vec static models, DataFusion + Parquet for storage and search. Design specs live in `docs/spec/`.
+mdvs (Markdown Validation & Search) is a Rust CLI that treats markdown directories as databases — schema inference, frontmatter validation, and semantic search with SQL filtering. Single binary, no external services, instant embeddings via Model2Vec static models, DataFusion + Parquet for storage and search. Design specs live in `docs/spec/`, user-facing documentation in `book/`.
 
 ## Git Rules
 
@@ -43,13 +43,13 @@ Single crate at the repo root. Modules grouped by pipeline stage:
 
 - **`src/discover/`** — `scan.rs` (walk + parse YAML), `field_type.rs` (FieldType enum + widening), `infer.rs` (DirectoryTree + GlobMap + InferredSchema)
 - **`src/schema/`** — `shared.rs` (common types), `config.rs` (mdvs.toml)
-- **`src/index/`** — `chunk.rs` (semantic chunking), `embed.rs` (model2vec embeddings), `storage.rs` (Parquet I/O)
-- **`src/search.rs`** — cosine distance + DataFusion query
+- **`src/index/`** — `chunk.rs` (semantic chunking), `embed.rs` (model2vec embeddings), `storage.rs` (Parquet I/O, column constants, `resolve_view_name()`)
+- **`src/search.rs`** — cosine similarity UDF + DataFusion query, `SearchContext` with collision detection
 - **`src/cmd/`** — `init`, `build`, `search`, `check`, `update`, `clean`, `info`
 
 ### Data Pipeline
 
-`.md` files → frontmatter extraction (`gray_matter`) → semantic chunking (`text-splitter` MarkdownSplitter) → plain text extraction (`pulldown-cmark`) → embeddings (`model2vec-rs`) → Parquet storage (`files.parquet` + `chunks.parquet`) → brute-force cosine distance in Rust → DataFusion SQL for JOIN/aggregate/filter
+`.md` files → frontmatter extraction (`gray_matter`) → semantic chunking (`text-splitter` MarkdownSplitter) → plain text extraction (`pulldown-cmark`) → embeddings (`model2vec-rs`) → Parquet storage (`files.parquet` + `chunks.parquet`) → brute-force cosine similarity in Rust → DataFusion SQL for JOIN/aggregate/filter
 
 ### Key Design Decisions
 
@@ -62,13 +62,16 @@ Single crate at the repo root. Modules grouped by pipeline stage:
 - `--where` SQL clauses for metadata filtering (no custom filter syntax)
 - `--output` global flag (`text`/`json`) via `CommandOutput` trait
 - All text processing and vector math in Rust; DataFusion handles SQL query execution
+- Config validation on load: three invariants enforced (ignore/field mutual exclusion, valid glob format, required ⊆ allowed)
 
 ### Storage
 
 - Two artifacts: `mdvs.toml` (committed) + `.mdvs/` (gitignored)
-- `files.parquet`: file_id, filename, frontmatter as `data` Struct column, content_hash, built_at
-- `chunks.parquet`: chunk_id, file_id FK, chunk_index, start_line, end_line, embedding FixedSizeList<Float32>
+- `files.parquet`: `file_id`, `filepath`, `data` (frontmatter Struct), `content_hash`, `built_at`
+- `chunks.parquet`: `chunk_id`, `file_id` FK, `chunk_index`, `start_line`, `end_line`, `embedding` FixedSizeList<Float32>
+- Column names are fixed constants (`COL_FILE_ID`, `COL_FILEPATH`, etc.) — no prefix in storage
 - Build metadata (model, revision, chunk_size, glob, built_at) stored as parquet native key-value metadata
+- Internal column prefix/aliases applied at search view layer only (`[search].internal_prefix`, `[search.aliases]`)
 
 ### Configuration
 
@@ -76,6 +79,7 @@ Single crate at the repo root. Modules grouped by pipeline stage:
 
 - Validation sections (`[scan]`, `[update]`, `[fields]`): always present
 - Build sections (`[embedding_model]`, `[chunking]`, `[search]`): added by `init --auto-build` or by `build`
+- `[search]` also holds `internal_prefix` and `aliases` for column naming in `--where` queries
 
 ### Commands
 
@@ -87,7 +91,7 @@ Single crate at the repo root. Modules grouped by pipeline stage:
 - `info [path]` — show config and index status
 - `clean [path]` — delete `.mdvs/`
 
-See `docs/spec/commands/` for detailed specs.
+See `docs/spec/commands/` for detailed specs and `book/src/commands/` for user-facing docs.
 
 ## Key Dependencies
 
@@ -102,4 +106,5 @@ See `docs/spec/commands/` for detailed specs.
 | `clap` | CLI parsing |
 | `tokio` | Async runtime (required by DataFusion) |
 | `tabled` | Table rendering |
+| `globset` | Glob pattern matching for allowed/required validation |
 | `cocogitto` | Conventional commit enforcement (dev tool, not a dependency) |
