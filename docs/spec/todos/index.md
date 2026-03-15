@@ -109,7 +109,7 @@
 | [0105](TODO-0105.md) | Test and write CI recipe for mdvs check | todo | medium | 2026-03-14 |
 | [0106](TODO-0106.md) | Link graph from internal links and wikilinks | todo | low | 2026-03-14 |
 | [0107](TODO-0107.md) | Pre-commit hook for mdvs check | todo | medium | 2026-03-14 |
-| [0108](TODO-0108.md) | --set-revision with empty string or "None" should clear the revision | todo | low | 2026-03-14 |
+| [0108](TODO-0108.md) | --set-revision with empty string or "None" should clear the revision | done | low | 2026-03-14 |
 | [0109](TODO-0109.md) | Clean up DataFusion error messages in --where | todo | low | 2026-03-14 |
 | [0110](TODO-0110.md) | Recursive output architecture — nested process steps | todo | high | 2026-03-14 |
 | [0111](TODO-0111.md) | Reject unknown fields in mdvs.toml with deny_unknown_fields | todo | high | 2026-03-14 |
