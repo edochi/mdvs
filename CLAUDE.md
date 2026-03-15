@@ -10,6 +10,8 @@ mdvs (Markdown Validation & Search) is a Rust CLI that treats markdown directori
 
 **Never push directly to `main`.** All work goes through feature branches and PRs. One branch per TODO or feature (`feat/description`, `fix/description`, `docs/description`). Regular merge (not squash). Always ask the user before creating a branch.
 
+**Releases** go through a `release/v<version>` branch + PR, then a tag push on main triggers the build. Use the `release` skill for the full process.
+
 **NEVER commit or push unless the user explicitly asks.** No autonomous commits. No "let me commit this" — wait for the user to say "commit" or "commit and push". This is non-negotiable.
 
 **Use conventional commits.** All commit messages must follow the [Conventional Commits](https://www.conventionalcommits.org/) format. A `commit-msg` hook (via cocogitto) enforces this locally. See `docs/spec/cocogitto.md` for the full guide.
