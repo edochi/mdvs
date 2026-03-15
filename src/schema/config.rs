@@ -8,6 +8,7 @@ use tracing::instrument;
 
 /// Controls behavior after `update` completes.
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct UpdateConfig {
     /// Whether to automatically trigger a build after updating the schema.
     pub auto_build: bool,
@@ -15,6 +16,7 @@ pub struct UpdateConfig {
 
 /// Default settings for the `search` command.
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct SearchConfig {
     /// Maximum number of results returned when `--limit` is not specified.
     pub default_limit: usize,
@@ -36,6 +38,7 @@ pub struct SearchConfig {
 /// `allowed = ["**"]`, `required = []`, `nullable = true`. A bare
 /// `[[fields.field]]` with just a name is effectively unconstrained.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct TomlField {
     /// Frontmatter key this definition applies to.
     pub name: String,
@@ -67,6 +70,7 @@ fn default_nullable() -> bool {
 
 /// The `[fields]` section: ignore list and per-field definitions.
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct FieldsConfig {
     /// Field names to ignore during validation (known but unconstrained).
     #[serde(default)]
@@ -81,6 +85,7 @@ pub struct FieldsConfig {
 /// `update`, `fields`) are always present; build sections (`embedding_model`,
 /// `chunking`, `search`) are optional and added by `init --auto-build` or `build`.
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct MdvsToml {
     /// File discovery settings (glob pattern, bare-file handling).
     pub scan: ScanConfig,
@@ -1001,5 +1006,131 @@ nullable = false
             nullable: false,
         }]);
         assert!(config.validate().is_ok());
+    }
+
+    // --- deny_unknown_fields tests ---
+
+    #[test]
+    fn unknown_field_in_scan_rejected() {
+        let toml_str = r#"
+[scan]
+glob = "**"
+include_bare_files = true
+glob_pattern = "*.md"
+
+[update]
+auto_build = false
+
+[fields]
+"#;
+        let err = toml::from_str::<MdvsToml>(toml_str).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("unknown field"),
+            "expected unknown field error: {msg}"
+        );
+    }
+
+    #[test]
+    fn unknown_field_in_update_rejected() {
+        let toml_str = r#"
+[scan]
+glob = "**"
+include_bare_files = true
+
+[update]
+autobuild = true
+
+[fields]
+"#;
+        let err = toml::from_str::<MdvsToml>(toml_str).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("unknown field"),
+            "expected unknown field error: {msg}"
+        );
+    }
+
+    #[test]
+    fn unknown_field_in_fields_field_rejected() {
+        let toml_str = r#"
+[scan]
+glob = "**"
+include_bare_files = true
+
+[update]
+auto_build = false
+
+[fields]
+
+[[fields.field]]
+name = "title"
+types = "String"
+"#;
+        let err = toml::from_str::<MdvsToml>(toml_str).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("unknown field"),
+            "expected unknown field error: {msg}"
+        );
+    }
+
+    #[test]
+    fn unknown_top_level_section_rejected() {
+        let toml_str = r#"
+[scan]
+glob = "**"
+include_bare_files = true
+
+[update]
+auto_build = false
+
+[storage]
+internal_prefix = "_"
+
+[fields]
+"#;
+        let err = toml::from_str::<MdvsToml>(toml_str).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("unknown field"),
+            "expected unknown field error: {msg}"
+        );
+    }
+
+    #[test]
+    fn valid_config_still_parses_with_deny_unknown() {
+        let toml_str = r#"
+[scan]
+glob = "**"
+include_bare_files = false
+skip_gitignore = true
+
+[update]
+auto_build = false
+
+[embedding_model]
+provider = "model2vec"
+name = "minishlab/potion-base-8M"
+
+[chunking]
+max_chunk_size = 1024
+
+[search]
+default_limit = 10
+
+[fields]
+ignore = []
+
+[[fields.field]]
+name = "title"
+type = "String"
+allowed = ["**"]
+required = ["**"]
+nullable = false
+"#;
+        let config: MdvsToml = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.scan.glob, "**");
+        assert_eq!(config.fields.field[0].name, "title");
     }
 }
