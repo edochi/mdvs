@@ -158,6 +158,9 @@ impl CommandOutput for CheckResult {
 /// Pipeline record for the check command.
 #[derive(Debug, Serialize)]
 pub struct CheckProcessOutput {
+    /// Auto-update output (if auto-update was triggered).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_update: Option<crate::cmd::update::UpdateCommandOutput>,
     /// Read config step result.
     pub read_config: ProcessingStepResult<ReadConfigOutput>,
     /// Scan step result.
@@ -178,7 +181,11 @@ pub struct CheckCommandOutput {
 impl CheckCommandOutput {
     /// Returns `true` if any processing step failed.
     pub fn has_failed_step(&self) -> bool {
-        matches!(self.process.read_config, ProcessingStepResult::Failed(_))
+        self.process
+            .auto_update
+            .as_ref()
+            .is_some_and(|u| u.has_failed_step())
+            || matches!(self.process.read_config, ProcessingStepResult::Failed(_))
             || matches!(self.process.scan, ProcessingStepResult::Failed(_))
             || matches!(self.process.validate, ProcessingStepResult::Failed(_))
     }
@@ -190,11 +197,28 @@ impl CommandOutput for CheckCommandOutput {
     }
 
     fn format_text(&self, verbose: bool) -> String {
+        let mut out = String::new();
+
+        // Render auto-update if present
+        if let Some(ref update_output) = self.process.auto_update {
+            if verbose {
+                out.push_str("Auto-update:\n");
+                let update_text = update_output.format_text(true);
+                for line in update_text.lines() {
+                    out.push_str(&format!("  {line}\n"));
+                }
+                out.push('\n');
+            } else if let Some(ref ur) = update_output.result {
+                let total = ur.added.len() + ur.changed.len() + ur.removed.len();
+                if total > 0 {
+                    out.push_str(&format!("Auto-updated schema ({total} change(s))\n"));
+                }
+            }
+        }
+
         // If pipeline completed successfully, delegate to CheckResult
         if let Some(result) = &self.result {
             if verbose {
-                // Show step lines before the result
-                let mut out = String::new();
                 out.push_str(&format!(
                     "{}\n",
                     self.process.read_config.format_line("Read config")
@@ -208,11 +232,11 @@ impl CommandOutput for CheckCommandOutput {
                 out.push_str(&result.format_text(verbose));
                 out
             } else {
-                result.format_text(verbose)
+                out.push_str(&result.format_text(verbose));
+                out
             }
         } else {
             // Pipeline didn't complete — show steps up to the failure
-            let mut out = String::new();
             out.push_str(&format!(
                 "{}\n",
                 self.process.read_config.format_line("Read config")
@@ -231,14 +255,46 @@ impl CommandOutput for CheckCommandOutput {
     }
 }
 
-/// Read config, scan files, and validate frontmatter against the schema.
+/// Read config, optionally auto-update, scan files, and validate frontmatter.
 #[instrument(name = "check", skip_all)]
-pub fn run(path: &Path, verbose: bool) -> CheckCommandOutput {
+pub async fn run(path: &Path, no_update: bool, verbose: bool) -> CheckCommandOutput {
     use crate::pipeline::read_config::run_read_config;
     use crate::pipeline::scan::run_scan;
     use crate::pipeline::validate::run_validate;
 
+    // Read config first to check auto_update setting
     let (read_config_step, config) = run_read_config(path);
+
+    // Auto-update: run update before validating if configured
+    let auto_update = if let Some(ref cfg) = config {
+        let should_update = !no_update && cfg.check.as_ref().is_some_and(|c| c.auto_update);
+        if should_update {
+            let update_output = crate::cmd::update::run(path, &[], false, false, verbose).await;
+            if update_output.has_failed_step() {
+                return CheckCommandOutput {
+                    process: CheckProcessOutput {
+                        auto_update: Some(update_output),
+                        read_config: read_config_step,
+                        scan: ProcessingStepResult::Skipped,
+                        validate: ProcessingStepResult::Skipped,
+                    },
+                    result: None,
+                };
+            }
+            Some(update_output)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    // Re-read config if auto-update ran (it may have changed the toml)
+    let (read_config_step, config) = if auto_update.is_some() {
+        run_read_config(path)
+    } else {
+        (read_config_step, config)
+    };
 
     let (scan_step, scanned) = match &config {
         Some(cfg) => run_scan(path, &cfg.scan),
@@ -262,6 +318,7 @@ pub fn run(path: &Path, verbose: bool) -> CheckCommandOutput {
 
     CheckCommandOutput {
         process: CheckProcessOutput {
+            auto_update,
             read_config: read_config_step,
             scan: scan_step,
             validate: validate_step,
@@ -532,13 +589,15 @@ mod tests {
                 include_bare_files: false,
                 skip_gitignore: false,
             },
-            update: UpdateConfig { auto_build: false },
+            update: UpdateConfig {},
+            check: None,
             fields: FieldsConfig {
                 ignore,
                 field: fields,
             },
             embedding_model: None,
             chunking: None,
+            build: None,
             search: None,
         };
         config.write(&dir.join("mdvs.toml")).unwrap();
@@ -564,8 +623,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn clean_check() {
+    #[tokio::test]
+    async fn clean_check() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
         write_toml(
@@ -586,15 +645,15 @@ mod tests {
             vec![],
         );
 
-        let result = run(tmp.path(), false).result.unwrap();
+        let result = run(tmp.path(), true, false).await.result.unwrap();
 
         assert!(!result.has_violations());
         assert!(result.new_fields.is_empty());
         assert_eq!(result.files_checked, 2);
     }
 
-    #[test]
-    fn missing_required() {
+    #[tokio::test]
+    async fn missing_required() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
@@ -617,7 +676,7 @@ mod tests {
             vec![],
         );
 
-        let result = run(tmp.path(), false).result.unwrap();
+        let result = run(tmp.path(), true, false).await.result.unwrap();
 
         assert!(result.has_violations());
         let v = &result.field_violations[0];
@@ -627,8 +686,8 @@ mod tests {
         assert_eq!(v.files[0].path.display().to_string(), "blog/post2.md");
     }
 
-    #[test]
-    fn wrong_type() {
+    #[tokio::test]
+    async fn wrong_type() {
         let tmp = tempfile::tempdir().unwrap();
         let blog_dir = tmp.path().join("blog");
         fs::create_dir_all(&blog_dir).unwrap();
@@ -646,7 +705,7 @@ mod tests {
             vec![],
         );
 
-        let result = run(tmp.path(), false).result.unwrap();
+        let result = run(tmp.path(), true, false).await.result.unwrap();
 
         assert!(result.has_violations());
         let v = &result.field_violations[0];
@@ -655,8 +714,8 @@ mod tests {
         assert_eq!(v.files[0].detail.as_deref(), Some("got String"));
     }
 
-    #[test]
-    fn wrong_type_int_in_float_lenient() {
+    #[tokio::test]
+    async fn wrong_type_int_in_float_lenient() {
         let tmp = tempfile::tempdir().unwrap();
         fs::create_dir_all(tmp.path().join("blog")).unwrap();
 
@@ -679,13 +738,13 @@ mod tests {
             vec![],
         );
 
-        let result = run(tmp.path(), false).result.unwrap();
+        let result = run(tmp.path(), true, false).await.result.unwrap();
 
         assert!(!result.has_violations());
     }
 
-    #[test]
-    fn disallowed_field() {
+    #[tokio::test]
+    async fn disallowed_field() {
         let tmp = tempfile::tempdir().unwrap();
         let notes_dir = tmp.path().join("notes");
         fs::create_dir_all(&notes_dir).unwrap();
@@ -709,7 +768,7 @@ mod tests {
             vec![],
         );
 
-        let result = run(tmp.path(), false).result.unwrap();
+        let result = run(tmp.path(), true, false).await.result.unwrap();
 
         assert!(result.has_violations());
         let v = &result.field_violations[0];
@@ -718,15 +777,15 @@ mod tests {
         assert_eq!(v.files[0].path.display().to_string(), "notes/idea.md");
     }
 
-    #[test]
-    fn new_fields_informational() {
+    #[tokio::test]
+    async fn new_fields_informational() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
         // Only declare title — tags and draft are new
         write_toml(tmp.path(), vec![string_field("title")], vec![]);
 
-        let result = run(tmp.path(), false).result.unwrap();
+        let result = run(tmp.path(), true, false).await.result.unwrap();
 
         assert!(!result.has_violations());
         assert_eq!(result.new_fields.len(), 2);
@@ -734,8 +793,8 @@ mod tests {
         assert!(result.new_fields.iter().any(|f| f.name == "tags"));
     }
 
-    #[test]
-    fn string_top_type_accepts_any_value() {
+    #[tokio::test]
+    async fn string_top_type_accepts_any_value() {
         let tmp = tempfile::tempdir().unwrap();
         let blog_dir = tmp.path().join("blog");
         fs::create_dir_all(&blog_dir).unwrap();
@@ -760,14 +819,14 @@ mod tests {
 
         write_toml(tmp.path(), vec![string_field("field")], vec![]);
 
-        let result = run(tmp.path(), false).result.unwrap();
+        let result = run(tmp.path(), true, false).await.result.unwrap();
 
         assert!(!result.has_violations());
         assert_eq!(result.files_checked, 4);
     }
 
-    #[test]
-    fn bare_files_trigger_required() {
+    #[tokio::test]
+    async fn bare_files_trigger_required() {
         let tmp = tempfile::tempdir().unwrap();
         fs::create_dir_all(tmp.path().join("blog")).unwrap();
 
@@ -785,7 +844,8 @@ mod tests {
                 include_bare_files: true,
                 skip_gitignore: false,
             },
-            update: UpdateConfig { auto_build: false },
+            update: UpdateConfig {},
+            check: None,
             fields: FieldsConfig {
                 ignore: vec![],
                 field: vec![TomlField {
@@ -798,18 +858,19 @@ mod tests {
             },
             embedding_model: None,
             chunking: None,
+            build: None,
             search: None,
         };
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
 
-        let result = run(tmp.path(), false).result.unwrap();
+        let result = run(tmp.path(), true, false).await.result.unwrap();
 
         // Bare files missing required fields are violations
         assert!(result.has_violations());
     }
 
-    #[test]
-    fn ignored_fields_skipped() {
+    #[tokio::test]
+    async fn ignored_fields_skipped() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
@@ -820,14 +881,14 @@ mod tests {
             vec!["draft".into(), "tags".into()],
         );
 
-        let result = run(tmp.path(), false).result.unwrap();
+        let result = run(tmp.path(), true, false).await.result.unwrap();
 
         assert!(!result.has_violations());
         assert!(result.new_fields.is_empty()); // draft and tags are ignored, not new
     }
 
-    #[test]
-    fn multiple_violations() {
+    #[tokio::test]
+    async fn multiple_violations() {
         let tmp = tempfile::tempdir().unwrap();
         let blog_dir = tmp.path().join("blog");
         let notes_dir = tmp.path().join("notes");
@@ -878,7 +939,7 @@ mod tests {
             vec![],
         );
 
-        let result = run(tmp.path(), false).result.unwrap();
+        let result = run(tmp.path(), true, false).await.result.unwrap();
 
         assert!(result.has_violations());
         // Should have: draft wrong type, tags missing required, draft disallowed

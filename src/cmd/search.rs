@@ -116,6 +116,9 @@ fn read_lines(path: &Path, start: i32, end: i32) -> Option<String> {
 /// Pipeline record for the search command.
 #[derive(Debug, Serialize)]
 pub struct SearchProcessOutput {
+    /// Auto-build output (if auto-build was triggered).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_build: Option<crate::cmd::build::BuildCommandOutput>,
     /// Read config step result.
     pub read_config: ProcessingStepResult<ReadConfigOutput>,
     /// Read index step result.
@@ -140,7 +143,11 @@ pub struct SearchCommandOutput {
 impl SearchCommandOutput {
     /// Returns `true` if any processing step failed.
     pub fn has_failed_step(&self) -> bool {
-        matches!(self.process.read_config, ProcessingStepResult::Failed(_))
+        self.process
+            .auto_build
+            .as_ref()
+            .is_some_and(|b| b.has_failed_step())
+            || matches!(self.process.read_config, ProcessingStepResult::Failed(_))
             || matches!(self.process.read_index, ProcessingStepResult::Failed(_))
             || matches!(self.process.load_model, ProcessingStepResult::Failed(_))
             || matches!(self.process.embed_query, ProcessingStepResult::Failed(_))
@@ -154,7 +161,24 @@ impl CommandOutput for SearchCommandOutput {
     }
 
     fn format_text(&self, verbose: bool) -> String {
-        if let Some(result) = &self.result {
+        let mut preamble = String::new();
+        if let Some(ref build_output) = self.process.auto_build {
+            if verbose {
+                preamble.push_str("Auto-build:\n");
+                let build_text = build_output.format_text(true);
+                for line in build_text.lines() {
+                    preamble.push_str(&format!("  {line}\n"));
+                }
+                preamble.push('\n');
+            } else if let Some(ref br) = build_output.result {
+                preamble.push_str(&format!(
+                    "Built index — {} files, {} chunks\n",
+                    br.files_total, br.chunks_total
+                ));
+            }
+        }
+
+        let body = if let Some(result) = &self.result {
             if verbose {
                 let mut out = String::new();
                 out.push_str(&format!(
@@ -215,7 +239,9 @@ impl CommandOutput for SearchCommandOutput {
                 ));
             }
             out
-        }
+        };
+
+        format!("{preamble}{body}")
     }
 }
 
@@ -226,6 +252,8 @@ pub async fn run(
     query: &str,
     limit: usize,
     where_clause: Option<&str>,
+    no_update: bool,
+    no_build: bool,
     verbose: bool,
 ) -> SearchCommandOutput {
     use crate::pipeline::embed::run_embed_query;
@@ -235,6 +263,42 @@ pub async fn run(
     use crate::pipeline::read_index::run_read_index;
 
     let (read_config_step, config) = run_read_config(path);
+
+    // Auto-build: run build before searching if configured
+    let auto_build = if let Some(ref cfg) = config {
+        let should_build = !no_build && cfg.search.as_ref().is_some_and(|s| s.auto_build);
+        if should_build {
+            let build_no_update = no_update || !cfg.search.as_ref().is_some_and(|s| s.auto_update);
+            let build_output =
+                crate::cmd::build::run(path, None, None, None, false, build_no_update, verbose)
+                    .await;
+            if build_output.has_failed_step() {
+                return SearchCommandOutput {
+                    process: SearchProcessOutput {
+                        auto_build: Some(build_output),
+                        read_config: read_config_step,
+                        read_index: ProcessingStepResult::Skipped,
+                        load_model: ProcessingStepResult::Skipped,
+                        embed_query: ProcessingStepResult::Skipped,
+                        execute_search: ProcessingStepResult::Skipped,
+                    },
+                    result: None,
+                };
+            }
+            Some(build_output)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    // Re-read config if auto-build ran
+    let (read_config_step, config) = if auto_build.is_some() {
+        run_read_config(path)
+    } else {
+        (read_config_step, config)
+    };
 
     let embedding = config.as_ref().and_then(|c| c.embedding_model.as_ref());
 
@@ -322,6 +386,7 @@ pub async fn run(
 
     SearchCommandOutput {
         process: SearchProcessOutput {
+            auto_build,
             read_config: read_config_step,
             read_index: read_index_step,
             load_model: load_model_step,
@@ -364,7 +429,8 @@ mod tests {
                 include_bare_files: false,
                 skip_gitignore: false,
             },
-            update: UpdateConfig { auto_build: true },
+            update: UpdateConfig {},
+            check: None,
             fields: FieldsConfig {
                 ignore: vec![],
                 field: vec![],
@@ -377,8 +443,11 @@ mod tests {
             chunking: Some(ChunkingConfig {
                 max_chunk_size: 1024,
             }),
+            build: None,
             search: Some(SearchConfig {
                 default_limit: 10,
+                auto_update: false,
+                auto_build: false,
                 internal_prefix: String::new(),
                 aliases: std::collections::HashMap::new(),
             }),
@@ -388,26 +457,20 @@ mod tests {
 
     async fn init_and_build(dir: &Path) {
         let output = crate::cmd::init::run(
-            dir,
-            Some("minishlab/potion-base-8M"),
-            None,
-            "**",
-            false,
-            false,
-            true,
-            None,
-            true,
-            false,
+            dir, "**", false, false, true, false, // skip_gitignore
             false, // verbose
-        )
-        .await;
+        );
+        assert!(!output.has_failed_step());
+
+        // Build the index
+        let output = crate::cmd::build::run(dir, None, None, None, false, true, false).await;
         assert!(!output.has_failed_step());
     }
 
     #[tokio::test]
     async fn missing_config() {
         let tmp = tempfile::tempdir().unwrap();
-        let output = run(tmp.path(), "test query", 10, None, false).await;
+        let output = run(tmp.path(), "test query", 10, None, true, true, false).await;
         assert!(output.has_failed_step());
         assert!(output.result.is_none());
     }
@@ -417,7 +480,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         write_config(tmp.path(), "test-model");
 
-        let output = run(tmp.path(), "test query", 10, None, false).await;
+        let output = run(tmp.path(), "test query", 10, None, true, true, false).await;
         assert!(output.has_failed_step());
         assert!(output.result.is_none());
         if let ProcessingStepResult::Failed(err) = &output.process.load_model {
@@ -433,7 +496,7 @@ mod tests {
         create_test_vault(tmp.path());
         init_and_build(tmp.path()).await;
 
-        let output = run(tmp.path(), "rust programming", 10, None, false).await;
+        let output = run(tmp.path(), "rust programming", 10, None, true, true, false).await;
         assert!(!output.has_failed_step(), "search failed: {:?}", output);
         let result = output.result.unwrap();
         assert_eq!(result.query, "rust programming");
@@ -452,7 +515,7 @@ mod tests {
         create_test_vault(tmp.path());
         init_and_build(tmp.path()).await;
 
-        let output = run(tmp.path(), "rust programming", 10, None, true).await;
+        let output = run(tmp.path(), "rust programming", 10, None, true, true, true).await;
         assert!(!output.has_failed_step());
         let result = output.result.unwrap();
         assert!(!result.hits.is_empty());
@@ -525,7 +588,7 @@ mod tests {
         config.embedding_model.as_mut().unwrap().name = "some-other-model".into();
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
 
-        let output = run(tmp.path(), "test query", 10, None, false).await;
+        let output = run(tmp.path(), "test query", 10, None, true, true, false).await;
         assert!(output.has_failed_step());
         if let ProcessingStepResult::Failed(err) = &output.process.load_model {
             assert!(err.message.contains("model mismatch"));
@@ -540,7 +603,16 @@ mod tests {
         create_test_vault(tmp.path());
         init_and_build(tmp.path()).await;
 
-        let output = run(tmp.path(), "test", 10, Some("author = 'O'Brien'"), false).await;
+        let output = run(
+            tmp.path(),
+            "test",
+            10,
+            Some("author = 'O'Brien'"),
+            true,
+            true,
+            false,
+        )
+        .await;
         assert!(output.has_failed_step());
         if let ProcessingStepResult::Failed(err) = &output.process.execute_search {
             assert!(err.message.contains("unmatched single quote"));
@@ -556,7 +628,7 @@ mod tests {
         create_test_vault(tmp.path());
         init_and_build(tmp.path()).await;
 
-        let output = run(tmp.path(), "test", 10, Some("x = \"bad"), false).await;
+        let output = run(tmp.path(), "test", 10, Some("x = \"bad"), true, true, false).await;
         assert!(output.has_failed_step());
         if let ProcessingStepResult::Failed(err) = &output.process.execute_search {
             assert!(err.message.contains("unmatched double quote"));
@@ -577,6 +649,8 @@ mod tests {
             "test",
             10,
             Some("author's name = O'Brien"),
+            true,
+            true,
             false,
         )
         .await;
@@ -590,7 +664,16 @@ mod tests {
         init_and_build(tmp.path()).await;
 
         // Properly escaped single quotes should pass validation
-        let output = run(tmp.path(), "test", 10, Some("title = 'O''Brien'"), false).await;
+        let output = run(
+            tmp.path(),
+            "test",
+            10,
+            Some("title = 'O''Brien'"),
+            true,
+            true,
+            false,
+        )
+        .await;
         // Should not fail with quote parity error (may fail for other reasons like no match)
         if let ProcessingStepResult::Failed(err) = &output.process.execute_search {
             assert!(

@@ -403,7 +403,8 @@ mod tests {
                 include_bare_files: false,
                 skip_gitignore: false,
             },
-            update: UpdateConfig { auto_build: true },
+            update: UpdateConfig {},
+            check: None,
             fields: FieldsConfig {
                 ignore: vec!["internal_id".into()],
                 field: vec![
@@ -440,8 +441,11 @@ mod tests {
             chunking: Some(ChunkingConfig {
                 max_chunk_size: 1024,
             }),
+            build: None,
             search: Some(SearchConfig {
                 default_limit: 10,
+                auto_update: false,
+                auto_build: false,
                 internal_prefix: String::new(),
                 aliases: std::collections::HashMap::new(),
             }),
@@ -451,19 +455,13 @@ mod tests {
 
     async fn init_and_build(dir: &Path) {
         let output = crate::cmd::init::run(
-            dir,
-            Some("minishlab/potion-base-8M"),
-            None,
-            "**",
-            false,
-            false,
-            true,
-            None,
-            true,
-            false,
+            dir, "**", false, false, true, false, // skip_gitignore
             false, // verbose
-        )
-        .await;
+        );
+        assert!(!output.has_failed_step());
+
+        // Build the index
+        let output = crate::cmd::build::run(dir, None, None, None, false, true, false).await;
         assert!(!output.has_failed_step());
     }
 
@@ -544,7 +542,8 @@ mod tests {
                 include_bare_files: false,
                 skip_gitignore: false,
             },
-            update: UpdateConfig { auto_build: true },
+            update: UpdateConfig {},
+            check: None,
             fields: FieldsConfig {
                 ignore: vec![],
                 field: vec![crate::schema::config::TomlField {
@@ -557,6 +556,7 @@ mod tests {
             },
             embedding_model: None,
             chunking: None,
+            build: None,
             search: None,
         };
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
