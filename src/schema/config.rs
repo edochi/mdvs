@@ -6,27 +6,46 @@ use std::fs;
 use std::path::Path;
 use tracing::instrument;
 
-/// Controls behavior after `update` completes.
+/// Placeholder for future update-specific settings.
+/// Currently empty — `[update]` section is hidden from toml when default.
+#[derive(Debug, Serialize, Deserialize, PartialEq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateConfig {}
+
+/// Check command settings (`[check]` in `mdvs.toml`).
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
-pub struct UpdateConfig {
-    /// Whether to automatically trigger a build after updating the schema.
-    pub auto_build: bool,
+pub struct CheckConfig {
+    /// Whether to auto-run update before validating.
+    #[serde(default)]
+    pub auto_update: bool,
 }
 
-/// Default settings for the `search` command.
+/// Build workflow settings (`[build]` in `mdvs.toml`).
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct BuildConfig {
+    /// Whether to auto-run update before building.
+    #[serde(default)]
+    pub auto_update: bool,
+}
+
+/// Search command settings (`[search]` in `mdvs.toml`).
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct SearchConfig {
     /// Maximum number of results returned when `--limit` is not specified.
     pub default_limit: usize,
+    /// Whether to auto-run update before building (when auto_build is true).
+    #[serde(default)]
+    pub auto_update: bool,
+    /// Whether to auto-run build before searching.
+    #[serde(default)]
+    pub auto_build: bool,
     /// Prefix applied to internal column names in `--where` queries.
-    /// Default is empty (no prefix). Set to e.g. `"_"` to resolve collisions
-    /// with frontmatter fields that share names with internal columns.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub internal_prefix: String,
     /// Per-column name overrides for internal columns in `--where` queries.
-    /// Takes precedence over `internal_prefix` for the specified columns.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub aliases: HashMap<String, String>,
 }
@@ -82,60 +101,47 @@ pub struct FieldsConfig {
 
 /// Top-level representation of `mdvs.toml`, the single source of truth for
 /// schema validation and build configuration. Validation sections (`scan`,
-/// `update`, `fields`) are always present; build sections (`embedding_model`,
-/// `chunking`, `search`) are optional and added by `init --auto-build` or `build`.
+/// `check`, `fields`) are always present; build sections (`embedding_model`,
+/// `chunking`, `build`, `search`) are optional and added by the first `build`.
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct MdvsToml {
     /// File discovery settings (glob pattern, bare-file handling).
     pub scan: ScanConfig,
-    /// Post-update workflow settings.
+    /// Placeholder for future update-specific settings.
+    #[serde(default, skip_serializing_if = "is_default_update_config")]
     pub update: UpdateConfig,
+    /// Check command settings (auto-update).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub check: Option<CheckConfig>,
     /// Embedding model identity. Present only when build is configured.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub embedding_model: Option<EmbeddingModelConfig>,
     /// Chunk-size settings for semantic splitting. Present only when build is configured.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chunking: Option<ChunkingConfig>,
-    /// Search defaults. Present only when build is configured.
+    /// Build workflow settings (auto-update). Present only when build is configured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub build: Option<BuildConfig>,
+    /// Search defaults and auto-build/update settings.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub search: Option<SearchConfig>,
     /// Field definitions and ignore list.
     pub fields: FieldsConfig,
 }
 
-impl MdvsToml {
-    /// Build an `MdvsToml` from an inferred schema and the provided scan/model/chunking settings.
-    /// When `auto_build` is false, the build sections are omitted.
-    pub fn from_inferred(
-        schema: &InferredSchema,
-        scan: ScanConfig,
-        model_name: &str,
-        model_revision: Option<&str>,
-        max_chunk_size: usize,
-        auto_build: bool,
-    ) -> Self {
-        let (embedding_model, chunking, search) = if auto_build {
-            (
-                Some(EmbeddingModelConfig {
-                    provider: "model2vec".to_string(),
-                    name: model_name.to_string(),
-                    revision: model_revision.map(|s| s.to_string()),
-                }),
-                Some(ChunkingConfig { max_chunk_size }),
-                Some(SearchConfig {
-                    default_limit: 10,
-                    internal_prefix: String::new(),
-                    aliases: HashMap::new(),
-                }),
-            )
-        } else {
-            (None, None, None)
-        };
+fn is_default_update_config(c: &UpdateConfig) -> bool {
+    *c == UpdateConfig::default()
+}
 
+impl MdvsToml {
+    /// Build an `MdvsToml` from an inferred schema. Schema-only — no build sections.
+    /// Build sections are added by the first `build` run.
+    pub fn from_inferred(schema: &InferredSchema, scan: ScanConfig) -> Self {
         MdvsToml {
             scan,
-            update: UpdateConfig { auto_build },
+            update: UpdateConfig::default(),
+            check: Some(CheckConfig { auto_update: true }),
             fields: FieldsConfig {
                 ignore: vec![],
                 field: schema
@@ -150,9 +156,16 @@ impl MdvsToml {
                     })
                     .collect(),
             },
-            embedding_model,
-            chunking,
-            search,
+            embedding_model: None,
+            chunking: None,
+            build: Some(BuildConfig { auto_update: true }),
+            search: Some(SearchConfig {
+                default_limit: 10,
+                auto_update: true,
+                auto_build: true,
+                internal_prefix: String::new(),
+                aliases: HashMap::new(),
+            }),
         }
     }
 
@@ -314,10 +327,10 @@ mod tests {
     use std::path::PathBuf;
 
     fn default_update() -> UpdateConfig {
-        UpdateConfig { auto_build: true }
+        UpdateConfig {}
     }
 
-    /// Helper to build a full MdvsToml with all sections present (auto_build=true).
+    /// Helper to build a full MdvsToml with all sections present.
     fn full_toml(fields: Vec<TomlField>) -> MdvsToml {
         MdvsToml {
             scan: ScanConfig {
@@ -326,6 +339,7 @@ mod tests {
                 skip_gitignore: false,
             },
             update: default_update(),
+            check: None,
             fields: FieldsConfig {
                 ignore: vec![],
                 field: fields,
@@ -338,8 +352,11 @@ mod tests {
             chunking: Some(ChunkingConfig {
                 max_chunk_size: 1024,
             }),
+            build: None,
             search: Some(SearchConfig {
                 default_limit: 10,
+                auto_update: false,
+                auto_build: false,
                 internal_prefix: String::new(),
                 aliases: HashMap::new(),
             }),
@@ -355,6 +372,7 @@ mod tests {
                 skip_gitignore: false,
             },
             update: default_update(),
+            check: None,
             fields: FieldsConfig {
                 ignore: vec![],
                 field: vec![
@@ -403,8 +421,11 @@ mod tests {
             chunking: Some(ChunkingConfig {
                 max_chunk_size: 1024,
             }),
+            build: None,
             search: Some(SearchConfig {
                 default_limit: 10,
+                auto_update: false,
+                auto_build: false,
                 internal_prefix: String::new(),
                 aliases: HashMap::new(),
             }),
@@ -421,9 +442,6 @@ mod tests {
 [scan]
 glob = "blog/**"
 include_bare_files = true
-
-[update]
-auto_build = true
 
 [fields]
 ignore = ["internal_id"]
@@ -522,17 +540,12 @@ default_limit = 10
             include_bare_files: false,
             skip_gitignore: false,
         };
-        let toml_doc =
-            MdvsToml::from_inferred(&schema, scan, "minishlab/potion-base-8M", None, 1024, true);
+        let toml_doc = MdvsToml::from_inferred(&schema, scan);
 
         assert_eq!(toml_doc.scan.glob, "**");
         assert!(!toml_doc.scan.include_bare_files);
-        assert_eq!(
-            toml_doc.embedding_model.as_ref().unwrap().name,
-            "minishlab/potion-base-8M"
-        );
-        assert_eq!(toml_doc.embedding_model.as_ref().unwrap().revision, None);
-        assert_eq!(toml_doc.chunking.as_ref().unwrap().max_chunk_size, 1024);
+        assert!(toml_doc.embedding_model.is_none());
+        assert!(toml_doc.chunking.is_none());
         assert_eq!(toml_doc.fields.field.len(), 3);
 
         assert_eq!(toml_doc.fields.field[0].name, "draft");
@@ -560,43 +573,27 @@ default_limit = 10
             include_bare_files: true,
             skip_gitignore: false,
         };
-        let toml_doc = MdvsToml::from_inferred(
-            &schema,
-            scan,
-            "minishlab/potion-base-8M",
-            Some("rev123"),
-            512,
-            true,
-        );
+        let toml_doc = MdvsToml::from_inferred(&schema, scan);
         assert_eq!(toml_doc.scan.glob, "docs/**");
         assert!(toml_doc.scan.include_bare_files);
-        assert_eq!(
-            toml_doc.embedding_model.as_ref().unwrap().revision,
-            Some("rev123".into())
-        );
+        assert!(toml_doc.embedding_model.is_none());
         assert!(toml_doc.fields.field.is_empty());
     }
 
     #[test]
-    fn from_inferred_no_auto_build() {
+    fn from_inferred_schema_only() {
         let schema = InferredSchema { fields: vec![] };
         let scan = ScanConfig {
             glob: "**".into(),
             include_bare_files: false,
             skip_gitignore: false,
         };
-        let toml_doc = MdvsToml::from_inferred(
-            &schema,
-            scan,
-            "minishlab/potion-base-8M",
-            None,
-            1024,
-            false, // no auto_build
-        );
+        let toml_doc = MdvsToml::from_inferred(&schema, scan);
         assert!(toml_doc.embedding_model.is_none());
         assert!(toml_doc.chunking.is_none());
-        assert!(toml_doc.search.is_none());
-        assert!(!toml_doc.update.auto_build);
+        assert!(toml_doc.build.is_some());
+        assert!(toml_doc.search.is_some());
+        assert!(toml_doc.search.as_ref().unwrap().auto_build);
     }
 
     #[test]
@@ -616,8 +613,7 @@ default_limit = 10
             include_bare_files: false,
             skip_gitignore: false,
         };
-        let toml_doc =
-            MdvsToml::from_inferred(&schema, scan, "minishlab/potion-base-8M", None, 1024, true);
+        let toml_doc = MdvsToml::from_inferred(&schema, scan);
 
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("mdvs.toml");
@@ -678,53 +674,40 @@ default_limit = 10
     }
 
     #[test]
-    fn update_roundtrip() {
+    fn validation_only_roundtrip() {
         let doc = MdvsToml {
             scan: ScanConfig {
                 glob: "**".into(),
                 include_bare_files: false,
                 skip_gitignore: false,
             },
-            update: UpdateConfig { auto_build: true },
+            update: UpdateConfig {},
+            check: None,
             fields: FieldsConfig {
                 ignore: vec![],
                 field: vec![],
             },
             embedding_model: None,
             chunking: None,
+            build: None,
             search: None,
         };
         let toml_str = toml::to_string(&doc).unwrap();
-        assert!(toml_str.contains("auto_build = true"));
         // Build sections should not appear
         assert!(!toml_str.contains("embedding_model"));
         assert!(!toml_str.contains("chunking"));
         assert!(!toml_str.contains("[search]"));
         let parsed: MdvsToml = toml::from_str(&toml_str).unwrap();
-        assert!(parsed.update.auto_build);
         assert!(parsed.embedding_model.is_none());
-
-        // With auto_build false
-        let doc2 = MdvsToml {
-            update: UpdateConfig { auto_build: false },
-            ..doc
-        };
-        let toml_str2 = toml::to_string(&doc2).unwrap();
-        assert!(toml_str2.contains("auto_build = false"));
-        let parsed2: MdvsToml = toml::from_str(&toml_str2).unwrap();
-        assert!(!parsed2.update.auto_build);
     }
 
     #[test]
-    fn validation_only_toml_roundtrip() {
+    fn validation_only_toml_roundtrip_handwritten() {
         // Minimal toml with only validation sections (no build sections)
         let handwritten = r#"
 [scan]
 glob = "**"
 include_bare_files = false
-
-[update]
-auto_build = false
 
 [fields]
 ignore = ["notes", "internal_id"]
@@ -732,7 +715,6 @@ ignore = ["notes", "internal_id"]
 
         let parsed: MdvsToml = toml::from_str(handwritten).unwrap();
         assert_eq!(parsed.scan.glob, "**");
-        assert!(!parsed.update.auto_build);
         assert_eq!(parsed.fields.ignore, vec!["notes", "internal_id"]);
         assert!(parsed.fields.field.is_empty());
         assert!(parsed.embedding_model.is_none());
@@ -751,9 +733,6 @@ ignore = ["notes", "internal_id"]
 [scan]
 glob = "**"
 include_bare_files = false
-
-[update]
-auto_build = false
 
 [fields]
 
@@ -778,9 +757,6 @@ name = "title"
 glob = "**"
 include_bare_files = false
 
-[update]
-auto_build = false
-
 [fields]
 
 [[fields.field]]
@@ -802,9 +778,6 @@ type = "Boolean"
 [scan]
 glob = "**"
 include_bare_files = false
-
-[update]
-auto_build = false
 
 [fields]
 
@@ -1018,9 +991,6 @@ glob = "**"
 include_bare_files = true
 glob_pattern = "*.md"
 
-[update]
-auto_build = false
-
 [fields]
 "#;
         let err = toml::from_str::<MdvsToml>(toml_str).unwrap_err();
@@ -1039,7 +1009,7 @@ glob = "**"
 include_bare_files = true
 
 [update]
-autobuild = true
+auto_build = true
 
 [fields]
 "#;
@@ -1057,9 +1027,6 @@ autobuild = true
 [scan]
 glob = "**"
 include_bare_files = true
-
-[update]
-auto_build = false
 
 [fields]
 
@@ -1082,9 +1049,6 @@ types = "String"
 glob = "**"
 include_bare_files = true
 
-[update]
-auto_build = false
-
 [storage]
 internal_prefix = "_"
 
@@ -1105,9 +1069,6 @@ internal_prefix = "_"
 glob = "**"
 include_bare_files = false
 skip_gitignore = true
-
-[update]
-auto_build = false
 
 [embedding_model]
 provider = "model2vec"

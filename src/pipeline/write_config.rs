@@ -26,30 +26,17 @@ impl StepOutput for WriteConfigOutput {
     }
 }
 
-/// Construct `MdvsToml` from inferred schema, validate reserved names, and write to disk.
-///
-/// Returns the step result and the written `MdvsToml` for subsequent build steps.
-/// Reserved name collision → `Failed(User)`. I/O failure → `Failed(Application)`.
+/// Construct `MdvsToml` from inferred schema and write to disk.
+/// Schema-only — no build sections are written.
 pub fn run_write_config(
     path: &Path,
     schema: &InferredSchema,
     scan_config: ScanConfig,
-    model_name: &str,
-    model_revision: Option<&str>,
-    max_chunk_size: usize,
-    auto_build: bool,
 ) -> (ProcessingStepResult<WriteConfigOutput>, Option<MdvsToml>) {
     let start = Instant::now();
     let config_path = path.join("mdvs.toml");
 
-    let toml_doc = MdvsToml::from_inferred(
-        schema,
-        scan_config,
-        model_name,
-        model_revision,
-        max_chunk_size,
-        auto_build,
-    );
+    let toml_doc = MdvsToml::from_inferred(schema, scan_config);
 
     if let Err(e) = toml_doc.write(&config_path) {
         return (

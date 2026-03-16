@@ -31,21 +31,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Discover fields, configure model, write mdvs.toml
+    /// Scan a directory, infer a typed schema, and write mdvs.toml
     Init {
         /// Directory to scan
         #[arg(default_value = ".")]
         path: PathBuf,
-        /// HuggingFace model ID [default: minishlab/potion-base-8M]
-        #[arg(long)]
-        model: Option<String>,
-        /// Pin model to specific revision (commit SHA)
-        #[arg(long)]
-        revision: Option<String>,
         /// File glob pattern
         #[arg(long, default_value = "**")]
         glob: String,
-        /// Overwrite existing config
+        /// Overwrite existing config and delete .mdvs/ if present
         #[arg(long)]
         force: bool,
         /// Print discovery table only, write nothing
@@ -54,12 +48,6 @@ enum Command {
         /// Exclude files without frontmatter
         #[arg(long)]
         ignore_bare_files: bool,
-        /// Maximum chunk size in characters [default: 1024]
-        #[arg(long)]
-        chunk_size: Option<usize>,
-        /// Skip building the search index after init
-        #[arg(long)]
-        suppress_auto_build: bool,
         /// Do not read .gitignore patterns during scan
         #[arg(long)]
         skip_gitignore: bool,
@@ -81,6 +69,9 @@ enum Command {
         /// Confirm config changes that require full re-embed
         #[arg(long)]
         force: bool,
+        /// Skip auto-update before building
+        #[arg(long)]
+        no_update: bool,
     },
     /// Semantic search across notes
     Search {
@@ -98,12 +89,21 @@ enum Command {
             long_help = "SQL WHERE clause for filtering.\n\nExamples:\n  --where \"draft = false\"\n  --where \"tags = 'rust'\"\n  --where \"author = 'O''Brien'\"  (escape ' by doubling)\n\nField names with special characters require SQL quoting:\n  --where \"\\\"author's note\\\" = 'value'\""
         )]
         where_clause: Option<String>,
+        /// Skip auto-update before building/searching
+        #[arg(long)]
+        no_update: bool,
+        /// Skip auto-build before searching
+        #[arg(long)]
+        no_build: bool,
     },
     /// Validate frontmatter against schema
     Check {
         /// Directory containing mdvs.toml
         #[arg(default_value = ".")]
         path: PathBuf,
+        /// Skip auto-update before validating
+        #[arg(long)]
+        no_update: bool,
     },
     /// Re-scan and update field definitions
     Update {
@@ -116,9 +116,6 @@ enum Command {
         /// Re-infer all fields
         #[arg(long)]
         reinfer_all: bool,
-        /// Override auto_build from [update] config
-        #[arg(long)]
-        build: Option<bool>,
         /// Show what would change, write nothing
         #[arg(long)]
         dry_run: bool,
@@ -164,30 +161,21 @@ async fn main() -> anyhow::Result<()> {
     match cli.command {
         Command::Init {
             path,
-            model,
-            revision,
             glob,
             force,
             dry_run,
             ignore_bare_files,
-            chunk_size,
-            suppress_auto_build,
             skip_gitignore,
         } => {
             let output = mdvs::cmd::init::run(
                 &path,
-                model.as_deref(),
-                revision.as_deref(),
                 &glob,
                 force,
                 dry_run,
                 ignore_bare_files,
-                chunk_size,
-                !suppress_auto_build,
                 skip_gitignore,
                 cli.verbose,
-            )
-            .await;
+            );
             output.print(&cli.output, cli.verbose);
             if output.has_failed_step() {
                 std::process::exit(2);
@@ -200,6 +188,7 @@ async fn main() -> anyhow::Result<()> {
             set_revision,
             set_chunk_size,
             force,
+            no_update,
         } => {
             let output = mdvs::cmd::build::run(
                 &path,
@@ -207,6 +196,7 @@ async fn main() -> anyhow::Result<()> {
                 set_revision.as_deref(),
                 set_chunk_size,
                 force,
+                no_update,
                 cli.verbose,
             )
             .await;
@@ -224,18 +214,27 @@ async fn main() -> anyhow::Result<()> {
             path,
             limit,
             where_clause,
+            no_update,
+            no_build,
         } => {
-            let output =
-                mdvs::cmd::search::run(&path, &query, limit, where_clause.as_deref(), cli.verbose)
-                    .await;
+            let output = mdvs::cmd::search::run(
+                &path,
+                &query,
+                limit,
+                where_clause.as_deref(),
+                no_update,
+                no_build,
+                cli.verbose,
+            )
+            .await;
             output.print(&cli.output, cli.verbose);
             if output.has_failed_step() {
                 std::process::exit(2);
             }
             Ok(())
         }
-        Command::Check { path } => {
-            let output = mdvs::cmd::check::run(&path, cli.verbose);
+        Command::Check { path, no_update } => {
+            let output = mdvs::cmd::check::run(&path, no_update, cli.verbose).await;
             output.print(&cli.output, cli.verbose);
             if output.has_failed_step() {
                 std::process::exit(2);
@@ -249,12 +248,10 @@ async fn main() -> anyhow::Result<()> {
             path,
             reinfer,
             reinfer_all,
-            build,
             dry_run,
         } => {
             let output =
-                mdvs::cmd::update::run(&path, &reinfer, reinfer_all, build, dry_run, cli.verbose)
-                    .await;
+                mdvs::cmd::update::run(&path, &reinfer, reinfer_all, dry_run, cli.verbose).await;
             output.print(&cli.output, cli.verbose);
             if output.has_failed_step() {
                 std::process::exit(2);

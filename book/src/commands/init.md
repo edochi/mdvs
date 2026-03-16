@@ -1,6 +1,6 @@
 # init
 
-Scan a directory, infer a typed schema, and optionally build the search index.
+Scan a directory, infer a typed schema, and write `mdvs.toml`.
 
 ## Usage
 
@@ -17,48 +17,33 @@ mdvs init [path] [flags]
 | `--force` | | Overwrite existing `mdvs.toml` |
 | `--dry-run` | | Preview the inferred schema without writing anything |
 | `--ignore-bare-files` | | Exclude files without YAML frontmatter |
-| `--suppress-auto-build` | | Write `mdvs.toml` only — don't build the search index |
 | `--skip-gitignore` | | Don't read `.gitignore` patterns during scan |
-| `--model` | `minishlab/potion-base-8M` | HuggingFace model ID for embeddings |
-| `--revision` | | Pin model to a specific revision (commit SHA) |
-| `--chunk-size` | `1024` | Maximum chunk size in characters |
-
-`--model`, `--revision`, and `--chunk-size` only take effect when auto-build is enabled (the default). They're rejected with `--suppress-auto-build`.
 
 Global flags (`-o`, `-v`, `--logs`) are described in [Configuration](../configuration.md).
 
 ## What it does
 
-`init` scans every markdown file in the directory, extracts YAML frontmatter, infers a typed schema with path patterns, and writes `mdvs.toml`. By default it also builds the search index (embedding model download, chunking, vector storage in `.mdvs/`).
+`init` scans every markdown file, extracts YAML frontmatter, infers a typed schema with path patterns, and writes `mdvs.toml`. It does not build the search index — run [build](./build.md) or [search](./search.md) for that.
 
 See [Getting Started](../getting-started.md) for a full walkthrough with output, and [Schema Inference](../concepts/schema.md) for how types and path patterns are computed.
 
-This creates up to two artifacts:
+One artifact is created: **`mdvs.toml`** — the schema file. Commit this to version control.
 
-- **`mdvs.toml`** — the schema file. Commit this to version control.
-- **`.mdvs/`** — the search index (Parquet files). Add to `.gitignore`. Only created when auto-build is enabled (the default).
-
-If `mdvs.toml` already exists, `init` refuses to run unless you pass `--force`. To update an existing schema without overwriting it, use [update](./update.md) instead.
+If `mdvs.toml` or `.mdvs/` already exists, `init` refuses to run unless you pass `--force`. With `--force`, both `mdvs.toml` and `.mdvs/` are deleted before proceeding. To update an existing schema without overwriting it, use [update](./update.md) instead.
 
 ### `init --force` vs `update --reinfer-all`
 
 Both re-infer the schema from scratch, but they differ in scope:
 
-- `init --force` overwrites the entire `mdvs.toml` — all sections, including `[scan]`, `[embedding_model]`, `[chunking]`, and `[search]`. Any manual edits are lost.
+- `init --force` overwrites the entire `mdvs.toml` — all sections, including `[scan]`, `[fields]`, and any build sections. Any manual edits are lost. `.mdvs/` is also deleted.
 - `update --reinfer-all` re-infers only the `[fields]` section. All other config is preserved.
-
-### `--suppress-auto-build`
-
-Writes `mdvs.toml` with only the validation sections (`[scan]`, `[update]`, `[fields]`). No `[embedding_model]`, `[chunking]`, or `[search]` sections are written, and no index is built.
-
-Use this when you only need schema validation (`mdvs check`) and don't plan to use search. You can always run `mdvs build` later — it will add the missing sections with defaults.
 
 ## Output
 
 ### Compact (default)
 
 ```bash
-mdvs init example_kb --suppress-auto-build
+mdvs init example_kb
 ```
 
 ```
@@ -86,7 +71,7 @@ Each row shows the field name, inferred type, how many files contain it (e.g., `
 ### Verbose (`-v`)
 
 ```bash
-mdvs init example_kb --suppress-auto-build -v
+mdvs init example_kb -v
 ```
 
 ```
@@ -156,14 +141,6 @@ Initialized 37 files — 37 field(s) (dry run)
 
 With `--ignore-bare-files`, only 37 files are scanned and `title` becomes 37/37. This also affects the inferred `required` patterns — without bare files diluting the counts, more fields can be required in broader paths.
 
-### Schema only, no index
-
-```bash
-mdvs init example_kb --suppress-auto-build
-```
-
-Writes `mdvs.toml` but skips the embedding step. No `.mdvs/` directory is created. Useful when you only need `mdvs check` for frontmatter validation.
-
 ## Errors
 
 | Error | Cause |
@@ -171,4 +148,3 @@ Writes `mdvs.toml` but skips the embedding step. No `.mdvs/` directory is create
 | `mdvs.toml already exists` | Config exists and `--force` not passed |
 | `is not a directory` | Path doesn't exist or isn't a directory |
 | `no markdown files found` | No `.md` files match the glob pattern |
-| `--model has no effect without --auto-build` | Build flags used with `--suppress-auto-build` |

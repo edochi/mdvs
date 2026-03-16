@@ -13,12 +13,17 @@ mdvs check [path]
 | Flag | Default | Description |
 |---|---|---|
 | `path` | `.` | Directory containing `mdvs.toml` |
+| `--no-update` | | Skip auto-update before validating |
 
 Global flags (`-o`, `-v`, `--logs`) are described in [Configuration](../configuration.md).
 
 ## What it does
 
-`check` reads `mdvs.toml`, scans every markdown file, and validates each field value against the declared constraints. It reports four kinds of violations:
+`check` reads `mdvs.toml`, scans every markdown file, and validates each field value against the declared constraints.
+
+By default, `check` auto-updates the schema before validating (see [`[check].auto_update`](../configuration.md#check)). Use `--no-update` to skip this and validate against the current `mdvs.toml` as-is.
+
+It reports four kinds of violations:
 
 - **`WrongType`** — value doesn't match the declared `type`
 - **`Disallowed`** — field appears in a file whose path doesn't match any `allowed` glob

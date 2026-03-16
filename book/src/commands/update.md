@@ -15,7 +15,6 @@ mdvs update [path] [flags]
 | `path` | `.` | Directory containing `mdvs.toml` |
 | `--reinfer <field>` | | Re-infer a specific field (repeatable) |
 | `--reinfer-all` | | Re-infer all fields from scratch |
-| `--build` | from config | Override auto-build setting |
 | `--dry-run` | | Preview changes without writing anything |
 
 `--reinfer` and `--reinfer-all` cannot be used together.
@@ -47,12 +46,6 @@ Fails if a named field isn't in `mdvs.toml`.
 Re-infer every field from scratch. All `[[fields.field]]` entries are removed and rebuilt from the current files. Fields that no longer exist in any file are reported as removed.
 
 All other config sections (`[scan]`, `[embedding_model]`, `[chunking]`, `[search]`, `[update]`) are preserved. This is the key difference from `init --force`, which rewrites the entire `mdvs.toml`.
-
-### Auto-build
-
-If `auto_build = true` in the `[update]` section (the default), `update` runs the full build pipeline after writing the updated config: validate, classify files, embed new/changed content, write index. The `--build` flag overrides the config setting.
-
-Auto-build only triggers when there are actual field changes (added, changed, or removed fields). If the schema is already up to date, no build runs — even if new files were added. To pick up new files without schema changes, run [build](./build.md) directly.
 
 ## Output
 

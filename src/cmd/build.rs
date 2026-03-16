@@ -10,7 +10,7 @@ use crate::pipeline::scan::{run_scan, ScanOutput};
 use crate::pipeline::validate::{run_validate, ValidateOutput};
 use crate::pipeline::write_index::{run_write_index, BuildFileDetail, WriteIndexOutput};
 use crate::pipeline::{ErrorKind, ProcessingStepError, ProcessingStepResult};
-use crate::schema::config::{MdvsToml, SearchConfig};
+use crate::schema::config::{BuildConfig, MdvsToml, SearchConfig};
 use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig};
 use crate::table::{style_compact, style_record, Builder};
 use serde::Serialize;
@@ -194,6 +194,9 @@ impl CommandOutput for BuildResult {
 /// Step records for each phase of the build pipeline.
 #[derive(Debug, Serialize)]
 pub struct BuildProcessOutput {
+    /// Auto-update output (if auto-update was triggered).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_update: Option<crate::cmd::update::UpdateCommandOutput>,
     /// Read and parse `mdvs.toml`.
     pub read_config: ProcessingStepResult<ReadConfigOutput>,
     /// Scan the project directory for markdown files.
@@ -222,7 +225,11 @@ pub struct BuildCommandOutput {
 impl BuildCommandOutput {
     /// Returns `true` if any step failed.
     pub fn has_failed_step(&self) -> bool {
-        matches!(self.process.read_config, ProcessingStepResult::Failed(_))
+        self.process
+            .auto_update
+            .as_ref()
+            .is_some_and(|u| u.has_failed_step())
+            || matches!(self.process.read_config, ProcessingStepResult::Failed(_))
             || matches!(self.process.scan, ProcessingStepResult::Failed(_))
             || matches!(self.process.validate, ProcessingStepResult::Failed(_))
             || matches!(self.process.classify, ProcessingStepResult::Failed(_))
@@ -246,7 +253,24 @@ impl CommandOutput for BuildCommandOutput {
     }
 
     fn format_text(&self, verbose: bool) -> String {
-        if self.has_violations() {
+        let mut preamble = String::new();
+        if let Some(ref update_output) = self.process.auto_update {
+            if verbose {
+                preamble.push_str("Auto-update:\n");
+                let update_text = update_output.format_text(true);
+                for line in update_text.lines() {
+                    preamble.push_str(&format!("  {line}\n"));
+                }
+                preamble.push('\n');
+            } else if let Some(ref ur) = update_output.result {
+                let total = ur.added.len() + ur.changed.len() + ur.removed.len();
+                if total > 0 {
+                    preamble.push_str(&format!("Auto-updated schema ({total} change(s))\n"));
+                }
+            }
+        }
+
+        let body = if self.has_violations() {
             // Validation found violations — show step lines + violation message
             let violation_msg = match &self.process.validate {
                 ProcessingStepResult::Completed(step) => {
@@ -349,7 +373,9 @@ impl CommandOutput for BuildCommandOutput {
                 ));
             }
             out
-        }
+        };
+
+        format!("{preamble}{body}")
     }
 }
 
@@ -365,15 +391,17 @@ pub async fn run(
     set_revision: Option<&str>,
     set_chunk_size: Option<usize>,
     force: bool,
+    no_update: bool,
     verbose: bool,
 ) -> BuildCommandOutput {
     // 1. read_config
     let (read_config_step, config) = run_read_config(path);
-    let mut config = match config {
+    let config = match config {
         Some(c) => c,
         None => {
             return BuildCommandOutput {
                 process: BuildProcessOutput {
+                    auto_update: None,
                     read_config: read_config_step,
                     scan: ProcessingStepResult::Skipped,
                     validate: ProcessingStepResult::Skipped,
@@ -386,6 +414,58 @@ pub async fn run(
             };
         }
     };
+
+    // Auto-update: run update before building if configured
+    let auto_update = {
+        let should_update = !no_update && config.build.as_ref().is_some_and(|b| b.auto_update);
+        if should_update {
+            let update_output = crate::cmd::update::run(path, &[], false, false, verbose).await;
+            if update_output.has_failed_step() {
+                return BuildCommandOutput {
+                    process: BuildProcessOutput {
+                        auto_update: Some(update_output),
+                        read_config: read_config_step,
+                        scan: ProcessingStepResult::Skipped,
+                        validate: ProcessingStepResult::Skipped,
+                        classify: ProcessingStepResult::Skipped,
+                        load_model: ProcessingStepResult::Skipped,
+                        embed_files: ProcessingStepResult::Skipped,
+                        write_index: ProcessingStepResult::Skipped,
+                    },
+                    result: None,
+                };
+            }
+            Some(update_output)
+        } else {
+            None
+        }
+    };
+
+    // Re-read config if auto-update ran (it may have changed the toml)
+    let (read_config_step, config) = if auto_update.is_some() {
+        let (step, cfg) = run_read_config(path);
+        match cfg {
+            Some(c) => (step, c),
+            None => {
+                return BuildCommandOutput {
+                    process: BuildProcessOutput {
+                        auto_update,
+                        read_config: step,
+                        scan: ProcessingStepResult::Skipped,
+                        validate: ProcessingStepResult::Skipped,
+                        classify: ProcessingStepResult::Skipped,
+                        load_model: ProcessingStepResult::Skipped,
+                        embed_files: ProcessingStepResult::Skipped,
+                        write_index: ProcessingStepResult::Skipped,
+                    },
+                    result: None,
+                };
+            }
+        }
+    } else {
+        (read_config_step, config)
+    };
+    let mut config = config;
 
     // Config mutation (inline, not a step)
     // Fill missing build sections, apply --set-* flags
@@ -416,6 +496,7 @@ pub async fn run(
         None => {
             return BuildCommandOutput {
                 process: BuildProcessOutput {
+                    auto_update: None,
                     read_config: read_config_step,
                     scan: scan_step,
                     validate: ProcessingStepResult::Skipped,
@@ -447,6 +528,7 @@ pub async fn run(
         None => {
             return BuildCommandOutput {
                 process: BuildProcessOutput {
+                    auto_update: None,
                     read_config: read_config_step,
                     scan: scan_step,
                     validate: validate_step,
@@ -467,6 +549,7 @@ pub async fn run(
     if has_violations {
         return BuildCommandOutput {
             process: BuildProcessOutput {
+                auto_update: None,
                 read_config: read_config_step,
                 scan: scan_step,
                 validate: validate_step,
@@ -495,6 +578,7 @@ pub async fn run(
         Err(msg) => {
             return BuildCommandOutput {
                 process: BuildProcessOutput {
+                    auto_update: None,
                     read_config: read_config_step,
                     scan: scan_step,
                     validate: validate_step,
@@ -516,6 +600,7 @@ pub async fn run(
         None => {
             return BuildCommandOutput {
                 process: BuildProcessOutput {
+                    auto_update: None,
                     read_config: read_config_step,
                     scan: scan_step,
                     validate: validate_step,
@@ -536,6 +621,7 @@ pub async fn run(
         None => {
             return BuildCommandOutput {
                 process: BuildProcessOutput {
+                    auto_update: None,
                     read_config: read_config_step,
                     scan: scan_step,
                     validate: validate_step,
@@ -577,6 +663,7 @@ pub async fn run(
                 Err(e) => {
                     return BuildCommandOutput {
                         process: BuildProcessOutput {
+                            auto_update: None,
                             read_config: read_config_step,
                             scan: scan_step,
                             validate: validate_step,
@@ -601,6 +688,7 @@ pub async fn run(
                 Err(e) => {
                     return BuildCommandOutput {
                         process: BuildProcessOutput {
+                            auto_update: None,
                             read_config: read_config_step,
                             scan: scan_step,
                             validate: validate_step,
@@ -625,6 +713,7 @@ pub async fn run(
         None => {
             return BuildCommandOutput {
                 process: BuildProcessOutput {
+                    auto_update: None,
                     read_config: read_config_step,
                     scan: scan_step,
                     validate: validate_step,
@@ -679,6 +768,7 @@ pub async fn run(
     if needs_embedding && embedder.is_none() {
         return BuildCommandOutput {
             process: BuildProcessOutput {
+                auto_update: None,
                 read_config: read_config_step,
                 scan: scan_step,
                 validate: validate_step,
@@ -710,6 +800,7 @@ pub async fn run(
             None => {
                 return BuildCommandOutput {
                     process: BuildProcessOutput {
+                        auto_update: None,
                         read_config: read_config_step,
                         scan: scan_step,
                         validate: validate_step,
@@ -737,6 +828,7 @@ pub async fn run(
     {
         return BuildCommandOutput {
             process: BuildProcessOutput {
+                auto_update: None,
                 read_config: read_config_step,
                 scan: scan_step,
                 validate: validate_step,
@@ -794,6 +886,7 @@ pub async fn run(
     if matches!(write_index_step, ProcessingStepResult::Failed(_)) {
         return BuildCommandOutput {
             process: BuildProcessOutput {
+                auto_update: None,
                 read_config: read_config_step,
                 scan: scan_step,
                 validate: validate_step,
@@ -836,6 +929,7 @@ pub async fn run(
 
     BuildCommandOutput {
         process: BuildProcessOutput {
+            auto_update,
             read_config: read_config_step,
             scan: scan_step,
             validate: validate_step,
@@ -925,9 +1019,16 @@ fn mutate_config(
     if config.search.is_none() {
         config.search = Some(SearchConfig {
             default_limit: 10,
+            auto_update: true,
+            auto_build: true,
             internal_prefix: String::new(),
             aliases: std::collections::HashMap::new(),
         });
+        config_changed = true;
+    }
+
+    if config.build.is_none() {
+        config.build = Some(BuildConfig { auto_update: true });
         config_changed = true;
     }
 
@@ -1016,7 +1117,7 @@ mod tests {
     #[tokio::test]
     async fn missing_config() {
         let tmp = tempfile::tempdir().unwrap();
-        let output = run(tmp.path(), None, None, None, false, false).await;
+        let output = run(tmp.path(), None, None, None, false, true, false).await;
         assert!(output.has_failed_step());
         assert!(matches!(
             output.process.read_config,
@@ -1029,25 +1130,28 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
-        // Run init (auto_build calls build internally)
+        // Run init (schema only, no build)
         let output = crate::cmd::init::run(
             tmp.path(),
-            Some("minishlab/potion-base-8M"),
-            None,
             "**",
             false,
             false,
-            true, // ignore bare files
-            None,
-            true,
+            true,  // ignore bare files
             false, // skip_gitignore
             false, // verbose
-        )
-        .await;
+        );
         assert!(!output.has_failed_step());
 
+        // Build the index
+        let output = run(tmp.path(), None, None, None, false, true, false).await;
+        assert!(
+            !output.has_failed_step(),
+            "first build failed: {:#?}",
+            output.process
+        );
+
         // Run build again (tests standalone rebuild)
-        let output = run(tmp.path(), None, None, None, false, false).await;
+        let output = run(tmp.path(), None, None, None, false, true, false).await;
         assert!(
             !output.has_failed_step(),
             "build failed: {:#?}",
@@ -1098,21 +1202,20 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
-        // Run init (auto_build calls build internally)
+        // Run init (schema only)
         let output = crate::cmd::init::run(
             tmp.path(),
-            Some("minishlab/potion-base-8M"),
-            None,
             "**",
             false,
             false,
             true,
-            None,
-            true,
             false, // skip_gitignore
             false, // verbose
-        )
-        .await;
+        );
+        assert!(!output.has_failed_step());
+
+        // Build the index
+        let output = run(tmp.path(), None, None, None, false, true, false).await;
         assert!(!output.has_failed_step());
 
         // Overwrite chunks.parquet with wrong dimension (2 instead of actual)
@@ -1135,7 +1238,7 @@ mod tests {
         .unwrap();
 
         // Build should fail with dimension mismatch when model loads
-        let output = run(tmp.path(), None, None, None, false, false).await;
+        let output = run(tmp.path(), None, None, None, false, true, false).await;
         assert!(output.has_failed_step());
         let err = match &output.process.embed_files {
             ProcessingStepResult::Failed(e) => &e.message,
@@ -1151,21 +1254,20 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
-        // Run init (auto_build calls build internally)
+        // Run init (schema only)
         let output = crate::cmd::init::run(
             tmp.path(),
-            Some("minishlab/potion-base-8M"),
-            None,
             "**",
             false,
             false,
             true,
-            None,
-            true,
             false, // skip_gitignore
             false, // verbose
-        )
-        .await;
+        );
+        assert!(!output.has_failed_step());
+
+        // Build the index
+        let output = run(tmp.path(), None, None, None, false, true, false).await;
         assert!(!output.has_failed_step());
 
         // Overwrite chunks.parquet with wrong dimension (2 instead of actual)
@@ -1181,7 +1283,7 @@ mod tests {
         write_parquet(&tmp.path().join(".mdvs/chunks.parquet"), &bad_batch).unwrap();
 
         // Build with --force should succeed despite dimension mismatch
-        let output = run(tmp.path(), None, None, None, true, false).await;
+        let output = run(tmp.path(), None, None, None, true, true, false).await;
         assert!(
             !output.has_failed_step(),
             "expected success with --force, got failed step"
@@ -1196,31 +1298,25 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
-        // Init without auto-build (no build sections in toml)
+        // Init (schema only, no build sections in toml)
         let output = crate::cmd::init::run(
             tmp.path(),
-            None,
-            None,
             "**",
             false,
             false,
             true,
-            None,
-            false, // no auto_build
-            false,
+            false, // skip_gitignore
             false, // verbose
-        )
-        .await;
+        );
         assert!(!output.has_failed_step());
 
-        // Verify no build sections
+        // Verify no model/chunking sections (auto-flag sections are present from init)
         let config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
         assert!(config.embedding_model.is_none());
         assert!(config.chunking.is_none());
-        assert!(config.search.is_none());
 
         // Build should fill defaults and succeed
-        let output = run(tmp.path(), None, None, None, false, false).await;
+        let output = run(tmp.path(), None, None, None, false, true, false).await;
         assert!(
             !output.has_failed_step(),
             "build failed: {:#?}",
@@ -1247,25 +1343,33 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
-        // Init with auto-build (sections exist)
+        // Init (schema only)
         let output = crate::cmd::init::run(
             tmp.path(),
-            Some("minishlab/potion-base-8M"),
-            None,
             "**",
             false,
             false,
             true,
-            None,
-            true,
-            false,
+            false, // skip_gitignore
             false, // verbose
-        )
-        .await;
+        );
+        assert!(!output.has_failed_step());
+
+        // Build the index (creates build sections)
+        let output = run(tmp.path(), None, None, None, false, true, false).await;
         assert!(!output.has_failed_step());
 
         // Try to change model without --force
-        let output = run(tmp.path(), Some("other-model"), None, None, false, false).await;
+        let output = run(
+            tmp.path(),
+            Some("other-model"),
+            None,
+            None,
+            false,
+            true,
+            false,
+        )
+        .await;
         assert!(output.has_failed_step());
         let err = match &output.process.scan {
             ProcessingStepResult::Failed(e) => &e.message,
@@ -1281,21 +1385,20 @@ mod tests {
 
         let init_output = crate::cmd::init::run(
             tmp.path(),
-            Some("minishlab/potion-base-8M"),
-            None,
             "**",
             false,
             false,
             true,
-            None,
-            true,
-            false,
+            false, // skip_gitignore
             false, // verbose
-        )
-        .await;
+        );
         assert!(!init_output.has_failed_step());
 
-        let output = run(tmp.path(), None, None, Some(512), false, false).await;
+        // Build the index (creates build sections)
+        let output = run(tmp.path(), None, None, None, false, true, false).await;
+        assert!(!output.has_failed_step());
+
+        let output = run(tmp.path(), None, None, Some(512), false, true, false).await;
         assert!(output.has_failed_step());
         let err = match &output.process.scan {
             ProcessingStepResult::Failed(e) => &e.message,
@@ -1311,22 +1414,21 @@ mod tests {
 
         let init_output = crate::cmd::init::run(
             tmp.path(),
-            Some("minishlab/potion-base-8M"),
-            None,
             "**",
             false,
             false,
             true,
-            None,
-            true,
-            false,
+            false, // skip_gitignore
             false, // verbose
-        )
-        .await;
+        );
         assert!(!init_output.has_failed_step());
 
+        // Build the index (creates build sections)
+        let output = run(tmp.path(), None, None, None, false, true, false).await;
+        assert!(!output.has_failed_step());
+
         // Change chunk size with --force (same model so no dimension mismatch)
-        let output = run(tmp.path(), None, None, Some(512), true, false).await;
+        let output = run(tmp.path(), None, None, Some(512), true, true, false).await;
         assert!(
             !output.has_failed_step(),
             "build with --force failed: {:#?}",
@@ -1344,19 +1446,18 @@ mod tests {
 
         let init_output = crate::cmd::init::run(
             tmp.path(),
-            Some("minishlab/potion-base-8M"),
-            None,
             "**",
             false,
             false,
             true,
-            None,
-            true,
-            false,
+            false, // skip_gitignore
             false, // verbose
-        )
-        .await;
+        );
         assert!(!init_output.has_failed_step());
+
+        // Build the index (creates build sections + parquets)
+        let output = run(tmp.path(), None, None, None, false, true, false).await;
+        assert!(!output.has_failed_step());
 
         // Manually change chunk_size in toml (simulates user editing)
         let mut config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
@@ -1364,7 +1465,7 @@ mod tests {
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
 
         // Build without --force should error
-        let output = run(tmp.path(), None, None, None, false, false).await;
+        let output = run(tmp.path(), None, None, None, false, true, false).await;
         assert!(output.has_failed_step());
         let err = match &output.process.classify {
             ProcessingStepResult::Failed(e) => &e.message,
@@ -1374,7 +1475,7 @@ mod tests {
         assert!(err.contains("chunk_size"));
 
         // Build with --force should succeed
-        let output = run(tmp.path(), None, None, None, true, false).await;
+        let output = run(tmp.path(), None, None, None, true, true, false).await;
         assert!(
             !output.has_failed_step(),
             "build with --force failed: {:#?}",
@@ -1401,7 +1502,8 @@ mod tests {
                 include_bare_files: false,
                 skip_gitignore: false,
             },
-            update: crate::schema::config::UpdateConfig { auto_build: false },
+            update: crate::schema::config::UpdateConfig {},
+            check: None,
             fields: crate::schema::config::FieldsConfig {
                 ignore: vec![],
                 field: vec![
@@ -1430,15 +1532,18 @@ mod tests {
             chunking: Some(ChunkingConfig {
                 max_chunk_size: 1024,
             }),
+            build: None,
             search: Some(SearchConfig {
                 default_limit: 10,
+                auto_update: false,
+                auto_build: false,
                 internal_prefix: String::new(),
                 aliases: HashMap::new(),
             }),
         };
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
 
-        let output = run(tmp.path(), None, None, None, false, false).await;
+        let output = run(tmp.path(), None, None, None, false, true, false).await;
         assert!(output.has_violations(), "expected validation violations");
     }
 
@@ -1466,7 +1571,8 @@ mod tests {
                 include_bare_files: false,
                 skip_gitignore: false,
             },
-            update: crate::schema::config::UpdateConfig { auto_build: false },
+            update: crate::schema::config::UpdateConfig {},
+            check: None,
             fields: crate::schema::config::FieldsConfig {
                 ignore: vec![],
                 field: vec![
@@ -1498,15 +1604,18 @@ mod tests {
             chunking: Some(ChunkingConfig {
                 max_chunk_size: 1024,
             }),
+            build: None,
             search: Some(SearchConfig {
                 default_limit: 10,
+                auto_update: false,
+                auto_build: false,
                 internal_prefix: String::new(),
                 aliases: HashMap::new(),
             }),
         };
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
 
-        let output = run(tmp.path(), None, None, None, false, false).await;
+        let output = run(tmp.path(), None, None, None, false, true, false).await;
         assert!(output.has_violations(), "expected validation violations");
     }
 
@@ -1530,7 +1639,8 @@ mod tests {
                 include_bare_files: false,
                 skip_gitignore: false,
             },
-            update: crate::schema::config::UpdateConfig { auto_build: false },
+            update: crate::schema::config::UpdateConfig {},
+            check: None,
             fields: crate::schema::config::FieldsConfig {
                 ignore: vec![],
                 field: vec![crate::schema::config::TomlField {
@@ -1549,8 +1659,11 @@ mod tests {
             chunking: Some(ChunkingConfig {
                 max_chunk_size: 1024,
             }),
+            build: None,
             search: Some(SearchConfig {
                 default_limit: 10,
+                auto_update: false,
+                auto_build: false,
                 internal_prefix: String::new(),
                 aliases: HashMap::new(),
             }),
@@ -1558,7 +1671,7 @@ mod tests {
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
 
         // Build should succeed despite unknown "author" field
-        let output = run(tmp.path(), None, None, None, false, false).await;
+        let output = run(tmp.path(), None, None, None, false, true, false).await;
         assert!(
             !output.has_failed_step(),
             "build should succeed with new fields: {:#?}",
@@ -1596,24 +1709,23 @@ mod tests {
 
         let init_output = crate::cmd::init::run(
             tmp.path(),
-            Some("minishlab/potion-base-8M"),
-            None,
             "**",
             false,
             false,
             true,
-            None,
-            true,
-            false,
+            false, // skip_gitignore
             false, // verbose
-        )
-        .await;
+        );
         assert!(!init_output.has_failed_step());
+
+        // Build the index
+        let output = run(tmp.path(), None, None, None, false, true, false).await;
+        assert!(!output.has_failed_step());
 
         let (files_before, chunks_before) = read_index_state(tmp.path());
 
         // Build again with no changes
-        let output = run(tmp.path(), None, None, None, false, false).await;
+        let output = run(tmp.path(), None, None, None, false, true, false).await;
         assert!(!output.has_failed_step());
 
         let (files_after, chunks_after) = read_index_state(tmp.path());
@@ -1639,19 +1751,18 @@ mod tests {
 
         let init_output = crate::cmd::init::run(
             tmp.path(),
-            Some("minishlab/potion-base-8M"),
-            None,
             "**",
             false,
             false,
             true,
-            None,
-            true,
-            false,
+            false, // skip_gitignore
             false, // verbose
-        )
-        .await;
+        );
         assert!(!init_output.has_failed_step());
+
+        // Build the index
+        let output = run(tmp.path(), None, None, None, false, true, false).await;
+        assert!(!output.has_failed_step());
 
         let (files_before, chunks_before) = read_index_state(tmp.path());
         // Add a new file
@@ -1661,7 +1772,7 @@ mod tests {
         )
         .unwrap();
 
-        let output = run(tmp.path(), None, None, None, false, false).await;
+        let output = run(tmp.path(), None, None, None, false, true, false).await;
         assert!(!output.has_failed_step());
 
         let (files_after, chunks_after) = read_index_state(tmp.path());
@@ -1694,19 +1805,18 @@ mod tests {
 
         let init_output = crate::cmd::init::run(
             tmp.path(),
-            Some("minishlab/potion-base-8M"),
-            None,
             "**",
             false,
             false,
             true,
-            None,
-            true,
-            false,
+            false, // skip_gitignore
             false, // verbose
-        )
-        .await;
+        );
         assert!(!init_output.has_failed_step());
+
+        // Build the index
+        let output = run(tmp.path(), None, None, None, false, true, false).await;
+        assert!(!output.has_failed_step());
 
         let (files_before, chunks_before) = read_index_state(tmp.path());
         let post1_id = files_before["blog/post1.md"].clone();
@@ -1730,7 +1840,7 @@ mod tests {
             "---\ntitle: Hello\ntags:\n  - rust\n  - code\ndraft: false\n---\n# Hello\nCompletely different body text.",
         ).unwrap();
 
-        let output = run(tmp.path(), None, None, None, false, false).await;
+        let output = run(tmp.path(), None, None, None, false, true, false).await;
         assert!(!output.has_failed_step());
 
         let (files_after, chunks_after) = read_index_state(tmp.path());
@@ -1768,19 +1878,18 @@ mod tests {
 
         let init_output = crate::cmd::init::run(
             tmp.path(),
-            Some("minishlab/potion-base-8M"),
-            None,
             "**",
             false,
             false,
             true,
-            None,
-            true,
-            false,
+            false, // skip_gitignore
             false, // verbose
-        )
-        .await;
+        );
         assert!(!init_output.has_failed_step());
+
+        // Build the index
+        let output = run(tmp.path(), None, None, None, false, true, false).await;
+        assert!(!output.has_failed_step());
 
         let (files_before, _) = read_index_state(tmp.path());
         assert_eq!(files_before.len(), 2);
@@ -1788,7 +1897,7 @@ mod tests {
         // Remove post2
         fs::remove_file(tmp.path().join("blog/post2.md")).unwrap();
 
-        let output = run(tmp.path(), None, None, None, false, false).await;
+        let output = run(tmp.path(), None, None, None, false, true, false).await;
         assert!(!output.has_failed_step());
 
         let (files_after, chunks_after) = read_index_state(tmp.path());
@@ -1809,19 +1918,18 @@ mod tests {
 
         let init_output = crate::cmd::init::run(
             tmp.path(),
-            Some("minishlab/potion-base-8M"),
-            None,
             "**",
             false,
             false,
             true,
-            None,
-            true,
-            false,
+            false, // skip_gitignore
             false, // verbose
-        )
-        .await;
+        );
         assert!(!init_output.has_failed_step());
+
+        // Build the index
+        let output = run(tmp.path(), None, None, None, false, true, false).await;
+        assert!(!output.has_failed_step());
 
         let (_, chunks_before) = read_index_state(tmp.path());
         let old_chunk_ids: HashSet<String> =
@@ -1833,7 +1941,7 @@ mod tests {
             "---\ntitle: Hello\ntags:\n  - rust\n  - code\n  - new-tag\ndraft: false\n---\n# Hello\nBody text about Rust programming.",
         ).unwrap();
 
-        let output = run(tmp.path(), None, None, None, false, false).await;
+        let output = run(tmp.path(), None, None, None, false, true, false).await;
         assert!(!output.has_failed_step());
 
         let (_, chunks_after) = read_index_state(tmp.path());
@@ -1851,19 +1959,18 @@ mod tests {
 
         let init_output = crate::cmd::init::run(
             tmp.path(),
-            Some("minishlab/potion-base-8M"),
-            None,
             "**",
             false,
             false,
             true,
-            None,
-            true,
-            false,
+            false, // skip_gitignore
             false, // verbose
-        )
-        .await;
+        );
         assert!(!init_output.has_failed_step());
+
+        // Build the index
+        let output = run(tmp.path(), None, None, None, false, true, false).await;
+        assert!(!output.has_failed_step());
 
         let (files_before, chunks_before) = read_index_state(tmp.path());
         let old_file_ids: HashSet<String> = files_before.values().cloned().collect();
@@ -1871,7 +1978,7 @@ mod tests {
             chunks_before.iter().map(|(id, _)| id.clone()).collect();
 
         // Force rebuild — should generate all new IDs
-        let output = run(tmp.path(), None, None, None, true, false).await;
+        let output = run(tmp.path(), None, None, None, true, true, false).await;
         assert!(!output.has_failed_step());
 
         let (files_after, chunks_after) = read_index_state(tmp.path());
