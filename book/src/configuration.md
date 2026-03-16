@@ -8,15 +8,14 @@ All configuration lives in `mdvs.toml`, created by [init](./commands/init.md) an
 
 **Validation** (always present):
 - [`[scan]`](#scan) — file discovery
-- [`[update]`](#update) — update workflow
+- [`[check]`](#check) — check command settings
 - [`[fields]`](#fields) — field definitions and ignore list
 
-**Build** (optional — added by `init` with auto-build or by `build`):
+**Build & search** (written by `init`, model/chunking filled by first `build`):
 - [`[embedding_model]`](#embedding_model) — model identity
 - [`[chunking]`](#chunking) — chunk sizing
-- [`[search]`](#search) — search defaults and internal column naming
-
-When build sections are absent, validation commands ([check](./commands/check.md), [update](./commands/update.md)) work normally. The [build](./commands/build.md) command adds missing build sections with defaults on first run.
+- [`[build]`](#build) — build workflow settings
+- [`[search]`](#search) — search defaults and auto-build/update
 
 ## Global flags
 
@@ -51,18 +50,22 @@ When `include_bare_files` is `true`, files without frontmatter participate in in
 
 ## `[update]`
 
-Controls the [update](./commands/update.md) command workflow.
+Placeholder for future update-specific settings. Currently empty — this section is hidden from `mdvs.toml` by default.
+
+## `[check]`
+
+Check command settings.
 
 ```toml
-[update]
-auto_build = true
+[check]
+auto_update = true
 ```
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `auto_build` | Boolean | `true` | Run build automatically after update infers field changes |
+| `auto_update` | Boolean | `false` | Auto-run update before validating |
 
-When `auto_build` is `true` and update finds changes, it triggers the full build pipeline (validate, embed, write index) after writing the updated config.
+When `auto_update` is `true`, `check` runs the update pipeline (scan, infer, write config) before validating. Set to `false` or use `--no-update` for deterministic CI validation against the committed `mdvs.toml`.
 
 ## `[embedding_model]`
 
@@ -99,6 +102,21 @@ max_chunk_size = 1024
 
 The text splitter breaks each file's body into semantic chunks respecting markdown structure (headings, paragraphs, lists). Changing the chunk size after a build requires `build --force`.
 
+## `[build]`
+
+Build workflow settings.
+
+```toml
+[build]
+auto_update = true
+```
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `auto_update` | Boolean | `false` | Auto-run update before building |
+
+When `auto_update` is `true`, `build` runs the update pipeline before building. Use `--no-update` to skip.
+
 ## `[search]`
 
 Settings for the [search](./commands/search.md) command, including how internal columns are named in `--where` queries.
@@ -113,6 +131,8 @@ default_limit = 10
 | `default_limit` | Integer | `10` | Maximum results when `--limit` is not specified |
 | `internal_prefix` | String | `""` | Prefix for internal column names in `--where` queries |
 | `aliases` | Map | `{}` | Per-column name overrides for internal columns |
+| `auto_update` | Boolean | `false` | Auto-run update before building (when `auto_build` is true) |
+| `auto_build` | Boolean | `false` | Auto-run build before searching |
 
 ### Internal column names
 
@@ -251,9 +271,6 @@ A representative subset from `example_kb/mdvs.toml` (37 fields total, 4 shown):
 glob = "**"
 include_bare_files = true
 skip_gitignore = false
-
-[update]
-auto_build = false
 
 [embedding_model]
 provider = "model2vec"

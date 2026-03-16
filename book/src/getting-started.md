@@ -27,7 +27,7 @@ Run `mdvs init` on the example directory:
 mdvs init example_kb
 ```
 
-mdvs scans every markdown file, extracts frontmatter, infers a typed schema, and builds a search index:
+mdvs scans every markdown file, extracts frontmatter, and infers a typed schema:
 
 ```
 Initialized 43 files — 37 field(s)
@@ -79,25 +79,15 @@ Initialized 43 files — 37 field(s)
 ╰─────────────────────┴───────────────────────┴───────┴────────────────────────╯
 
 Initialized mdvs in 'example_kb'
-
-Built index — 43 files, 59 chunks (full rebuild)
-
-╭─────────────────────────┬─────────────────────────┬──────────────────────────╮
-│ embedded                │ 43 files                │ 59 chunks                │
-╰─────────────────────────┴─────────────────────────┴──────────────────────────╯
 ```
 
-That one command did several things:
+That command did three things:
 
 1. **Scanned** 43 markdown files and extracted their YAML frontmatter
 2. **Inferred** 37 typed fields — strings, integers, floats, booleans, arrays, even a nested object (`calibration`)
 3. **Wrote** `mdvs.toml` with the inferred schema
-4. **Embedded** the file contents into vectors and stored them in `.mdvs/`
 
-Two artifacts were created:
-
-- **`mdvs.toml`** — the schema file. Commit this to version control.
-- **`.mdvs/`** — the search index (Parquet files). Add this to `.gitignore`.
+One artifact is created by `init`: **`mdvs.toml`** — the schema file. Commit this to version control. The `.mdvs/` directory (search index) is created later on first `build` or `search`.
 
 ## Validate
 
@@ -154,13 +144,21 @@ Revert your changes to `mdvs.toml` before continuing (or re-run `mdvs init examp
 
 ## Search
 
-Query the index with natural language:
+Query the index with natural language. On first run, `search` auto-builds the index:
+
+> **Note:** The first `search` or `build` downloads the embedding model from HuggingFace (~30 MB for the default model). This is a one-time download — subsequent runs use the cached model and start instantly.
 
 ```bash
 mdvs search "calibration" example_kb
 ```
 
 ```
+Built index — 43 files, 59 chunks (full rebuild)
+
+╭─────────────────────────┬─────────────────────────┬──────────────────────────╮
+│ embedded                │ 43 files                │ 59 chunks                │
+╰─────────────────────────┴─────────────────────────┴──────────────────────────╯
+
 Searched "calibration" — 10 hits
 
 ╭────────────┬──────────────────────────────────────────────────┬──────────────╮

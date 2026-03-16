@@ -16,6 +16,8 @@ mdvs search <query> [path] [flags]
 | `path` | `.` | Directory containing `mdvs.toml` |
 | `--limit` / `-n` | `10` | Maximum number of results |
 | `--where` | | SQL WHERE clause for filtering on frontmatter fields |
+| `--no-update` | | Skip auto-update |
+| `--no-build` | | Skip auto-build before searching |
 
 The default limit can be changed in `mdvs.toml` via `[search].default_limit`.
 
@@ -25,7 +27,24 @@ Global flags (`-o`, `-v`, `--logs`) are described in [Configuration](../configur
 
 `search` loads the index from `.mdvs/`, embeds the query into a vector using the same model that built the index, and ranks files by [cosine similarity](../concepts/search.md#scores). Each file's score is the **best chunk match** — the highest similarity across all its chunks. Results are sorted descending (higher = more similar).
 
+By default, `search` auto-builds the index before querying, which includes auto-updating the schema (see [`[search].auto_build`](../configuration.md#search)). Use `--no-build` to query the existing index as-is, or `--no-update` to build without updating the schema first.
+
 See [Search & Indexing](../concepts/search.md) for details on chunking, embedding, scoring, and model identity.
+
+### First run
+
+> **Note:** The very first time `search` (or `build`) runs, mdvs downloads the embedding model from HuggingFace to a local cache. This is a one-time download — subsequent runs use the cached model and start instantly.
+>
+> Download size depends on the model:
+>
+> | Model | Size |
+> |---|---|
+> | `potion-base-2M` | ~8 MB |
+> | `potion-base-8M` (default) | ~30 MB |
+> | `potion-base-32M` | ~120 MB |
+> | `potion-multilingual-128M` | ~480 MB |
+>
+> After the model is cached, a full build of 500+ files completes in under a second.
 
 ### `--where`
 

@@ -114,3 +114,4 @@
 | [0110](TODO-0110.md) | Recursive output architecture — nested process steps | todo | high | 2026-03-14 |
 | [0111](TODO-0111.md) | Reject unknown fields in mdvs.toml with deny_unknown_fields | done | high | 2026-03-14 |
 | [0112](TODO-0112.md) | Document JSON output format in the mdBook | todo | medium | 2026-03-15 |
+| [0113](TODO-0113.md) | Progress bar for model download and embedding | todo | medium | 2026-03-16 |

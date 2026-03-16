@@ -17,6 +17,7 @@ mdvs build [path] [flags]
 | `--set-revision` | | Pin model to a specific HuggingFace revision (requires `--force`) |
 | `--set-chunk-size` | | Change max chunk size in characters (requires `--force`) |
 | `--force` | | Confirm config changes or trigger a full rebuild |
+| `--no-update` | | Skip auto-update before building |
 
 Global flags (`-o`, `-v`, `--logs`) are described in [Configuration](../configuration.md).
 
@@ -25,6 +26,9 @@ Global flags (`-o`, `-v`, `--logs`) are described in [Configuration](../configur
 `build` creates (or updates) the search index in `.mdvs/`. The pipeline:
 
 1. **Read config** — parse `mdvs.toml`. If `[embedding_model]`, `[chunking]`, or `[search]` sections are missing, they're added with defaults and written back.
+
+By default, `build` auto-updates the schema before building (see [`[build].auto_update`](../configuration.md#build)). Use `--no-update` to skip this.
+
 2. **Scan** — walk the directory and extract frontmatter.
 3. **Validate** — check frontmatter against the schema (same as [check](./check.md)). If violations are found, the build aborts.
 4. **Classify** — compare scanned files against the existing index to determine what needs embedding.
