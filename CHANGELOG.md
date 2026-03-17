@@ -2,6 +2,14 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## v0.1.1 - 2026-03-17
+#### Bug Fixes
+- null values now trigger Disallowed and NullNotAllowed checks - (d6e4484) - edoch
+#### Documentation
+- add TODO-0114 (mdbook-cmdrun) and TODO-0115 (asciinema) - (35db5d2) - edoch
+
+- - -
+
 ## v0.1.0 - 2026-03-16
 #### Features
 - auto-pipeline redesign — downstream commands auto-run upstream steps - (f1d9921) - edoch
