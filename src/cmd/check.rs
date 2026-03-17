@@ -398,25 +398,8 @@ fn check_field_values(
                     continue;
                 }
 
-                if value.is_null() {
-                    continue;
-                }
-
                 if let Some(toml_field) = field_map.get(field_name.as_str()) {
-                    let expected = FieldType::try_from(&toml_field.field_type)
-                        .map_err(|e| anyhow::anyhow!("invalid type for '{}': {}", field_name, e))?;
-                    if !type_matches(&expected, value) {
-                        let key = ViolationKey {
-                            field: field_name.clone(),
-                            kind: ViolationKind::WrongType,
-                            rule: format!("type {}", toml_field.field_type),
-                        };
-                        violations.entry(key).or_default().push(ViolatingFile {
-                            path: file.path.clone(),
-                            detail: Some(format!("got {}", actual_type_name(value))),
-                        });
-                    }
-
+                    // Disallowed: field present at a path not in allowed
                     if !matches_any_glob(&toml_field.allowed, &file_path_str) {
                         let key = ViolationKey {
                             field: field_name.clone(),
@@ -427,6 +410,38 @@ fn check_field_values(
                             path: file.path.clone(),
                             detail: None,
                         });
+                    }
+
+                    if value.is_null() {
+                        // NullNotAllowed: null value on a non-nullable field
+                        if !toml_field.nullable {
+                            let key = ViolationKey {
+                                field: field_name.clone(),
+                                kind: ViolationKind::NullNotAllowed,
+                                rule: "not nullable".to_string(),
+                            };
+                            violations.entry(key).or_default().push(ViolatingFile {
+                                path: file.path.clone(),
+                                detail: None,
+                            });
+                        }
+                    } else {
+                        // WrongType: value doesn't match declared type
+                        let expected =
+                            FieldType::try_from(&toml_field.field_type).map_err(|e| {
+                                anyhow::anyhow!("invalid type for '{}': {}", field_name, e)
+                            })?;
+                        if !type_matches(&expected, value) {
+                            let key = ViolationKey {
+                                field: field_name.clone(),
+                                kind: ViolationKind::WrongType,
+                                rule: format!("type {}", toml_field.field_type),
+                            };
+                            violations.entry(key).or_default().push(ViolatingFile {
+                                path: file.path.clone(),
+                                detail: Some(format!("got {}", actual_type_name(value))),
+                            });
+                        }
                     }
                 } else {
                     new_field_paths
@@ -944,5 +959,154 @@ mod tests {
         assert!(result.has_violations());
         // Should have: draft wrong type, tags missing required, draft disallowed
         assert!(result.field_violations.len() >= 3);
+    }
+
+    #[tokio::test]
+    async fn null_on_non_nullable_non_required_field() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("notes")).unwrap();
+
+        fs::write(
+            tmp.path().join("notes/note1.md"),
+            "---\ntitle: Hello\nstatus:\n---\n# Hello\nBody.",
+        )
+        .unwrap();
+
+        // status: nullable=false, required=[], allowed=["**"]
+        write_toml(
+            tmp.path(),
+            vec![
+                string_field("title"),
+                TomlField {
+                    name: "status".into(),
+                    field_type: FieldTypeSerde::Scalar("String".into()),
+                    allowed: vec!["**".into()],
+                    required: vec![],
+                    nullable: false,
+                },
+            ],
+            vec![],
+        );
+
+        let result = run(tmp.path(), true, false).await.result.unwrap();
+        assert!(result.has_violations());
+        let v = result
+            .field_violations
+            .iter()
+            .find(|v| v.field == "status")
+            .expect("expected NullNotAllowed for status");
+        assert!(matches!(v.kind, ViolationKind::NullNotAllowed));
+    }
+
+    #[tokio::test]
+    async fn null_on_nullable_non_required_field() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("notes")).unwrap();
+
+        fs::write(
+            tmp.path().join("notes/note1.md"),
+            "---\ntitle: Hello\nstatus:\n---\n# Hello\nBody.",
+        )
+        .unwrap();
+
+        // status: nullable=true, required=[], allowed=["**"]
+        write_toml(
+            tmp.path(),
+            vec![
+                string_field("title"),
+                TomlField {
+                    name: "status".into(),
+                    field_type: FieldTypeSerde::Scalar("String".into()),
+                    allowed: vec!["**".into()],
+                    required: vec![],
+                    nullable: true,
+                },
+            ],
+            vec![],
+        );
+
+        let result = run(tmp.path(), true, false).await.result.unwrap();
+        assert!(!result.has_violations());
+    }
+
+    #[tokio::test]
+    async fn null_on_disallowed_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("notes")).unwrap();
+
+        fs::write(
+            tmp.path().join("notes/note1.md"),
+            "---\ntitle: Hello\ndraft:\n---\n# Hello\nBody.",
+        )
+        .unwrap();
+
+        // draft: allowed only in blog/**, but file is in notes/
+        write_toml(
+            tmp.path(),
+            vec![
+                string_field("title"),
+                TomlField {
+                    name: "draft".into(),
+                    field_type: FieldTypeSerde::Scalar("Boolean".into()),
+                    allowed: vec!["blog/**".into()],
+                    required: vec![],
+                    nullable: true,
+                },
+            ],
+            vec![],
+        );
+
+        let result = run(tmp.path(), true, false).await.result.unwrap();
+        assert!(result.has_violations());
+        let v = result
+            .field_violations
+            .iter()
+            .find(|v| v.field == "draft")
+            .expect("expected Disallowed for draft");
+        assert!(matches!(v.kind, ViolationKind::Disallowed));
+    }
+
+    #[tokio::test]
+    async fn null_on_disallowed_path_and_not_nullable() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("notes")).unwrap();
+
+        fs::write(
+            tmp.path().join("notes/note1.md"),
+            "---\ntitle: Hello\ndraft:\n---\n# Hello\nBody.",
+        )
+        .unwrap();
+
+        // draft: allowed only in blog/**, nullable=false
+        // Should trigger BOTH Disallowed AND NullNotAllowed
+        write_toml(
+            tmp.path(),
+            vec![
+                string_field("title"),
+                TomlField {
+                    name: "draft".into(),
+                    field_type: FieldTypeSerde::Scalar("Boolean".into()),
+                    allowed: vec!["blog/**".into()],
+                    required: vec![],
+                    nullable: false,
+                },
+            ],
+            vec![],
+        );
+
+        let result = run(tmp.path(), true, false).await.result.unwrap();
+        assert!(result.has_violations());
+
+        let has_disallowed = result
+            .field_violations
+            .iter()
+            .any(|v| v.field == "draft" && matches!(v.kind, ViolationKind::Disallowed));
+        let has_null_not_allowed = result
+            .field_violations
+            .iter()
+            .any(|v| v.field == "draft" && matches!(v.kind, ViolationKind::NullNotAllowed));
+
+        assert!(has_disallowed, "expected Disallowed for draft");
+        assert!(has_null_not_allowed, "expected NullNotAllowed for draft");
     }
 }
