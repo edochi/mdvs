@@ -49,7 +49,14 @@ Objects just check that the value is an object — individual keys are not valid
 
 Null interacts with validation in specific ways:
 
-**Null values skip type and allowed checks.** If a field's value is `null`, it doesn't matter what type is declared or which paths are allowed — those checks are skipped entirely. Only the nullable constraint applies.
+**All four checks are independent.** A null value is checked like any other value — each violation type is evaluated separately:
+
+- **`WrongType`** — null is accepted by any type, so this never fires on null.
+- **`Disallowed`** — the field is present (the key exists), so `Disallowed` fires if the path isn't in `allowed`.
+- **`MissingRequired`** — null counts as "present", so this never fires on null.
+- **`NullNotAllowed`** — fires when the value is null and `nullable = false`.
+
+A single null field can trigger both `Disallowed` and `NullNotAllowed` at the same time.
 
 **Null vs absent.** These are different situations with different outcomes:
 
@@ -59,7 +66,7 @@ Null interacts with validation in specific ways:
 | Field is **null**, `nullable = true` | `drift_rate: null` | Passes |
 | Field is **null**, `nullable = false` | `drift_rate: null` | `NullNotAllowed` |
 
-A null value counts as "present" — the field exists in the frontmatter, it just has no value. So null never triggers `MissingRequired`. An absent field is genuinely missing — it can trigger `MissingRequired` but never `NullNotAllowed`.
+A null value counts as "present" — the field key exists in the frontmatter, it just has no value. So null never triggers `MissingRequired`. An absent field is genuinely missing — it can trigger `MissingRequired` but never `NullNotAllowed`.
 
 > **Note:** In YAML, unquoted `null` is a null value, not the string `"null"`. To store the literal string, write `drift_rate: "null"` (with quotes).
 
