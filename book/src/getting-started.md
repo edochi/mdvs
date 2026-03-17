@@ -87,6 +87,21 @@ That command did three things:
 2. **Inferred** 37 typed fields — strings, integers, floats, booleans, arrays, even a nested object (`calibration`)
 3. **Wrote** `mdvs.toml` with the inferred schema
 
+Notice the third column: `draft` appears in 8/43 files — all in `blog/`. `sensor_type` in 3/43 — all in `projects/alpha/notes/`. mdvs captured not just the types, but *where* each field belongs. Run `mdvs init example_kb -v` to see the full path patterns.
+
+Here's what a field definition looks like in `mdvs.toml`:
+
+```toml
+[[fields.field]]
+name = "sensor_type"
+type = "String"
+allowed = ["projects/alpha/notes/**"]
+required = ["projects/alpha/notes/**"]
+nullable = false
+```
+
+This means `sensor_type` is allowed only in experiment notes, and required there. If it appears in a blog post, `check` will flag it. If it's missing from an experiment note, `check` will flag that too.
+
 One artifact is created by `init`: **`mdvs.toml`** — the schema file. Commit this to version control. The `.mdvs/` directory (search index) is created later on first `build` or `search`.
 
 ## Validate
@@ -101,7 +116,7 @@ mdvs check example_kb
 Checked 43 files — no violations
 ```
 
-Since `mdvs init` just inferred the schema from these same files, everything passes. The power of `check` comes after you tighten the schema.
+Since `mdvs init` just inferred the schema from these same files, everything passes. The power of `check` comes after you tighten the schema — or when files drift from it. Try adding `sensor_type: SPR-A1` to a blog post — mdvs will flag it as `Disallowed` because that field doesn't belong there.
 
 ### What violations look like
 

@@ -32,17 +32,29 @@ tags:                                                     # String[]
 
 mdvs recognizes these types automatically. When it scans your files, it infers the type of each field from the values it finds — no configuration needed.
 
+## Directory-aware schema
+
+mdvs infers a three-dimensional schema from your files:
+
+- **Types** — boolean, integer, float, string, arrays, nested objects. Inferred automatically, with widening when files disagree.
+- **Paths** — which fields belong in which directories. `draft` only in `blog/`, `sensor_type` only in `projects/alpha/notes/`. Captured as `allowed` and `required` glob patterns.
+- **Nullability** — whether a field can be null. Tracked per field.
+
+This means different directories can have different fields with different constraints — all inferred automatically from your existing files.
+
+> **Tightest fit:** `mdvs init` infers the strictest schema that's consistent with your existing files. A field is inferred as *allowed* in a directory if at least one file there has it. It's inferred as *required* if every file there has it. These rules propagate up — if every subdirectory requires a field, the parent directory does too. The result is the tightest set of constraints where `check` still returns zero violations. You can always loosen them later.
+
 ## Two layers
 
 mdvs has two distinct capabilities that work independently:
 
-**Validation** — Scan your files, infer what frontmatter fields exist, where they appear, and what types they have. Write the result to `mdvs.toml`. Then validate files against that schema. No model, no index, nothing to download.
+**Validation** — Scan your files, infer what frontmatter fields exist, which directories they appear in, and what types they have. Write the result to `mdvs.toml`. Then validate files against that schema. No model, no index, nothing to download.
 
 **Search** — Chunk your markdown, embed it with a lightweight local model, store the vectors in Parquet files in `.mdvs/`, and query with natural language. Filter results on any frontmatter field using standard SQL.
 
-You need validation without search? Run `mdvs init --suppress-auto-build`, customise the fields in `mdvs.toml`, and run `mdvs check` to validate your files. 
+You need validation without search? Run `mdvs init`, customize the fields in `mdvs.toml`, and run `mdvs check`.
 
-You want search without validation? Just run `mdvs init` and `mdvs search` to get going. The inferred schema is used to extract metadata for search results, but you don't have to worry about it if you don't want to.
+You want search without validation? Just run `mdvs init` and `mdvs search`. The inferred schema is used to extract metadata for search results, but you don't have to worry about it if you don't want to.
 
 Use them together for the best experience, or separately if that's what you need.
 
@@ -53,6 +65,7 @@ You can think of mdvs as a layer on top of your markdown files that gives you da
 | Concept | Database | mdvs |
 |---|---|---|
 | Define structure | `CREATE TABLE` | `mdvs init` |
+| Per-table columns | Different columns per table | Per-directory fields via `allowed`/`required` globs |
 | Enforce constraints | Constraint validation | `mdvs check` |
 | Evolve structure | `ALTER TABLE` | `mdvs update` |
 | Create an index | `CREATE INDEX` | `mdvs build` |
