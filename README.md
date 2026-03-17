@@ -1,9 +1,15 @@
 # mdvs — Markdown Validation & Search
 
+<div align="center">
+
 [![CI](https://github.com/edochi/mdvs/actions/workflows/ci.yml/badge.svg)](https://github.com/edochi/mdvs/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/mdvs)](https://crates.io/crates/mdvs)
+[![downloads](https://img.shields.io/crates/d/mdvs)](https://crates.io/crates/mdvs)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-2021-orange.svg)](https://www.rust-lang.org/)
 [![Docs](https://img.shields.io/badge/docs-mdBook-green.svg)](https://edochi.github.io/mdvs/)
+
+</div>
 
 <div align="center">
 
@@ -13,7 +19,27 @@
 
 </div>
 
-mdvs infers a schema from your frontmatter, validates it, and gives you semantic search with SQL filtering. Single binary, no cloud, no setup.
+Schema inference, frontmatter validation, and semantic search for markdown directories. Single binary, no cloud, no setup.
+
+## Why mdvs?
+
+Markdown files can have a YAML block at the top called **frontmatter** — structured fields that describe the document:
+
+```markdown
+---
+title: Rust Tips
+tags: [rust, programming]
+draft: false
+---
+
+# Rust Tips
+
+Your content here...
+```
+
+`title`, `tags`, and `draft` are frontmatter fields. Most tools treat these as flat text or ignore them entirely. mdvs sees structure — your directories, your fields, your types. It infers which fields belong in which directories, validates that they're consistent, and lets you search everything with natural language and SQL.
+
+No config to write. No schema to define. Point it at a directory and it figures it out.
 
 ## Install
 
@@ -37,117 +63,119 @@ cd mdvs
 cargo install --path .
 ```
 
-## Quick Start
+## How it works
 
-```bash
-# Initialize: scans your files, infers a schema, builds a search index
-mdvs init ~/notes
+mdvs treats your markdown directory as a database — and your directory structure as part of the schema.
 
-# Search with natural language
-mdvs search "how to handle errors in rust"
+Consider a simple knowledge base:
 
-# Filter results with SQL on frontmatter fields
-mdvs search "async patterns" --where "draft = false" --limit 5
-
-# Validate frontmatter against the inferred schema
-mdvs check
+```
+notes/
+├── blog/
+│   ├── rust-tips.md        ← title, tags, draft
+│   └── half-baked-idea.md  ← title, draft
+├── team/
+│   ├── alice.md            ← title, role, email
+│   └── bob.md              ← title, role
+└── meetings/
+    └── weekly.md           ← title, date, attendees
 ```
 
-That's it. No config files to write, no models to download manually, no services to start.
+Different directories, different fields. mdvs sees this.
+
+### Infer
+
+```bash
+mdvs init notes/
+```
+
+mdvs scans every file, extracts frontmatter, and infers which fields belong where:
+
+```
+Initialized 5 files — 7 field(s)
+
+ "title"      String    5/5   required everywhere
+ "draft"      Boolean   2/5   only in blog/
+ "tags"       String[]  1/5   only in blog/
+ "role"       String    2/5   required in team/
+ "email"      String    1/5   only in team/
+ "date"       String    1/5   only in meetings/
+ "attendees"  String[]  1/5   only in meetings/
+```
+
+`draft` belongs in `blog/`. `role` belongs in `team/`. The directory structure is the schema.
+
+### Validate
+
+Two new files appear — both without `role`:
+
+```
+notes/
+├── blog/
+│   └── new-post.md    ← title, draft  (no role)
+├── team/
+│   └── charlie.md     ← title         (no role)
+└── ...
+```
+
+```bash
+mdvs check notes/
+```
+
+```
+1 violation — "role" MissingRequired in team/charlie.md
+```
+
+`charlie.md` is missing `role` — but `new-post.md` isn't flagged. mdvs knows `role` belongs in `team/`, not in `blog/`.
+
+### Search
+
+```bash
+mdvs search "weekly sync" notes/
+```
+
+```
+1  meetings/weekly.md   0.82
+2  team/alice.md        0.45
+```
+
+Filter with SQL on frontmatter fields:
+
+```bash
+mdvs search "rust" notes/ --where "draft = false"
+```
+
+No config files to write. No models to download manually. No services to start.
+
+> **Try it yourself!** Clone the repo and explore a richer example — 43 files across 8 directories, with type widening, nullable fields, nested objects, and deliberate edge cases:
+> ```bash
+> git clone https://github.com/edochi/mdvs.git
+> cd mdvs
+> mdvs init example_kb/
+> mdvs search "experiment" example_kb/
+> ```
 
 ## Features
 
-### Schema inference
-
-mdvs scans your markdown files and infers a typed schema from frontmatter — field names, types (boolean, integer, float, string, arrays, nested objects), which directories they appear in, and which ones are required. The schema is written to `mdvs.toml` and can be customized.
-
-```bash
-mdvs init ~/notes
-# Discovered 10 fields across 496 files
-#   tags       String[]  (required in ["**"])
-#   draft      Boolean   (allowed in ["blog/**"])
-#   year       Integer   (required in ["articles/**"])
-#   ...
-```
-
-### Frontmatter validation
-
-Check your files against the schema — catch missing required fields, wrong types, and fields that appear where they shouldn't.
-
-```bash
-mdvs check
-# blog/draft.md: missing required field 'tags'
-# blog/old-post.md: field 'year' expected Integer, got String
-```
-
-### Semantic search
-
-Instant vector search using lightweight static embeddings ([Model2Vec](https://github.com/MinishLab/model2vec)). The default model is 8MB — no GPU, no API keys, no network access needed at query time.
-
-```bash
-mdvs search "distributed consensus algorithms"
-0.72  notes/raft.md
-0.68  notes/paxos.md
-0.61  blog/distributed-systems.md
-```
-
-All commands support `--output json` for scripting and pipelines:
-
-```bash
-mdvs search "distributed consensus" --output json
-```
-
-```json
-{
-  "hits": [
-    { "filename": "notes/raft.md", "score": 0.72 },
-    { "filename": "notes/paxos.md", "score": 0.68 },
-    { "filename": "blog/distributed-systems.md", "score": 0.61 }
-  ]
-}
-```
-
-### SQL filtering
-
-Filter search results on any frontmatter field using SQL syntax, powered by [DataFusion](https://datafusion.apache.org/).
-
-```bash
-mdvs search "rust" --where "draft = false AND year >= 2024"
-mdvs search "recipes" --where "tags IS NOT NULL" --limit 5
-```
-
-### Incremental builds
-
-Only changed files are re-embedded. Unchanged files keep their existing chunks and embeddings. If nothing changed, the model isn't even loaded.
-
-```bash
-mdvs build
-# Built index: 3 new, 1 edited, 492 unchanged, 0 removed (4 files embedded)
-```
+- **Schema inference** — types (boolean, integer, float, string, arrays, nested objects), path constraints (allowed/required per directory), nullable detection. All automatic.
+- **Frontmatter validation** — wrong types, disallowed fields, missing required fields, null violations. Four independent checks, path-aware.
+- **Semantic search** — instant vector search using lightweight [Model2Vec](https://minish.ai/) static embeddings. Default model is ~30MB. No GPU, no API keys.
+- **SQL filtering** — `--where` clauses on any frontmatter field, powered by [DataFusion](https://datafusion.apache.org/). Arrays, nested objects, LIKE, IS NULL — full SQL.
+- **Incremental builds** — only changed files are re-embedded. Unchanged files keep their chunks. If nothing changed, the model isn't even loaded.
+- **Auto pipeline** — `search` auto-builds the index. `build` auto-updates the schema. One command does everything: `mdvs search "query"`.
+- **JSON output** — all commands support `--output json` for scripting and CI.
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `init`  | Scan files, infer schema, write `mdvs.toml`, optionally build index |
+| `init`  | Scan files, infer schema, write `mdvs.toml` |
 | `check` | Validate frontmatter against schema |
 | `update` | Re-scan and update field definitions |
 | `build` | Validate + embed + write search index |
 | `search` | Semantic search with optional SQL filtering |
 | `info`  | Show config and index status |
 | `clean` | Delete search index |
-
-## How it works
-
-mdvs treats your markdown directory like a database:
-
-- **`init`** scans your files and infers a schema from frontmatter — like `CREATE TABLE`
-- **`check`** validates every file against that schema — like constraint checking
-- **`update`** detects new fields as your files evolve — like `ALTER TABLE`
-- **`build`** chunks and embeds your content into a local Parquet index
-- **`search`** queries that index with SQL filtering on metadata — like `SELECT ... WHERE ... ORDER BY similarity`
-
-Two artifacts: `mdvs.toml` (committed, your schema) and `.mdvs/` (gitignored, the search index).
 
 ## Documentation
 

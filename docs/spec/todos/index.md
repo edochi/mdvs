@@ -119,3 +119,4 @@
 | [0115](TODO-0115.md) | Embed asciinema recordings in mdBook for interactive demos | todo | medium | 2026-03-17 |
 | [0116](TODO-0116.md) | Trim DataFusion default features to reduce binary size | todo | medium | 2026-03-17 |
 | [0117](TODO-0117.md) | Fix null values skipping Disallowed and NullNotAllowed checks | done | high | 2026-03-17 |
+| [0118](TODO-0118.md) | Rework README and book intro to show directory-aware schema | todo | high | 2026-03-17 |
