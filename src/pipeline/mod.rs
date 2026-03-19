@@ -5,7 +5,6 @@
 //! compose.
 
 pub mod classify;
-pub mod delete_index;
 pub mod embed;
 pub mod execute_search;
 pub mod infer;

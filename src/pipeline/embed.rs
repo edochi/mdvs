@@ -8,8 +8,8 @@ use crate::index::chunk::{extract_plain_text, Chunks};
 use crate::index::embed::Embedder;
 use crate::index::storage::ChunkRow;
 use crate::output::format_file_count;
+use crate::output::BuildFileDetail;
 use crate::pipeline::classify::FileToEmbed;
-use crate::pipeline::write_index::BuildFileDetail;
 use crate::pipeline::{ProcessingStep, ProcessingStepResult, StepOutput};
 
 /// Output record for the embed query step.

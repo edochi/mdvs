@@ -11,14 +11,8 @@ use crate::pipeline::{
     ErrorKind, ProcessingStep, ProcessingStepError, ProcessingStepResult, StepOutput,
 };
 
-/// Per-file chunk count for verbose build output.
-#[derive(Debug, Serialize)]
-pub struct BuildFileDetail {
-    /// Relative path of the file.
-    pub filename: String,
-    /// Number of chunks produced for this file.
-    pub chunks: usize,
-}
+// BuildFileDetail moved to crate::output
+pub use crate::output::BuildFileDetail;
 
 /// Output record for the write index step.
 #[derive(Debug, Serialize)]

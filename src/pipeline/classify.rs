@@ -9,7 +9,7 @@ use crate::index::storage::{content_hash, ChunkRow, FileIndexEntry};
 use crate::output::format_file_count;
 use crate::pipeline::{ProcessingStep, ProcessingStepResult, StepOutput};
 
-use super::write_index::BuildFileDetail;
+use crate::output::BuildFileDetail;
 
 /// Output record for the classify step.
 #[derive(Debug, Serialize)]
