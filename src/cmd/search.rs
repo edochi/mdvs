@@ -1,101 +1,13 @@
-use crate::index::backend::{Backend, SearchHit};
-use crate::output::{format_json_compact, CommandOutput};
-use crate::pipeline::embed::EmbedQueryOutput;
-use crate::pipeline::execute_search::ExecuteSearchOutput;
-use crate::pipeline::load_model::LoadModelOutput;
-use crate::pipeline::read_config::ReadConfigOutput;
-use crate::pipeline::read_index::ReadIndexOutput;
-use crate::pipeline::{ErrorKind, ProcessingStepError, ProcessingStepResult};
-use crate::table::{style_compact, style_record, Builder};
-use serde::Serialize;
+use crate::index::backend::Backend;
+use crate::outcome::commands::SearchOutcome;
+use crate::outcome::{
+    EmbedQueryOutcome, ExecuteSearchOutcome, LoadModelOutcome, Outcome, ReadConfigOutcome,
+    ReadIndexOutcome,
+};
+use crate::step::{from_pipeline_result, ErrorKind, Step, StepError, StepOutcome};
 use std::path::Path;
+use std::time::Instant;
 use tracing::{instrument, warn};
-
-/// Result of the `search` command: ranked list of matching files.
-#[derive(Debug, Serialize)]
-pub struct SearchResult {
-    /// The query string.
-    pub query: String,
-    /// Files ranked by cosine similarity to the query, descending.
-    pub hits: Vec<SearchHit>,
-    /// Name of the embedding model used.
-    pub model_name: String,
-    /// Result limit that was applied.
-    pub limit: usize,
-}
-
-impl CommandOutput for SearchResult {
-    fn format_text(&self, verbose: bool) -> String {
-        let mut out = String::new();
-
-        // One-liner
-        let hit_word = if self.hits.len() == 1 { "hit" } else { "hits" };
-        out.push_str(&format!(
-            "Searched \"{}\" — {} {}\n",
-            self.query,
-            self.hits.len(),
-            hit_word
-        ));
-
-        if self.hits.is_empty() {
-            return out;
-        }
-
-        out.push('\n');
-
-        if verbose {
-            // Record tables: one per hit with chunk text
-            for (i, hit) in self.hits.iter().enumerate() {
-                let mut builder = Builder::default();
-                let idx = format!("{}", i + 1);
-                let path = format!("\"{}\"", hit.filename);
-                let score = format!("{:.3}", hit.score);
-                builder.push_record([idx.as_str(), path.as_str(), score.as_str()]);
-
-                let detail = match (&hit.chunk_text, hit.start_line, hit.end_line) {
-                    (Some(text), Some(start), Some(end)) => {
-                        let indented: String = text
-                            .lines()
-                            .map(|l| format!("    {l}"))
-                            .collect::<Vec<_>>()
-                            .join("\n");
-                        format!("  lines {start}-{end}:\n{indented}")
-                    }
-                    (None, Some(start), Some(end)) => format!("  lines {start}-{end}"),
-                    _ => String::new(),
-                };
-
-                builder.push_record([detail.as_str(), "", ""]);
-                let mut table = builder.build();
-                style_record(&mut table, 3);
-                out.push_str(&format!("{table}\n"));
-            }
-
-            // Footer
-            out.push_str(&format!(
-                "{} {} | model: \"{}\" | limit: {}\n",
-                self.hits.len(),
-                hit_word,
-                self.model_name,
-                self.limit,
-            ));
-        } else {
-            // Compact table
-            let mut builder = Builder::default();
-            for (i, hit) in self.hits.iter().enumerate() {
-                let idx = format!("{}", i + 1);
-                let path = format!("\"{}\"", hit.filename);
-                let score = format!("{:.3}", hit.score);
-                builder.push_record([idx.as_str(), path.as_str(), score.as_str()]);
-            }
-            let mut table = builder.build();
-            style_compact(&mut table);
-            out.push_str(&format!("{table}\n"));
-        }
-
-        out
-    }
-}
 
 /// Read lines from a file (1-indexed, inclusive range).
 fn read_lines(path: &Path, start: i32, end: i32) -> Option<String> {
@@ -109,142 +21,6 @@ fn read_lines(path: &Path, start: i32, end: i32) -> Option<String> {
     Some(lines[start..end].join("\n"))
 }
 
-// ============================================================================
-// SearchCommandOutput (pipeline-based)
-// ============================================================================
-
-/// Pipeline record for the search command.
-#[derive(Debug, Serialize)]
-pub struct SearchProcessOutput {
-    /// Auto-build output (if auto-build was triggered).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub auto_build: Option<crate::cmd::build::BuildCommandOutput>,
-    /// Read config step result.
-    pub read_config: ProcessingStepResult<ReadConfigOutput>,
-    /// Read index step result.
-    pub read_index: ProcessingStepResult<ReadIndexOutput>,
-    /// Load model step result.
-    pub load_model: ProcessingStepResult<LoadModelOutput>,
-    /// Embed query step result.
-    pub embed_query: ProcessingStepResult<EmbedQueryOutput>,
-    /// Execute search step result.
-    pub execute_search: ProcessingStepResult<ExecuteSearchOutput>,
-}
-
-/// Full output of the search command: pipeline steps + command result.
-#[derive(Debug, Serialize)]
-pub struct SearchCommandOutput {
-    /// Processing steps and their outcomes.
-    pub process: SearchProcessOutput,
-    /// Command result (None if pipeline didn't complete).
-    pub result: Option<SearchResult>,
-}
-
-impl SearchCommandOutput {
-    /// Returns `true` if any processing step failed.
-    pub fn has_failed_step(&self) -> bool {
-        self.process
-            .auto_build
-            .as_ref()
-            .is_some_and(|b| b.has_failed_step())
-            || matches!(self.process.read_config, ProcessingStepResult::Failed(_))
-            || matches!(self.process.read_index, ProcessingStepResult::Failed(_))
-            || matches!(self.process.load_model, ProcessingStepResult::Failed(_))
-            || matches!(self.process.embed_query, ProcessingStepResult::Failed(_))
-            || matches!(self.process.execute_search, ProcessingStepResult::Failed(_))
-    }
-}
-
-impl CommandOutput for SearchCommandOutput {
-    fn format_json(&self, verbose: bool) -> String {
-        format_json_compact(self, self.result.as_ref(), verbose)
-    }
-
-    fn format_text(&self, verbose: bool) -> String {
-        let mut preamble = String::new();
-        if let Some(ref build_output) = self.process.auto_build {
-            if verbose {
-                preamble.push_str("Auto-build:\n");
-                let build_text = build_output.format_text(true);
-                for line in build_text.lines() {
-                    preamble.push_str(&format!("  {line}\n"));
-                }
-                preamble.push('\n');
-            } else if let Some(ref br) = build_output.result {
-                preamble.push_str(&format!(
-                    "Built index — {} files, {} chunks\n",
-                    br.files_total, br.chunks_total
-                ));
-            }
-        }
-
-        let body = if let Some(result) = &self.result {
-            if verbose {
-                let mut out = String::new();
-                out.push_str(&format!(
-                    "{}\n",
-                    self.process.read_config.format_line("Read config")
-                ));
-                out.push_str(&format!(
-                    "{}\n",
-                    self.process.read_index.format_line("Read index")
-                ));
-                out.push_str(&format!(
-                    "{}\n",
-                    self.process.load_model.format_line("Load model")
-                ));
-                out.push_str(&format!(
-                    "{}\n",
-                    self.process.embed_query.format_line("Embed query")
-                ));
-                out.push_str(&format!(
-                    "{}\n",
-                    self.process.execute_search.format_line("Search")
-                ));
-                out.push('\n');
-                out.push_str(&result.format_text(verbose));
-                out
-            } else {
-                result.format_text(verbose)
-            }
-        } else {
-            // Pipeline didn't complete — show steps up to the failure
-            let mut out = String::new();
-            out.push_str(&format!(
-                "{}\n",
-                self.process.read_config.format_line("Read config")
-            ));
-            if !matches!(self.process.read_index, ProcessingStepResult::Skipped) {
-                out.push_str(&format!(
-                    "{}\n",
-                    self.process.read_index.format_line("Read index")
-                ));
-            }
-            if !matches!(self.process.load_model, ProcessingStepResult::Skipped) {
-                out.push_str(&format!(
-                    "{}\n",
-                    self.process.load_model.format_line("Load model")
-                ));
-            }
-            if !matches!(self.process.embed_query, ProcessingStepResult::Skipped) {
-                out.push_str(&format!(
-                    "{}\n",
-                    self.process.embed_query.format_line("Embed query")
-                ));
-            }
-            if !matches!(self.process.execute_search, ProcessingStepResult::Skipped) {
-                out.push_str(&format!(
-                    "{}\n",
-                    self.process.execute_search.format_line("Search")
-                ));
-            }
-            out
-        };
-
-        format!("{preamble}{body}")
-    }
-}
-
 /// Embed a query, search the index, and return ranked results.
 #[instrument(name = "search", skip_all)]
 pub async fn run(
@@ -254,38 +30,43 @@ pub async fn run(
     where_clause: Option<&str>,
     no_update: bool,
     no_build: bool,
-    verbose: bool,
-) -> SearchCommandOutput {
+    _verbose: bool,
+) -> Step<Outcome> {
     use crate::pipeline::embed::run_embed_query;
     use crate::pipeline::execute_search::run_execute_search;
     use crate::pipeline::load_model::run_load_model;
     use crate::pipeline::read_config::run_read_config;
     use crate::pipeline::read_index::run_read_index;
 
-    let (read_config_step, config) = run_read_config(path);
+    let start = Instant::now();
+    let mut substeps = Vec::new();
+
+    // 1. Read config
+    let (read_config_result, config) = run_read_config(path);
+    substeps.push(from_pipeline_result(read_config_result, |o| {
+        Outcome::ReadConfig(ReadConfigOutcome {
+            config_path: o.config_path.clone(),
+        })
+    }));
 
     // Auto-build: run build before searching if configured
     let auto_build = if let Some(ref cfg) = config {
         let should_build = !no_build && cfg.search.as_ref().is_some_and(|s| s.auto_build);
         if should_build {
             let build_no_update = no_update || !cfg.search.as_ref().is_some_and(|s| s.auto_update);
-            let build_output =
-                crate::cmd::build::run(path, None, None, None, false, build_no_update, verbose)
-                    .await;
-            if build_output.has_failed_step() {
-                return SearchCommandOutput {
-                    process: SearchProcessOutput {
-                        auto_build: Some(build_output),
-                        read_config: read_config_step,
-                        read_index: ProcessingStepResult::Skipped,
-                        load_model: ProcessingStepResult::Skipped,
-                        embed_query: ProcessingStepResult::Skipped,
-                        execute_search: ProcessingStepResult::Skipped,
-                    },
-                    result: None,
-                };
+            let build_step =
+                crate::cmd::build::run(path, None, None, None, false, build_no_update, false).await;
+            if build_step.has_failed_step() {
+                substeps.push(build_step);
+                return fail_msg(
+                    &mut substeps,
+                    start,
+                    ErrorKind::User,
+                    "auto-build failed",
+                    4,
+                );
             }
-            Some(build_output)
+            Some(build_step)
         } else {
             None
         }
@@ -293,79 +74,135 @@ pub async fn run(
         None
     };
 
+    // Push auto-build substep if it ran
+    if let Some(build_step) = auto_build {
+        substeps.push(build_step);
+    }
+
     // Re-read config if auto-build ran
-    let (read_config_step, config) = if auto_build.is_some() {
-        run_read_config(path)
+    let config = if substeps.len() > 1 {
+        // auto-build ran, re-read
+        let (result, cfg) = run_read_config(path);
+        substeps.push(from_pipeline_result(result, |o| {
+            Outcome::ReadConfig(ReadConfigOutcome {
+                config_path: o.config_path.clone(),
+            })
+        }));
+        match cfg {
+            Some(c) => Some(c),
+            None => return fail_from_last(&mut substeps, start, 3),
+        }
     } else {
-        (read_config_step, config)
+        config
     };
 
     let embedding = config.as_ref().and_then(|c| c.embedding_model.as_ref());
 
-    let (read_index_step, index_data) = match &config {
+    // 2. Read index
+    let (read_index_result, index_data) = match &config {
         Some(_) => run_read_index(path),
-        None => (ProcessingStepResult::Skipped, None),
+        None => {
+            substeps.push(Step {
+                substeps: vec![],
+                outcome: StepOutcome::Skipped,
+            });
+            return fail_from_last(&mut substeps, start, 3);
+        }
     };
+    substeps.push(from_pipeline_result(read_index_result, |o| {
+        Outcome::ReadIndex(ReadIndexOutcome {
+            exists: o.exists,
+            files_indexed: o.files_indexed,
+            chunks: o.chunks,
+        })
+    }));
 
-    // Pre-checks before loading model (fail fast on user errors)
-    let pre_check_error: Option<String> = if config.is_none() {
-        None // already failed at read_config
-    } else if embedding.is_none() {
-        Some("missing [embedding_model] in mdvs.toml (run `mdvs build` first)".to_string())
-    } else if matches!(read_index_step, ProcessingStepResult::Failed(_)) {
-        None // already failed at read_index
-    } else if index_data.is_none() {
-        Some("index not found (run `mdvs build` first)".to_string())
-    } else {
-        // Model mismatch check
-        let data = index_data.as_ref().unwrap();
-        let emb = embedding.unwrap();
-        if data.metadata.embedding_model != *emb {
-            Some(format!(
-                "model mismatch: config has '{}' (rev {:?}) but index was built with '{}' (rev {:?}) — run 'mdvs build' to rebuild",
-                emb.name, emb.revision,
-                data.metadata.embedding_model.name, data.metadata.embedding_model.revision,
-            ))
-        } else {
-            None
+    // Pre-checks before loading model
+    let pre_check_error: Option<String> = match (config.as_ref(), embedding, index_data.as_ref()) {
+        (None, _, _) => None, // already failed
+        (_, None, _) => {
+            Some("missing [embedding_model] in mdvs.toml (run `mdvs build` first)".to_string())
+        }
+        (_, _, None) => Some("index not found (run `mdvs build` first)".to_string()),
+        (_, Some(emb), Some(data)) => {
+            if data.metadata.embedding_model != *emb {
+                Some(format!(
+                    "model mismatch: config has '{}' (rev {:?}) but index was built with '{}' (rev {:?}) — run 'mdvs build' to rebuild",
+                    emb.name, emb.revision,
+                    data.metadata.embedding_model.name, data.metadata.embedding_model.revision,
+                ))
+            } else {
+                None
+            }
         }
     };
 
-    let (load_model_step, embedder) = match (embedding, &pre_check_error) {
-        (Some(emb), None) => run_load_model(emb),
-        (_, Some(msg)) => {
-            let err = ProcessingStepError {
-                kind: ErrorKind::User,
-                message: msg.clone(),
-            };
-            (ProcessingStepResult::Failed(err), None)
-        }
-        _ => (ProcessingStepResult::Skipped, None),
+    // 3. Load model
+    if let Some(msg) = pre_check_error {
+        substeps.push(Step {
+            substeps: vec![],
+            outcome: StepOutcome::Complete {
+                result: Err(StepError {
+                    kind: ErrorKind::User,
+                    message: msg,
+                }),
+                elapsed_ms: 0,
+            },
+        });
+        return fail_from_last(&mut substeps, start, 2);
+    }
+
+    let emb_config = embedding.unwrap();
+    let (load_model_result, embedder) = run_load_model(emb_config);
+    substeps.push(from_pipeline_result(load_model_result, |o| {
+        Outcome::LoadModel(LoadModelOutcome {
+            model_name: o.model_name.clone(),
+            dimension: o.dimension,
+        })
+    }));
+    let embedder = match embedder {
+        Some(e) => e,
+        None => return fail_from_last(&mut substeps, start, 2),
     };
 
-    let (embed_query_step, query_embedding) = match &embedder {
-        Some(emb) => run_embed_query(emb, query).await,
-        None => (ProcessingStepResult::Skipped, None),
+    // 4. Embed query
+    let (embed_query_result, query_embedding) = run_embed_query(&embedder, query).await;
+    substeps.push(from_pipeline_result(embed_query_result, |o| {
+        Outcome::EmbedQuery(EmbedQueryOutcome {
+            query: o.query.clone(),
+        })
+    }));
+    let query_embedding = match query_embedding {
+        Some(qe) => qe,
+        None => return fail_from_last(&mut substeps, start, 1),
     };
 
-    let (execute_search_step, hits) = match (&config, query_embedding) {
-        (Some(cfg), Some(qe)) => {
-            let backend = Backend::parquet(path);
-            let (prefix, aliases) = match &cfg.search {
-                Some(sc) => (sc.internal_prefix.as_str(), &sc.aliases),
-                None => ("", &std::collections::HashMap::new()),
-            };
-            run_execute_search(&backend, qe, where_clause, limit, prefix, aliases).await
-        }
-        _ => (ProcessingStepResult::Skipped, None),
+    // 5. Execute search
+    let cfg = config.as_ref().unwrap();
+    let backend = Backend::parquet(path);
+    let (prefix, aliases) = match &cfg.search {
+        Some(sc) => (sc.internal_prefix.as_str(), &sc.aliases),
+        None => ("", &std::collections::HashMap::new()),
     };
+    let (execute_result, hits) = run_execute_search(
+        &backend,
+        query_embedding,
+        where_clause,
+        limit,
+        prefix,
+        aliases,
+    )
+    .await;
+    substeps.push(from_pipeline_result(execute_result, |o| {
+        Outcome::ExecuteSearch(ExecuteSearchOutcome { hits: o.hits })
+    }));
 
-    // Build result with chunk text populated if verbose
-    let result = hits.map(|mut hits| {
-        if verbose {
+    // Build result with chunk text populated (always — full outcome carries all data)
+    let hits = match hits {
+        Some(mut hits) => {
             for hit in &mut hits {
-                if let (Some(start), Some(end)) = (hit.start_line, hit.end_line) {
-                    match read_lines(&path.join(&hit.filename), start, end) {
+                if let (Some(s), Some(e)) = (hit.start_line, hit.end_line) {
+                    match read_lines(&path.join(&hit.filename), s, e) {
                         Some(text) => hit.chunk_text = Some(text),
                         None => warn!(
                             file = %hit.filename,
@@ -374,26 +211,78 @@ pub async fn run(
                     }
                 }
             }
+            hits
         }
-        let model_name = embedding.map(|e| e.name.clone()).unwrap_or_default();
-        SearchResult {
-            query: query.to_string(),
-            hits,
-            model_name,
-            limit,
-        }
-    });
+        None => return fail_from_last(&mut substeps, start, 0),
+    };
 
-    SearchCommandOutput {
-        process: SearchProcessOutput {
-            auto_build,
-            read_config: read_config_step,
-            read_index: read_index_step,
-            load_model: load_model_step,
-            embed_query: embed_query_step,
-            execute_search: execute_search_step,
+    let model_name = emb_config.name.clone();
+    Step {
+        substeps,
+        outcome: StepOutcome::Complete {
+            result: Ok(Outcome::Search(Box::new(SearchOutcome {
+                query: query.to_string(),
+                hits,
+                model_name,
+                limit,
+            }))),
+            elapsed_ms: start.elapsed().as_millis() as u64,
         },
-        result,
+    }
+}
+
+fn fail_from_last(
+    substeps: &mut Vec<Step<Outcome>>,
+    start: Instant,
+    skipped: usize,
+) -> Step<Outcome> {
+    let msg = match substeps.iter().rev().find_map(|s| match &s.outcome {
+        StepOutcome::Complete { result: Err(e), .. } => Some(e.message.clone()),
+        _ => None,
+    }) {
+        Some(m) => m,
+        None => "step failed".into(),
+    };
+    for _ in 0..skipped {
+        substeps.push(Step {
+            substeps: vec![],
+            outcome: StepOutcome::Skipped,
+        });
+    }
+    Step {
+        substeps: std::mem::take(substeps),
+        outcome: StepOutcome::Complete {
+            result: Err(StepError {
+                kind: ErrorKind::Application,
+                message: msg,
+            }),
+            elapsed_ms: start.elapsed().as_millis() as u64,
+        },
+    }
+}
+
+fn fail_msg(
+    substeps: &mut Vec<Step<Outcome>>,
+    start: Instant,
+    kind: ErrorKind,
+    msg: &str,
+    skipped: usize,
+) -> Step<Outcome> {
+    for _ in 0..skipped {
+        substeps.push(Step {
+            substeps: vec![],
+            outcome: StepOutcome::Skipped,
+        });
+    }
+    Step {
+        substeps: std::mem::take(substeps),
+        outcome: StepOutcome::Complete {
+            result: Err(StepError {
+                kind,
+                message: msg.into(),
+            }),
+            elapsed_ms: start.elapsed().as_millis() as u64,
+        },
     }
 }
 
@@ -401,20 +290,36 @@ pub async fn run(
 mod tests {
     use super::*;
     use crate::index::embed::{Embedder, ModelConfig};
+    use crate::outcome::commands::SearchOutcome;
     use crate::schema::config::{FieldsConfig, MdvsToml, SearchConfig, UpdateConfig};
     use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig, ScanConfig};
     use std::fs;
 
+    fn unwrap_search(step: &Step<Outcome>) -> &SearchOutcome {
+        match &step.outcome {
+            StepOutcome::Complete {
+                result: Ok(Outcome::Search(o)),
+                ..
+            } => o,
+            other => panic!("expected Ok(Search), got: {other:?}"),
+        }
+    }
+
+    fn unwrap_error(step: &Step<Outcome>) -> &StepError {
+        match &step.outcome {
+            StepOutcome::Complete { result: Err(e), .. } => e,
+            other => panic!("expected Err, got: {other:?}"),
+        }
+    }
+
     fn create_test_vault(dir: &Path) {
         let blog_dir = dir.join("blog");
         fs::create_dir_all(&blog_dir).unwrap();
-
         fs::write(
             blog_dir.join("post1.md"),
             "---\ntitle: Rust Programming\ntags:\n  - rust\n  - code\ndraft: false\n---\n# Rust Programming\nRust is a systems programming language focused on safety and performance.",
         )
         .unwrap();
-
         fs::write(
             blog_dir.join("post2.md"),
             "---\ntitle: Cooking Recipes\ndraft: true\n---\n# Cooking Recipes\nDelicious pasta recipes for weeknight dinners.",
@@ -456,13 +361,8 @@ mod tests {
     }
 
     async fn init_and_build(dir: &Path) {
-        let output = crate::cmd::init::run(
-            dir, "**", false, false, true, false, // skip_gitignore
-            false, // verbose
-        );
-        assert!(!output.has_failed_step());
-
-        // Build the index
+        let step = crate::cmd::init::run(dir, "**", false, false, true, false, false);
+        assert!(!crate::step::has_failed(&step));
         let output = crate::cmd::build::run(dir, None, None, None, false, true, false).await;
         assert!(!output.has_failed_step());
     }
@@ -472,7 +372,6 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let output = run(tmp.path(), "test query", 10, None, true, true, false).await;
         assert!(output.has_failed_step());
-        assert!(output.result.is_none());
     }
 
     #[tokio::test]
@@ -482,12 +381,8 @@ mod tests {
 
         let output = run(tmp.path(), "test query", 10, None, true, true, false).await;
         assert!(output.has_failed_step());
-        assert!(output.result.is_none());
-        if let ProcessingStepResult::Failed(err) = &output.process.load_model {
-            assert!(err.message.contains("index not found"));
-        } else {
-            panic!("expected load_model to fail");
-        }
+        let err = unwrap_error(&output);
+        assert!(err.message.contains("index not found"));
     }
 
     #[tokio::test]
@@ -498,15 +393,14 @@ mod tests {
 
         let output = run(tmp.path(), "rust programming", 10, None, true, true, false).await;
         assert!(!output.has_failed_step(), "search failed: {:?}", output);
-        let result = output.result.unwrap();
+        let result = unwrap_search(&output);
         assert_eq!(result.query, "rust programming");
         assert!(!result.model_name.is_empty());
         assert!(!result.hits.is_empty());
-        // start_line/end_line always present
         assert!(result.hits[0].start_line.is_some());
         assert!(result.hits[0].end_line.is_some());
-        // chunk_text not populated without verbose
-        assert!(result.hits[0].chunk_text.is_none());
+        // chunk_text always populated now (full outcome carries all data)
+        assert!(result.hits[0].chunk_text.is_some());
     }
 
     #[tokio::test]
@@ -517,9 +411,8 @@ mod tests {
 
         let output = run(tmp.path(), "rust programming", 10, None, true, true, true).await;
         assert!(!output.has_failed_step());
-        let result = output.result.unwrap();
+        let result = unwrap_search(&output);
         assert!(!result.hits.is_empty());
-        // chunk_text populated in verbose mode
         assert!(result.hits[0].chunk_text.is_some());
     }
 
@@ -590,11 +483,8 @@ mod tests {
 
         let output = run(tmp.path(), "test query", 10, None, true, true, false).await;
         assert!(output.has_failed_step());
-        if let ProcessingStepResult::Failed(err) = &output.process.load_model {
-            assert!(err.message.contains("model mismatch"));
-        } else {
-            panic!("expected load_model to fail");
-        }
+        let err = unwrap_error(&output);
+        assert!(err.message.contains("model mismatch"));
     }
 
     #[tokio::test]
@@ -614,12 +504,8 @@ mod tests {
         )
         .await;
         assert!(output.has_failed_step());
-        if let ProcessingStepResult::Failed(err) = &output.process.execute_search {
-            assert!(err.message.contains("unmatched single quote"));
-            assert!(err.message.contains("O''Brien"));
-        } else {
-            panic!("expected execute_search to fail");
-        }
+        let err = unwrap_error(&output);
+        assert!(err.message.contains("unmatched single quote"));
     }
 
     #[tokio::test]
@@ -630,11 +516,8 @@ mod tests {
 
         let output = run(tmp.path(), "test", 10, Some("x = \"bad"), true, true, false).await;
         assert!(output.has_failed_step());
-        if let ProcessingStepResult::Failed(err) = &output.process.execute_search {
-            assert!(err.message.contains("unmatched double quote"));
-        } else {
-            panic!("expected execute_search to fail");
-        }
+        let err = unwrap_error(&output);
+        assert!(err.message.contains("unmatched double quote"));
     }
 
     #[tokio::test]
@@ -643,7 +526,6 @@ mod tests {
         create_test_vault(tmp.path());
         init_and_build(tmp.path()).await;
 
-        // 2 single quotes (even) — passes parity check but DataFusion rejects it
         let output = run(
             tmp.path(),
             "test",
@@ -663,7 +545,6 @@ mod tests {
         create_test_vault(tmp.path());
         init_and_build(tmp.path()).await;
 
-        // Properly escaped single quotes should pass validation
         let output = run(
             tmp.path(),
             "test",
@@ -674,10 +555,10 @@ mod tests {
             false,
         )
         .await;
-        // Should not fail with quote parity error (may fail for other reasons like no match)
-        if let ProcessingStepResult::Failed(err) = &output.process.execute_search {
+        // Should not fail with quote parity error
+        if let StepOutcome::Complete { result: Err(e), .. } = &output.outcome {
             assert!(
-                !err.message.contains("unmatched"),
+                !e.message.contains("unmatched"),
                 "balanced quotes should not trigger parity check"
             );
         }

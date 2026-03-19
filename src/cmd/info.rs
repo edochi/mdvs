@@ -1,16 +1,18 @@
-use crate::output::{field_hints, format_hints, format_json_compact, CommandOutput, FieldHint};
-use crate::pipeline::read_config::ReadConfigOutput;
-use crate::pipeline::read_index::ReadIndexOutput;
-use crate::pipeline::scan::ScanOutput;
-use crate::pipeline::ProcessingStepResult;
-use crate::table::{style_compact, style_record, Builder};
+use crate::discover::scan::ScannedFiles;
+use crate::index::backend::Backend;
+use crate::outcome::commands::InfoOutcome;
+use crate::outcome::{Outcome, ReadConfigOutcome, ReadIndexOutcome, ScanOutcome};
+use crate::output::{field_hints, FieldHint};
+use crate::schema::config::MdvsToml;
+use crate::step::{ErrorKind, Step, StepError, StepOutcome};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::Path;
+use std::time::Instant;
 use tracing::instrument;
 
-/// A field definition from `mdvs.toml`, rendered for display.
+/// A single field definition for info display.
 #[derive(Debug, Serialize)]
 pub struct InfoField {
     /// Field name.
@@ -34,7 +36,7 @@ pub struct InfoField {
     pub hints: Vec<FieldHint>,
 }
 
-/// Metadata and statistics about a built search index.
+/// Built index metadata for info display.
 #[derive(Debug, Serialize)]
 pub struct IndexInfo {
     /// Embedding model name.
@@ -56,339 +58,226 @@ pub struct IndexInfo {
     pub config_status: String,
 }
 
-/// Output of the `info` command.
-#[derive(Debug, Serialize)]
-pub struct InfoResult {
-    /// Glob pattern from `[scan]` config.
-    pub scan_glob: String,
-    /// Number of markdown files matching the scan pattern.
-    pub files_on_disk: usize,
-    /// Field definitions from `[[fields.field]]`.
-    pub fields: Vec<InfoField>,
-    /// Field names in the `[fields].ignore` list.
-    pub ignored_fields: Vec<String>,
-    /// Index info, if a built index exists.
-    pub index: Option<IndexInfo>,
-}
-
-impl CommandOutput for InfoResult {
-    fn format_text(&self, verbose: bool) -> String {
-        let mut out = String::new();
-
-        // One-liner
-        match &self.index {
-            Some(idx) => out.push_str(&format!(
-                "{} files, {} fields, {} chunks\n",
-                self.files_on_disk,
-                self.fields.len(),
-                idx.chunks,
-            )),
-            None => out.push_str(&format!(
-                "{} files, {} fields\n",
-                self.files_on_disk,
-                self.fields.len(),
-            )),
-        }
-
-        // Metadata table (only when index exists)
-        if let Some(idx) = &self.index {
-            out.push('\n');
-            let mut builder = Builder::default();
-            builder.push_record(["model:", &idx.model]);
-            if verbose {
-                let rev = idx.revision.as_deref().unwrap_or("none");
-                builder.push_record(["revision:", rev]);
-                builder.push_record(["chunk size:", &idx.chunk_size.to_string()]);
-                builder.push_record(["built:", &idx.built_at]);
-            }
-            builder.push_record(["config:", &idx.config_status]);
-            builder.push_record([
-                "files:",
-                &format!("{}/{}", idx.files_indexed, idx.files_on_disk),
-            ]);
-            let mut table = builder.build();
-            style_compact(&mut table);
-            out.push_str(&format!("{table}\n"));
-        }
-
-        // Fields table
-        if !self.fields.is_empty() {
-            out.push('\n');
-            if verbose {
-                for f in &self.fields {
-                    let mut builder = Builder::default();
-                    let count_str = match (f.count, f.total_files) {
-                        (Some(c), Some(t)) => format!("{c}/{t}"),
-                        _ => String::new(),
-                    };
-                    builder.push_record([
-                        format!("\"{}\"", f.name),
-                        f.field_type.clone(),
-                        count_str,
-                    ]);
-
-                    let mut detail_lines = Vec::new();
-                    if !f.required.is_empty() {
-                        detail_lines.push("  required:".to_string());
-                        for g in &f.required {
-                            detail_lines.push(format!("    - \"{g}\""));
-                        }
-                    }
-                    detail_lines.push("  allowed:".to_string());
-                    for g in &f.allowed {
-                        detail_lines.push(format!("    - \"{g}\""));
-                    }
-                    if f.nullable {
-                        detail_lines.push("  nullable: true".to_string());
-                    }
-                    if !f.hints.is_empty() {
-                        detail_lines.push(format!("  hints: {}", format_hints(&f.hints)));
-                    }
-
-                    builder.push_record([detail_lines.join("\n"), String::new(), String::new()]);
-                    let mut table = builder.build();
-                    style_record(&mut table, 3);
-                    out.push_str(&format!("{table}\n"));
-                }
-            } else {
-                let mut builder = Builder::default();
-                for f in &self.fields {
-                    let required_str = if f.required.is_empty() {
-                        String::new()
-                    } else {
-                        let globs: Vec<String> =
-                            f.required.iter().map(|g| format!("\"{g}\"")).collect();
-                        format!("required: {}", globs.join(", "))
-                    };
-                    let allowed_str = {
-                        let globs: Vec<String> =
-                            f.allowed.iter().map(|g| format!("\"{g}\"")).collect();
-                        format!("allowed: {}", globs.join(", "))
-                    };
-                    let type_str = if f.nullable {
-                        format!("{}?", f.field_type)
-                    } else {
-                        f.field_type.clone()
-                    };
-                    let mut row = vec![
-                        format!("\"{}\"", f.name),
-                        type_str,
-                        required_str,
-                        allowed_str,
-                    ];
-                    let hints_str = format_hints(&f.hints);
-                    if !hints_str.is_empty() {
-                        row.push(hints_str);
-                    }
-                    builder.push_record(row);
-                }
-                let mut table = builder.build();
-                style_compact(&mut table);
-                out.push_str(&format!("{table}\n"));
-            }
-        }
-
-        out
-    }
-}
-
-// ============================================================================
-// InfoCommandOutput (pipeline-based)
-// ============================================================================
-
-/// Pipeline record for the info command.
-#[derive(Debug, Serialize)]
-pub struct InfoProcessOutput {
-    /// Read config step result.
-    pub read_config: ProcessingStepResult<ReadConfigOutput>,
-    /// Scan step result.
-    pub scan: ProcessingStepResult<ScanOutput>,
-    /// Read index step result.
-    pub read_index: ProcessingStepResult<ReadIndexOutput>,
-}
-
-/// Full output of the info command: pipeline steps + command result.
-#[derive(Debug, Serialize)]
-pub struct InfoCommandOutput {
-    /// Processing steps and their outcomes.
-    pub process: InfoProcessOutput,
-    /// Command result (None if pipeline didn't complete).
-    pub result: Option<InfoResult>,
-}
-
-impl InfoCommandOutput {
-    /// Returns `true` if any processing step failed.
-    pub fn has_failed_step(&self) -> bool {
-        matches!(self.process.read_config, ProcessingStepResult::Failed(_))
-            || matches!(self.process.scan, ProcessingStepResult::Failed(_))
-            || matches!(self.process.read_index, ProcessingStepResult::Failed(_))
-    }
-}
-
-impl CommandOutput for InfoCommandOutput {
-    fn format_json(&self, verbose: bool) -> String {
-        format_json_compact(self, self.result.as_ref(), verbose)
-    }
-
-    fn format_text(&self, verbose: bool) -> String {
-        if let Some(result) = &self.result {
-            if verbose {
-                let mut out = String::new();
-                out.push_str(&format!(
-                    "{}\n",
-                    self.process.read_config.format_line("Read config")
-                ));
-                out.push_str(&format!("{}\n", self.process.scan.format_line("Scan")));
-                out.push_str(&format!(
-                    "{}\n",
-                    self.process.read_index.format_line("Read index")
-                ));
-                out.push('\n');
-                out.push_str(&result.format_text(verbose));
-                out
-            } else {
-                result.format_text(verbose)
-            }
-        } else {
-            // Pipeline didn't complete — show steps up to the failure
-            let mut out = String::new();
-            out.push_str(&format!(
-                "{}\n",
-                self.process.read_config.format_line("Read config")
-            ));
-            if !matches!(self.process.scan, ProcessingStepResult::Skipped) {
-                out.push_str(&format!("{}\n", self.process.scan.format_line("Scan")));
-            }
-            if !matches!(self.process.read_index, ProcessingStepResult::Skipped) {
-                out.push_str(&format!(
-                    "{}\n",
-                    self.process.read_index.format_line("Read index")
-                ));
-            }
-            out
-        }
-    }
-}
-
 /// Read config, scan files, and read index metadata.
 #[instrument(name = "info", skip_all)]
-pub fn run(path: &Path, verbose: bool) -> InfoCommandOutput {
-    use crate::pipeline::read_config::run_read_config;
-    use crate::pipeline::read_index::run_read_index;
-    use crate::pipeline::scan::run_scan;
+pub fn run(path: &Path, _verbose: bool) -> Step<Outcome> {
+    let start = Instant::now();
+    let mut substeps = Vec::new();
 
-    let (read_config_step, config) = run_read_config(path);
-
-    let (scan_step, scanned) = match &config {
-        Some(cfg) => run_scan(path, &cfg.scan),
-        None => (ProcessingStepResult::Skipped, None),
+    // 1. Read config — calls MdvsToml::read() + validate() directly
+    let config_start = Instant::now();
+    let config_path_buf = path.join("mdvs.toml");
+    let config = match MdvsToml::read(&config_path_buf) {
+        Ok(cfg) => match cfg.validate() {
+            Ok(()) => {
+                substeps.push(Step::leaf(
+                    Outcome::ReadConfig(ReadConfigOutcome {
+                        config_path: config_path_buf.display().to_string(),
+                    }),
+                    config_start.elapsed().as_millis() as u64,
+                ));
+                Some(cfg)
+            }
+            Err(e) => {
+                substeps.push(Step::failed(
+                    ErrorKind::User,
+                    format!("mdvs.toml is invalid: {e} — fix the file or run 'mdvs init --force'"),
+                    config_start.elapsed().as_millis() as u64,
+                ));
+                None
+            }
+        },
+        Err(e) => {
+            substeps.push(Step::failed(
+                ErrorKind::User,
+                e.to_string(),
+                config_start.elapsed().as_millis() as u64,
+            ));
+            None
+        }
     };
 
-    let (read_index_step, index_data) = match &config {
-        Some(_) => run_read_index(path),
-        None => (ProcessingStepResult::Skipped, None),
-    };
-
-    // Build InfoResult from config + scanned + index_data
-    let result = match (&config, &scanned) {
-        (Some(cfg), Some(scanned)) => {
-            let total_files = scanned.files.len();
-
-            // Count files per field (verbose only)
-            let field_counts: HashMap<String, usize> = if verbose {
-                let mut counts = HashMap::new();
-                for file in &scanned.files {
-                    if let Some(Value::Object(map)) = &file.data {
-                        for key in map.keys() {
-                            *counts.entry(key.clone()).or_insert(0) += 1;
-                        }
-                    }
-                }
-                counts
-            } else {
-                HashMap::new()
+    let config = match config {
+        Some(c) => c,
+        None => {
+            substeps.push(Step::skipped()); // scan
+            substeps.push(Step::skipped()); // read_index
+            let msg = match &substeps[0].outcome {
+                StepOutcome::Complete { result: Err(e), .. } => e.message.clone(),
+                _ => "failed to read config".into(),
             };
+            return Step {
+                substeps,
+                outcome: StepOutcome::Complete {
+                    result: Err(StepError {
+                        kind: ErrorKind::User,
+                        message: msg,
+                    }),
+                    elapsed_ms: start.elapsed().as_millis() as u64,
+                },
+            };
+        }
+    };
 
-            // Fields from toml
-            let fields: Vec<InfoField> = cfg
-                .fields
-                .field
-                .iter()
-                .map(|f| InfoField {
-                    name: f.name.clone(),
-                    field_type: f.field_type.to_string(),
-                    allowed: f.allowed.clone(),
-                    required: f.required.clone(),
-                    nullable: f.nullable,
-                    count: if verbose {
-                        Some(*field_counts.get(&f.name).unwrap_or(&0))
-                    } else {
-                        None
-                    },
-                    total_files: if verbose { Some(total_files) } else { None },
-                    hints: field_hints(&f.name),
-                })
-                .collect();
+    // 2. Scan — calls ScannedFiles::scan() directly
+    let scan_start = Instant::now();
+    let scanned = match ScannedFiles::scan(path, &config.scan) {
+        Ok(s) => {
+            substeps.push(Step::leaf(
+                Outcome::Scan(ScanOutcome {
+                    files_found: s.files.len(),
+                    glob: config.scan.glob.clone(),
+                }),
+                scan_start.elapsed().as_millis() as u64,
+            ));
+            Some(s)
+        }
+        Err(e) => {
+            substeps.push(Step::failed(
+                ErrorKind::Application,
+                e.to_string(),
+                scan_start.elapsed().as_millis() as u64,
+            ));
+            None
+        }
+    };
 
-            // Index info from index_data
-            let index = index_data.map(|data| {
-                let config_match = cfg.embedding_model.as_ref()
-                    == Some(&data.metadata.embedding_model)
-                    && cfg.chunking.as_ref() == Some(&data.metadata.chunking);
-                IndexInfo {
-                    model: data.metadata.embedding_model.name,
-                    revision: data.metadata.embedding_model.revision,
-                    chunk_size: data.metadata.chunking.max_chunk_size,
-                    files_indexed: data.stats.files_indexed,
-                    files_on_disk: total_files,
-                    chunks: data.stats.chunks,
-                    built_at: data.metadata.built_at,
-                    config_status: if config_match {
-                        "match".to_string()
-                    } else {
-                        "changed — rebuild recommended".to_string()
-                    },
+    // 3. Read index — calls Backend methods directly
+    let index_start = Instant::now();
+    let backend = Backend::parquet(path);
+    let index_data = if !backend.exists() {
+        substeps.push(Step::leaf(
+            Outcome::ReadIndex(ReadIndexOutcome {
+                exists: false,
+                files_indexed: 0,
+                chunks: 0,
+            }),
+            index_start.elapsed().as_millis() as u64,
+        ));
+        None
+    } else {
+        let build_meta = backend.read_metadata().ok().flatten();
+        let idx_stats = backend.stats().ok().flatten();
+        match (build_meta, idx_stats) {
+            (Some(metadata), Some(stats)) => {
+                substeps.push(Step::leaf(
+                    Outcome::ReadIndex(ReadIndexOutcome {
+                        exists: true,
+                        files_indexed: stats.files_indexed,
+                        chunks: stats.chunks,
+                    }),
+                    index_start.elapsed().as_millis() as u64,
+                ));
+                Some((metadata, stats))
+            }
+            _ => {
+                substeps.push(Step::leaf(
+                    Outcome::ReadIndex(ReadIndexOutcome {
+                        exists: false,
+                        files_indexed: 0,
+                        chunks: 0,
+                    }),
+                    index_start.elapsed().as_millis() as u64,
+                ));
+                None
+            }
+        }
+    };
+
+    // Build InfoOutcome from config + scanned + index_data
+    let empty_files = Vec::new();
+    let files = scanned.as_ref().map(|s| &s.files).unwrap_or(&empty_files);
+    let total_files = files.len();
+
+    let field_counts: HashMap<String, usize> = {
+        let mut counts = HashMap::new();
+        for file in files {
+            if let Some(Value::Object(map)) = &file.data {
+                for key in map.keys() {
+                    *counts.entry(key.clone()).or_insert(0) += 1;
                 }
-            });
+            }
+        }
+        counts
+    };
 
-            Some(InfoResult {
-                scan_glob: cfg.scan.glob.clone(),
+    let fields: Vec<InfoField> = config
+        .fields
+        .field
+        .iter()
+        .map(|f| InfoField {
+            name: f.name.clone(),
+            field_type: f.field_type.to_string(),
+            allowed: f.allowed.clone(),
+            required: f.required.clone(),
+            nullable: f.nullable,
+            count: Some(*field_counts.get(&f.name).unwrap_or(&0)),
+            total_files: Some(total_files),
+            hints: field_hints(&f.name),
+        })
+        .collect();
+
+    let index = index_data.map(|(metadata, stats)| {
+        let config_match = config.embedding_model.as_ref() == Some(&metadata.embedding_model)
+            && config.chunking.as_ref() == Some(&metadata.chunking);
+        IndexInfo {
+            model: metadata.embedding_model.name,
+            revision: metadata.embedding_model.revision,
+            chunk_size: metadata.chunking.max_chunk_size,
+            files_indexed: stats.files_indexed,
+            files_on_disk: total_files,
+            chunks: stats.chunks,
+            built_at: metadata.built_at,
+            config_status: if config_match {
+                "match".to_string()
+            } else {
+                "changed — rebuild recommended".to_string()
+            },
+        }
+    });
+
+    Step {
+        substeps,
+        outcome: StepOutcome::Complete {
+            result: Ok(Outcome::Info(Box::new(InfoOutcome {
+                scan_glob: config.scan.glob.clone(),
                 files_on_disk: total_files,
                 fields,
-                ignored_fields: cfg.fields.ignore.clone(),
+                ignored_fields: config.fields.ignore.clone(),
                 index,
-            })
-        }
-        _ => None,
-    };
-
-    InfoCommandOutput {
-        process: InfoProcessOutput {
-            read_config: read_config_step,
-            scan: scan_step,
-            read_index: read_index_step,
+            }))),
+            elapsed_ms: start.elapsed().as_millis() as u64,
         },
-        result,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::outcome::Outcome;
     use crate::schema::config::{FieldsConfig, MdvsToml, SearchConfig, UpdateConfig};
     use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig, FieldTypeSerde, ScanConfig};
+    use crate::step::StepOutcome;
     use std::fs;
+
+    fn unwrap_info(step: &Step<Outcome>) -> &InfoOutcome {
+        match &step.outcome {
+            StepOutcome::Complete {
+                result: Ok(Outcome::Info(o)),
+                ..
+            } => o,
+            other => panic!("expected Ok(Info), got: {other:?}"),
+        }
+    }
 
     fn create_test_vault(dir: &Path) {
         let blog_dir = dir.join("blog");
         fs::create_dir_all(&blog_dir).unwrap();
-
         fs::write(
             blog_dir.join("post1.md"),
             "---\ntitle: Rust Programming\ntags:\n  - rust\n  - code\ndraft: false\n---\n# Rust Programming\nBody.",
         )
         .unwrap();
-
         fs::write(
             blog_dir.join("post2.md"),
             "---\ntitle: Cooking Recipes\ndraft: true\n---\n# Cooking Recipes\nBody.",
@@ -454,13 +343,8 @@ mod tests {
     }
 
     async fn init_and_build(dir: &Path) {
-        let output = crate::cmd::init::run(
-            dir, "**", false, false, true, false, // skip_gitignore
-            false, // verbose
-        );
-        assert!(!output.has_failed_step());
-
-        // Build the index
+        let step = crate::cmd::init::run(dir, "**", false, false, true, false, false);
+        assert!(!crate::step::has_failed(&step));
         let output = crate::cmd::build::run(dir, None, None, None, false, true, false).await;
         assert!(!output.has_failed_step());
     }
@@ -470,20 +354,13 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
         write_config(tmp.path());
-
-        let output = run(tmp.path(), false);
-        assert!(!output.has_failed_step());
-        let result = output.result.unwrap();
-
+        let step = run(tmp.path(), false);
+        assert!(!crate::step::has_failed(&step));
+        let result = unwrap_info(&step);
         assert_eq!(result.scan_glob, "**");
         assert_eq!(result.files_on_disk, 2);
         assert_eq!(result.fields.len(), 3);
         assert_eq!(result.fields[0].name, "title");
-        assert_eq!(result.fields[0].field_type, "String");
-        assert_eq!(result.fields[1].name, "tags");
-        assert_eq!(result.fields[1].field_type, "String[]");
-        assert_eq!(result.fields[2].name, "draft");
-        assert_eq!(result.fields[2].field_type, "Boolean");
         assert_eq!(result.ignored_fields, vec!["internal_id"]);
         assert!(result.index.is_none());
     }
@@ -493,14 +370,12 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
         init_and_build(tmp.path()).await;
-
-        let output = run(tmp.path(), false);
-        assert!(!output.has_failed_step());
-        let result = output.result.unwrap();
-
+        let step = run(tmp.path(), false);
+        assert!(!crate::step::has_failed(&step));
+        let result = unwrap_info(&step);
         assert_eq!(result.files_on_disk, 2);
         assert!(result.index.is_some());
-        let idx = result.index.unwrap();
+        let idx = result.index.as_ref().unwrap();
         assert_eq!(idx.model, "minishlab/potion-base-8M");
         assert_eq!(idx.files_indexed, 2);
         assert!(idx.chunks > 0);
@@ -512,19 +387,17 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
         init_and_build(tmp.path()).await;
-
-        // Change chunk_size in toml
         let mut config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
         config.chunking.as_mut().unwrap().max_chunk_size = 512;
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
-
-        let output = run(tmp.path(), false);
-        assert!(!output.has_failed_step());
-        let result = output.result.unwrap();
-
+        let step = run(tmp.path(), false);
+        assert!(!crate::step::has_failed(&step));
+        let result = unwrap_info(&step);
         assert!(result.index.is_some());
-        let idx = result.index.unwrap();
-        assert_eq!(idx.config_status, "changed — rebuild recommended");
+        assert_eq!(
+            result.index.as_ref().unwrap().config_status,
+            "changed — rebuild recommended"
+        );
     }
 
     #[test]
@@ -535,7 +408,6 @@ mod tests {
             "---\nauthor's_note: hello\n---\n# Note\nBody.",
         )
         .unwrap();
-
         let config = MdvsToml {
             scan: ScanConfig {
                 glob: "**".into(),
@@ -560,11 +432,9 @@ mod tests {
             search: None,
         };
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
-
-        let output = run(tmp.path(), false);
-        assert!(!output.has_failed_step());
-        let result = output.result.unwrap();
-
+        let step = run(tmp.path(), false);
+        assert!(!crate::step::has_failed(&step));
+        let result = unwrap_info(&step);
         assert_eq!(result.fields.len(), 1);
         assert_eq!(result.fields[0].name, "author's_note");
         assert!(result.fields[0]

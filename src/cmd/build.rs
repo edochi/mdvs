@@ -1,383 +1,28 @@
 use crate::discover::field_type::FieldType;
 use crate::index::backend::Backend;
 use crate::index::storage::{content_hash, BuildMetadata, FileRow};
-use crate::output::{format_file_count, format_json_compact, CommandOutput, NewField};
-use crate::pipeline::classify::{run_classify, ClassifyOutput};
-use crate::pipeline::embed::{run_embed_files, EmbedFilesOutput};
-use crate::pipeline::load_model::{run_load_model, LoadModelOutput};
-use crate::pipeline::read_config::{run_read_config, ReadConfigOutput};
-use crate::pipeline::scan::{run_scan, ScanOutput};
-use crate::pipeline::validate::{run_validate, ValidateOutput};
-use crate::pipeline::write_index::{run_write_index, BuildFileDetail, WriteIndexOutput};
-use crate::pipeline::{ErrorKind, ProcessingStepError, ProcessingStepResult};
+use crate::outcome::commands::BuildOutcome;
+use crate::outcome::{
+    ClassifyOutcome, EmbedFilesOutcome, LoadModelOutcome, Outcome, ReadConfigOutcome, ScanOutcome,
+    ValidateOutcome, WriteIndexOutcome,
+};
+use crate::pipeline::classify::run_classify;
+use crate::pipeline::embed::run_embed_files;
+use crate::pipeline::load_model::run_load_model;
+use crate::pipeline::read_config::run_read_config;
+use crate::pipeline::scan::run_scan;
+use crate::pipeline::validate::run_validate;
+use crate::pipeline::write_index::run_write_index;
+use crate::pipeline::ProcessingStepResult;
 use crate::schema::config::{BuildConfig, MdvsToml, SearchConfig};
 use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig};
-use crate::table::{style_compact, style_record, Builder};
-use serde::Serialize;
+use crate::step::{from_pipeline_result, ErrorKind, Step, StepError, StepOutcome};
 use std::path::Path;
+use std::time::Instant;
 use tracing::instrument;
 
 const DEFAULT_MODEL: &str = "minishlab/potion-base-8M";
 const DEFAULT_CHUNK_SIZE: usize = 1024;
-
-// ============================================================================
-// BuildResult
-// ============================================================================
-
-/// Result of the `build` command: embedding and index statistics.
-#[derive(Debug, Serialize)]
-pub struct BuildResult {
-    /// Whether this was a full rebuild (vs incremental).
-    pub full_rebuild: bool,
-    /// Total number of files in the final index.
-    pub files_total: usize,
-    /// Number of files that were chunked and embedded this run.
-    pub files_embedded: usize,
-    /// Number of files reused from the previous index (content unchanged).
-    pub files_unchanged: usize,
-    /// Number of files removed since the last build.
-    pub files_removed: usize,
-    /// Total number of chunks in the final index.
-    pub chunks_total: usize,
-    /// Number of chunks produced by newly embedded files.
-    pub chunks_embedded: usize,
-    /// Number of chunks retained from unchanged files.
-    pub chunks_unchanged: usize,
-    /// Number of chunks dropped from removed files.
-    pub chunks_removed: usize,
-    /// Fields found in frontmatter but not yet in `mdvs.toml`.
-    pub new_fields: Vec<NewField>,
-    /// Per-file chunk counts for embedded files (verbose only).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub embedded_files: Option<Vec<BuildFileDetail>>,
-    /// Per-file chunk counts for removed files (verbose only).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub removed_files: Option<Vec<BuildFileDetail>>,
-}
-
-fn format_chunk_count(n: usize) -> String {
-    if n == 1 {
-        "1 chunk".to_string()
-    } else {
-        format!("{n} chunks")
-    }
-}
-
-impl CommandOutput for BuildResult {
-    fn format_text(&self, verbose: bool) -> String {
-        let mut out = String::new();
-
-        // New fields (shown before stats)
-        for nf in &self.new_fields {
-            out.push_str(&format!(
-                "  new field: {} ({})\n",
-                nf.name,
-                format_file_count(nf.files_found)
-            ));
-        }
-        if !self.new_fields.is_empty() {
-            out.push_str("Run 'mdvs update' to incorporate new fields.\n\n");
-        }
-
-        // One-liner
-        let rebuild_suffix = if self.full_rebuild {
-            " (full rebuild)"
-        } else {
-            ""
-        };
-        out.push_str(&format!(
-            "Built index — {}, {}{rebuild_suffix}\n",
-            format_file_count(self.files_total),
-            format_chunk_count(self.chunks_total)
-        ));
-
-        // Stats table
-        out.push('\n');
-        if verbose {
-            // Verbose: record tables for embedded/removed, compact for unchanged
-            if self.files_embedded > 0 {
-                let mut builder = Builder::default();
-                builder.push_record([
-                    "embedded".to_string(),
-                    format_file_count(self.files_embedded),
-                    format_chunk_count(self.chunks_embedded),
-                ]);
-                let detail = match &self.embedded_files {
-                    Some(files) => {
-                        let lines: Vec<String> = files
-                            .iter()
-                            .map(|f| {
-                                format!("  - \"{}\" ({})", f.filename, format_chunk_count(f.chunks))
-                            })
-                            .collect();
-                        lines.join("\n")
-                    }
-                    None => String::new(),
-                };
-                builder.push_record([detail, String::new(), String::new()]);
-                let mut table = builder.build();
-                style_record(&mut table, 3);
-                out.push_str(&format!("{table}\n"));
-            }
-            if self.files_unchanged > 0 {
-                let mut builder = Builder::default();
-                builder.push_record([
-                    "unchanged".to_string(),
-                    format_file_count(self.files_unchanged),
-                    format_chunk_count(self.chunks_unchanged),
-                ]);
-                let mut table = builder.build();
-                style_compact(&mut table);
-                out.push_str(&format!("{table}\n"));
-            }
-            if self.files_removed > 0 {
-                let mut builder = Builder::default();
-                builder.push_record([
-                    "removed".to_string(),
-                    format_file_count(self.files_removed),
-                    format_chunk_count(self.chunks_removed),
-                ]);
-                let detail = match &self.removed_files {
-                    Some(files) => {
-                        let lines: Vec<String> = files
-                            .iter()
-                            .map(|f| {
-                                format!("  - \"{}\" ({})", f.filename, format_chunk_count(f.chunks))
-                            })
-                            .collect();
-                        lines.join("\n")
-                    }
-                    None => String::new(),
-                };
-                builder.push_record([detail, String::new(), String::new()]);
-                let mut table = builder.build();
-                style_record(&mut table, 3);
-                out.push_str(&format!("{table}\n"));
-            }
-        } else {
-            // Compact: single table with all non-zero categories
-            let mut builder = Builder::default();
-            if self.files_embedded > 0 {
-                builder.push_record([
-                    "embedded".to_string(),
-                    format_file_count(self.files_embedded),
-                    format_chunk_count(self.chunks_embedded),
-                ]);
-            }
-            if self.files_unchanged > 0 {
-                builder.push_record([
-                    "unchanged".to_string(),
-                    format_file_count(self.files_unchanged),
-                    format_chunk_count(self.chunks_unchanged),
-                ]);
-            }
-            if self.files_removed > 0 {
-                builder.push_record([
-                    "removed".to_string(),
-                    format_file_count(self.files_removed),
-                    format_chunk_count(self.chunks_removed),
-                ]);
-            }
-            let mut table = builder.build();
-            style_compact(&mut table);
-            out.push_str(&format!("{table}\n"));
-        }
-
-        out
-    }
-}
-
-// ============================================================================
-// BuildCommandOutput (pipeline)
-// ============================================================================
-
-/// Step records for each phase of the build pipeline.
-#[derive(Debug, Serialize)]
-pub struct BuildProcessOutput {
-    /// Auto-update output (if auto-update was triggered).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub auto_update: Option<crate::cmd::update::UpdateCommandOutput>,
-    /// Read and parse `mdvs.toml`.
-    pub read_config: ProcessingStepResult<ReadConfigOutput>,
-    /// Scan the project directory for markdown files.
-    pub scan: ProcessingStepResult<ScanOutput>,
-    /// Validate frontmatter against the schema.
-    pub validate: ProcessingStepResult<ValidateOutput>,
-    /// Classify files as new/edited/unchanged/removed.
-    pub classify: ProcessingStepResult<ClassifyOutput>,
-    /// Load the embedding model.
-    pub load_model: ProcessingStepResult<LoadModelOutput>,
-    /// Embed files that need embedding.
-    pub embed_files: ProcessingStepResult<EmbedFilesOutput>,
-    /// Write the index to disk.
-    pub write_index: ProcessingStepResult<WriteIndexOutput>,
-}
-
-/// Complete output of the `build` command.
-#[derive(Debug, Serialize)]
-pub struct BuildCommandOutput {
-    /// Step-by-step process records.
-    pub process: BuildProcessOutput,
-    /// Build statistics (present when build completes successfully).
-    pub result: Option<BuildResult>,
-}
-
-impl BuildCommandOutput {
-    /// Returns `true` if any step failed.
-    pub fn has_failed_step(&self) -> bool {
-        self.process
-            .auto_update
-            .as_ref()
-            .is_some_and(|u| u.has_failed_step())
-            || matches!(self.process.read_config, ProcessingStepResult::Failed(_))
-            || matches!(self.process.scan, ProcessingStepResult::Failed(_))
-            || matches!(self.process.validate, ProcessingStepResult::Failed(_))
-            || matches!(self.process.classify, ProcessingStepResult::Failed(_))
-            || matches!(self.process.load_model, ProcessingStepResult::Failed(_))
-            || matches!(self.process.embed_files, ProcessingStepResult::Failed(_))
-            || matches!(self.process.write_index, ProcessingStepResult::Failed(_))
-    }
-
-    /// Returns `true` if validation found violations (build aborted).
-    pub fn has_violations(&self) -> bool {
-        match &self.process.validate {
-            ProcessingStepResult::Completed(step) => step.output.violation_count > 0,
-            _ => false,
-        }
-    }
-}
-
-impl CommandOutput for BuildCommandOutput {
-    fn format_json(&self, verbose: bool) -> String {
-        format_json_compact(self, self.result.as_ref(), verbose)
-    }
-
-    fn format_text(&self, verbose: bool) -> String {
-        let mut preamble = String::new();
-        if let Some(ref update_output) = self.process.auto_update {
-            if verbose {
-                preamble.push_str("Auto-update:\n");
-                let update_text = update_output.format_text(true);
-                for line in update_text.lines() {
-                    preamble.push_str(&format!("  {line}\n"));
-                }
-                preamble.push('\n');
-            } else if let Some(ref ur) = update_output.result {
-                let total = ur.added.len() + ur.changed.len() + ur.removed.len();
-                if total > 0 {
-                    preamble.push_str(&format!("Auto-updated schema ({total} change(s))\n"));
-                }
-            }
-        }
-
-        let body = if self.has_violations() {
-            // Validation found violations — show step lines + violation message
-            let violation_msg = match &self.process.validate {
-                ProcessingStepResult::Completed(step) => {
-                    format!(
-                        "Build aborted — {} violation(s) found. Run `mdvs check` for details.\n",
-                        step.output.violation_count
-                    )
-                }
-                _ => "Build aborted — validation failed.\n".to_string(),
-            };
-            if verbose {
-                let mut out = String::new();
-                out.push_str(&format!(
-                    "{}\n",
-                    self.process.read_config.format_line("Read config")
-                ));
-                out.push_str(&format!("{}\n", self.process.scan.format_line("Scan")));
-                out.push_str(&format!(
-                    "{}\n",
-                    self.process.validate.format_line("Validate")
-                ));
-                out.push('\n');
-                out.push_str(&violation_msg);
-                out
-            } else {
-                violation_msg
-            }
-        } else if let Some(result) = &self.result {
-            if verbose {
-                let mut out = String::new();
-                out.push_str(&format!(
-                    "{}\n",
-                    self.process.read_config.format_line("Read config")
-                ));
-                out.push_str(&format!("{}\n", self.process.scan.format_line("Scan")));
-                out.push_str(&format!(
-                    "{}\n",
-                    self.process.validate.format_line("Validate")
-                ));
-                out.push_str(&format!(
-                    "{}\n",
-                    self.process.classify.format_line("Classify")
-                ));
-                out.push_str(&format!(
-                    "{}\n",
-                    self.process.load_model.format_line("Load model")
-                ));
-                out.push_str(&format!(
-                    "{}\n",
-                    self.process.embed_files.format_line("Embed")
-                ));
-                out.push_str(&format!(
-                    "{}\n",
-                    self.process.write_index.format_line("Write index")
-                ));
-                out.push('\n');
-                out.push_str(&result.format_text(verbose));
-                out
-            } else {
-                result.format_text(verbose)
-            }
-        } else {
-            // Pipeline didn't complete — show steps up to the failure
-            let mut out = String::new();
-            out.push_str(&format!(
-                "{}\n",
-                self.process.read_config.format_line("Read config")
-            ));
-            if !matches!(self.process.scan, ProcessingStepResult::Skipped) {
-                out.push_str(&format!("{}\n", self.process.scan.format_line("Scan")));
-            }
-            if !matches!(self.process.validate, ProcessingStepResult::Skipped) {
-                out.push_str(&format!(
-                    "{}\n",
-                    self.process.validate.format_line("Validate")
-                ));
-            }
-            if !matches!(self.process.classify, ProcessingStepResult::Skipped) {
-                out.push_str(&format!(
-                    "{}\n",
-                    self.process.classify.format_line("Classify")
-                ));
-            }
-            if !matches!(self.process.load_model, ProcessingStepResult::Skipped) {
-                out.push_str(&format!(
-                    "{}\n",
-                    self.process.load_model.format_line("Load model")
-                ));
-            }
-            if !matches!(self.process.embed_files, ProcessingStepResult::Skipped) {
-                out.push_str(&format!(
-                    "{}\n",
-                    self.process.embed_files.format_line("Embed")
-                ));
-            }
-            if !matches!(self.process.write_index, ProcessingStepResult::Skipped) {
-                out.push_str(&format!(
-                    "{}\n",
-                    self.process.write_index.format_line("Write index")
-                ));
-            }
-            out
-        };
-
-        format!("{preamble}{body}")
-    }
-}
 
 // ============================================================================
 // run()
@@ -392,83 +37,57 @@ pub async fn run(
     set_chunk_size: Option<usize>,
     force: bool,
     no_update: bool,
-    verbose: bool,
-) -> BuildCommandOutput {
-    // 1. read_config
-    let (read_config_step, config) = run_read_config(path);
+    _verbose: bool,
+) -> Step<Outcome> {
+    let start = Instant::now();
+    let mut substeps = Vec::new();
+
+    // 1. Read config
+    let (read_config_result, config) = run_read_config(path);
+    substeps.push(from_pipeline_result(read_config_result, |o| {
+        Outcome::ReadConfig(ReadConfigOutcome {
+            config_path: o.config_path.clone(),
+        })
+    }));
     let config = match config {
         Some(c) => c,
-        None => {
-            return BuildCommandOutput {
-                process: BuildProcessOutput {
-                    auto_update: None,
-                    read_config: read_config_step,
-                    scan: ProcessingStepResult::Skipped,
-                    validate: ProcessingStepResult::Skipped,
-                    classify: ProcessingStepResult::Skipped,
-                    load_model: ProcessingStepResult::Skipped,
-                    embed_files: ProcessingStepResult::Skipped,
-                    write_index: ProcessingStepResult::Skipped,
-                },
-                result: None,
-            };
-        }
+        None => return fail_from_last(&mut substeps, start, 7),
     };
 
-    // Auto-update: run update before building if configured
-    let auto_update = {
-        let should_update = !no_update && config.build.as_ref().is_some_and(|b| b.auto_update);
-        if should_update {
-            let update_output = crate::cmd::update::run(path, &[], false, false, verbose).await;
-            if update_output.has_failed_step() {
-                return BuildCommandOutput {
-                    process: BuildProcessOutput {
-                        auto_update: Some(update_output),
-                        read_config: read_config_step,
-                        scan: ProcessingStepResult::Skipped,
-                        validate: ProcessingStepResult::Skipped,
-                        classify: ProcessingStepResult::Skipped,
-                        load_model: ProcessingStepResult::Skipped,
-                        embed_files: ProcessingStepResult::Skipped,
-                        write_index: ProcessingStepResult::Skipped,
-                    },
-                    result: None,
-                };
-            }
-            Some(update_output)
-        } else {
-            None
+    // 2. Auto-update (conditional)
+    let should_update = !no_update && config.build.as_ref().is_some_and(|b| b.auto_update);
+    if should_update {
+        let update_step = crate::cmd::update::run(path, &[], false, false, false).await;
+        if update_step.has_failed_step() {
+            substeps.push(update_step);
+            return fail_msg(
+                &mut substeps,
+                start,
+                ErrorKind::User,
+                "auto-update failed",
+                6,
+            );
         }
-    };
+        substeps.push(update_step);
+    }
 
-    // Re-read config if auto-update ran (it may have changed the toml)
-    let (read_config_step, config) = if auto_update.is_some() {
-        let (step, cfg) = run_read_config(path);
+    // Re-read config if auto-update ran
+    let mut config = if should_update {
+        let (re_read, cfg) = run_read_config(path);
+        substeps.push(from_pipeline_result(re_read, |o| {
+            Outcome::ReadConfig(ReadConfigOutcome {
+                config_path: o.config_path.clone(),
+            })
+        }));
         match cfg {
-            Some(c) => (step, c),
-            None => {
-                return BuildCommandOutput {
-                    process: BuildProcessOutput {
-                        auto_update,
-                        read_config: step,
-                        scan: ProcessingStepResult::Skipped,
-                        validate: ProcessingStepResult::Skipped,
-                        classify: ProcessingStepResult::Skipped,
-                        load_model: ProcessingStepResult::Skipped,
-                        embed_files: ProcessingStepResult::Skipped,
-                        write_index: ProcessingStepResult::Skipped,
-                    },
-                    result: None,
-                };
-            }
+            Some(c) => c,
+            None => return fail_from_last(&mut substeps, start, 6),
         }
     } else {
-        (read_config_step, config)
+        config
     };
-    let mut config = config;
 
-    // Config mutation (inline, not a step)
-    // Fill missing build sections, apply --set-* flags
+    // Mutate config (inline, not a step)
     let mutation_error = mutate_config(
         &mut config,
         path,
@@ -478,91 +97,111 @@ pub async fn run(
         force,
     );
 
-    // 2. scan
-    let (scan_step, scanned) = if let Some(msg) = mutation_error {
-        (
-            ProcessingStepResult::Failed(ProcessingStepError {
-                kind: ErrorKind::User,
-                message: msg,
-            }),
-            None,
-        )
-    } else {
-        run_scan(path, &config.scan)
-    };
+    // 3. Scan (mutation errors land here)
+    if let Some(msg) = mutation_error {
+        substeps.push(Step {
+            substeps: vec![],
+            outcome: StepOutcome::Complete {
+                result: Err(StepError {
+                    kind: ErrorKind::User,
+                    message: msg,
+                }),
+                elapsed_ms: 0,
+            },
+        });
+        return fail_from_last(&mut substeps, start, 5);
+    }
 
+    let (scan_result, scanned) = run_scan(path, &config.scan);
+    substeps.push(from_pipeline_result(scan_result, |o| {
+        Outcome::Scan(ScanOutcome {
+            files_found: o.files_found,
+            glob: o.glob.clone(),
+        })
+    }));
     let scanned = match scanned {
         Some(s) => s,
-        None => {
-            return BuildCommandOutput {
-                process: BuildProcessOutput {
-                    auto_update: None,
-                    read_config: read_config_step,
-                    scan: scan_step,
-                    validate: ProcessingStepResult::Skipped,
-                    classify: ProcessingStepResult::Skipped,
-                    load_model: ProcessingStepResult::Skipped,
-                    embed_files: ProcessingStepResult::Skipped,
-                    write_index: ProcessingStepResult::Skipped,
-                },
-                result: None,
-            };
-        }
+        None => return fail_from_last(&mut substeps, start, 5),
     };
 
-    // 3. validate (no-files check lands here as pre-check)
-    let (validate_step, validation_data) = if scanned.files.is_empty() {
-        (
-            ProcessingStepResult::Failed(ProcessingStepError {
-                kind: ErrorKind::User,
-                message: format!("no markdown files found in '{}'", path.display()),
-            }),
-            None,
-        )
-    } else {
-        run_validate(&scanned, &config, false)
-    };
-
-    let validation_data = match validation_data {
-        Some(d) => d,
-        None => {
-            return BuildCommandOutput {
-                process: BuildProcessOutput {
-                    auto_update: None,
-                    read_config: read_config_step,
-                    scan: scan_step,
-                    validate: validate_step,
-                    classify: ProcessingStepResult::Skipped,
-                    load_model: ProcessingStepResult::Skipped,
-                    embed_files: ProcessingStepResult::Skipped,
-                    write_index: ProcessingStepResult::Skipped,
-                },
-                result: None,
-            };
-        }
-    };
-
-    let (violations, new_fields) = validation_data;
-    let has_violations = !violations.is_empty();
-
-    // If violations found, abort — remaining steps skipped
-    if has_violations {
-        return BuildCommandOutput {
-            process: BuildProcessOutput {
-                auto_update: None,
-                read_config: read_config_step,
-                scan: scan_step,
-                validate: validate_step,
-                classify: ProcessingStepResult::Skipped,
-                load_model: ProcessingStepResult::Skipped,
-                embed_files: ProcessingStepResult::Skipped,
-                write_index: ProcessingStepResult::Skipped,
+    // 4. Validate
+    if scanned.files.is_empty() {
+        substeps.push(Step {
+            substeps: vec![],
+            outcome: StepOutcome::Complete {
+                result: Err(StepError {
+                    kind: ErrorKind::User,
+                    message: format!("no markdown files found in '{}'", path.display()),
+                }),
+                elapsed_ms: 0,
             },
-            result: None,
+        });
+        return fail_from_last(&mut substeps, start, 4);
+    }
+
+    let (validate_result, validation_data) = run_validate(&scanned, &config, false);
+    let (violations, new_fields) = match validation_data {
+        Some((v, nf)) => (v, nf),
+        None => {
+            substeps.push(from_pipeline_result(validate_result, |o| {
+                Outcome::Validate(ValidateOutcome {
+                    files_checked: o.files_checked,
+                    violations: vec![],
+                    new_fields: vec![],
+                })
+            }));
+            return fail_from_last(&mut substeps, start, 4);
+        }
+    };
+
+    // Build validate substep with actual violation/new_fields data
+    let validate_step = Step {
+        substeps: vec![],
+        outcome: match validate_result {
+            ProcessingStepResult::Completed(step) => StepOutcome::Complete {
+                result: Ok(Outcome::Validate(ValidateOutcome {
+                    files_checked: step.output.files_checked,
+                    violations: violations.clone(),
+                    new_fields: new_fields.clone(),
+                })),
+                elapsed_ms: step.elapsed_ms,
+            },
+            ProcessingStepResult::Failed(err) => StepOutcome::Complete {
+                result: Err(StepError {
+                    kind: crate::step::convert_error_kind(err.kind),
+                    message: err.message,
+                }),
+                elapsed_ms: 0,
+            },
+            ProcessingStepResult::Skipped => StepOutcome::Skipped,
+        },
+    };
+    substeps.push(validate_step);
+
+    // Abort on violations
+    if !violations.is_empty() {
+        for _ in 0..4 {
+            substeps.push(Step {
+                substeps: vec![],
+                outcome: StepOutcome::Skipped,
+            });
+        }
+        return Step {
+            substeps,
+            outcome: StepOutcome::Complete {
+                result: Err(StepError {
+                    kind: ErrorKind::User,
+                    message: format!(
+                        "{} violation(s) found. Run `mdvs check` for details.",
+                        violations.len()
+                    ),
+                }),
+                elapsed_ms: start.elapsed().as_millis() as u64,
+            },
         };
     }
 
-    // Convert schema fields
+    // Pre-checks for classify
     let schema_fields: Vec<(String, FieldType)> = match config
         .fields
         .field
@@ -576,168 +215,144 @@ pub async fn run(
     {
         Ok(sf) => sf,
         Err(msg) => {
-            return BuildCommandOutput {
-                process: BuildProcessOutput {
-                    auto_update: None,
-                    read_config: read_config_step,
-                    scan: scan_step,
-                    validate: validate_step,
-                    classify: ProcessingStepResult::Failed(ProcessingStepError {
+            substeps.push(Step {
+                substeps: vec![],
+                outcome: StepOutcome::Complete {
+                    result: Err(StepError {
                         kind: ErrorKind::Application,
                         message: msg,
                     }),
-                    load_model: ProcessingStepResult::Skipped,
-                    embed_files: ProcessingStepResult::Skipped,
-                    write_index: ProcessingStepResult::Skipped,
+                    elapsed_ms: 0,
                 },
-                result: None,
-            };
+            });
+            return fail_from_last(&mut substeps, start, 3);
         }
     };
 
     let embedding = match config.embedding_model.as_ref() {
         Some(e) => e,
         None => {
-            return BuildCommandOutput {
-                process: BuildProcessOutput {
-                    auto_update: None,
-                    read_config: read_config_step,
-                    scan: scan_step,
-                    validate: validate_step,
-                    classify: ProcessingStepResult::Failed(ProcessingStepError {
+            substeps.push(Step {
+                substeps: vec![],
+                outcome: StepOutcome::Complete {
+                    result: Err(StepError {
                         kind: ErrorKind::User,
-                        message: "missing [embedding_model] in mdvs.toml".to_string(),
+                        message: "missing [embedding_model] in mdvs.toml".into(),
                     }),
-                    load_model: ProcessingStepResult::Skipped,
-                    embed_files: ProcessingStepResult::Skipped,
-                    write_index: ProcessingStepResult::Skipped,
+                    elapsed_ms: 0,
                 },
-                result: None,
-            };
+            });
+            return fail_from_last(&mut substeps, start, 3);
         }
     };
     let chunking = match config.chunking.as_ref() {
         Some(c) => c,
         None => {
-            return BuildCommandOutput {
-                process: BuildProcessOutput {
-                    auto_update: None,
-                    read_config: read_config_step,
-                    scan: scan_step,
-                    validate: validate_step,
-                    classify: ProcessingStepResult::Failed(ProcessingStepError {
+            substeps.push(Step {
+                substeps: vec![],
+                outcome: StepOutcome::Complete {
+                    result: Err(StepError {
                         kind: ErrorKind::User,
-                        message: "missing [chunking] in mdvs.toml".to_string(),
+                        message: "missing [chunking] in mdvs.toml".into(),
                     }),
-                    load_model: ProcessingStepResult::Skipped,
-                    embed_files: ProcessingStepResult::Skipped,
-                    write_index: ProcessingStepResult::Skipped,
+                    elapsed_ms: 0,
                 },
-                result: None,
-            };
+            });
+            return fail_from_last(&mut substeps, start, 3);
         }
     };
     let backend = Backend::parquet(path);
-
-    // Config change detection (pre-check for classify step)
     let config_change_error = detect_config_changes(&backend, embedding, chunking, &config, force);
 
-    // 4. classify
+    // 5. Classify
     let full_rebuild = force || !backend.exists();
 
-    let (classify_step, classify_data) = if let Some(msg) = config_change_error {
-        (
-            ProcessingStepResult::Failed(ProcessingStepError {
-                kind: ErrorKind::User,
-                message: msg,
-            }),
-            None,
-        )
+    if let Some(msg) = config_change_error {
+        substeps.push(Step {
+            substeps: vec![],
+            outcome: StepOutcome::Complete {
+                result: Err(StepError {
+                    kind: ErrorKind::User,
+                    message: msg,
+                }),
+                elapsed_ms: 0,
+            },
+        });
+        return fail_from_last(&mut substeps, start, 3);
+    }
+
+    let existing_index = if full_rebuild {
+        vec![]
     } else {
-        // Read existing index for classification
-        let existing_index = if full_rebuild {
-            vec![]
-        } else {
-            match backend.read_file_index() {
-                Ok(idx) => idx,
-                Err(e) => {
-                    return BuildCommandOutput {
-                        process: BuildProcessOutput {
-                            auto_update: None,
-                            read_config: read_config_step,
-                            scan: scan_step,
-                            validate: validate_step,
-                            classify: ProcessingStepResult::Failed(ProcessingStepError {
-                                kind: ErrorKind::Application,
-                                message: e.to_string(),
-                            }),
-                            load_model: ProcessingStepResult::Skipped,
-                            embed_files: ProcessingStepResult::Skipped,
-                            write_index: ProcessingStepResult::Skipped,
-                        },
-                        result: None,
-                    };
-                }
+        match backend.read_file_index() {
+            Ok(idx) => idx,
+            Err(e) => {
+                substeps.push(Step {
+                    substeps: vec![],
+                    outcome: StepOutcome::Complete {
+                        result: Err(StepError {
+                            kind: ErrorKind::Application,
+                            message: e.to_string(),
+                        }),
+                        elapsed_ms: 0,
+                    },
+                });
+                return fail_from_last(&mut substeps, start, 3);
             }
-        };
-        let existing_chunks = if full_rebuild {
-            vec![]
-        } else {
-            match backend.read_chunk_rows() {
-                Ok(crs) => crs,
-                Err(e) => {
-                    return BuildCommandOutput {
-                        process: BuildProcessOutput {
-                            auto_update: None,
-                            read_config: read_config_step,
-                            scan: scan_step,
-                            validate: validate_step,
-                            classify: ProcessingStepResult::Failed(ProcessingStepError {
-                                kind: ErrorKind::Application,
-                                message: e.to_string(),
-                            }),
-                            load_model: ProcessingStepResult::Skipped,
-                            embed_files: ProcessingStepResult::Skipped,
-                            write_index: ProcessingStepResult::Skipped,
-                        },
-                        result: None,
-                    };
-                }
+        }
+    };
+    let existing_chunks = if full_rebuild {
+        vec![]
+    } else {
+        match backend.read_chunk_rows() {
+            Ok(crs) => crs,
+            Err(e) => {
+                substeps.push(Step {
+                    substeps: vec![],
+                    outcome: StepOutcome::Complete {
+                        result: Err(StepError {
+                            kind: ErrorKind::Application,
+                            message: e.to_string(),
+                        }),
+                        elapsed_ms: 0,
+                    },
+                });
+                return fail_from_last(&mut substeps, start, 3);
             }
-        };
-        run_classify(&scanned, &existing_index, existing_chunks, full_rebuild)
+        }
     };
 
+    let (classify_result, classify_data) =
+        run_classify(&scanned, &existing_index, existing_chunks, full_rebuild);
+    substeps.push(from_pipeline_result(classify_result, |o| {
+        Outcome::Classify(ClassifyOutcome {
+            full_rebuild: o.full_rebuild,
+            needs_embedding: o.needs_embedding,
+            unchanged: o.unchanged,
+            removed: o.removed,
+        })
+    }));
     let classify_data = match classify_data {
         Some(d) => d,
-        None => {
-            return BuildCommandOutput {
-                process: BuildProcessOutput {
-                    auto_update: None,
-                    read_config: read_config_step,
-                    scan: scan_step,
-                    validate: validate_step,
-                    classify: classify_step,
-                    load_model: ProcessingStepResult::Skipped,
-                    embed_files: ProcessingStepResult::Skipped,
-                    write_index: ProcessingStepResult::Skipped,
-                },
-                result: None,
-            };
-        }
+        None => return fail_from_last(&mut substeps, start, 3),
     };
 
     let needs_embedding = !classify_data.needs_embedding.is_empty();
 
-    // 5. load_model (skip if nothing to embed)
-    let (load_model_step, embedder) = if needs_embedding {
+    // 6. Load model
+    let (load_model_result, embedder) = if needs_embedding {
         run_load_model(embedding)
     } else {
         (ProcessingStepResult::Skipped, None)
     };
+    substeps.push(from_pipeline_result(load_model_result, |o| {
+        Outcome::LoadModel(LoadModelOutcome {
+            model_name: o.model_name.clone(),
+            dimension: o.dimension,
+        })
+    }));
 
-    // Dimension check (pre-check for embed_files)
-    // Skip on full rebuild — old index is being discarded entirely.
+    // Dimension check
     let dim_error = if full_rebuild {
         None
     } else {
@@ -746,9 +361,7 @@ pub async fn run(
                 Ok(Some(existing_dim)) => {
                     let model_dim = emb.dimension() as i32;
                     if existing_dim != model_dim {
-                        Some(format!(
-                            "dimension mismatch: model produces {model_dim}-dim embeddings but existing index has {existing_dim}-dim"
-                        ))
+                        Some(format!("dimension mismatch: model produces {model_dim}-dim embeddings but existing index has {existing_dim}-dim"))
                     } else {
                         None
                     }
@@ -756,93 +369,74 @@ pub async fn run(
                 Ok(None) => None,
                 Err(e) => Some(e.to_string()),
             },
-            None if needs_embedding => {
-                // load_model failed — embed_files will be skipped via embedder check below
-                None
-            }
+            None if needs_embedding => None,
             None => None,
         }
     };
 
-    // If load_model failed, skip embed_files and write_index
     if needs_embedding && embedder.is_none() {
-        return BuildCommandOutput {
-            process: BuildProcessOutput {
-                auto_update: None,
-                read_config: read_config_step,
-                scan: scan_step,
-                validate: validate_step,
-                classify: classify_step,
-                load_model: load_model_step,
-                embed_files: ProcessingStepResult::Skipped,
-                write_index: ProcessingStepResult::Skipped,
-            },
-            result: None,
-        };
+        for _ in 0..2 {
+            substeps.push(Step {
+                substeps: vec![],
+                outcome: StepOutcome::Skipped,
+            });
+        }
+        return fail_msg(
+            &mut substeps,
+            start,
+            ErrorKind::Application,
+            "model loading failed",
+            0,
+        );
     }
 
-    // 6. embed_files
+    // 7. Embed files
     let max_chunk_size = chunking.max_chunk_size;
     let built_at = chrono::Utc::now().timestamp_micros();
 
-    let (embed_files_step, embed_data) = if let Some(msg) = dim_error {
-        (
-            ProcessingStepResult::Failed(ProcessingStepError {
-                kind: ErrorKind::User,
-                message: msg,
-            }),
-            None,
-        )
-    } else if needs_embedding {
-        // Safe: we returned early above if needs_embedding && embedder.is_none()
-        let emb = match embedder.as_ref() {
-            Some(e) => e,
-            None => {
-                return BuildCommandOutput {
-                    process: BuildProcessOutput {
-                        auto_update: None,
-                        read_config: read_config_step,
-                        scan: scan_step,
-                        validate: validate_step,
-                        classify: classify_step,
-                        load_model: load_model_step,
-                        embed_files: ProcessingStepResult::Failed(ProcessingStepError {
-                            kind: ErrorKind::Application,
-                            message: "embedder not loaded".to_string(),
-                        }),
-                        write_index: ProcessingStepResult::Skipped,
-                    },
-                    result: None,
-                };
-            }
-        };
+    if let Some(msg) = dim_error {
+        substeps.push(Step {
+            substeps: vec![],
+            outcome: StepOutcome::Complete {
+                result: Err(StepError {
+                    kind: ErrorKind::User,
+                    message: msg,
+                }),
+                elapsed_ms: 0,
+            },
+        });
+        substeps.push(Step {
+            substeps: vec![],
+            outcome: StepOutcome::Skipped,
+        }); // write_index
+        return fail_from_last_skip(&mut substeps, start, 0);
+    }
+
+    let (embed_result, embed_data) = if needs_embedding {
+        let emb = embedder.as_ref().unwrap();
         run_embed_files(&classify_data.needs_embedding, emb, max_chunk_size).await
     } else {
         (ProcessingStepResult::Skipped, None)
     };
+    substeps.push(from_pipeline_result(embed_result, |o| {
+        Outcome::EmbedFiles(EmbedFilesOutcome {
+            files_embedded: o.files_embedded,
+            chunks_produced: o.chunks_produced,
+        })
+    }));
 
-    // If embed_files failed, skip write_index
     if needs_embedding
         && embed_data.is_none()
-        && !matches!(embed_files_step, ProcessingStepResult::Skipped)
+        && !matches!(substeps.last().unwrap().outcome, StepOutcome::Skipped)
     {
-        return BuildCommandOutput {
-            process: BuildProcessOutput {
-                auto_update: None,
-                read_config: read_config_step,
-                scan: scan_step,
-                validate: validate_step,
-                classify: classify_step,
-                load_model: load_model_step,
-                embed_files: embed_files_step,
-                write_index: ProcessingStepResult::Skipped,
-            },
-            result: None,
-        };
+        substeps.push(Step {
+            substeps: vec![],
+            outcome: StepOutcome::Skipped,
+        }); // write_index
+        return fail_from_last_skip(&mut substeps, start, 0);
     }
 
-    // 7. write_index — assemble file_rows + chunk_rows from classify_data + embed_data
-    // File rows: always built fresh from scanned files with file_ids from classify
+    // 8. Write index
     let file_rows: Vec<FileRow> = scanned
         .files
         .iter()
@@ -859,10 +453,8 @@ pub async fn run(
         })
         .collect();
 
-    // Chunk rows: retained chunks + newly embedded chunks
     let mut chunk_rows = classify_data.retained_chunks;
     let mut embedded_details = Vec::new();
-
     if let Some(ed) = embed_data {
         chunk_rows.extend(ed.chunk_rows);
         embedded_details = ed.details;
@@ -875,70 +467,127 @@ pub async fn run(
         built_at: chrono::Utc::now().to_rfc3339(),
     };
 
-    let write_index_step = run_write_index(
+    let write_index_result = run_write_index(
         &backend,
         &schema_fields,
         &file_rows,
         &chunk_rows,
         build_meta,
     );
+    substeps.push(from_pipeline_result(write_index_result, |o| {
+        Outcome::WriteIndex(WriteIndexOutcome {
+            files_written: o.files_written,
+            chunks_written: o.chunks_written,
+        })
+    }));
 
-    if matches!(write_index_step, ProcessingStepResult::Failed(_)) {
-        return BuildCommandOutput {
-            process: BuildProcessOutput {
-                auto_update: None,
-                read_config: read_config_step,
-                scan: scan_step,
-                validate: validate_step,
-                classify: classify_step,
-                load_model: load_model_step,
-                embed_files: embed_files_step,
-                write_index: write_index_step,
-            },
-            result: None,
-        };
+    if crate::step::has_failed(substeps.last().unwrap()) {
+        return fail_from_last_skip(&mut substeps, start, 0);
     }
 
-    // Assemble BuildResult
+    // Assemble BuildOutcome
     let chunks_embedded: usize = embedded_details.iter().map(|d| d.chunks).sum();
     let chunks_total = chunk_rows.len();
     let chunks_unchanged = chunks_total - chunks_embedded;
 
-    let result = BuildResult {
-        full_rebuild: classify_data.full_rebuild,
-        files_total: file_rows.len(),
-        files_embedded: classify_data.needs_embedding.len(),
-        files_unchanged: file_rows.len() - classify_data.needs_embedding.len(),
-        files_removed: classify_data.removed_count,
-        chunks_total,
-        chunks_embedded,
-        chunks_unchanged,
-        chunks_removed: classify_data.chunks_removed,
-        new_fields,
-        embedded_files: if verbose {
-            Some(embedded_details)
-        } else {
-            None
+    Step {
+        substeps,
+        outcome: StepOutcome::Complete {
+            result: Ok(Outcome::Build(Box::new(BuildOutcome {
+                full_rebuild: classify_data.full_rebuild,
+                files_total: file_rows.len(),
+                files_embedded: classify_data.needs_embedding.len(),
+                files_unchanged: file_rows.len() - classify_data.needs_embedding.len(),
+                files_removed: classify_data.removed_count,
+                chunks_total,
+                chunks_embedded,
+                chunks_unchanged,
+                chunks_removed: classify_data.chunks_removed,
+                new_fields,
+                embedded_files: embedded_details,
+                removed_files: classify_data.removed_details,
+            }))),
+            elapsed_ms: start.elapsed().as_millis() as u64,
         },
-        removed_files: if verbose && !classify_data.removed_details.is_empty() {
-            Some(classify_data.removed_details)
-        } else {
-            None
-        },
-    };
+    }
+}
 
-    BuildCommandOutput {
-        process: BuildProcessOutput {
-            auto_update,
-            read_config: read_config_step,
-            scan: scan_step,
-            validate: validate_step,
-            classify: classify_step,
-            load_model: load_model_step,
-            embed_files: embed_files_step,
-            write_index: write_index_step,
+/// Push N Skipped substeps, extract error from last substep, return failed command Step.
+fn fail_from_last(
+    substeps: &mut Vec<Step<Outcome>>,
+    start: Instant,
+    skipped: usize,
+) -> Step<Outcome> {
+    let msg = match substeps.last().map(|s| &s.outcome) {
+        Some(StepOutcome::Complete { result: Err(e), .. }) => e.message.clone(),
+        _ => "step failed".into(),
+    };
+    for _ in 0..skipped {
+        substeps.push(Step {
+            substeps: vec![],
+            outcome: StepOutcome::Skipped,
+        });
+    }
+    Step {
+        substeps: std::mem::take(substeps),
+        outcome: StepOutcome::Complete {
+            result: Err(StepError {
+                kind: ErrorKind::Application,
+                message: msg,
+            }),
+            elapsed_ms: start.elapsed().as_millis() as u64,
         },
-        result: Some(result),
+    }
+}
+
+/// Push N Skipped substeps, return failed command Step with a specific message.
+fn fail_msg(
+    substeps: &mut Vec<Step<Outcome>>,
+    start: Instant,
+    kind: ErrorKind,
+    msg: &str,
+    skipped: usize,
+) -> Step<Outcome> {
+    for _ in 0..skipped {
+        substeps.push(Step {
+            substeps: vec![],
+            outcome: StepOutcome::Skipped,
+        });
+    }
+    Step {
+        substeps: std::mem::take(substeps),
+        outcome: StepOutcome::Complete {
+            result: Err(StepError {
+                kind,
+                message: msg.into(),
+            }),
+            elapsed_ms: start.elapsed().as_millis() as u64,
+        },
+    }
+}
+
+/// Return failed command Step (no additional Skipped substeps).
+fn fail_from_last_skip(
+    substeps: &mut Vec<Step<Outcome>>,
+    start: Instant,
+    _skipped: usize,
+) -> Step<Outcome> {
+    let msg = match substeps.iter().rev().find_map(|s| match &s.outcome {
+        StepOutcome::Complete { result: Err(e), .. } => Some(e.message.clone()),
+        _ => None,
+    }) {
+        Some(m) => m,
+        None => "step failed".into(),
+    };
+    Step {
+        substeps: std::mem::take(substeps),
+        outcome: StepOutcome::Complete {
+            result: Err(StepError {
+                kind: ErrorKind::Application,
+                message: msg,
+            }),
+            elapsed_ms: start.elapsed().as_millis() as u64,
+        },
     }
 }
 
@@ -1097,6 +746,23 @@ mod tests {
     use std::collections::{HashMap, HashSet};
     use std::fs;
 
+    fn unwrap_build(step: &Step<Outcome>) -> &BuildOutcome {
+        match &step.outcome {
+            StepOutcome::Complete {
+                result: Ok(Outcome::Build(o)),
+                ..
+            } => o,
+            other => panic!("expected Ok(Build), got: {other:?}"),
+        }
+    }
+
+    fn unwrap_error(step: &Step<Outcome>) -> &StepError {
+        match &step.outcome {
+            StepOutcome::Complete { result: Err(e), .. } => e,
+            other => panic!("expected Err, got: {other:?}"),
+        }
+    }
+
     fn create_test_vault(dir: &Path) {
         let blog_dir = dir.join("blog");
         fs::create_dir_all(&blog_dir).unwrap();
@@ -1119,10 +785,6 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let output = run(tmp.path(), None, None, None, false, true, false).await;
         assert!(output.has_failed_step());
-        assert!(matches!(
-            output.process.read_config,
-            ProcessingStepResult::Failed(_)
-        ));
     }
 
     #[tokio::test]
@@ -1147,17 +809,13 @@ mod tests {
         assert!(
             !output.has_failed_step(),
             "first build failed: {:#?}",
-            output.process
+            output
         );
 
         // Run build again (tests standalone rebuild)
         let output = run(tmp.path(), None, None, None, false, true, false).await;
-        assert!(
-            !output.has_failed_step(),
-            "build failed: {:#?}",
-            output.process
-        );
-        assert!(output.result.is_some());
+        assert!(!output.has_failed_step(), "build failed: {:#?}", output);
+        assert!(!output.has_failed_step());
 
         // Verify Parquet files exist
         let files_path = tmp.path().join(".mdvs/files.parquet");
@@ -1240,11 +898,8 @@ mod tests {
         // Build should fail with dimension mismatch when model loads
         let output = run(tmp.path(), None, None, None, false, true, false).await;
         assert!(output.has_failed_step());
-        let err = match &output.process.embed_files {
-            ProcessingStepResult::Failed(e) => &e.message,
-            other => panic!("expected embed_files Failed, got: {other:?}"),
-        };
-        assert!(err.contains("dimension mismatch"));
+        let err = unwrap_error(&output);
+        assert!(err.message.contains("dimension mismatch"));
     }
 
     #[tokio::test]
@@ -1288,8 +943,8 @@ mod tests {
             !output.has_failed_step(),
             "expected success with --force, got failed step"
         );
-        assert!(output.result.is_some());
-        let result = output.result.unwrap();
+        assert!(!output.has_failed_step());
+        let result = unwrap_build(&output);
         assert!(result.full_rebuild);
     }
 
@@ -1317,11 +972,7 @@ mod tests {
 
         // Build should fill defaults and succeed
         let output = run(tmp.path(), None, None, None, false, true, false).await;
-        assert!(
-            !output.has_failed_step(),
-            "build failed: {:#?}",
-            output.process
-        );
+        assert!(!output.has_failed_step(), "build failed: {:#?}", output);
 
         // Verify sections were written
         let config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
@@ -1371,11 +1022,8 @@ mod tests {
         )
         .await;
         assert!(output.has_failed_step());
-        let err = match &output.process.scan {
-            ProcessingStepResult::Failed(e) => &e.message,
-            other => panic!("expected scan Failed, got: {other:?}"),
-        };
-        assert!(err.contains("--force"));
+        let err = unwrap_error(&output);
+        assert!(err.message.contains("--force"));
     }
 
     #[tokio::test]
@@ -1392,7 +1040,7 @@ mod tests {
             false, // skip_gitignore
             false, // verbose
         );
-        assert!(!init_output.has_failed_step());
+        assert!(!crate::step::has_failed(&init_output));
 
         // Build the index (creates build sections)
         let output = run(tmp.path(), None, None, None, false, true, false).await;
@@ -1400,11 +1048,8 @@ mod tests {
 
         let output = run(tmp.path(), None, None, Some(512), false, true, false).await;
         assert!(output.has_failed_step());
-        let err = match &output.process.scan {
-            ProcessingStepResult::Failed(e) => &e.message,
-            other => panic!("expected scan Failed, got: {other:?}"),
-        };
-        assert!(err.contains("--force"));
+        let err = unwrap_error(&output);
+        assert!(err.message.contains("--force"));
     }
 
     #[tokio::test]
@@ -1421,7 +1066,7 @@ mod tests {
             false, // skip_gitignore
             false, // verbose
         );
-        assert!(!init_output.has_failed_step());
+        assert!(!crate::step::has_failed(&init_output));
 
         // Build the index (creates build sections)
         let output = run(tmp.path(), None, None, None, false, true, false).await;
@@ -1432,7 +1077,7 @@ mod tests {
         assert!(
             !output.has_failed_step(),
             "build with --force failed: {:#?}",
-            output.process
+            output
         );
 
         let config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
@@ -1453,7 +1098,7 @@ mod tests {
             false, // skip_gitignore
             false, // verbose
         );
-        assert!(!init_output.has_failed_step());
+        assert!(!crate::step::has_failed(&init_output));
 
         // Build the index (creates build sections + parquets)
         let output = run(tmp.path(), None, None, None, false, true, false).await;
@@ -1467,19 +1112,16 @@ mod tests {
         // Build without --force should error
         let output = run(tmp.path(), None, None, None, false, true, false).await;
         assert!(output.has_failed_step());
-        let err = match &output.process.classify {
-            ProcessingStepResult::Failed(e) => &e.message,
-            other => panic!("expected classify Failed, got: {other:?}"),
-        };
-        assert!(err.contains("config changed since last build"));
-        assert!(err.contains("chunk_size"));
+        let err = unwrap_error(&output);
+        assert!(err.message.contains("config changed since last build"));
+        assert!(err.message.contains("chunk_size"));
 
         // Build with --force should succeed
         let output = run(tmp.path(), None, None, None, true, true, false).await;
         assert!(
             !output.has_failed_step(),
             "build with --force failed: {:#?}",
-            output.process
+            output
         );
     }
 
@@ -1544,7 +1186,10 @@ mod tests {
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
 
         let output = run(tmp.path(), None, None, None, false, true, false).await;
-        assert!(output.has_violations(), "expected validation violations");
+        assert!(
+            crate::step::has_violations(&output),
+            "expected validation violations"
+        );
     }
 
     #[tokio::test]
@@ -1616,7 +1261,10 @@ mod tests {
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
 
         let output = run(tmp.path(), None, None, None, false, true, false).await;
-        assert!(output.has_violations(), "expected validation violations");
+        assert!(
+            crate::step::has_violations(&output),
+            "expected validation violations"
+        );
     }
 
     #[tokio::test]
@@ -1675,7 +1323,7 @@ mod tests {
         assert!(
             !output.has_failed_step(),
             "build should succeed with new fields: {:#?}",
-            output.process
+            output
         );
 
         // Verify index was created
@@ -1716,7 +1364,7 @@ mod tests {
             false, // skip_gitignore
             false, // verbose
         );
-        assert!(!init_output.has_failed_step());
+        assert!(!crate::step::has_failed(&init_output));
 
         // Build the index
         let output = run(tmp.path(), None, None, None, false, true, false).await;
@@ -1758,7 +1406,7 @@ mod tests {
             false, // skip_gitignore
             false, // verbose
         );
-        assert!(!init_output.has_failed_step());
+        assert!(!crate::step::has_failed(&init_output));
 
         // Build the index
         let output = run(tmp.path(), None, None, None, false, true, false).await;
@@ -1812,7 +1460,7 @@ mod tests {
             false, // skip_gitignore
             false, // verbose
         );
-        assert!(!init_output.has_failed_step());
+        assert!(!crate::step::has_failed(&init_output));
 
         // Build the index
         let output = run(tmp.path(), None, None, None, false, true, false).await;
@@ -1885,7 +1533,7 @@ mod tests {
             false, // skip_gitignore
             false, // verbose
         );
-        assert!(!init_output.has_failed_step());
+        assert!(!crate::step::has_failed(&init_output));
 
         // Build the index
         let output = run(tmp.path(), None, None, None, false, true, false).await;
@@ -1925,7 +1573,7 @@ mod tests {
             false, // skip_gitignore
             false, // verbose
         );
-        assert!(!init_output.has_failed_step());
+        assert!(!crate::step::has_failed(&init_output));
 
         // Build the index
         let output = run(tmp.path(), None, None, None, false, true, false).await;
@@ -1966,7 +1614,7 @@ mod tests {
             false, // skip_gitignore
             false, // verbose
         );
-        assert!(!init_output.has_failed_step());
+        assert!(!crate::step::has_failed(&init_output));
 
         // Build the index
         let output = run(tmp.path(), None, None, None, false, true, false).await;

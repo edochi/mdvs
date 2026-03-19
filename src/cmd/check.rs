@@ -1,16 +1,11 @@
 use crate::discover::field_type::FieldType;
 use crate::discover::scan::ScannedFiles;
-use crate::output::{
-    format_file_count, format_json_compact, CommandOutput, FieldViolation, NewField, ViolatingFile,
-    ViolationKind,
-};
-use crate::pipeline::read_config::ReadConfigOutput;
-use crate::pipeline::scan::ScanOutput;
-use crate::pipeline::validate::ValidateOutput;
-use crate::pipeline::ProcessingStepResult;
+use crate::outcome::commands::CheckOutcome;
+use crate::outcome::{Outcome, ReadConfigOutcome, ScanOutcome, ValidateOutcome};
+use crate::output::{FieldViolation, NewField, ViolatingFile, ViolationKind};
 use crate::schema::config::MdvsToml;
 use crate::schema::shared::FieldTypeSerde;
-use crate::table::{style_compact, style_record, Builder};
+use crate::step::{from_pipeline_result, ErrorKind, Step, StepError, StepOutcome};
 use globset::Glob;
 use serde::Serialize;
 use serde_json::Value;
@@ -18,7 +13,12 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use tracing::{info, instrument};
 
-/// Result of the `check` command: validation violations and unknown fields.
+// ============================================================================
+// CheckResult — kept for build compatibility during migration
+// ============================================================================
+
+/// Result of validation. Used by both `check` and `build` commands.
+/// Kept during migration; build still references this type.
 #[derive(Debug, Serialize)]
 pub struct CheckResult {
     /// Number of markdown files checked.
@@ -36,296 +36,201 @@ impl CheckResult {
     }
 }
 
-impl CommandOutput for CheckResult {
-    fn format_text(&self, verbose: bool) -> String {
-        let mut out = String::new();
-
-        // One-liner
-        let violations_part = if self.has_violations() {
-            format!("{} violation(s)", self.field_violations.len())
-        } else {
-            "no violations".to_string()
-        };
-        let new_fields_part = if self.new_fields.is_empty() {
-            String::new()
-        } else {
-            format!(", {} new field(s)", self.new_fields.len())
-        };
-        out.push_str(&format!(
-            "Checked {} files — {violations_part}{new_fields_part}\n",
-            self.files_checked
-        ));
-
-        // Violations table
-        if self.has_violations() {
-            out.push('\n');
-            if verbose {
-                for v in &self.field_violations {
-                    let mut builder = Builder::default();
-                    let kind_str = match v.kind {
-                        ViolationKind::MissingRequired => "MissingRequired",
-                        ViolationKind::WrongType => "WrongType",
-                        ViolationKind::Disallowed => "Disallowed",
-                        ViolationKind::NullNotAllowed => "NullNotAllowed",
-                    };
-                    builder.push_record([
-                        format!("\"{}\"", v.field),
-                        kind_str.to_string(),
-                        format_file_count(v.files.len()),
-                    ]);
-                    let detail: String = v
-                        .files
-                        .iter()
-                        .map(|f| match &f.detail {
-                            Some(d) => format!("  - \"{}\" ({d})", f.path.display()),
-                            None => format!("  - \"{}\"", f.path.display()),
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    builder.push_record([detail, String::new(), String::new()]);
-                    let mut table = builder.build();
-                    style_record(&mut table, 3);
-                    out.push_str(&format!("{table}\n"));
-                }
-            } else {
-                let mut builder = Builder::default();
-                for v in &self.field_violations {
-                    let kind_str = match v.kind {
-                        ViolationKind::MissingRequired => "MissingRequired",
-                        ViolationKind::WrongType => "WrongType",
-                        ViolationKind::Disallowed => "Disallowed",
-                        ViolationKind::NullNotAllowed => "NullNotAllowed",
-                    };
-                    builder.push_record([
-                        format!("\"{}\"", v.field),
-                        kind_str.to_string(),
-                        format_file_count(v.files.len()),
-                    ]);
-                }
-                let mut table = builder.build();
-                style_compact(&mut table);
-                out.push_str(&format!("{table}\n"));
-            }
-        }
-
-        // New fields table
-        if !self.new_fields.is_empty() {
-            out.push('\n');
-            if verbose {
-                for nf in &self.new_fields {
-                    let mut builder = Builder::default();
-                    builder.push_record([
-                        format!("\"{}\"", nf.name),
-                        "new".to_string(),
-                        format_file_count(nf.files_found),
-                    ]);
-                    let detail = match &nf.files {
-                        Some(files) => files
-                            .iter()
-                            .map(|p| format!("  - \"{}\"", p.display()))
-                            .collect::<Vec<_>>()
-                            .join("\n"),
-                        None => String::new(),
-                    };
-                    builder.push_record([detail, String::new(), String::new()]);
-                    let mut table = builder.build();
-                    style_record(&mut table, 3);
-                    out.push_str(&format!("{table}\n"));
-                }
-            } else {
-                let mut builder = Builder::default();
-                for nf in &self.new_fields {
-                    builder.push_record([
-                        format!("\"{}\"", nf.name),
-                        "new".to_string(),
-                        format_file_count(nf.files_found),
-                    ]);
-                }
-                let mut table = builder.build();
-                style_compact(&mut table);
-                out.push_str(&format!("{table}\n"));
-            }
-        }
-
-        out
-    }
-}
-
 // ============================================================================
-// CheckCommandOutput (pipeline-based)
+// run()
 // ============================================================================
-
-/// Pipeline record for the check command.
-#[derive(Debug, Serialize)]
-pub struct CheckProcessOutput {
-    /// Auto-update output (if auto-update was triggered).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub auto_update: Option<crate::cmd::update::UpdateCommandOutput>,
-    /// Read config step result.
-    pub read_config: ProcessingStepResult<ReadConfigOutput>,
-    /// Scan step result.
-    pub scan: ProcessingStepResult<ScanOutput>,
-    /// Validate step result.
-    pub validate: ProcessingStepResult<ValidateOutput>,
-}
-
-/// Full output of the check command: pipeline steps + command result.
-#[derive(Debug, Serialize)]
-pub struct CheckCommandOutput {
-    /// Processing steps and their outcomes.
-    pub process: CheckProcessOutput,
-    /// Command result (None if pipeline didn't complete).
-    pub result: Option<CheckResult>,
-}
-
-impl CheckCommandOutput {
-    /// Returns `true` if any processing step failed.
-    pub fn has_failed_step(&self) -> bool {
-        self.process
-            .auto_update
-            .as_ref()
-            .is_some_and(|u| u.has_failed_step())
-            || matches!(self.process.read_config, ProcessingStepResult::Failed(_))
-            || matches!(self.process.scan, ProcessingStepResult::Failed(_))
-            || matches!(self.process.validate, ProcessingStepResult::Failed(_))
-    }
-}
-
-impl CommandOutput for CheckCommandOutput {
-    fn format_json(&self, verbose: bool) -> String {
-        format_json_compact(self, self.result.as_ref(), verbose)
-    }
-
-    fn format_text(&self, verbose: bool) -> String {
-        let mut out = String::new();
-
-        // Render auto-update if present
-        if let Some(ref update_output) = self.process.auto_update {
-            if verbose {
-                out.push_str("Auto-update:\n");
-                let update_text = update_output.format_text(true);
-                for line in update_text.lines() {
-                    out.push_str(&format!("  {line}\n"));
-                }
-                out.push('\n');
-            } else if let Some(ref ur) = update_output.result {
-                let total = ur.added.len() + ur.changed.len() + ur.removed.len();
-                if total > 0 {
-                    out.push_str(&format!("Auto-updated schema ({total} change(s))\n"));
-                }
-            }
-        }
-
-        // If pipeline completed successfully, delegate to CheckResult
-        if let Some(result) = &self.result {
-            if verbose {
-                out.push_str(&format!(
-                    "{}\n",
-                    self.process.read_config.format_line("Read config")
-                ));
-                out.push_str(&format!("{}\n", self.process.scan.format_line("Scan")));
-                out.push_str(&format!(
-                    "{}\n",
-                    self.process.validate.format_line("Validate")
-                ));
-                out.push('\n');
-                out.push_str(&result.format_text(verbose));
-                out
-            } else {
-                out.push_str(&result.format_text(verbose));
-                out
-            }
-        } else {
-            // Pipeline didn't complete — show steps up to the failure
-            out.push_str(&format!(
-                "{}\n",
-                self.process.read_config.format_line("Read config")
-            ));
-            if !matches!(self.process.scan, ProcessingStepResult::Skipped) {
-                out.push_str(&format!("{}\n", self.process.scan.format_line("Scan")));
-            }
-            if !matches!(self.process.validate, ProcessingStepResult::Skipped) {
-                out.push_str(&format!(
-                    "{}\n",
-                    self.process.validate.format_line("Validate")
-                ));
-            }
-            out
-        }
-    }
-}
 
 /// Read config, optionally auto-update, scan files, and validate frontmatter.
 #[instrument(name = "check", skip_all)]
-pub async fn run(path: &Path, no_update: bool, verbose: bool) -> CheckCommandOutput {
+pub async fn run(path: &Path, no_update: bool, verbose: bool) -> Step<Outcome> {
     use crate::pipeline::read_config::run_read_config;
     use crate::pipeline::scan::run_scan;
-    use crate::pipeline::validate::run_validate;
 
-    // Read config first to check auto_update setting
-    let (read_config_step, config) = run_read_config(path);
+    let start = std::time::Instant::now();
+    let mut substeps = Vec::new();
 
-    // Auto-update: run update before validating if configured
-    let auto_update = if let Some(ref cfg) = config {
-        let should_update = !no_update && cfg.check.as_ref().is_some_and(|c| c.auto_update);
-        if should_update {
-            let update_output = crate::cmd::update::run(path, &[], false, false, verbose).await;
-            if update_output.has_failed_step() {
-                return CheckCommandOutput {
-                    process: CheckProcessOutput {
-                        auto_update: Some(update_output),
-                        read_config: read_config_step,
-                        scan: ProcessingStepResult::Skipped,
-                        validate: ProcessingStepResult::Skipped,
+    // 1. Read config
+    let (read_config_result, config) = run_read_config(path);
+    substeps.push(from_pipeline_result(read_config_result, |o| {
+        Outcome::ReadConfig(ReadConfigOutcome {
+            config_path: o.config_path.clone(),
+        })
+    }));
+
+    let config = match config {
+        Some(c) => c,
+        None => {
+            substeps.push(Step {
+                substeps: vec![],
+                outcome: StepOutcome::Skipped,
+            }); // scan
+            substeps.push(Step {
+                substeps: vec![],
+                outcome: StepOutcome::Skipped,
+            }); // validate
+            let msg = match &substeps[0].outcome {
+                StepOutcome::Complete { result: Err(e), .. } => e.message.clone(),
+                _ => "failed to read config".into(),
+            };
+            return Step {
+                substeps,
+                outcome: StepOutcome::Complete {
+                    result: Err(StepError {
+                        kind: ErrorKind::User,
+                        message: msg,
+                    }),
+                    elapsed_ms: start.elapsed().as_millis() as u64,
+                },
+            };
+        }
+    };
+
+    // 2. Auto-update (calls old update::run(), does not nest as substep during migration)
+    let should_update = !no_update && config.check.as_ref().is_some_and(|c| c.auto_update);
+    if should_update {
+        let update_output = crate::cmd::update::run(path, &[], false, false, verbose).await;
+        if update_output.has_failed_step() {
+            substeps.push(Step {
+                substeps: vec![],
+                outcome: StepOutcome::Skipped,
+            }); // scan
+            substeps.push(Step {
+                substeps: vec![],
+                outcome: StepOutcome::Skipped,
+            }); // validate
+            return Step {
+                substeps,
+                outcome: StepOutcome::Complete {
+                    result: Err(StepError {
+                        kind: ErrorKind::User,
+                        message: "auto-update failed".into(),
+                    }),
+                    elapsed_ms: start.elapsed().as_millis() as u64,
+                },
+            };
+        }
+    }
+
+    // Re-read config if auto-update ran
+    let config = if should_update {
+        match MdvsToml::read(&path.join("mdvs.toml")) {
+            Ok(c) => c,
+            Err(e) => {
+                substeps.push(Step {
+                    substeps: vec![],
+                    outcome: StepOutcome::Skipped,
+                }); // scan
+                substeps.push(Step {
+                    substeps: vec![],
+                    outcome: StepOutcome::Skipped,
+                }); // validate
+                return Step {
+                    substeps,
+                    outcome: StepOutcome::Complete {
+                        result: Err(StepError {
+                            kind: ErrorKind::Application,
+                            message: format!("failed to re-read config: {e}"),
+                        }),
+                        elapsed_ms: start.elapsed().as_millis() as u64,
                     },
-                    result: None,
                 };
             }
-            Some(update_output)
-        } else {
-            None
         }
     } else {
-        None
+        config
     };
 
-    // Re-read config if auto-update ran (it may have changed the toml)
-    let (read_config_step, config) = if auto_update.is_some() {
-        run_read_config(path)
-    } else {
-        (read_config_step, config)
-    };
+    // 3. Scan
+    let (scan_result, scanned) = run_scan(path, &config.scan);
+    substeps.push(from_pipeline_result(scan_result, |o| {
+        Outcome::Scan(ScanOutcome {
+            files_found: o.files_found,
+            glob: o.glob.clone(),
+        })
+    }));
 
-    let (scan_step, scanned) = match &config {
-        Some(cfg) => run_scan(path, &cfg.scan),
-        None => (ProcessingStepResult::Skipped, None),
-    };
-
-    let (validate_step, validation_data) = match (&scanned, &config) {
-        (Some(scanned), Some(cfg)) => run_validate(scanned, cfg, verbose),
-        _ => (ProcessingStepResult::Skipped, None),
-    };
-
-    // Build CheckResult from validation data (if completed)
-    let result = validation_data.map(|(field_violations, new_fields)| {
-        let files_checked = scanned.as_ref().map_or(0, |s| s.files.len());
-        CheckResult {
-            files_checked,
-            field_violations,
-            new_fields,
+    let scanned = match scanned {
+        Some(s) => s,
+        None => {
+            substeps.push(Step {
+                substeps: vec![],
+                outcome: StepOutcome::Skipped,
+            }); // validate
+            let msg = match &substeps.last().unwrap().outcome {
+                StepOutcome::Complete { result: Err(e), .. } => e.message.clone(),
+                _ => "scan failed".into(),
+            };
+            return Step {
+                substeps,
+                outcome: StepOutcome::Complete {
+                    result: Err(StepError {
+                        kind: ErrorKind::Application,
+                        message: msg,
+                    }),
+                    elapsed_ms: start.elapsed().as_millis() as u64,
+                },
+            };
         }
+    };
+
+    // 4. Validate
+    let validate_start = std::time::Instant::now();
+    let check_result = match validate(&scanned, &config, verbose) {
+        Ok(r) => r,
+        Err(e) => {
+            substeps.push(Step {
+                substeps: vec![],
+                outcome: StepOutcome::Complete {
+                    result: Err(StepError {
+                        kind: ErrorKind::Application,
+                        message: e.to_string(),
+                    }),
+                    elapsed_ms: validate_start.elapsed().as_millis() as u64,
+                },
+            });
+            return Step {
+                substeps,
+                outcome: StepOutcome::Complete {
+                    result: Err(StepError {
+                        kind: ErrorKind::Application,
+                        message: "validation failed".into(),
+                    }),
+                    elapsed_ms: start.elapsed().as_millis() as u64,
+                },
+            };
+        }
+    };
+
+    // Push validate substep
+    substeps.push(Step {
+        substeps: vec![],
+        outcome: StepOutcome::Complete {
+            result: Ok(Outcome::Validate(ValidateOutcome {
+                files_checked: check_result.files_checked,
+                violations: check_result.field_violations.clone(),
+                new_fields: check_result.new_fields.clone(),
+            })),
+            elapsed_ms: validate_start.elapsed().as_millis() as u64,
+        },
     });
 
-    CheckCommandOutput {
-        process: CheckProcessOutput {
-            auto_update,
-            read_config: read_config_step,
-            scan: scan_step,
-            validate: validate_step,
+    // Build command outcome
+    Step {
+        substeps,
+        outcome: StepOutcome::Complete {
+            result: Ok(Outcome::Check(Box::new(CheckOutcome {
+                files_checked: check_result.files_checked,
+                violations: check_result.field_violations,
+                new_fields: check_result.new_fields,
+            }))),
+            elapsed_ms: start.elapsed().as_millis() as u64,
         },
-        result,
     }
 }
+
+// ============================================================================
+// validate() — core validation logic, reused by build
+// ============================================================================
 
 /// Accumulator key for grouping violations by field, kind, and rule.
 #[derive(PartialEq, Eq, Hash)]
@@ -481,7 +386,6 @@ fn check_required_fields(
 
             match value {
                 None => {
-                    // Key absent → MissingRequired
                     let key = ViolationKey {
                         field: toml_field.name.clone(),
                         kind: ViolationKind::MissingRequired,
@@ -493,7 +397,6 @@ fn check_required_fields(
                     });
                 }
                 Some(v) if v.is_null() && !toml_field.nullable => {
-                    // Key present but null on non-nullable field → NullNotAllowed
                     let key = ViolationKey {
                         field: toml_field.name.clone(),
                         kind: ViolationKind::NullNotAllowed,
@@ -504,9 +407,7 @@ fn check_required_fields(
                         detail: None,
                     });
                 }
-                _ => {
-                    // Key present with value (or null on nullable field) → pass
-                }
+                _ => {}
             }
         }
     }
@@ -549,11 +450,10 @@ fn collect_new_fields(
 
 fn type_matches(expected: &FieldType, value: &Value) -> bool {
     match (expected, value) {
-        // String is the top type in the widening hierarchy — accepts any value
         (FieldType::String, _) => true,
         (FieldType::Boolean, Value::Bool(_)) => true,
         (FieldType::Integer, Value::Number(n)) => n.is_i64() || n.is_u64(),
-        (FieldType::Float, Value::Number(_)) => true, // lenient: accepts integers
+        (FieldType::Float, Value::Number(_)) => true,
         (FieldType::Array(inner), Value::Array(arr)) => arr.iter().all(|v| type_matches(inner, v)),
         (FieldType::Object(_), Value::Object(_)) => true,
         _ => false,
@@ -576,9 +476,20 @@ fn actual_type_name(value: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::outcome::commands::CheckOutcome;
     use crate::schema::config::{FieldsConfig, TomlField, UpdateConfig};
     use crate::schema::shared::ScanConfig;
     use std::fs;
+
+    fn unwrap_check(step: &Step<Outcome>) -> &CheckOutcome {
+        match &step.outcome {
+            StepOutcome::Complete {
+                result: Ok(Outcome::Check(o)),
+                ..
+            } => o,
+            other => panic!("expected Ok(Check), got: {other:?}"),
+        }
+    }
 
     fn create_test_vault(dir: &Path) {
         let blog_dir = dir.join("blog");
@@ -660,9 +571,10 @@ mod tests {
             vec![],
         );
 
-        let result = run(tmp.path(), true, false).await.result.unwrap();
+        let step = run(tmp.path(), true, false).await;
+        let result = unwrap_check(&step);
 
-        assert!(!result.has_violations());
+        assert!(result.violations.is_empty());
         assert!(result.new_fields.is_empty());
         assert_eq!(result.files_checked, 2);
     }
@@ -672,7 +584,6 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
-        // tags is required in blog/**, but post2 doesn't have tags
         write_toml(
             tmp.path(),
             vec![
@@ -691,10 +602,11 @@ mod tests {
             vec![],
         );
 
-        let result = run(tmp.path(), true, false).await.result.unwrap();
+        let step = run(tmp.path(), true, false).await;
+        let result = unwrap_check(&step);
 
-        assert!(result.has_violations());
-        let v = &result.field_violations[0];
+        assert!(!result.violations.is_empty());
+        let v = &result.violations[0];
         assert_eq!(v.field, "tags");
         assert!(matches!(v.kind, ViolationKind::MissingRequired));
         assert_eq!(v.files.len(), 1);
@@ -707,7 +619,6 @@ mod tests {
         let blog_dir = tmp.path().join("blog");
         fs::create_dir_all(&blog_dir).unwrap();
 
-        // draft is declared as Boolean but file has string value
         fs::write(
             blog_dir.join("post1.md"),
             "---\ntitle: Hello\ndraft: \"yes\"\n---\n# Hello\nBody.",
@@ -720,10 +631,11 @@ mod tests {
             vec![],
         );
 
-        let result = run(tmp.path(), true, false).await.result.unwrap();
+        let step = run(tmp.path(), true, false).await;
+        let result = unwrap_check(&step);
 
-        assert!(result.has_violations());
-        let v = &result.field_violations[0];
+        assert!(!result.violations.is_empty());
+        let v = &result.violations[0];
         assert_eq!(v.field, "draft");
         assert!(matches!(v.kind, ViolationKind::WrongType));
         assert_eq!(v.files[0].detail.as_deref(), Some("got String"));
@@ -734,7 +646,6 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         fs::create_dir_all(tmp.path().join("blog")).unwrap();
 
-        // rating is declared Float, file has integer 5 — should be OK
         fs::write(
             tmp.path().join("blog/post1.md"),
             "---\nrating: 5\n---\n# Post\nBody.",
@@ -753,9 +664,9 @@ mod tests {
             vec![],
         );
 
-        let result = run(tmp.path(), true, false).await.result.unwrap();
-
-        assert!(!result.has_violations());
+        let step = run(tmp.path(), true, false).await;
+        let result = unwrap_check(&step);
+        assert!(result.violations.is_empty());
     }
 
     #[tokio::test]
@@ -764,7 +675,6 @@ mod tests {
         let notes_dir = tmp.path().join("notes");
         fs::create_dir_all(&notes_dir).unwrap();
 
-        // draft is only allowed in blog/**, but appears in notes/
         fs::write(
             notes_dir.join("idea.md"),
             "---\ndraft: true\n---\n# Idea\nContent.",
@@ -783,10 +693,11 @@ mod tests {
             vec![],
         );
 
-        let result = run(tmp.path(), true, false).await.result.unwrap();
+        let step = run(tmp.path(), true, false).await;
+        let result = unwrap_check(&step);
 
-        assert!(result.has_violations());
-        let v = &result.field_violations[0];
+        assert!(!result.violations.is_empty());
+        let v = &result.violations[0];
         assert_eq!(v.field, "draft");
         assert!(matches!(v.kind, ViolationKind::Disallowed));
         assert_eq!(v.files[0].path.display().to_string(), "notes/idea.md");
@@ -797,12 +708,12 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
-        // Only declare title — tags and draft are new
         write_toml(tmp.path(), vec![string_field("title")], vec![]);
 
-        let result = run(tmp.path(), true, false).await.result.unwrap();
+        let step = run(tmp.path(), true, false).await;
+        let result = unwrap_check(&step);
 
-        assert!(!result.has_violations());
+        assert!(result.violations.is_empty());
         assert_eq!(result.new_fields.len(), 2);
         assert!(result.new_fields.iter().any(|f| f.name == "draft"));
         assert!(result.new_fields.iter().any(|f| f.name == "tags"));
@@ -814,7 +725,6 @@ mod tests {
         let blog_dir = tmp.path().join("blog");
         fs::create_dir_all(&blog_dir).unwrap();
 
-        // String field with boolean, integer, array, and object values
         fs::write(
             blog_dir.join("bool.md"),
             "---\nfield: false\n---\n# Bool\nBody.",
@@ -834,9 +744,10 @@ mod tests {
 
         write_toml(tmp.path(), vec![string_field("field")], vec![]);
 
-        let result = run(tmp.path(), true, false).await.result.unwrap();
+        let step = run(tmp.path(), true, false).await;
+        let result = unwrap_check(&step);
 
-        assert!(!result.has_violations());
+        assert!(result.violations.is_empty());
         assert_eq!(result.files_checked, 4);
     }
 
@@ -845,14 +756,12 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         fs::create_dir_all(tmp.path().join("blog")).unwrap();
 
-        // A bare file (no frontmatter) in blog/ — should violate required
         fs::write(
             tmp.path().join("blog/bare.md"),
             "# No frontmatter\nJust content.",
         )
         .unwrap();
 
-        // title required in blog/** with include_bare_files=true
         let config = MdvsToml {
             scan: ScanConfig {
                 glob: "**".into(),
@@ -878,10 +787,9 @@ mod tests {
         };
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
 
-        let result = run(tmp.path(), true, false).await.result.unwrap();
-
-        // Bare files missing required fields are violations
-        assert!(result.has_violations());
+        let step = run(tmp.path(), true, false).await;
+        let result = unwrap_check(&step);
+        assert!(!result.violations.is_empty());
     }
 
     #[tokio::test]
@@ -889,17 +797,17 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
-        // draft is in the ignore list — should not be flagged as new or violating
         write_toml(
             tmp.path(),
             vec![string_field("title")],
             vec!["draft".into(), "tags".into()],
         );
 
-        let result = run(tmp.path(), true, false).await.result.unwrap();
+        let step = run(tmp.path(), true, false).await;
+        let result = unwrap_check(&step);
 
-        assert!(!result.has_violations());
-        assert!(result.new_fields.is_empty()); // draft and tags are ignored, not new
+        assert!(result.violations.is_empty());
+        assert!(result.new_fields.is_empty());
     }
 
     #[tokio::test]
@@ -910,14 +818,12 @@ mod tests {
         fs::create_dir_all(&blog_dir).unwrap();
         fs::create_dir_all(&notes_dir).unwrap();
 
-        // post1: draft is string "yes" (wrong type for Boolean), missing tags
         fs::write(
             blog_dir.join("post1.md"),
             "---\ntitle: Hello\ndraft: \"yes\"\n---\n# Post\nBody.",
         )
         .unwrap();
 
-        // note1: has draft (disallowed outside blog/)
         fs::write(
             notes_dir.join("note1.md"),
             "---\ntitle: Note\ndraft: true\n---\n# Note\nBody.",
@@ -954,11 +860,11 @@ mod tests {
             vec![],
         );
 
-        let result = run(tmp.path(), true, false).await.result.unwrap();
+        let step = run(tmp.path(), true, false).await;
+        let result = unwrap_check(&step);
 
-        assert!(result.has_violations());
-        // Should have: draft wrong type, tags missing required, draft disallowed
-        assert!(result.field_violations.len() >= 3);
+        assert!(!result.violations.is_empty());
+        assert!(result.violations.len() >= 3);
     }
 
     #[tokio::test]
@@ -972,7 +878,6 @@ mod tests {
         )
         .unwrap();
 
-        // status: nullable=false, required=[], allowed=["**"]
         write_toml(
             tmp.path(),
             vec![
@@ -988,10 +893,11 @@ mod tests {
             vec![],
         );
 
-        let result = run(tmp.path(), true, false).await.result.unwrap();
-        assert!(result.has_violations());
+        let step = run(tmp.path(), true, false).await;
+        let result = unwrap_check(&step);
+        assert!(!result.violations.is_empty());
         let v = result
-            .field_violations
+            .violations
             .iter()
             .find(|v| v.field == "status")
             .expect("expected NullNotAllowed for status");
@@ -1009,7 +915,6 @@ mod tests {
         )
         .unwrap();
 
-        // status: nullable=true, required=[], allowed=["**"]
         write_toml(
             tmp.path(),
             vec![
@@ -1025,8 +930,9 @@ mod tests {
             vec![],
         );
 
-        let result = run(tmp.path(), true, false).await.result.unwrap();
-        assert!(!result.has_violations());
+        let step = run(tmp.path(), true, false).await;
+        let result = unwrap_check(&step);
+        assert!(result.violations.is_empty());
     }
 
     #[tokio::test]
@@ -1040,7 +946,6 @@ mod tests {
         )
         .unwrap();
 
-        // draft: allowed only in blog/**, but file is in notes/
         write_toml(
             tmp.path(),
             vec![
@@ -1056,10 +961,11 @@ mod tests {
             vec![],
         );
 
-        let result = run(tmp.path(), true, false).await.result.unwrap();
-        assert!(result.has_violations());
+        let step = run(tmp.path(), true, false).await;
+        let result = unwrap_check(&step);
+        assert!(!result.violations.is_empty());
         let v = result
-            .field_violations
+            .violations
             .iter()
             .find(|v| v.field == "draft")
             .expect("expected Disallowed for draft");
@@ -1077,8 +983,6 @@ mod tests {
         )
         .unwrap();
 
-        // draft: allowed only in blog/**, nullable=false
-        // Should trigger BOTH Disallowed AND NullNotAllowed
         write_toml(
             tmp.path(),
             vec![
@@ -1094,15 +998,16 @@ mod tests {
             vec![],
         );
 
-        let result = run(tmp.path(), true, false).await.result.unwrap();
-        assert!(result.has_violations());
+        let step = run(tmp.path(), true, false).await;
+        let result = unwrap_check(&step);
+        assert!(!result.violations.is_empty());
 
         let has_disallowed = result
-            .field_violations
+            .violations
             .iter()
             .any(|v| v.field == "draft" && matches!(v.kind, ViolationKind::Disallowed));
         let has_null_not_allowed = result
-            .field_violations
+            .violations
             .iter()
             .any(|v| v.field == "draft" && matches!(v.kind, ViolationKind::NullNotAllowed));
 

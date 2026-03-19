@@ -83,6 +83,33 @@ pub struct DiscoveredField {
     pub hints: Vec<FieldHint>,
 }
 
+/// Compact version of [`DiscoveredField`] — summary only, no globs or hints.
+#[derive(Debug, Serialize)]
+pub struct DiscoveredFieldCompact {
+    /// Field name.
+    pub name: String,
+    /// Inferred type.
+    pub field_type: String,
+    /// Number of files containing this field.
+    pub files_found: usize,
+    /// Total scanned files.
+    pub total_files: usize,
+    /// Whether null values are accepted.
+    pub nullable: bool,
+}
+
+impl From<&DiscoveredField> for DiscoveredFieldCompact {
+    fn from(f: &DiscoveredField) -> Self {
+        Self {
+            name: f.name.clone(),
+            field_type: f.field_type.clone(),
+            files_found: f.files_found,
+            total_files: f.total_files,
+            nullable: f.nullable,
+        }
+    }
+}
+
 /// A field whose definition changed between the previous and current scan.
 #[derive(Debug, Serialize)]
 pub struct ChangedField {
@@ -168,6 +195,39 @@ pub struct RemovedField {
     pub allowed: Option<Vec<String>>,
 }
 
+/// Compact version of [`ChangedField`] — aspect labels only, no old/new values.
+#[derive(Debug, Serialize)]
+pub struct ChangedFieldCompact {
+    /// Field name.
+    pub name: String,
+    /// Labels of aspects that changed (e.g. `["type", "allowed"]`).
+    pub aspects: Vec<String>,
+}
+
+impl From<&ChangedField> for ChangedFieldCompact {
+    fn from(f: &ChangedField) -> Self {
+        Self {
+            name: f.name.clone(),
+            aspects: f.changes.iter().map(|c| c.label().to_string()).collect(),
+        }
+    }
+}
+
+/// Compact version of [`RemovedField`] — name only, no globs.
+#[derive(Debug, Serialize)]
+pub struct RemovedFieldCompact {
+    /// Field name.
+    pub name: String,
+}
+
+impl From<&RemovedField> for RemovedFieldCompact {
+    fn from(f: &RemovedField) -> Self {
+        Self {
+            name: f.name.clone(),
+        }
+    }
+}
+
 /// Category of a frontmatter validation failure.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub enum ViolationKind {
@@ -182,7 +242,7 @@ pub enum ViolationKind {
 }
 
 /// A single file that failed a particular field validation rule.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ViolatingFile {
     /// Path to the offending markdown file.
     pub path: PathBuf,
@@ -191,7 +251,7 @@ pub struct ViolatingFile {
 }
 
 /// Groups all files that violate a specific validation rule on a single field.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct FieldViolation {
     /// Name of the frontmatter field.
     pub field: String,
@@ -204,7 +264,7 @@ pub struct FieldViolation {
 }
 
 /// A frontmatter field found during check that is not yet tracked in `mdvs.toml`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct NewField {
     /// Field name.
     pub name: String,
@@ -213,6 +273,54 @@ pub struct NewField {
     /// Paths of files containing this field (verbose only).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub files: Option<Vec<PathBuf>>,
+}
+
+/// Compact version of [`FieldViolation`] — summary counts, no file paths.
+#[derive(Debug, Serialize)]
+pub struct FieldViolationCompact {
+    /// Name of the frontmatter field.
+    pub field: String,
+    /// What kind of violation occurred.
+    pub kind: ViolationKind,
+    /// Number of files that triggered this violation.
+    pub file_count: usize,
+}
+
+impl From<&FieldViolation> for FieldViolationCompact {
+    fn from(v: &FieldViolation) -> Self {
+        Self {
+            field: v.field.clone(),
+            kind: v.kind.clone(),
+            file_count: v.files.len(),
+        }
+    }
+}
+
+/// Compact version of [`NewField`] — name and count only, no file paths.
+#[derive(Debug, Serialize)]
+pub struct NewFieldCompact {
+    /// Field name.
+    pub name: String,
+    /// Number of files containing this field.
+    pub files_found: usize,
+}
+
+impl From<&NewField> for NewFieldCompact {
+    fn from(nf: &NewField) -> Self {
+        Self {
+            name: nf.name.clone(),
+            files_found: nf.files_found,
+        }
+    }
+}
+
+/// Per-file chunk count for build output.
+#[derive(Debug, Serialize)]
+pub struct BuildFileDetail {
+    /// Relative path of the file.
+    pub filename: String,
+    /// Number of chunks produced for this file.
+    pub chunks: usize,
 }
 
 /// Format a file count with correct pluralization: `"1 file"` / `"3 files"`.
@@ -237,56 +345,6 @@ pub fn format_size(bytes: u64) -> String {
         format!("{:.1} KB", bytes as f64 / KB as f64)
     } else {
         format!("{bytes} B")
-    }
-}
-
-/// Shared interface for command result structs, providing text and JSON rendering.
-///
-/// Every command collects its results into a struct that implements this trait.
-/// JSON output is derived automatically via `Serialize`; commands only need to
-/// implement `format_text`.
-pub trait CommandOutput: Serialize {
-    /// Render this result as human-readable text (tables, summaries).
-    /// When `verbose` is true, output includes expanded details and a metadata footer.
-    fn format_text(&self, verbose: bool) -> String;
-
-    /// Render this result as JSON. Default serializes the full struct.
-    /// Command output wrappers override this to omit `process` in compact mode.
-    /// Infallible: all CommandOutput types derive Serialize with simple field types
-    /// (strings, numbers, vecs, options). serde_json only fails on non-string map keys
-    /// or infinite recursion, neither of which applies here.
-    fn format_json(&self, verbose: bool) -> String {
-        let _ = verbose;
-        serde_json::to_string_pretty(self).expect("CommandOutput types must be JSON-serializable")
-    }
-
-    /// Print to stdout in the requested format.
-    /// Default implementation handles dispatch — commands don't need to override this.
-    fn print(&self, format: &OutputFormat, verbose: bool) {
-        match format {
-            OutputFormat::Text => print!("{}", self.format_text(verbose)),
-            OutputFormat::Json => print!("{}", self.format_json(verbose)),
-        }
-    }
-}
-
-/// Serialize command output as JSON, omitting process steps in compact mode.
-///
-/// In compact mode (not verbose), only the result is emitted: `{"result": ...}`.
-/// In verbose mode or when the result is absent (error), the full struct is serialized.
-/// Serialize command output as JSON, omitting process steps in compact mode.
-///
-/// Infallible: same reasoning as `format_json` — all types are simple Serialize derivations.
-pub fn format_json_compact<T: Serialize, R: Serialize>(
-    full: &T,
-    result: Option<&R>,
-    verbose: bool,
-) -> String {
-    if result.is_some() && !verbose {
-        serde_json::to_string_pretty(&serde_json::json!({ "result": result }))
-            .expect("CommandOutput types must be JSON-serializable")
-    } else {
-        serde_json::to_string_pretty(full).expect("CommandOutput types must be JSON-serializable")
     }
 }
 
