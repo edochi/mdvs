@@ -62,7 +62,7 @@ pub async fn run(
     // 1. Read config — calls MdvsToml::read() + validate() directly
     let config_start = Instant::now();
     let config_path_buf = path.join("mdvs.toml");
-    let config = match MdvsToml::read(&config_path_buf) {
+    let mut config = match MdvsToml::read(&config_path_buf) {
         Ok(cfg) => match cfg.validate() {
             Ok(()) => {
                 substeps.push(Step::leaf(
@@ -92,68 +92,36 @@ pub async fn run(
         }
     };
 
-    // Auto-build: run build before searching if configured
-    let auto_build = if let Some(ref cfg) = config {
+    // Auto-build: run build core pipeline before searching if configured
+    let mut build_embedder: Option<Embedder> = None;
+    if let Some(ref mut cfg) = config {
         let should_build = !no_build && cfg.search.as_ref().is_some_and(|s| s.auto_build);
         if should_build {
             let build_no_update = no_update || !cfg.search.as_ref().is_some_and(|s| s.auto_update);
-            let build_step =
-                crate::cmd::build::run(path, None, None, None, false, build_no_update, false).await;
-            if crate::step::has_failed(&build_step) {
-                substeps.push(build_step);
-                return fail_msg(&mut substeps, start, ErrorKind::User, "auto-build failed");
-            }
-            Some(build_step)
-        } else {
-            None
-        }
-    } else {
-        None
-    };
+            let auto_update = !build_no_update && cfg.build.as_ref().is_some_and(|b| b.auto_update);
 
-    // Push auto-build substep if it ran
-    if let Some(build_step) = auto_build {
-        substeps.push(build_step);
+            // Fill missing build sections (embedding_model, chunking, search, build)
+            crate::cmd::build::mutate_config(cfg, path, None, None, None, false);
+
+            match crate::cmd::build::build_core(
+                path,
+                cfg,
+                &config_path_buf,
+                false,
+                auto_update,
+                &mut substeps,
+            )
+            .await
+            {
+                Ok((_build_outcome, embedder)) => {
+                    build_embedder = embedder;
+                }
+                Err(()) => {
+                    return fail_msg(&mut substeps, start, ErrorKind::User, "auto-build failed");
+                }
+            }
+        }
     }
-
-    // Re-read config if auto-build ran
-    let config = if substeps.len() > 1 {
-        let re_read_start = Instant::now();
-        let re_read_path = path.join("mdvs.toml");
-        match MdvsToml::read(&re_read_path) {
-            Ok(cfg) => match cfg.validate() {
-                Ok(()) => {
-                    substeps.push(Step::leaf(
-                        Outcome::ReadConfig(ReadConfigOutcome {
-                            config_path: re_read_path.display().to_string(),
-                        }),
-                        re_read_start.elapsed().as_millis() as u64,
-                    ));
-                    Some(cfg)
-                }
-                Err(e) => {
-                    substeps.push(Step::failed(
-                        ErrorKind::User,
-                        format!(
-                            "mdvs.toml is invalid: {e} — fix the file or run 'mdvs init --force'"
-                        ),
-                        re_read_start.elapsed().as_millis() as u64,
-                    ));
-                    return fail_from_last(&mut substeps, start);
-                }
-            },
-            Err(e) => {
-                substeps.push(Step::failed(
-                    ErrorKind::User,
-                    e.to_string(),
-                    re_read_start.elapsed().as_millis() as u64,
-                ));
-                return fail_from_last(&mut substeps, start);
-            }
-        }
-    } else {
-        config
-    };
 
     let embedding = config.as_ref().and_then(|c| c.embedding_model.as_ref());
 
@@ -232,20 +200,40 @@ pub async fn run(
         return fail_from_last(&mut substeps, start);
     }
 
+    // 3. Load model (reuse from build if available)
     let emb_config = embedding.unwrap();
-    let model_start = Instant::now();
-    let embedder = match ModelConfig::try_from(emb_config) {
-        Ok(mc) => match Embedder::load(&mc) {
-            Ok(emb) => {
-                substeps.push(Step::leaf(
-                    Outcome::LoadModel(LoadModelOutcome {
-                        model_name: emb_config.name.clone(),
-                        dimension: emb.dimension(),
-                    }),
-                    model_start.elapsed().as_millis() as u64,
-                ));
-                emb
-            }
+    let embedder = if let Some(emb) = build_embedder {
+        substeps.push(Step::leaf(
+            Outcome::LoadModel(LoadModelOutcome {
+                model_name: emb_config.name.clone(),
+                dimension: emb.dimension(),
+            }),
+            0, // already loaded during build
+        ));
+        emb
+    } else {
+        let model_start = Instant::now();
+        match ModelConfig::try_from(emb_config) {
+            Ok(mc) => match Embedder::load(&mc) {
+                Ok(emb) => {
+                    substeps.push(Step::leaf(
+                        Outcome::LoadModel(LoadModelOutcome {
+                            model_name: emb_config.name.clone(),
+                            dimension: emb.dimension(),
+                        }),
+                        model_start.elapsed().as_millis() as u64,
+                    ));
+                    emb
+                }
+                Err(e) => {
+                    substeps.push(Step::failed(
+                        ErrorKind::Application,
+                        e.to_string(),
+                        model_start.elapsed().as_millis() as u64,
+                    ));
+                    return fail_from_last(&mut substeps, start);
+                }
+            },
             Err(e) => {
                 substeps.push(Step::failed(
                     ErrorKind::Application,
@@ -254,14 +242,6 @@ pub async fn run(
                 ));
                 return fail_from_last(&mut substeps, start);
             }
-        },
-        Err(e) => {
-            substeps.push(Step::failed(
-                ErrorKind::Application,
-                e.to_string(),
-                model_start.elapsed().as_millis() as u64,
-            ));
-            return fail_from_last(&mut substeps, start);
         }
     };
 

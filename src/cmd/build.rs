@@ -1,4 +1,5 @@
 use crate::discover::field_type::FieldType;
+use crate::discover::infer::InferredSchema;
 use crate::discover::scan::{ScannedFile, ScannedFiles};
 use crate::index::backend::Backend;
 use crate::index::chunk::{extract_plain_text, Chunks};
@@ -6,12 +7,12 @@ use crate::index::embed::{Embedder, ModelConfig};
 use crate::index::storage::{content_hash, BuildMetadata, ChunkRow, FileIndexEntry, FileRow};
 use crate::outcome::commands::BuildOutcome;
 use crate::outcome::{
-    ClassifyOutcome, EmbedFilesOutcome, LoadModelOutcome, Outcome, ReadConfigOutcome, ScanOutcome,
-    ValidateOutcome, WriteIndexOutcome,
+    ClassifyOutcome, EmbedFilesOutcome, InferOutcome, LoadModelOutcome, Outcome, ReadConfigOutcome,
+    ScanOutcome, ValidateOutcome, WriteConfigOutcome, WriteIndexOutcome,
 };
 use crate::output::BuildFileDetail;
-use crate::schema::config::{BuildConfig, MdvsToml, SearchConfig};
-use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig};
+use crate::schema::config::{BuildConfig, MdvsToml, SearchConfig, TomlField};
+use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig, FieldTypeSerde};
 use crate::step::{ErrorKind, Step, StepError, StepOutcome};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -221,62 +222,14 @@ pub async fn run(
             None
         }
     };
-    let config = match config {
+    let mut config = match config {
         Some(c) => c,
         None => return fail_from_last(&mut substeps, start),
     };
 
-    // 2. Auto-update (conditional)
     let should_update = !no_update && config.build.as_ref().is_some_and(|b| b.auto_update);
-    if should_update {
-        let update_step = crate::cmd::update::run(path, &[], false, false, false).await;
-        if crate::step::has_failed(&update_step) {
-            substeps.push(update_step);
-            return fail_msg(&mut substeps, start, ErrorKind::User, "auto-update failed");
-        }
-        substeps.push(update_step);
-    }
 
-    // Re-read config if auto-update ran
-    let mut config = if should_update {
-        let re_read_start = Instant::now();
-        let re_read_path = path.join("mdvs.toml");
-        match MdvsToml::read(&re_read_path) {
-            Ok(cfg) => match cfg.validate() {
-                Ok(()) => {
-                    substeps.push(Step::leaf(
-                        Outcome::ReadConfig(ReadConfigOutcome {
-                            config_path: re_read_path.display().to_string(),
-                        }),
-                        re_read_start.elapsed().as_millis() as u64,
-                    ));
-                    cfg
-                }
-                Err(e) => {
-                    substeps.push(Step::failed(
-                        ErrorKind::User,
-                        format!(
-                            "mdvs.toml is invalid: {e} — fix the file or run 'mdvs init --force'"
-                        ),
-                        re_read_start.elapsed().as_millis() as u64,
-                    ));
-                    return fail_from_last(&mut substeps, start);
-                }
-            },
-            Err(e) => {
-                substeps.push(Step::failed(
-                    ErrorKind::User,
-                    e.to_string(),
-                    re_read_start.elapsed().as_millis() as u64,
-                ));
-                return fail_from_last(&mut substeps, start);
-            }
-        }
-    } else {
-        config
-    };
-
-    // Mutate config (inline, not a step)
+    // 2. Mutate config (inline, not a step)
     let mutation_error = mutate_config(
         &mut config,
         path,
@@ -286,7 +239,6 @@ pub async fn run(
         force,
     );
 
-    // 3. Scan (mutation errors land here)
     if let Some(msg) = mutation_error {
         substeps.push(Step {
             substeps: vec![],
@@ -301,6 +253,48 @@ pub async fn run(
         return fail_from_last(&mut substeps, start);
     }
 
+    // 3. Core build pipeline (scan → auto-update → validate → classify → embed → write)
+    let (build_outcome, _embedder) = match build_core(
+        path,
+        &mut config,
+        &config_path_buf,
+        force,
+        should_update,
+        &mut substeps,
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(()) => return fail_from_last(&mut substeps, start),
+    };
+
+    Step {
+        substeps,
+        outcome: StepOutcome::Complete {
+            result: Ok(Outcome::Build(Box::new(build_outcome))),
+            elapsed_ms: start.elapsed().as_millis() as u64,
+        },
+    }
+}
+
+// ============================================================================
+// build_core() — shared pipeline, called by build::run() and search::run()
+// ============================================================================
+
+/// Core build pipeline: scan → auto-update → validate → classify → embed → write index.
+///
+/// Returns `BuildOutcome` + optional `Embedder` (for reuse by search) on success.
+/// On failure, pushes error substeps and returns `Err(())` — the caller constructs
+/// the failed command Step from the substeps.
+pub(crate) async fn build_core(
+    path: &Path,
+    config: &mut MdvsToml,
+    config_path: &Path,
+    force: bool,
+    auto_update: bool,
+    substeps: &mut Vec<Step<Outcome>>,
+) -> Result<(BuildOutcome, Option<Embedder>), ()> {
+    // 1. Scan
     let scan_start = Instant::now();
     let scanned = match ScannedFiles::scan(path, &config.scan) {
         Ok(s) => {
@@ -319,11 +313,71 @@ pub async fn run(
                 e.to_string(),
                 scan_start.elapsed().as_millis() as u64,
             ));
-            return fail_from_last(&mut substeps, start);
+            return Err(());
         }
     };
 
-    // 4. Validate
+    // 2. Auto-update: infer new fields, write config if changed
+    if auto_update {
+        let infer_start = Instant::now();
+        let schema = InferredSchema::infer(&scanned);
+        substeps.push(Step::leaf(
+            Outcome::Infer(InferOutcome {
+                fields_inferred: schema.fields.len(),
+            }),
+            infer_start.elapsed().as_millis() as u64,
+        ));
+
+        let existing: HashSet<&str> = config
+            .fields
+            .field
+            .iter()
+            .map(|f| f.name.as_str())
+            .collect();
+        let new_toml_fields: Vec<TomlField> = schema
+            .fields
+            .iter()
+            .filter(|f| !existing.contains(f.name.as_str()))
+            .filter(|f| !config.fields.ignore.contains(&f.name))
+            .map(|f| TomlField {
+                name: f.name.clone(),
+                field_type: FieldTypeSerde::from(&f.field_type),
+                allowed: f.allowed.clone(),
+                required: f.required.clone(),
+                nullable: f.nullable,
+            })
+            .collect();
+
+        if !new_toml_fields.is_empty() {
+            config.fields.field.extend(new_toml_fields);
+            let write_start = Instant::now();
+            match config.write(config_path) {
+                Ok(()) => {
+                    substeps.push(Step::leaf(
+                        Outcome::WriteConfig(WriteConfigOutcome {
+                            config_path: config_path.display().to_string(),
+                            fields_written: config.fields.field.len(),
+                        }),
+                        write_start.elapsed().as_millis() as u64,
+                    ));
+                    // Re-read to pick up normalized TOML
+                    if let Ok(c) = MdvsToml::read(config_path) {
+                        *config = c;
+                    }
+                }
+                Err(e) => {
+                    substeps.push(Step::failed(
+                        ErrorKind::Application,
+                        e.to_string(),
+                        write_start.elapsed().as_millis() as u64,
+                    ));
+                    return Err(());
+                }
+            }
+        }
+    }
+
+    // 3. Validate
     if scanned.files.is_empty() {
         substeps.push(Step {
             substeps: vec![],
@@ -335,11 +389,11 @@ pub async fn run(
                 elapsed_ms: 0,
             },
         });
-        return fail_from_last(&mut substeps, start);
+        return Err(());
     }
 
     let validate_start = Instant::now();
-    let check_result = match crate::cmd::check::validate(&scanned, &config, false) {
+    let check_result = match crate::cmd::check::validate(&scanned, config, false) {
         Ok(r) => r,
         Err(e) => {
             substeps.push(Step::failed(
@@ -347,7 +401,7 @@ pub async fn run(
                 e.to_string(),
                 validate_start.elapsed().as_millis() as u64,
             ));
-            return fail_from_last(&mut substeps, start);
+            return Err(());
         }
     };
     substeps.push(Step::leaf(
@@ -361,10 +415,9 @@ pub async fn run(
     let violations = check_result.field_violations;
     let new_fields = check_result.new_fields;
 
-    // Abort on violations
     if !violations.is_empty() {
-        return Step {
-            substeps,
+        substeps.push(Step {
+            substeps: vec![],
             outcome: StepOutcome::Complete {
                 result: Err(StepError {
                     kind: ErrorKind::User,
@@ -373,12 +426,13 @@ pub async fn run(
                         violations.len()
                     ),
                 }),
-                elapsed_ms: start.elapsed().as_millis() as u64,
+                elapsed_ms: 0,
             },
-        };
+        });
+        return Err(());
     }
 
-    // Pre-checks for classify
+    // 4. Pre-checks for classify
     let schema_fields: Vec<(String, FieldType)> = match config
         .fields
         .field
@@ -402,7 +456,7 @@ pub async fn run(
                     elapsed_ms: 0,
                 },
             });
-            return fail_from_last(&mut substeps, start);
+            return Err(());
         }
     };
 
@@ -419,7 +473,7 @@ pub async fn run(
                     elapsed_ms: 0,
                 },
             });
-            return fail_from_last(&mut substeps, start);
+            return Err(());
         }
     };
     let chunking = match config.chunking.as_ref() {
@@ -435,11 +489,11 @@ pub async fn run(
                     elapsed_ms: 0,
                 },
             });
-            return fail_from_last(&mut substeps, start);
+            return Err(());
         }
     };
     let backend = Backend::parquet(path);
-    let config_change_error = detect_config_changes(&backend, embedding, chunking, &config, force);
+    let config_change_error = detect_config_changes(&backend, embedding, chunking, config, force);
 
     // 5. Classify
     let full_rebuild = force || !backend.exists();
@@ -455,7 +509,7 @@ pub async fn run(
                 elapsed_ms: 0,
             },
         });
-        return fail_from_last(&mut substeps, start);
+        return Err(());
     }
 
     let existing_index = if full_rebuild {
@@ -474,7 +528,7 @@ pub async fn run(
                         elapsed_ms: 0,
                     },
                 });
-                return fail_from_last(&mut substeps, start);
+                return Err(());
             }
         }
     };
@@ -494,7 +548,7 @@ pub async fn run(
                         elapsed_ms: 0,
                     },
                 });
-                return fail_from_last(&mut substeps, start);
+                return Err(());
             }
         }
     };
@@ -590,7 +644,7 @@ pub async fn run(
 
     let needs_embedding = !classify_data.needs_embedding.is_empty();
 
-    // 6. Load model — calls ModelConfig::try_from() + Embedder::load() directly
+    // 6. Load model
     let embedder = if needs_embedding {
         let model_start = Instant::now();
         match ModelConfig::try_from(embedding) {
@@ -651,12 +705,17 @@ pub async fn run(
     };
 
     if needs_embedding && embedder.is_none() {
-        return fail_msg(
-            &mut substeps,
-            start,
-            ErrorKind::Application,
-            "model loading failed",
-        );
+        substeps.push(Step {
+            substeps: vec![],
+            outcome: StepOutcome::Complete {
+                result: Err(StepError {
+                    kind: ErrorKind::Application,
+                    message: "model loading failed".into(),
+                }),
+                elapsed_ms: 0,
+            },
+        });
+        return Err(());
     }
 
     // 7. Embed files
@@ -665,7 +724,7 @@ pub async fn run(
 
     if let Some(msg) = dim_error {
         substeps.push(Step::failed(ErrorKind::User, msg, 0));
-        return fail_from_last(&mut substeps, start);
+        return Err(());
     }
 
     let embed_data = if needs_embedding {
@@ -745,7 +804,7 @@ pub async fn run(
                 e.to_string(),
                 write_start.elapsed().as_millis() as u64,
             ));
-            return fail_from_last(&mut substeps, start);
+            return Err(());
         }
     }
 
@@ -754,26 +813,22 @@ pub async fn run(
     let chunks_total = chunk_rows.len();
     let chunks_unchanged = chunks_total - chunks_embedded;
 
-    Step {
-        substeps,
-        outcome: StepOutcome::Complete {
-            result: Ok(Outcome::Build(Box::new(BuildOutcome {
-                full_rebuild: classify_data.full_rebuild,
-                files_total: file_rows.len(),
-                files_embedded: classify_data.needs_embedding.len(),
-                files_unchanged: file_rows.len() - classify_data.needs_embedding.len(),
-                files_removed: classify_data.removed_count,
-                chunks_total,
-                chunks_embedded,
-                chunks_unchanged,
-                chunks_removed: classify_data.chunks_removed,
-                new_fields,
-                embedded_files: embedded_details,
-                removed_files: classify_data.removed_details,
-            }))),
-            elapsed_ms: start.elapsed().as_millis() as u64,
-        },
-    }
+    let outcome = BuildOutcome {
+        full_rebuild: classify_data.full_rebuild,
+        files_total: file_rows.len(),
+        files_embedded: classify_data.needs_embedding.len(),
+        files_unchanged: file_rows.len() - classify_data.needs_embedding.len(),
+        files_removed: classify_data.removed_count,
+        chunks_total,
+        chunks_embedded,
+        chunks_unchanged,
+        chunks_removed: classify_data.chunks_removed,
+        new_fields,
+        embedded_files: embedded_details,
+        removed_files: classify_data.removed_details,
+    };
+
+    Ok((outcome, embedder))
 }
 
 /// Extract error from last failed substep and return a failed command Step.
@@ -797,25 +852,6 @@ fn fail_from_last(substeps: &mut Vec<Step<Outcome>>, start: Instant) -> Step<Out
     }
 }
 
-/// Return a failed command Step with a specific message.
-fn fail_msg(
-    substeps: &mut Vec<Step<Outcome>>,
-    start: Instant,
-    kind: ErrorKind,
-    msg: &str,
-) -> Step<Outcome> {
-    Step {
-        substeps: std::mem::take(substeps),
-        outcome: StepOutcome::Complete {
-            result: Err(StepError {
-                kind,
-                message: msg.into(),
-            }),
-            elapsed_ms: start.elapsed().as_millis() as u64,
-        },
-    }
-}
-
 // ============================================================================
 // Helpers
 // ============================================================================
@@ -831,7 +867,7 @@ fn normalize_revision(s: &str) -> Option<String> {
 
 /// Apply config mutations: fill missing build sections, apply --set-* flags.
 /// Returns `Some(error_message)` if a flag requires --force but wasn't given.
-fn mutate_config(
+pub(crate) fn mutate_config(
     config: &mut MdvsToml,
     path: &Path,
     set_model: Option<&str>,

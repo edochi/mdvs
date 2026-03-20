@@ -280,7 +280,7 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
         Command::Check { path, no_update } => {
-            let step = mdvs::cmd::check::run(&path, no_update, cli.verbose).await;
+            let step = mdvs::cmd::check::run(&path, no_update, cli.verbose);
             let failed = mdvs::step::has_failed(&step);
             let violations = mdvs::step::has_violations(&step);
             let output_str = match (&cli.output, cli.verbose) {

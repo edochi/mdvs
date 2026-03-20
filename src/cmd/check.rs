@@ -1,9 +1,12 @@
 use crate::discover::field_type::FieldType;
+use crate::discover::infer::InferredSchema;
 use crate::discover::scan::ScannedFiles;
 use crate::outcome::commands::CheckOutcome;
-use crate::outcome::{Outcome, ReadConfigOutcome, ScanOutcome, ValidateOutcome};
+use crate::outcome::{
+    InferOutcome, Outcome, ReadConfigOutcome, ScanOutcome, ValidateOutcome, WriteConfigOutcome,
+};
 use crate::output::{FieldViolation, NewField, ViolatingFile, ViolationKind};
-use crate::schema::config::MdvsToml;
+use crate::schema::config::{MdvsToml, TomlField};
 use crate::schema::shared::FieldTypeSerde;
 use crate::step::{ErrorKind, Step, StepError, StepOutcome};
 use globset::Glob;
@@ -11,6 +14,7 @@ use serde::Serialize;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 use tracing::{info, instrument};
 
 // ============================================================================
@@ -42,8 +46,8 @@ impl CheckResult {
 
 /// Read config, optionally auto-update, scan files, and validate frontmatter.
 #[instrument(name = "check", skip_all)]
-pub async fn run(path: &Path, no_update: bool, verbose: bool) -> Step<Outcome> {
-    let start = std::time::Instant::now();
+pub fn run(path: &Path, no_update: bool, verbose: bool) -> Step<Outcome> {
+    let start = Instant::now();
     let mut substeps = Vec::new();
 
     // 1. Read config — calls MdvsToml::read() + validate() directly
@@ -99,49 +103,8 @@ pub async fn run(path: &Path, no_update: bool, verbose: bool) -> Step<Outcome> {
         }
     };
 
-    // 2. Auto-update
-    let should_update = !no_update && config.check.as_ref().is_some_and(|c| c.auto_update);
-    if should_update {
-        let update_output = crate::cmd::update::run(path, &[], false, false, verbose).await;
-        let failed = crate::step::has_failed(&update_output);
-        substeps.push(update_output);
-        if failed {
-            return Step {
-                substeps,
-                outcome: StepOutcome::Complete {
-                    result: Err(StepError {
-                        kind: ErrorKind::User,
-                        message: "auto-update failed".into(),
-                    }),
-                    elapsed_ms: start.elapsed().as_millis() as u64,
-                },
-            };
-        }
-    }
-
-    // Re-read config if auto-update ran
-    let config = if should_update {
-        match MdvsToml::read(&path.join("mdvs.toml")) {
-            Ok(c) => c,
-            Err(e) => {
-                return Step {
-                    substeps,
-                    outcome: StepOutcome::Complete {
-                        result: Err(StepError {
-                            kind: ErrorKind::Application,
-                            message: format!("failed to re-read config: {e}"),
-                        }),
-                        elapsed_ms: start.elapsed().as_millis() as u64,
-                    },
-                };
-            }
-        }
-    } else {
-        config
-    };
-
-    // 3. Scan — calls ScannedFiles::scan() directly
-    let scan_start = std::time::Instant::now();
+    // 2. Scan (once — shared between auto-update and validate)
+    let scan_start = Instant::now();
     let scanned = match ScannedFiles::scan(path, &config.scan) {
         Ok(s) => {
             substeps.push(Step::leaf(
@@ -151,7 +114,7 @@ pub async fn run(path: &Path, no_update: bool, verbose: bool) -> Step<Outcome> {
                 }),
                 scan_start.elapsed().as_millis() as u64,
             ));
-            Some(s)
+            s
         }
         Err(e) => {
             substeps.push(Step::failed(
@@ -159,17 +122,7 @@ pub async fn run(path: &Path, no_update: bool, verbose: bool) -> Step<Outcome> {
                 e.to_string(),
                 scan_start.elapsed().as_millis() as u64,
             ));
-            None
-        }
-    };
-
-    let scanned = match scanned {
-        Some(s) => s,
-        None => {
-            let msg = match &substeps.last().unwrap().outcome {
-                StepOutcome::Complete { result: Err(e), .. } => e.message.clone(),
-                _ => "scan failed".into(),
-            };
+            let msg = e.to_string();
             return Step {
                 substeps,
                 outcome: StepOutcome::Complete {
@@ -181,6 +134,83 @@ pub async fn run(path: &Path, no_update: bool, verbose: bool) -> Step<Outcome> {
                 },
             };
         }
+    };
+
+    // 3. Auto-update: infer new fields, write config if changed
+    let should_update = !no_update && config.check.as_ref().is_some_and(|c| c.auto_update);
+    let config = if should_update {
+        let infer_start = Instant::now();
+        let schema = InferredSchema::infer(&scanned);
+        substeps.push(Step::leaf(
+            Outcome::Infer(InferOutcome {
+                fields_inferred: schema.fields.len(),
+            }),
+            infer_start.elapsed().as_millis() as u64,
+        ));
+
+        // Find truly new fields (not in config, not ignored)
+        let existing: HashSet<&str> = config
+            .fields
+            .field
+            .iter()
+            .map(|f| f.name.as_str())
+            .collect();
+        let new_toml_fields: Vec<TomlField> = schema
+            .fields
+            .iter()
+            .filter(|f| !existing.contains(f.name.as_str()))
+            .filter(|f| !config.fields.ignore.contains(&f.name))
+            .map(|f| TomlField {
+                name: f.name.clone(),
+                field_type: FieldTypeSerde::from(&f.field_type),
+                allowed: f.allowed.clone(),
+                required: f.required.clone(),
+                nullable: f.nullable,
+            })
+            .collect();
+
+        if new_toml_fields.is_empty() {
+            config
+        } else {
+            let mut config = config;
+            config.fields.field.extend(new_toml_fields);
+            let write_start = Instant::now();
+            match config.write(&config_path_buf) {
+                Ok(()) => {
+                    substeps.push(Step::leaf(
+                        Outcome::WriteConfig(WriteConfigOutcome {
+                            config_path: config_path_buf.display().to_string(),
+                            fields_written: config.fields.field.len(),
+                        }),
+                        write_start.elapsed().as_millis() as u64,
+                    ));
+                    // Re-read to pick up normalized TOML
+                    match MdvsToml::read(&config_path_buf) {
+                        Ok(c) => c,
+                        Err(_) => config,
+                    }
+                }
+                Err(e) => {
+                    substeps.push(Step::failed(
+                        ErrorKind::Application,
+                        e.to_string(),
+                        write_start.elapsed().as_millis() as u64,
+                    ));
+                    return Step {
+                        substeps,
+                        outcome: StepOutcome::Complete {
+                            result: Err(StepError {
+                                kind: ErrorKind::Application,
+                                message: "auto-update failed to write config".into(),
+                            }),
+                            elapsed_ms: start.elapsed().as_millis() as u64,
+                        },
+                    };
+                }
+            }
+        }
+    } else {
+        config
     };
 
     // 4. Validate
@@ -559,8 +589,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn clean_check() {
+    #[test]
+    fn clean_check() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
         write_toml(
@@ -581,7 +611,7 @@ mod tests {
             vec![],
         );
 
-        let step = run(tmp.path(), true, false).await;
+        let step = run(tmp.path(), true, false);
         let result = unwrap_check(&step);
 
         assert!(result.violations.is_empty());
@@ -589,8 +619,8 @@ mod tests {
         assert_eq!(result.files_checked, 2);
     }
 
-    #[tokio::test]
-    async fn missing_required() {
+    #[test]
+    fn missing_required() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
@@ -612,7 +642,7 @@ mod tests {
             vec![],
         );
 
-        let step = run(tmp.path(), true, false).await;
+        let step = run(tmp.path(), true, false);
         let result = unwrap_check(&step);
 
         assert!(!result.violations.is_empty());
@@ -623,8 +653,8 @@ mod tests {
         assert_eq!(v.files[0].path.display().to_string(), "blog/post2.md");
     }
 
-    #[tokio::test]
-    async fn wrong_type() {
+    #[test]
+    fn wrong_type() {
         let tmp = tempfile::tempdir().unwrap();
         let blog_dir = tmp.path().join("blog");
         fs::create_dir_all(&blog_dir).unwrap();
@@ -641,7 +671,7 @@ mod tests {
             vec![],
         );
 
-        let step = run(tmp.path(), true, false).await;
+        let step = run(tmp.path(), true, false);
         let result = unwrap_check(&step);
 
         assert!(!result.violations.is_empty());
@@ -651,8 +681,8 @@ mod tests {
         assert_eq!(v.files[0].detail.as_deref(), Some("got String"));
     }
 
-    #[tokio::test]
-    async fn wrong_type_int_in_float_lenient() {
+    #[test]
+    fn wrong_type_int_in_float_lenient() {
         let tmp = tempfile::tempdir().unwrap();
         fs::create_dir_all(tmp.path().join("blog")).unwrap();
 
@@ -674,13 +704,13 @@ mod tests {
             vec![],
         );
 
-        let step = run(tmp.path(), true, false).await;
+        let step = run(tmp.path(), true, false);
         let result = unwrap_check(&step);
         assert!(result.violations.is_empty());
     }
 
-    #[tokio::test]
-    async fn disallowed_field() {
+    #[test]
+    fn disallowed_field() {
         let tmp = tempfile::tempdir().unwrap();
         let notes_dir = tmp.path().join("notes");
         fs::create_dir_all(&notes_dir).unwrap();
@@ -703,7 +733,7 @@ mod tests {
             vec![],
         );
 
-        let step = run(tmp.path(), true, false).await;
+        let step = run(tmp.path(), true, false);
         let result = unwrap_check(&step);
 
         assert!(!result.violations.is_empty());
@@ -713,14 +743,14 @@ mod tests {
         assert_eq!(v.files[0].path.display().to_string(), "notes/idea.md");
     }
 
-    #[tokio::test]
-    async fn new_fields_informational() {
+    #[test]
+    fn new_fields_informational() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
         write_toml(tmp.path(), vec![string_field("title")], vec![]);
 
-        let step = run(tmp.path(), true, false).await;
+        let step = run(tmp.path(), true, false);
         let result = unwrap_check(&step);
 
         assert!(result.violations.is_empty());
@@ -729,8 +759,8 @@ mod tests {
         assert!(result.new_fields.iter().any(|f| f.name == "tags"));
     }
 
-    #[tokio::test]
-    async fn string_top_type_accepts_any_value() {
+    #[test]
+    fn string_top_type_accepts_any_value() {
         let tmp = tempfile::tempdir().unwrap();
         let blog_dir = tmp.path().join("blog");
         fs::create_dir_all(&blog_dir).unwrap();
@@ -754,15 +784,15 @@ mod tests {
 
         write_toml(tmp.path(), vec![string_field("field")], vec![]);
 
-        let step = run(tmp.path(), true, false).await;
+        let step = run(tmp.path(), true, false);
         let result = unwrap_check(&step);
 
         assert!(result.violations.is_empty());
         assert_eq!(result.files_checked, 4);
     }
 
-    #[tokio::test]
-    async fn bare_files_trigger_required() {
+    #[test]
+    fn bare_files_trigger_required() {
         let tmp = tempfile::tempdir().unwrap();
         fs::create_dir_all(tmp.path().join("blog")).unwrap();
 
@@ -797,13 +827,13 @@ mod tests {
         };
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
 
-        let step = run(tmp.path(), true, false).await;
+        let step = run(tmp.path(), true, false);
         let result = unwrap_check(&step);
         assert!(!result.violations.is_empty());
     }
 
-    #[tokio::test]
-    async fn ignored_fields_skipped() {
+    #[test]
+    fn ignored_fields_skipped() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
@@ -813,15 +843,15 @@ mod tests {
             vec!["draft".into(), "tags".into()],
         );
 
-        let step = run(tmp.path(), true, false).await;
+        let step = run(tmp.path(), true, false);
         let result = unwrap_check(&step);
 
         assert!(result.violations.is_empty());
         assert!(result.new_fields.is_empty());
     }
 
-    #[tokio::test]
-    async fn multiple_violations() {
+    #[test]
+    fn multiple_violations() {
         let tmp = tempfile::tempdir().unwrap();
         let blog_dir = tmp.path().join("blog");
         let notes_dir = tmp.path().join("notes");
@@ -870,15 +900,15 @@ mod tests {
             vec![],
         );
 
-        let step = run(tmp.path(), true, false).await;
+        let step = run(tmp.path(), true, false);
         let result = unwrap_check(&step);
 
         assert!(!result.violations.is_empty());
         assert!(result.violations.len() >= 3);
     }
 
-    #[tokio::test]
-    async fn null_on_non_nullable_non_required_field() {
+    #[test]
+    fn null_on_non_nullable_non_required_field() {
         let tmp = tempfile::tempdir().unwrap();
         fs::create_dir_all(tmp.path().join("notes")).unwrap();
 
@@ -903,7 +933,7 @@ mod tests {
             vec![],
         );
 
-        let step = run(tmp.path(), true, false).await;
+        let step = run(tmp.path(), true, false);
         let result = unwrap_check(&step);
         assert!(!result.violations.is_empty());
         let v = result
@@ -914,8 +944,8 @@ mod tests {
         assert!(matches!(v.kind, ViolationKind::NullNotAllowed));
     }
 
-    #[tokio::test]
-    async fn null_on_nullable_non_required_field() {
+    #[test]
+    fn null_on_nullable_non_required_field() {
         let tmp = tempfile::tempdir().unwrap();
         fs::create_dir_all(tmp.path().join("notes")).unwrap();
 
@@ -940,13 +970,13 @@ mod tests {
             vec![],
         );
 
-        let step = run(tmp.path(), true, false).await;
+        let step = run(tmp.path(), true, false);
         let result = unwrap_check(&step);
         assert!(result.violations.is_empty());
     }
 
-    #[tokio::test]
-    async fn null_on_disallowed_path() {
+    #[test]
+    fn null_on_disallowed_path() {
         let tmp = tempfile::tempdir().unwrap();
         fs::create_dir_all(tmp.path().join("notes")).unwrap();
 
@@ -971,7 +1001,7 @@ mod tests {
             vec![],
         );
 
-        let step = run(tmp.path(), true, false).await;
+        let step = run(tmp.path(), true, false);
         let result = unwrap_check(&step);
         assert!(!result.violations.is_empty());
         let v = result
@@ -982,8 +1012,8 @@ mod tests {
         assert!(matches!(v.kind, ViolationKind::Disallowed));
     }
 
-    #[tokio::test]
-    async fn null_on_disallowed_path_and_not_nullable() {
+    #[test]
+    fn null_on_disallowed_path_and_not_nullable() {
         let tmp = tempfile::tempdir().unwrap();
         fs::create_dir_all(tmp.path().join("notes")).unwrap();
 
@@ -1008,7 +1038,7 @@ mod tests {
             vec![],
         );
 
-        let step = run(tmp.path(), true, false).await;
+        let step = run(tmp.path(), true, false);
         let result = unwrap_check(&step);
         assert!(!result.violations.is_empty());
 
