@@ -135,3 +135,5 @@
 | [0131](TODO-0131.md) | Step tree: delete old pipeline, update main.rs, simplify output.rs | todo | high | 2026-03-19 |
 | [0132](TODO-0132.md) | Macro for compact struct generation (crabtime) | todo | low | 2026-03-19 |
 | [0133](TODO-0133.md) | Macro for step pipeline boilerplate (early-return pattern) | todo | low | 2026-03-19 |
+| [0134](TODO-0134.md) | Step tree post-migration cleanup | todo | medium | 2026-03-20 |
+| [0135](TODO-0135.md) | Remove Skipped padding from Step tree error paths | todo | medium | 2026-03-20 |
