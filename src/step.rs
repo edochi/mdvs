@@ -136,12 +136,6 @@ impl<O> Step<O> {
             outcome: StepOutcome::Skipped,
         }
     }
-
-    /// Compatibility method during migration — delegates to `has_failed()` free function.
-    /// TODO: remove after all commands are converted (TODO-0131 wave 7).
-    pub fn has_failed_step(&self) -> bool {
-        has_failed(self)
-    }
 }
 
 // --- Free functions ---
@@ -162,103 +156,6 @@ pub fn has_violations(step: &Step<Outcome>) -> bool {
             } => outcome.contains_violations(),
             _ => false,
         }
-}
-
-// --- Pipeline migration helper (temporary, deleted in TODO-0131) ---
-
-/// Convert an old `ProcessingStepResult<T>` into a new `Step<Outcome>`.
-///
-/// This is migration glue: during the transition, commands still call old
-/// `run_*()` pipeline functions that return `ProcessingStepResult<T>`. This
-/// generic helper converts the result into a `Step<Outcome>` leaf node,
-/// using the provided closure to map the output to an `Outcome` variant.
-///
-/// Deleted when the old pipeline modules are removed (TODO-0131).
-pub fn from_pipeline_result<T: Serialize, F>(
-    result: crate::pipeline::ProcessingStepResult<T>,
-    to_outcome: F,
-) -> Step<Outcome>
-where
-    F: FnOnce(&T) -> Outcome,
-{
-    match result {
-        crate::pipeline::ProcessingStepResult::Completed(step) => Step {
-            substeps: vec![],
-            outcome: StepOutcome::Complete {
-                result: Ok(to_outcome(&step.output)),
-                elapsed_ms: step.elapsed_ms,
-            },
-        },
-        crate::pipeline::ProcessingStepResult::Failed(err) => Step {
-            substeps: vec![],
-            outcome: StepOutcome::Complete {
-                result: Err(StepError {
-                    kind: convert_error_kind(err.kind),
-                    message: err.message,
-                }),
-                elapsed_ms: 0,
-            },
-        },
-        crate::pipeline::ProcessingStepResult::Skipped => Step {
-            substeps: vec![],
-            outcome: StepOutcome::Skipped,
-        },
-    }
-}
-
-/// Like [`from_pipeline_result`], but also returns the raw output data
-/// (needed when subsequent steps consume data from a prior step).
-pub fn from_pipeline_result_with_data<T: Serialize, F>(
-    result: crate::pipeline::ProcessingStepResult<T>,
-    to_outcome: F,
-) -> (Step<Outcome>, Option<T>)
-where
-    F: FnOnce(&T) -> Outcome,
-{
-    match result {
-        crate::pipeline::ProcessingStepResult::Completed(step) => {
-            let outcome = to_outcome(&step.output);
-            (
-                Step {
-                    substeps: vec![],
-                    outcome: StepOutcome::Complete {
-                        result: Ok(outcome),
-                        elapsed_ms: step.elapsed_ms,
-                    },
-                },
-                Some(step.output),
-            )
-        }
-        crate::pipeline::ProcessingStepResult::Failed(err) => (
-            Step {
-                substeps: vec![],
-                outcome: StepOutcome::Complete {
-                    result: Err(StepError {
-                        kind: convert_error_kind(err.kind),
-                        message: err.message,
-                    }),
-                    elapsed_ms: 0,
-                },
-            },
-            None,
-        ),
-        crate::pipeline::ProcessingStepResult::Skipped => (
-            Step {
-                substeps: vec![],
-                outcome: StepOutcome::Skipped,
-            },
-            None,
-        ),
-    }
-}
-
-/// Convert old pipeline ErrorKind to new step ErrorKind.
-/// Temporary migration helper (deleted in TODO-0131).
-pub fn convert_error_kind(kind: crate::pipeline::ErrorKind) -> ErrorKind {
-    match kind {
-        crate::pipeline::ErrorKind::User => ErrorKind::User,
-        crate::pipeline::ErrorKind::Application => ErrorKind::Application,
-    }
 }
 
 // --- Serialize impls (hand-written, not derived) ---

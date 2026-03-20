@@ -5,7 +5,7 @@ use crate::outcome::{Outcome, ReadConfigOutcome, ScanOutcome, ValidateOutcome};
 use crate::output::{FieldViolation, NewField, ViolatingFile, ViolationKind};
 use crate::schema::config::MdvsToml;
 use crate::schema::shared::FieldTypeSerde;
-use crate::step::{from_pipeline_result, ErrorKind, Step, StepError, StepOutcome};
+use crate::step::{ErrorKind, Step, StepError, StepOutcome};
 use globset::Glob;
 use serde::Serialize;
 use serde_json::Value;
@@ -43,31 +43,45 @@ impl CheckResult {
 /// Read config, optionally auto-update, scan files, and validate frontmatter.
 #[instrument(name = "check", skip_all)]
 pub async fn run(path: &Path, no_update: bool, verbose: bool) -> Step<Outcome> {
-    use crate::pipeline::read_config::run_read_config;
-    use crate::pipeline::scan::run_scan;
-
     let start = std::time::Instant::now();
     let mut substeps = Vec::new();
 
-    // 1. Read config
-    let (read_config_result, config) = run_read_config(path);
-    substeps.push(from_pipeline_result(read_config_result, |o| {
-        Outcome::ReadConfig(ReadConfigOutcome {
-            config_path: o.config_path.clone(),
-        })
-    }));
+    // 1. Read config — calls MdvsToml::read() + validate() directly
+    let config_start = std::time::Instant::now();
+    let config_path_buf = path.join("mdvs.toml");
+    let config = match MdvsToml::read(&config_path_buf) {
+        Ok(cfg) => match cfg.validate() {
+            Ok(()) => {
+                substeps.push(Step::leaf(
+                    Outcome::ReadConfig(ReadConfigOutcome {
+                        config_path: config_path_buf.display().to_string(),
+                    }),
+                    config_start.elapsed().as_millis() as u64,
+                ));
+                Some(cfg)
+            }
+            Err(e) => {
+                substeps.push(Step::failed(
+                    ErrorKind::User,
+                    format!("mdvs.toml is invalid: {e} — fix the file or run 'mdvs init --force'"),
+                    config_start.elapsed().as_millis() as u64,
+                ));
+                None
+            }
+        },
+        Err(e) => {
+            substeps.push(Step::failed(
+                ErrorKind::User,
+                e.to_string(),
+                config_start.elapsed().as_millis() as u64,
+            ));
+            None
+        }
+    };
 
     let config = match config {
         Some(c) => c,
         None => {
-            substeps.push(Step {
-                substeps: vec![],
-                outcome: StepOutcome::Skipped,
-            }); // scan
-            substeps.push(Step {
-                substeps: vec![],
-                outcome: StepOutcome::Skipped,
-            }); // validate
             let msg = match &substeps[0].outcome {
                 StepOutcome::Complete { result: Err(e), .. } => e.message.clone(),
                 _ => "failed to read config".into(),
@@ -85,19 +99,13 @@ pub async fn run(path: &Path, no_update: bool, verbose: bool) -> Step<Outcome> {
         }
     };
 
-    // 2. Auto-update (calls old update::run(), does not nest as substep during migration)
+    // 2. Auto-update
     let should_update = !no_update && config.check.as_ref().is_some_and(|c| c.auto_update);
     if should_update {
         let update_output = crate::cmd::update::run(path, &[], false, false, verbose).await;
-        if update_output.has_failed_step() {
-            substeps.push(Step {
-                substeps: vec![],
-                outcome: StepOutcome::Skipped,
-            }); // scan
-            substeps.push(Step {
-                substeps: vec![],
-                outcome: StepOutcome::Skipped,
-            }); // validate
+        let failed = crate::step::has_failed(&update_output);
+        substeps.push(update_output);
+        if failed {
             return Step {
                 substeps,
                 outcome: StepOutcome::Complete {
@@ -116,14 +124,6 @@ pub async fn run(path: &Path, no_update: bool, verbose: bool) -> Step<Outcome> {
         match MdvsToml::read(&path.join("mdvs.toml")) {
             Ok(c) => c,
             Err(e) => {
-                substeps.push(Step {
-                    substeps: vec![],
-                    outcome: StepOutcome::Skipped,
-                }); // scan
-                substeps.push(Step {
-                    substeps: vec![],
-                    outcome: StepOutcome::Skipped,
-                }); // validate
                 return Step {
                     substeps,
                     outcome: StepOutcome::Complete {
@@ -140,22 +140,32 @@ pub async fn run(path: &Path, no_update: bool, verbose: bool) -> Step<Outcome> {
         config
     };
 
-    // 3. Scan
-    let (scan_result, scanned) = run_scan(path, &config.scan);
-    substeps.push(from_pipeline_result(scan_result, |o| {
-        Outcome::Scan(ScanOutcome {
-            files_found: o.files_found,
-            glob: o.glob.clone(),
-        })
-    }));
+    // 3. Scan — calls ScannedFiles::scan() directly
+    let scan_start = std::time::Instant::now();
+    let scanned = match ScannedFiles::scan(path, &config.scan) {
+        Ok(s) => {
+            substeps.push(Step::leaf(
+                Outcome::Scan(ScanOutcome {
+                    files_found: s.files.len(),
+                    glob: config.scan.glob.clone(),
+                }),
+                scan_start.elapsed().as_millis() as u64,
+            ));
+            Some(s)
+        }
+        Err(e) => {
+            substeps.push(Step::failed(
+                ErrorKind::Application,
+                e.to_string(),
+                scan_start.elapsed().as_millis() as u64,
+            ));
+            None
+        }
+    };
 
     let scanned = match scanned {
         Some(s) => s,
         None => {
-            substeps.push(Step {
-                substeps: vec![],
-                outcome: StepOutcome::Skipped,
-            }); // validate
             let msg = match &substeps.last().unwrap().outcome {
                 StepOutcome::Complete { result: Err(e), .. } => e.message.clone(),
                 _ => "scan failed".into(),

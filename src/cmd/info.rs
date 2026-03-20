@@ -100,8 +100,6 @@ pub fn run(path: &Path, _verbose: bool) -> Step<Outcome> {
     let config = match config {
         Some(c) => c,
         None => {
-            substeps.push(Step::skipped()); // scan
-            substeps.push(Step::skipped()); // read_index
             let msg = match &substeps[0].outcome {
                 StepOutcome::Complete { result: Err(e), .. } => e.message.clone(),
                 _ => "failed to read config".into(),
@@ -346,7 +344,7 @@ mod tests {
         let step = crate::cmd::init::run(dir, "**", false, false, true, false, false);
         assert!(!crate::step::has_failed(&step));
         let output = crate::cmd::build::run(dir, None, None, None, false, true, false).await;
-        assert!(!output.has_failed_step());
+        assert!(!crate::step::has_failed(&output));
     }
 
     #[test]

@@ -1,9 +1,11 @@
+use crate::discover::infer::InferredSchema;
+use crate::discover::scan::ScannedFiles;
 use crate::outcome::commands::UpdateOutcome;
 use crate::outcome::{InferOutcome, Outcome, ReadConfigOutcome, ScanOutcome, WriteConfigOutcome};
 use crate::output::{ChangedField, FieldChange, RemovedField};
-use crate::schema::config::TomlField;
+use crate::schema::config::{MdvsToml, TomlField};
 use crate::schema::shared::FieldTypeSerde;
-use crate::step::{from_pipeline_result, ErrorKind, Step, StepError, StepOutcome};
+use crate::step::{ErrorKind, Step, StepError, StepOutcome};
 use std::collections::HashMap;
 use std::path::Path;
 use std::time::Instant;
@@ -19,10 +21,6 @@ pub async fn run(
     dry_run: bool,
     _verbose: bool,
 ) -> Step<Outcome> {
-    use crate::pipeline::infer::run_infer;
-    use crate::pipeline::read_config::run_read_config;
-    use crate::pipeline::scan::run_scan;
-
     let start = Instant::now();
     let mut substeps = Vec::new();
 
@@ -33,21 +31,40 @@ pub async fn run(
             start,
             ErrorKind::User,
             "cannot use --reinfer and --reinfer-all together".into(),
-            4,
         );
     }
 
-    // 1. Read config
-    let (read_config_result, config) = run_read_config(path);
-    substeps.push(from_pipeline_result(read_config_result, |o| {
-        Outcome::ReadConfig(ReadConfigOutcome {
-            config_path: o.config_path.clone(),
-        })
-    }));
-
-    let mut config = match config {
-        Some(c) => c,
-        None => return fail_from_last_substep(&mut substeps, start, 3),
+    // 1. Read config — MdvsToml::read() + validate() directly
+    let config_start = Instant::now();
+    let config_path_buf = path.join("mdvs.toml");
+    let mut config = match MdvsToml::read(&config_path_buf) {
+        Ok(cfg) => match cfg.validate() {
+            Ok(()) => {
+                substeps.push(Step::leaf(
+                    Outcome::ReadConfig(ReadConfigOutcome {
+                        config_path: config_path_buf.display().to_string(),
+                    }),
+                    config_start.elapsed().as_millis() as u64,
+                ));
+                cfg
+            }
+            Err(e) => {
+                substeps.push(Step::failed(
+                    ErrorKind::User,
+                    format!("mdvs.toml is invalid: {e} — fix the file or run 'mdvs init --force'"),
+                    config_start.elapsed().as_millis() as u64,
+                ));
+                return fail_from_last_substep(&mut substeps, start);
+            }
+        },
+        Err(e) => {
+            substeps.push(Step::failed(
+                ErrorKind::User,
+                e.to_string(),
+                config_start.elapsed().as_millis() as u64,
+            ));
+            return fail_from_last_substep(&mut substeps, start);
+        }
     };
 
     // Pre-check: reinfer field names exist
@@ -58,37 +75,42 @@ pub async fn run(
                 start,
                 ErrorKind::User,
                 format!("field '{name}' is not in mdvs.toml"),
-                3,
             );
         }
     }
 
-    // 2. Scan
-    let (scan_result, scanned) = run_scan(path, &config.scan);
-    substeps.push(from_pipeline_result(scan_result, |o| {
-        Outcome::Scan(ScanOutcome {
-            files_found: o.files_found,
-            glob: o.glob.clone(),
-        })
-    }));
-
-    let scanned = match scanned {
-        Some(s) => s,
-        None => return fail_from_last_substep(&mut substeps, start, 2),
+    // 2. Scan — ScannedFiles::scan() directly
+    let scan_start = Instant::now();
+    let scanned = match ScannedFiles::scan(path, &config.scan) {
+        Ok(s) => {
+            substeps.push(Step::leaf(
+                Outcome::Scan(ScanOutcome {
+                    files_found: s.files.len(),
+                    glob: config.scan.glob.clone(),
+                }),
+                scan_start.elapsed().as_millis() as u64,
+            ));
+            s
+        }
+        Err(e) => {
+            substeps.push(Step::failed(
+                ErrorKind::Application,
+                e.to_string(),
+                scan_start.elapsed().as_millis() as u64,
+            ));
+            return fail_from_last_substep(&mut substeps, start);
+        }
     };
 
-    // 3. Infer
-    let (infer_result, schema) = run_infer(&scanned);
-    substeps.push(from_pipeline_result(infer_result, |o| {
+    // 3. Infer — InferredSchema::infer() is infallible
+    let infer_start = Instant::now();
+    let schema = InferredSchema::infer(&scanned);
+    substeps.push(Step::leaf(
         Outcome::Infer(InferOutcome {
-            fields_inferred: o.fields_inferred,
-        })
-    }));
-
-    let schema = match schema {
-        Some(s) => s,
-        None => return fail_from_last_substep(&mut substeps, start, 1),
-    };
+            fields_inferred: schema.fields.len(),
+        }),
+        infer_start.elapsed().as_millis() as u64,
+    ));
 
     let total_files = scanned.files.len();
 
@@ -194,53 +216,40 @@ pub async fn run(
 
     // 4. Write config (Skipped if dry_run or no changes)
     if dry_run || !has_changes {
-        substeps.push(Step {
-            substeps: vec![],
-            outcome: StepOutcome::Skipped,
-        });
+        substeps.push(Step::skipped());
     } else {
         let write_start = Instant::now();
-        let config_path = path.join("mdvs.toml");
+        let write_path = path.join("mdvs.toml");
         config.fields.field = new_fields;
 
-        if let Err(e) = config.write(&config_path) {
-            substeps.push(Step {
-                substeps: vec![],
-                outcome: StepOutcome::Complete {
-                    result: Err(StepError {
-                        kind: ErrorKind::Application,
-                        message: e.to_string(),
+        match config.write(&write_path) {
+            Ok(()) => {
+                substeps.push(Step::leaf(
+                    Outcome::WriteConfig(WriteConfigOutcome {
+                        config_path: write_path.display().to_string(),
+                        fields_written: config.fields.field.len(),
                     }),
-                    elapsed_ms: write_start.elapsed().as_millis() as u64,
-                },
-            });
-            return Step {
-                substeps,
-                outcome: StepOutcome::Complete {
-                    result: Err(StepError {
-                        kind: ErrorKind::Application,
-                        message: "failed to write config".into(),
-                    }),
-                    elapsed_ms: start.elapsed().as_millis() as u64,
-                },
-            };
+                    write_start.elapsed().as_millis() as u64,
+                ));
+            }
+            Err(e) => {
+                substeps.push(Step::failed(
+                    ErrorKind::Application,
+                    e.to_string(),
+                    write_start.elapsed().as_millis() as u64,
+                ));
+                return Step {
+                    substeps,
+                    outcome: StepOutcome::Complete {
+                        result: Err(StepError {
+                            kind: ErrorKind::Application,
+                            message: "failed to write config".into(),
+                        }),
+                        elapsed_ms: start.elapsed().as_millis() as u64,
+                    },
+                };
+            }
         }
-
-        substeps.push(from_pipeline_result(
-            crate::pipeline::ProcessingStepResult::Completed(crate::pipeline::ProcessingStep {
-                elapsed_ms: write_start.elapsed().as_millis() as u64,
-                output: crate::pipeline::write_config::WriteConfigOutput {
-                    config_path: config_path.display().to_string(),
-                    fields_written: config.fields.field.len(),
-                },
-            }),
-            |o| {
-                Outcome::WriteConfig(WriteConfigOutcome {
-                    config_path: o.config_path.clone(),
-                    fields_written: o.fields_written,
-                })
-            },
-        ));
     }
 
     Step {
@@ -260,18 +269,11 @@ pub async fn run(
 }
 
 fn fail_early(
-    mut substeps: Vec<Step<Outcome>>,
+    substeps: Vec<Step<Outcome>>,
     start: Instant,
     kind: ErrorKind,
     message: String,
-    skipped_count: usize,
 ) -> Step<Outcome> {
-    for _ in 0..skipped_count {
-        substeps.push(Step {
-            substeps: vec![],
-            outcome: StepOutcome::Skipped,
-        });
-    }
     Step {
         substeps,
         outcome: StepOutcome::Complete {
@@ -281,21 +283,11 @@ fn fail_early(
     }
 }
 
-fn fail_from_last_substep(
-    substeps: &mut Vec<Step<Outcome>>,
-    start: Instant,
-    skipped_count: usize,
-) -> Step<Outcome> {
+fn fail_from_last_substep(substeps: &mut Vec<Step<Outcome>>, start: Instant) -> Step<Outcome> {
     let msg = match substeps.last().map(|s| &s.outcome) {
         Some(StepOutcome::Complete { result: Err(e), .. }) => e.message.clone(),
         _ => "step failed".into(),
     };
-    for _ in 0..skipped_count {
-        substeps.push(Step {
-            substeps: vec![],
-            outcome: StepOutcome::Skipped,
-        });
-    }
     Step {
         substeps: std::mem::take(substeps),
         outcome: StepOutcome::Complete {
