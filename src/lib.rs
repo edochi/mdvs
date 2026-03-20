@@ -17,8 +17,6 @@ pub mod index;
 pub mod outcome;
 /// Output formatting types and the `CommandOutput` trait.
 pub mod output;
-/// Core pipeline abstractions for structured command output.
-pub mod pipeline;
 /// Shared formatters (`format_text`, `format_markdown`) that consume `Vec<Block>`.
 pub mod render;
 /// Configuration file types (`mdvs.toml`) and shared data structures.
