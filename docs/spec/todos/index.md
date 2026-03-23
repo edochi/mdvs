@@ -138,3 +138,4 @@
 | [0134](TODO-0134.md) | Step tree post-migration cleanup | todo | medium | 2026-03-20 |
 | [0135](TODO-0135.md) | Remove Skipped padding from Step tree error paths | todo | medium | 2026-03-20 |
 | [0136](TODO-0136.md) | Inline auto-update and auto-build logic to eliminate redundant reads | todo | high | 2026-03-20 |
+| [0137](TODO-0137.md) | Flatten Step tree into steps + result structure | todo | high | 2026-03-21 |
