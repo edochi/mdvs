@@ -132,10 +132,10 @@
 | [0128](TODO-0128.md) | Step tree: convert init command | done | high | 2026-03-19 |
 | [0129](TODO-0129.md) | Step tree: convert update command | done | high | 2026-03-19 |
 | [0130](TODO-0130.md) | Step tree: convert build + search commands | done | high | 2026-03-19 |
-| [0131](TODO-0131.md) | Step tree: delete old pipeline, update main.rs, simplify output.rs | todo | high | 2026-03-19 |
-| [0132](TODO-0132.md) | Macro for compact struct generation (crabtime) | todo | low | 2026-03-19 |
+| [0131](TODO-0131.md) | Step tree: delete old pipeline, update main.rs, simplify output.rs | done | high | 2026-03-19 |
+| [0132](TODO-0132.md) | Macro for compact struct generation (crabtime) | done (subsumed by 0137) | low | 2026-03-19 |
 | [0133](TODO-0133.md) | Macro for step pipeline boilerplate (early-return pattern) | todo | low | 2026-03-19 |
 | [0134](TODO-0134.md) | Step tree post-migration cleanup | todo | medium | 2026-03-20 |
-| [0135](TODO-0135.md) | Remove Skipped padding from Step tree error paths | todo | medium | 2026-03-20 |
-| [0136](TODO-0136.md) | Inline auto-update and auto-build logic to eliminate redundant reads | todo | high | 2026-03-20 |
-| [0137](TODO-0137.md) | Flatten Step tree into steps + result structure | todo | high | 2026-03-21 |
+| [0135](TODO-0135.md) | Remove Skipped padding from Step tree error paths | done | medium | 2026-03-20 |
+| [0136](TODO-0136.md) | Inline auto-update and auto-build logic to eliminate redundant reads | done | high | 2026-03-20 |
+| [0137](TODO-0137.md) | Flatten Step tree into steps + result structure | done | high | 2026-03-21 |
