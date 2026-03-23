@@ -5,7 +5,7 @@ use crate::outcome::{InferOutcome, Outcome, ScanOutcome, WriteConfigOutcome};
 use crate::output::DiscoveredField;
 use crate::schema::config::MdvsToml;
 use crate::schema::shared::ScanConfig;
-use crate::step::{CommandResult, ErrorKind, StepEntry, StepError};
+use crate::step::{CommandResult, ErrorKind, StepEntry};
 use std::path::Path;
 use std::time::Instant;
 use tracing::{info, instrument};
@@ -29,25 +29,25 @@ pub fn run(
 
     // Pre-checks
     if !path.is_dir() {
-        return fail_early(
+        return CommandResult::failed(
             steps,
-            start,
             ErrorKind::User,
             format!("'{}' is not a directory", path.display()),
+            start,
         );
     }
 
     let config_path = path.join("mdvs.toml");
     let mdvs_dir = path.join(".mdvs");
     if !force && (config_path.exists() || mdvs_dir.exists()) {
-        return fail_early(
+        return CommandResult::failed(
             steps,
-            start,
             ErrorKind::User,
             format!(
                 "mdvs is already initialized in '{}' (use --force to reinitialize)",
                 path.display()
             ),
+            start,
         );
     }
 
@@ -84,7 +84,7 @@ pub fn run(
                 e.to_string(),
                 scan_start.elapsed().as_millis() as u64,
             ));
-            return fail_from_last_substep(&mut steps, start);
+            return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
         }
     };
 
@@ -92,14 +92,7 @@ pub fn run(
     if scanned.files.is_empty() {
         let msg = format!("no markdown files found in '{}'", path.display());
         steps.push(StepEntry::err(ErrorKind::User, msg.clone(), 0));
-        return CommandResult {
-            steps,
-            result: Err(StepError {
-                kind: ErrorKind::User,
-                message: msg,
-            }),
-            elapsed_ms: start.elapsed().as_millis() as u64,
-        };
+        return CommandResult::failed(steps, ErrorKind::User, msg, start);
     }
 
     // 2b. Infer — InferredSchema::infer() is infallible
@@ -127,7 +120,7 @@ pub fn run(
         steps.push(StepEntry::skipped());
     } else {
         let write_start = Instant::now();
-        let toml_doc = MdvsToml::from_inferred(&schema, scan_config);
+        let mut toml_doc = MdvsToml::from_inferred(&schema, scan_config);
         match toml_doc.write(&config_path) {
             Ok(()) => {
                 steps.push(StepEntry::ok(
@@ -156,36 +149,6 @@ pub fn run(
             fields,
             dry_run,
         }))),
-        elapsed_ms: start.elapsed().as_millis() as u64,
-    }
-}
-
-/// Helper: return a failed CommandResult with the given error.
-fn fail_early(
-    steps: Vec<StepEntry>,
-    start: Instant,
-    kind: ErrorKind,
-    message: String,
-) -> CommandResult {
-    CommandResult {
-        steps,
-        result: Err(StepError { kind, message }),
-        elapsed_ms: start.elapsed().as_millis() as u64,
-    }
-}
-
-/// Helper: extract error from last step and return a failed CommandResult.
-fn fail_from_last_substep(steps: &mut Vec<StepEntry>, start: Instant) -> CommandResult {
-    let msg = match steps.last() {
-        Some(StepEntry::Failed(f)) => f.message.clone(),
-        _ => "step failed".into(),
-    };
-    CommandResult {
-        steps: std::mem::take(steps),
-        result: Err(StepError {
-            kind: ErrorKind::Application,
-            message: msg,
-        }),
         elapsed_ms: start.elapsed().as_millis() as u64,
     }
 }

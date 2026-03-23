@@ -1,7 +1,7 @@
 use crate::index::backend::Backend;
 use crate::outcome::commands::CleanOutcome;
 use crate::outcome::{DeleteIndexOutcome, Outcome};
-use crate::step::{CommandResult, ErrorKind, StepEntry, StepError};
+use crate::step::{CommandResult, ErrorKind, StepEntry};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 use tracing::instrument;
@@ -45,14 +45,7 @@ pub fn run(path: &Path) -> CommandResult {
             msg.clone(),
             delete_start.elapsed().as_millis() as u64,
         ));
-        return CommandResult {
-            steps,
-            result: Err(StepError {
-                kind: ErrorKind::User,
-                message: msg,
-            }),
-            elapsed_ms: start.elapsed().as_millis() as u64,
-        };
+        return CommandResult::failed(steps, ErrorKind::User, msg, start);
     }
 
     let (removed, path_str, files_removed, size_bytes) = if mdvs_dir.exists() {
@@ -64,14 +57,7 @@ pub fn run(path: &Path) -> CommandResult {
                     e.to_string(),
                     delete_start.elapsed().as_millis() as u64,
                 ));
-                return CommandResult {
-                    steps,
-                    result: Err(StepError {
-                        kind: ErrorKind::Application,
-                        message: e.to_string(),
-                    }),
-                    elapsed_ms: start.elapsed().as_millis() as u64,
-                };
+                return CommandResult::failed_from_steps(steps, start);
             }
         };
 
@@ -82,14 +68,7 @@ pub fn run(path: &Path) -> CommandResult {
                 e.to_string(),
                 delete_start.elapsed().as_millis() as u64,
             ));
-            return CommandResult {
-                steps,
-                result: Err(StepError {
-                    kind: ErrorKind::Application,
-                    message: e.to_string(),
-                }),
-                elapsed_ms: start.elapsed().as_millis() as u64,
-            };
+            return CommandResult::failed_from_steps(steps, start);
         }
 
         (

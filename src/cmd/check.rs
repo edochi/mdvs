@@ -8,7 +8,7 @@ use crate::outcome::{
 use crate::output::{FieldViolation, NewField, ViolatingFile, ViolationKind};
 use crate::schema::config::{MdvsToml, TomlField};
 use crate::schema::shared::FieldTypeSerde;
-use crate::step::{CommandResult, ErrorKind, StepEntry, StepError};
+use crate::step::{CommandResult, ErrorKind, StepEntry};
 use globset::Glob;
 use serde::Serialize;
 use serde_json::Value;
@@ -86,18 +86,7 @@ pub fn run(path: &Path, no_update: bool, verbose: bool) -> CommandResult {
     let config = match config {
         Some(c) => c,
         None => {
-            let msg = match &steps[0] {
-                StepEntry::Failed(f) => f.message.clone(),
-                _ => "failed to read config".into(),
-            };
-            return CommandResult {
-                steps,
-                result: Err(StepError {
-                    kind: ErrorKind::User,
-                    message: msg,
-                }),
-                elapsed_ms: start.elapsed().as_millis() as u64,
-            };
+            return CommandResult::failed_from_steps(steps, start);
         }
     };
 
@@ -120,15 +109,7 @@ pub fn run(path: &Path, no_update: bool, verbose: bool) -> CommandResult {
                 e.to_string(),
                 scan_start.elapsed().as_millis() as u64,
             ));
-            let msg = e.to_string();
-            return CommandResult {
-                steps,
-                result: Err(StepError {
-                    kind: ErrorKind::Application,
-                    message: msg,
-                }),
-                elapsed_ms: start.elapsed().as_millis() as u64,
-            };
+            return CommandResult::failed_from_steps(steps, start);
         }
     };
 
@@ -192,14 +173,12 @@ pub fn run(path: &Path, no_update: bool, verbose: bool) -> CommandResult {
                         e.to_string(),
                         write_start.elapsed().as_millis() as u64,
                     ));
-                    return CommandResult {
+                    return CommandResult::failed(
                         steps,
-                        result: Err(StepError {
-                            kind: ErrorKind::Application,
-                            message: "auto-update failed to write config".into(),
-                        }),
-                        elapsed_ms: start.elapsed().as_millis() as u64,
-                    };
+                        ErrorKind::Application,
+                        "auto-update failed to write config".into(),
+                        start,
+                    );
                 }
             }
         }
@@ -217,14 +196,12 @@ pub fn run(path: &Path, no_update: bool, verbose: bool) -> CommandResult {
                 e.to_string(),
                 validate_start.elapsed().as_millis() as u64,
             ));
-            return CommandResult {
+            return CommandResult::failed(
                 steps,
-                result: Err(StepError {
-                    kind: ErrorKind::Application,
-                    message: "validation failed".into(),
-                }),
-                elapsed_ms: start.elapsed().as_millis() as u64,
-            };
+                ErrorKind::Application,
+                "validation failed".into(),
+                start,
+            );
         }
     };
 
@@ -515,7 +492,7 @@ mod tests {
     }
 
     fn write_toml(dir: &Path, fields: Vec<TomlField>, ignore: Vec<String>) {
-        let config = MdvsToml {
+        let mut config = MdvsToml {
             scan: ScanConfig {
                 glob: "**".into(),
                 include_bare_files: false,
@@ -768,7 +745,7 @@ mod tests {
         )
         .unwrap();
 
-        let config = MdvsToml {
+        let mut config = MdvsToml {
             scan: ScanConfig {
                 glob: "**".into(),
                 include_bare_files: true,
@@ -1062,5 +1039,72 @@ mod tests {
             "expected exactly 1 NullNotAllowed, got {}",
             null_violations.len()
         );
+    }
+
+    // --- Unit tests for type_matches ---
+
+    #[test]
+    fn string_matches_anything() {
+        use serde_json::json;
+        assert!(type_matches(&FieldType::String, &json!(true)));
+        assert!(type_matches(&FieldType::String, &json!(42)));
+        assert!(type_matches(&FieldType::String, &json!("hello")));
+        assert!(type_matches(&FieldType::String, &json!([1, 2])));
+        assert!(type_matches(&FieldType::String, &json!({"a": 1})));
+    }
+
+    #[test]
+    fn bool_matches_bool() {
+        use serde_json::json;
+        assert!(type_matches(&FieldType::Boolean, &json!(true)));
+        assert!(type_matches(&FieldType::Boolean, &json!(false)));
+        assert!(!type_matches(&FieldType::Boolean, &json!("yes")));
+    }
+
+    #[test]
+    fn int_matches_int() {
+        use serde_json::json;
+        assert!(type_matches(&FieldType::Integer, &json!(42)));
+        assert!(!type_matches(&FieldType::Integer, &json!(1.5)));
+        assert!(!type_matches(&FieldType::Integer, &json!("42")));
+    }
+
+    #[test]
+    fn float_matches_any_number() {
+        use serde_json::json;
+        assert!(type_matches(&FieldType::Float, &json!(1.5)));
+        assert!(type_matches(&FieldType::Float, &json!(42))); // int-in-float lenient
+        assert!(!type_matches(&FieldType::Float, &json!("1.5")));
+    }
+
+    #[test]
+    fn array_checks_elements() {
+        use serde_json::json;
+        let arr_str = FieldType::Array(Box::new(FieldType::String));
+        assert!(type_matches(&arr_str, &json!(["a", "b"])));
+        assert!(type_matches(&arr_str, &json!([1, 2]))); // String matches anything
+
+        let arr_int = FieldType::Array(Box::new(FieldType::Integer));
+        assert!(type_matches(&arr_int, &json!([1, 2])));
+        assert!(!type_matches(&arr_int, &json!([1.5, 2.5])));
+    }
+
+    // --- Unit tests for matches_any_glob ---
+
+    #[test]
+    fn glob_star_star_matches_all() {
+        assert!(matches_any_glob(&["**".into()], "blog/post.md"));
+        assert!(matches_any_glob(&["**".into()], "deep/nested/path.md"));
+    }
+
+    #[test]
+    fn glob_specific_path() {
+        assert!(matches_any_glob(&["blog/**".into()], "blog/post.md"));
+        assert!(!matches_any_glob(&["blog/**".into()], "notes/idea.md"));
+    }
+
+    #[test]
+    fn glob_empty_patterns() {
+        assert!(!matches_any_glob(&[], "anything.md"));
     }
 }

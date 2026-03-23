@@ -7,7 +7,7 @@ use crate::outcome::{
     ReadIndexOutcome,
 };
 use crate::schema::config::MdvsToml;
-use crate::step::{CommandResult, ErrorKind, StepEntry, StepError};
+use crate::step::{CommandResult, ErrorKind, StepEntry};
 use std::path::Path;
 use std::time::Instant;
 use tracing::{instrument, warn};
@@ -117,7 +117,12 @@ pub async fn run(
                     build_embedder = embedder;
                 }
                 Err(()) => {
-                    return fail_msg(&mut steps, start, ErrorKind::User, "auto-build failed");
+                    return CommandResult::failed(
+                        std::mem::take(&mut steps),
+                        ErrorKind::User,
+                        "auto-build failed".into(),
+                        start,
+                    );
                 }
             }
         }
@@ -170,7 +175,7 @@ pub async fn run(
             }
         }
         None => {
-            return fail_from_last(&mut steps, start);
+            return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
         }
     };
 
@@ -197,7 +202,7 @@ pub async fn run(
     // 3. Load model — calls ModelConfig::try_from() + Embedder::load() directly
     if let Some(msg) = pre_check_error {
         steps.push(StepEntry::err(ErrorKind::User, msg, 0));
-        return fail_from_last(&mut steps, start);
+        return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
     }
 
     // 3. Load model (reuse from build if available)
@@ -231,7 +236,7 @@ pub async fn run(
                         e.to_string(),
                         model_start.elapsed().as_millis() as u64,
                     ));
-                    return fail_from_last(&mut steps, start);
+                    return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
                 }
             },
             Err(e) => {
@@ -240,7 +245,7 @@ pub async fn run(
                     e.to_string(),
                     model_start.elapsed().as_millis() as u64,
                 ));
-                return fail_from_last(&mut steps, start);
+                return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
             }
         }
     };
@@ -266,7 +271,7 @@ pub async fn run(
     if let Some(w) = where_clause {
         if let Err(msg) = validate_where_clause(w) {
             steps.push(StepEntry::err(ErrorKind::User, msg, 0));
-            return fail_from_last(&mut steps, start);
+            return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
         }
     }
 
@@ -288,7 +293,7 @@ pub async fn run(
                 e.to_string(),
                 search_start.elapsed().as_millis() as u64,
             ));
-            return fail_from_last(&mut steps, start);
+            return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
         }
     };
 
@@ -319,40 +324,6 @@ pub async fn run(
     }
 }
 
-fn fail_from_last(steps: &mut Vec<StepEntry>, start: Instant) -> CommandResult {
-    let msg = match steps.iter().rev().find_map(|s| match s {
-        StepEntry::Failed(f) => Some(f.message.clone()),
-        _ => None,
-    }) {
-        Some(m) => m,
-        None => "step failed".into(),
-    };
-    CommandResult {
-        steps: std::mem::take(steps),
-        result: Err(StepError {
-            kind: ErrorKind::Application,
-            message: msg,
-        }),
-        elapsed_ms: start.elapsed().as_millis() as u64,
-    }
-}
-
-fn fail_msg(
-    steps: &mut Vec<StepEntry>,
-    start: Instant,
-    kind: ErrorKind,
-    msg: &str,
-) -> CommandResult {
-    CommandResult {
-        steps: std::mem::take(steps),
-        result: Err(StepError {
-            kind,
-            message: msg.into(),
-        }),
-        elapsed_ms: start.elapsed().as_millis() as u64,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -360,6 +331,7 @@ mod tests {
     use crate::outcome::commands::SearchOutcome;
     use crate::schema::config::{FieldsConfig, MdvsToml, SearchConfig, UpdateConfig};
     use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig, ScanConfig};
+    use crate::step::StepError;
     use std::fs;
 
     fn unwrap_search(result: &CommandResult) -> &SearchOutcome {
@@ -392,7 +364,7 @@ mod tests {
     }
 
     fn write_config(dir: &Path, model_name: &str) {
-        let config = MdvsToml {
+        let mut config = MdvsToml {
             scan: ScanConfig {
                 glob: "**".into(),
                 include_bare_files: false,
@@ -490,7 +462,7 @@ mod tests {
         create_test_vault(tmp.path());
         init_and_build(tmp.path()).await;
 
-        let config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
+        let mut config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
         let backend = Backend::parquet(tmp.path());
         let embedding = config.embedding_model.as_ref().unwrap();
         let model_config = ModelConfig::try_from(embedding).unwrap();
@@ -516,7 +488,7 @@ mod tests {
         create_test_vault(tmp.path());
         init_and_build(tmp.path()).await;
 
-        let config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
+        let mut config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
         let backend = Backend::parquet(tmp.path());
         let embedding = config.embedding_model.as_ref().unwrap();
         let model_config = ModelConfig::try_from(embedding).unwrap();
@@ -630,5 +602,60 @@ mod tests {
                 "balanced quotes should not trigger parity check"
             );
         }
+    }
+
+    // --- Unit tests for validate_where_clause ---
+
+    #[test]
+    fn validate_where_valid() {
+        assert!(validate_where_clause("draft = false").is_ok());
+    }
+
+    #[test]
+    fn validate_where_empty() {
+        assert!(validate_where_clause("").is_ok());
+    }
+
+    #[test]
+    fn validate_where_unmatched_single() {
+        assert!(validate_where_clause("name = 'O'Brien'").is_err());
+    }
+
+    #[test]
+    fn validate_where_unmatched_double() {
+        assert!(validate_where_clause("x = \"bad").is_err());
+    }
+
+    #[test]
+    fn validate_where_balanced_quotes() {
+        assert!(validate_where_clause("name = 'O''Brien'").is_ok());
+    }
+
+    // --- Unit tests for read_lines ---
+
+    #[test]
+    fn read_lines_valid_range() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("test.md");
+        std::fs::write(&file, "line1\nline2\nline3\nline4\n").unwrap();
+        let result = read_lines(&file, 2, 3);
+        assert_eq!(result, Some("line2\nline3".to_string()));
+    }
+
+    #[test]
+    fn read_lines_out_of_bounds() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("test.md");
+        std::fs::write(&file, "line1\n").unwrap();
+        assert!(read_lines(&file, 10, 20).is_none());
+    }
+
+    #[test]
+    fn read_lines_single_line() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("test.md");
+        std::fs::write(&file, "only\n").unwrap();
+        let result = read_lines(&file, 1, 1);
+        assert_eq!(result, Some("only".to_string()));
     }
 }

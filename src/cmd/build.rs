@@ -13,7 +13,7 @@ use crate::outcome::{
 use crate::output::BuildFileDetail;
 use crate::schema::config::{BuildConfig, MdvsToml, SearchConfig, TomlField};
 use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig, FieldTypeSerde};
-use crate::step::{CommandResult, ErrorKind, StepEntry, StepError};
+use crate::step::{CommandResult, ErrorKind, StepEntry};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::time::Instant;
@@ -224,7 +224,7 @@ pub async fn run(
     };
     let mut config = match config {
         Some(c) => c,
-        None => return fail_from_last(&mut steps, start),
+        None => return CommandResult::failed_from_steps(std::mem::take(&mut steps), start),
     };
 
     let should_update = !no_update && config.build.as_ref().is_some_and(|b| b.auto_update);
@@ -241,7 +241,7 @@ pub async fn run(
 
     if let Some(msg) = mutation_error {
         steps.push(StepEntry::err(ErrorKind::User, msg, 0));
-        return fail_from_last(&mut steps, start);
+        return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
     }
 
     // 3. Core build pipeline (scan → auto-update → validate → classify → embed → write)
@@ -256,7 +256,7 @@ pub async fn run(
     .await
     {
         Ok(result) => result,
-        Err(()) => return fail_from_last(&mut steps, start),
+        Err(()) => return CommandResult::failed_from_steps(std::mem::take(&mut steps), start),
     };
 
     CommandResult {
@@ -759,25 +759,6 @@ pub(crate) async fn build_core(
     Ok((outcome, embedder))
 }
 
-/// Extract error from last failed step and return a failed CommandResult.
-fn fail_from_last(steps: &mut Vec<StepEntry>, start: Instant) -> CommandResult {
-    let msg = match steps.iter().rev().find_map(|s| match s {
-        StepEntry::Failed(f) => Some(f.message.clone()),
-        _ => None,
-    }) {
-        Some(m) => m,
-        None => "step failed".into(),
-    };
-    CommandResult {
-        steps: std::mem::take(steps),
-        result: Err(StepError {
-            kind: ErrorKind::Application,
-            message: msg,
-        }),
-        elapsed_ms: start.elapsed().as_millis() as u64,
-    }
-}
-
 // ============================================================================
 // Helpers
 // ============================================================================
@@ -929,6 +910,7 @@ mod tests {
         read_build_metadata, read_chunk_rows, read_file_index, read_parquet,
     };
     use crate::schema::config::MdvsToml;
+    use crate::step::StepError;
     use datafusion::arrow::datatypes::DataType;
     use std::collections::{HashMap, HashSet};
     use std::fs;
@@ -1154,7 +1136,7 @@ mod tests {
         assert!(!crate::step::has_failed(&output));
 
         // Verify no model/chunking sections (auto-flag sections are present from init)
-        let config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
+        let mut config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
         assert!(config.embedding_model.is_none());
         assert!(config.chunking.is_none());
 
@@ -1167,7 +1149,7 @@ mod tests {
         );
 
         // Verify sections were written
-        let config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
+        let mut config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
         assert_eq!(config.embedding_model.as_ref().unwrap().name, DEFAULT_MODEL);
         assert!(config.embedding_model.as_ref().unwrap().revision.is_none());
         assert_eq!(
@@ -1272,7 +1254,7 @@ mod tests {
             output
         );
 
-        let config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
+        let mut config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
         assert_eq!(config.chunking.as_ref().unwrap().max_chunk_size, 512);
     }
 
@@ -1330,7 +1312,7 @@ mod tests {
         )
         .unwrap();
 
-        let config = MdvsToml {
+        let mut config = MdvsToml {
             scan: crate::schema::shared::ScanConfig {
                 glob: "**".into(),
                 include_bare_files: false,
@@ -1402,7 +1384,7 @@ mod tests {
         )
         .unwrap();
 
-        let config = MdvsToml {
+        let mut config = MdvsToml {
             scan: crate::schema::shared::ScanConfig {
                 glob: "**".into(),
                 include_bare_files: false,
@@ -1473,7 +1455,7 @@ mod tests {
         )
         .unwrap();
 
-        let config = MdvsToml {
+        let mut config = MdvsToml {
             scan: crate::schema::shared::ScanConfig {
                 glob: "**".into(),
                 include_bare_files: false,

@@ -5,7 +5,7 @@ use crate::outcome::{InferOutcome, Outcome, ReadConfigOutcome, ScanOutcome, Writ
 use crate::output::{ChangedField, FieldChange, RemovedField};
 use crate::schema::config::{MdvsToml, TomlField};
 use crate::schema::shared::FieldTypeSerde;
-use crate::step::{CommandResult, ErrorKind, StepEntry, StepError};
+use crate::step::{CommandResult, ErrorKind, StepEntry};
 use std::collections::HashMap;
 use std::path::Path;
 use std::time::Instant;
@@ -26,11 +26,11 @@ pub async fn run(
 
     // Pre-check: flag conflict
     if !reinfer.is_empty() && reinfer_all {
-        return fail_early(
+        return CommandResult::failed(
             steps,
-            start,
             ErrorKind::User,
             "cannot use --reinfer and --reinfer-all together".into(),
+            start,
         );
     }
 
@@ -54,7 +54,7 @@ pub async fn run(
                     format!("mdvs.toml is invalid: {e} — fix the file or run 'mdvs init --force'"),
                     config_start.elapsed().as_millis() as u64,
                 ));
-                return fail_from_last_substep(&mut steps, start);
+                return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
             }
         },
         Err(e) => {
@@ -63,18 +63,18 @@ pub async fn run(
                 e.to_string(),
                 config_start.elapsed().as_millis() as u64,
             ));
-            return fail_from_last_substep(&mut steps, start);
+            return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
         }
     };
 
     // Pre-check: reinfer field names exist
     for name in reinfer {
         if !config.fields.field.iter().any(|f| f.name == *name) {
-            return fail_early(
+            return CommandResult::failed(
                 std::mem::take(&mut steps),
-                start,
                 ErrorKind::User,
                 format!("field '{name}' is not in mdvs.toml"),
+                start,
             );
         }
     }
@@ -98,7 +98,7 @@ pub async fn run(
                 e.to_string(),
                 scan_start.elapsed().as_millis() as u64,
             ));
-            return fail_from_last_substep(&mut steps, start);
+            return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
         }
     };
 
@@ -238,14 +238,12 @@ pub async fn run(
                     e.to_string(),
                     write_start.elapsed().as_millis() as u64,
                 ));
-                return CommandResult {
+                return CommandResult::failed(
                     steps,
-                    result: Err(StepError {
-                        kind: ErrorKind::Application,
-                        message: "failed to write config".into(),
-                    }),
-                    elapsed_ms: start.elapsed().as_millis() as u64,
-                };
+                    ErrorKind::Application,
+                    "failed to write config".into(),
+                    start,
+                );
             }
         }
     }
@@ -264,40 +262,11 @@ pub async fn run(
     }
 }
 
-fn fail_early(
-    steps: Vec<StepEntry>,
-    start: Instant,
-    kind: ErrorKind,
-    message: String,
-) -> CommandResult {
-    CommandResult {
-        steps,
-        result: Err(StepError { kind, message }),
-        elapsed_ms: start.elapsed().as_millis() as u64,
-    }
-}
-
-fn fail_from_last_substep(steps: &mut Vec<StepEntry>, start: Instant) -> CommandResult {
-    let msg = match steps.last() {
-        Some(StepEntry::Failed(f)) => f.message.clone(),
-        _ => "step failed".into(),
-    };
-    CommandResult {
-        steps: std::mem::take(steps),
-        result: Err(StepError {
-            kind: ErrorKind::Application,
-            message: msg,
-        }),
-        elapsed_ms: start.elapsed().as_millis() as u64,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::outcome::commands::UpdateOutcome;
-    use crate::output::ViolationKind;
-    use crate::schema::config::{FieldsConfig, MdvsToml, UpdateConfig};
+    use crate::schema::config::MdvsToml;
     use crate::schema::shared::{FieldTypeSerde, ScanConfig};
     use std::fs;
 

@@ -4,7 +4,7 @@ use crate::outcome::commands::InfoOutcome;
 use crate::outcome::{Outcome, ReadConfigOutcome, ReadIndexOutcome, ScanOutcome};
 use crate::output::{field_hints, FieldHint};
 use crate::schema::config::MdvsToml;
-use crate::step::{CommandResult, ErrorKind, StepEntry, StepError};
+use crate::step::{CommandResult, ErrorKind, StepEntry};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -100,18 +100,7 @@ pub fn run(path: &Path, _verbose: bool) -> CommandResult {
     let config = match config {
         Some(c) => c,
         None => {
-            let msg = match &steps[0] {
-                StepEntry::Failed(f) => f.message.clone(),
-                _ => "failed to read config".into(),
-            };
-            return CommandResult {
-                steps,
-                result: Err(StepError {
-                    kind: ErrorKind::User,
-                    message: msg,
-                }),
-                elapsed_ms: start.elapsed().as_millis() as u64,
-            };
+            return CommandResult::failed_from_steps(steps, start);
         }
     };
 
@@ -277,7 +266,7 @@ mod tests {
     }
 
     fn write_config(dir: &Path) {
-        let config = MdvsToml {
+        let mut config = MdvsToml {
             scan: ScanConfig {
                 glob: "**".into(),
                 include_bare_files: false,
@@ -351,7 +340,7 @@ mod tests {
         assert_eq!(result.scan_glob, "**");
         assert_eq!(result.files_on_disk, 2);
         assert_eq!(result.fields.len(), 3);
-        assert_eq!(result.fields[0].name, "title");
+        assert_eq!(result.fields[0].name, "draft"); // alphabetically sorted
         assert_eq!(result.ignored_fields, vec!["internal_id"]);
         assert!(result.index.is_none());
     }
@@ -399,7 +388,7 @@ mod tests {
             "---\nauthor's_note: hello\n---\n# Note\nBody.",
         )
         .unwrap();
-        let config = MdvsToml {
+        let mut config = MdvsToml {
             scan: ScanConfig {
                 glob: "**".into(),
                 include_bare_files: false,
