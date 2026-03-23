@@ -424,30 +424,17 @@ fn check_required_fields(
                 .and_then(|v| v.as_object())
                 .and_then(|map| map.get(&toml_field.name));
 
-            match value {
-                None => {
-                    let key = ViolationKey {
-                        field: toml_field.name.clone(),
-                        kind: ViolationKind::MissingRequired,
-                        rule: format!("required in {:?}", toml_field.required),
-                    };
-                    violations.entry(key).or_default().push(ViolatingFile {
-                        path: file.path.clone(),
-                        detail: None,
-                    });
-                }
-                Some(v) if v.is_null() && !toml_field.nullable => {
-                    let key = ViolationKey {
-                        field: toml_field.name.clone(),
-                        kind: ViolationKind::NullNotAllowed,
-                        rule: format!("not nullable, required in {:?}", toml_field.required),
-                    };
-                    violations.entry(key).or_default().push(ViolatingFile {
-                        path: file.path.clone(),
-                        detail: None,
-                    });
-                }
-                _ => {}
+            // Null on non-nullable is caught by check_field_values — only check absence here
+            if value.is_none() {
+                let key = ViolationKey {
+                    field: toml_field.name.clone(),
+                    kind: ViolationKind::MissingRequired,
+                    rule: format!("required in {:?}", toml_field.required),
+                };
+                violations.entry(key).or_default().push(ViolatingFile {
+                    path: file.path.clone(),
+                    detail: None,
+                });
             }
         }
     }
@@ -1053,5 +1040,48 @@ mod tests {
 
         assert!(has_disallowed, "expected Disallowed for draft");
         assert!(has_null_not_allowed, "expected NullNotAllowed for draft");
+    }
+
+    #[test]
+    fn null_on_required_non_nullable_produces_single_violation() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("notes")).unwrap();
+
+        fs::write(
+            tmp.path().join("notes/note1.md"),
+            "---\ntitle: Hello\nstatus:\n---\n# Hello\nBody.",
+        )
+        .unwrap();
+
+        write_toml(
+            tmp.path(),
+            vec![
+                string_field("title"),
+                TomlField {
+                    name: "status".into(),
+                    field_type: FieldTypeSerde::Scalar("String".into()),
+                    allowed: vec!["**".into()],
+                    required: vec!["**".into()],
+                    nullable: false,
+                },
+            ],
+            vec![],
+        );
+
+        let step = run(tmp.path(), true, false);
+        let result = unwrap_check(&step);
+
+        // Should produce exactly 1 NullNotAllowed — not duplicated by check_required_fields
+        let null_violations: Vec<_> = result
+            .violations
+            .iter()
+            .filter(|v| v.field == "status" && matches!(v.kind, ViolationKind::NullNotAllowed))
+            .collect();
+        assert_eq!(
+            null_violations.len(),
+            1,
+            "expected exactly 1 NullNotAllowed, got {}",
+            null_violations.len()
+        );
     }
 }
