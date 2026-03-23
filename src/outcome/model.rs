@@ -18,27 +18,3 @@ impl Render for LoadModelOutcome {
         vec![Block::Line(format!("Load model: {}", self.model_name))]
     }
 }
-
-/// Compact outcome for the load_model step (identical).
-#[derive(Debug, Serialize)]
-pub struct LoadModelOutcomeCompact {
-    /// Name of the embedding model loaded.
-    pub model_name: String,
-    /// Embedding dimension.
-    pub dimension: usize,
-}
-
-impl Render for LoadModelOutcomeCompact {
-    fn render(&self) -> Vec<Block> {
-        vec![]
-    }
-}
-
-impl From<&LoadModelOutcome> for LoadModelOutcomeCompact {
-    fn from(o: &LoadModelOutcome) -> Self {
-        Self {
-            model_name: o.model_name.clone(),
-            dimension: o.dimension,
-        }
-    }
-}

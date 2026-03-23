@@ -7,7 +7,7 @@ use crate::outcome::{
     ReadIndexOutcome,
 };
 use crate::schema::config::MdvsToml;
-use crate::step::{ErrorKind, Step, StepError, StepOutcome};
+use crate::step::{CommandResult, ErrorKind, StepEntry, StepError};
 use std::path::Path;
 use std::time::Instant;
 use tracing::{instrument, warn};
@@ -55,9 +55,9 @@ pub async fn run(
     no_update: bool,
     no_build: bool,
     _verbose: bool,
-) -> Step<Outcome> {
+) -> CommandResult {
     let start = Instant::now();
-    let mut substeps = Vec::new();
+    let mut steps = Vec::new();
 
     // 1. Read config — calls MdvsToml::read() + validate() directly
     let config_start = Instant::now();
@@ -65,7 +65,7 @@ pub async fn run(
     let mut config = match MdvsToml::read(&config_path_buf) {
         Ok(cfg) => match cfg.validate() {
             Ok(()) => {
-                substeps.push(Step::leaf(
+                steps.push(StepEntry::ok(
                     Outcome::ReadConfig(ReadConfigOutcome {
                         config_path: config_path_buf.display().to_string(),
                     }),
@@ -74,7 +74,7 @@ pub async fn run(
                 Some(cfg)
             }
             Err(e) => {
-                substeps.push(Step::failed(
+                steps.push(StepEntry::err(
                     ErrorKind::User,
                     format!("mdvs.toml is invalid: {e} — fix the file or run 'mdvs init --force'"),
                     config_start.elapsed().as_millis() as u64,
@@ -83,7 +83,7 @@ pub async fn run(
             }
         },
         Err(e) => {
-            substeps.push(Step::failed(
+            steps.push(StepEntry::err(
                 ErrorKind::User,
                 e.to_string(),
                 config_start.elapsed().as_millis() as u64,
@@ -109,7 +109,7 @@ pub async fn run(
                 &config_path_buf,
                 false,
                 auto_update,
-                &mut substeps,
+                &mut steps,
             )
             .await
             {
@@ -117,7 +117,7 @@ pub async fn run(
                     build_embedder = embedder;
                 }
                 Err(()) => {
-                    return fail_msg(&mut substeps, start, ErrorKind::User, "auto-build failed");
+                    return fail_msg(&mut steps, start, ErrorKind::User, "auto-build failed");
                 }
             }
         }
@@ -131,7 +131,7 @@ pub async fn run(
             let index_start = Instant::now();
             let backend = Backend::parquet(path);
             if !backend.exists() {
-                substeps.push(Step::leaf(
+                steps.push(StepEntry::ok(
                     Outcome::ReadIndex(ReadIndexOutcome {
                         exists: false,
                         files_indexed: 0,
@@ -145,7 +145,7 @@ pub async fn run(
                 let idx_stats = backend.stats().ok().flatten();
                 match (build_meta, idx_stats) {
                     (Some(metadata), Some(stats)) => {
-                        substeps.push(Step::leaf(
+                        steps.push(StepEntry::ok(
                             Outcome::ReadIndex(ReadIndexOutcome {
                                 exists: true,
                                 files_indexed: stats.files_indexed,
@@ -156,7 +156,7 @@ pub async fn run(
                         Some(IndexData { metadata })
                     }
                     _ => {
-                        substeps.push(Step::leaf(
+                        steps.push(StepEntry::ok(
                             Outcome::ReadIndex(ReadIndexOutcome {
                                 exists: false,
                                 files_indexed: 0,
@@ -170,7 +170,7 @@ pub async fn run(
             }
         }
         None => {
-            return fail_from_last(&mut substeps, start);
+            return fail_from_last(&mut steps, start);
         }
     };
 
@@ -196,14 +196,14 @@ pub async fn run(
 
     // 3. Load model — calls ModelConfig::try_from() + Embedder::load() directly
     if let Some(msg) = pre_check_error {
-        substeps.push(Step::failed(ErrorKind::User, msg, 0));
-        return fail_from_last(&mut substeps, start);
+        steps.push(StepEntry::err(ErrorKind::User, msg, 0));
+        return fail_from_last(&mut steps, start);
     }
 
     // 3. Load model (reuse from build if available)
     let emb_config = embedding.unwrap();
     let embedder = if let Some(emb) = build_embedder {
-        substeps.push(Step::leaf(
+        steps.push(StepEntry::ok(
             Outcome::LoadModel(LoadModelOutcome {
                 model_name: emb_config.name.clone(),
                 dimension: emb.dimension(),
@@ -216,7 +216,7 @@ pub async fn run(
         match ModelConfig::try_from(emb_config) {
             Ok(mc) => match Embedder::load(&mc) {
                 Ok(emb) => {
-                    substeps.push(Step::leaf(
+                    steps.push(StepEntry::ok(
                         Outcome::LoadModel(LoadModelOutcome {
                             model_name: emb_config.name.clone(),
                             dimension: emb.dimension(),
@@ -226,21 +226,21 @@ pub async fn run(
                     emb
                 }
                 Err(e) => {
-                    substeps.push(Step::failed(
+                    steps.push(StepEntry::err(
                         ErrorKind::Application,
                         e.to_string(),
                         model_start.elapsed().as_millis() as u64,
                     ));
-                    return fail_from_last(&mut substeps, start);
+                    return fail_from_last(&mut steps, start);
                 }
             },
             Err(e) => {
-                substeps.push(Step::failed(
+                steps.push(StepEntry::err(
                     ErrorKind::Application,
                     e.to_string(),
                     model_start.elapsed().as_millis() as u64,
                 ));
-                return fail_from_last(&mut substeps, start);
+                return fail_from_last(&mut steps, start);
             }
         }
     };
@@ -248,7 +248,7 @@ pub async fn run(
     // 4. Embed query — calls embedder.embed() directly (infallible)
     let embed_start = Instant::now();
     let query_embedding = embedder.embed(query).await;
-    substeps.push(Step::leaf(
+    steps.push(StepEntry::ok(
         Outcome::EmbedQuery(EmbedQueryOutcome {
             query: query.to_string(),
         }),
@@ -265,8 +265,8 @@ pub async fn run(
 
     if let Some(w) = where_clause {
         if let Err(msg) = validate_where_clause(w) {
-            substeps.push(Step::failed(ErrorKind::User, msg, 0));
-            return fail_from_last(&mut substeps, start);
+            steps.push(StepEntry::err(ErrorKind::User, msg, 0));
+            return fail_from_last(&mut steps, start);
         }
     }
 
@@ -276,19 +276,19 @@ pub async fn run(
         .await
     {
         Ok(hits) => {
-            substeps.push(Step::leaf(
+            steps.push(StepEntry::ok(
                 Outcome::ExecuteSearch(ExecuteSearchOutcome { hits: hits.len() }),
                 search_start.elapsed().as_millis() as u64,
             ));
             hits
         }
         Err(e) => {
-            substeps.push(Step::failed(
+            steps.push(StepEntry::err(
                 ErrorKind::Application,
                 e.to_string(),
                 search_start.elapsed().as_millis() as u64,
             ));
-            return fail_from_last(&mut substeps, start);
+            return fail_from_last(&mut steps, start);
         }
     };
 
@@ -307,55 +307,49 @@ pub async fn run(
     }
 
     let model_name = emb_config.name.clone();
-    Step {
-        substeps,
-        outcome: StepOutcome::Complete {
-            result: Ok(Outcome::Search(Box::new(SearchOutcome {
-                query: query.to_string(),
-                hits,
-                model_name,
-                limit,
-            }))),
-            elapsed_ms: start.elapsed().as_millis() as u64,
-        },
+    CommandResult {
+        steps,
+        result: Ok(Outcome::Search(Box::new(SearchOutcome {
+            query: query.to_string(),
+            hits,
+            model_name,
+            limit,
+        }))),
+        elapsed_ms: start.elapsed().as_millis() as u64,
     }
 }
 
-fn fail_from_last(substeps: &mut Vec<Step<Outcome>>, start: Instant) -> Step<Outcome> {
-    let msg = match substeps.iter().rev().find_map(|s| match &s.outcome {
-        StepOutcome::Complete { result: Err(e), .. } => Some(e.message.clone()),
+fn fail_from_last(steps: &mut Vec<StepEntry>, start: Instant) -> CommandResult {
+    let msg = match steps.iter().rev().find_map(|s| match s {
+        StepEntry::Failed(f) => Some(f.message.clone()),
         _ => None,
     }) {
         Some(m) => m,
         None => "step failed".into(),
     };
-    Step {
-        substeps: std::mem::take(substeps),
-        outcome: StepOutcome::Complete {
-            result: Err(StepError {
-                kind: ErrorKind::Application,
-                message: msg,
-            }),
-            elapsed_ms: start.elapsed().as_millis() as u64,
-        },
+    CommandResult {
+        steps: std::mem::take(steps),
+        result: Err(StepError {
+            kind: ErrorKind::Application,
+            message: msg,
+        }),
+        elapsed_ms: start.elapsed().as_millis() as u64,
     }
 }
 
 fn fail_msg(
-    substeps: &mut Vec<Step<Outcome>>,
+    steps: &mut Vec<StepEntry>,
     start: Instant,
     kind: ErrorKind,
     msg: &str,
-) -> Step<Outcome> {
-    Step {
-        substeps: std::mem::take(substeps),
-        outcome: StepOutcome::Complete {
-            result: Err(StepError {
-                kind,
-                message: msg.into(),
-            }),
-            elapsed_ms: start.elapsed().as_millis() as u64,
-        },
+) -> CommandResult {
+    CommandResult {
+        steps: std::mem::take(steps),
+        result: Err(StepError {
+            kind,
+            message: msg.into(),
+        }),
+        elapsed_ms: start.elapsed().as_millis() as u64,
     }
 }
 
@@ -368,19 +362,16 @@ mod tests {
     use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig, ScanConfig};
     use std::fs;
 
-    fn unwrap_search(step: &Step<Outcome>) -> &SearchOutcome {
-        match &step.outcome {
-            StepOutcome::Complete {
-                result: Ok(Outcome::Search(o)),
-                ..
-            } => o,
+    fn unwrap_search(result: &CommandResult) -> &SearchOutcome {
+        match &result.result {
+            Ok(Outcome::Search(o)) => o,
             other => panic!("expected Ok(Search), got: {other:?}"),
         }
     }
 
-    fn unwrap_error(step: &Step<Outcome>) -> &StepError {
-        match &step.outcome {
-            StepOutcome::Complete { result: Err(e), .. } => e,
+    fn unwrap_error(result: &CommandResult) -> &StepError {
+        match &result.result {
+            Err(e) => e,
             other => panic!("expected Err, got: {other:?}"),
         }
     }
@@ -633,7 +624,7 @@ mod tests {
         )
         .await;
         // Should not fail with quote parity error
-        if let StepOutcome::Complete { result: Err(e), .. } = &output.outcome {
+        if let Err(e) = &output.result {
             assert!(
                 !e.message.contains("unmatched"),
                 "balanced quotes should not trigger parity check"

@@ -5,7 +5,7 @@ use crate::outcome::{InferOutcome, Outcome, ReadConfigOutcome, ScanOutcome, Writ
 use crate::output::{ChangedField, FieldChange, RemovedField};
 use crate::schema::config::{MdvsToml, TomlField};
 use crate::schema::shared::FieldTypeSerde;
-use crate::step::{ErrorKind, Step, StepError, StepOutcome};
+use crate::step::{CommandResult, ErrorKind, StepEntry, StepError};
 use std::collections::HashMap;
 use std::path::Path;
 use std::time::Instant;
@@ -20,14 +20,14 @@ pub async fn run(
     reinfer_all: bool,
     dry_run: bool,
     _verbose: bool,
-) -> Step<Outcome> {
+) -> CommandResult {
     let start = Instant::now();
-    let mut substeps = Vec::new();
+    let mut steps = Vec::new();
 
     // Pre-check: flag conflict
     if !reinfer.is_empty() && reinfer_all {
         return fail_early(
-            substeps,
+            steps,
             start,
             ErrorKind::User,
             "cannot use --reinfer and --reinfer-all together".into(),
@@ -40,7 +40,7 @@ pub async fn run(
     let mut config = match MdvsToml::read(&config_path_buf) {
         Ok(cfg) => match cfg.validate() {
             Ok(()) => {
-                substeps.push(Step::leaf(
+                steps.push(StepEntry::ok(
                     Outcome::ReadConfig(ReadConfigOutcome {
                         config_path: config_path_buf.display().to_string(),
                     }),
@@ -49,21 +49,21 @@ pub async fn run(
                 cfg
             }
             Err(e) => {
-                substeps.push(Step::failed(
+                steps.push(StepEntry::err(
                     ErrorKind::User,
                     format!("mdvs.toml is invalid: {e} — fix the file or run 'mdvs init --force'"),
                     config_start.elapsed().as_millis() as u64,
                 ));
-                return fail_from_last_substep(&mut substeps, start);
+                return fail_from_last_substep(&mut steps, start);
             }
         },
         Err(e) => {
-            substeps.push(Step::failed(
+            steps.push(StepEntry::err(
                 ErrorKind::User,
                 e.to_string(),
                 config_start.elapsed().as_millis() as u64,
             ));
-            return fail_from_last_substep(&mut substeps, start);
+            return fail_from_last_substep(&mut steps, start);
         }
     };
 
@@ -71,7 +71,7 @@ pub async fn run(
     for name in reinfer {
         if !config.fields.field.iter().any(|f| f.name == *name) {
             return fail_early(
-                std::mem::take(&mut substeps),
+                std::mem::take(&mut steps),
                 start,
                 ErrorKind::User,
                 format!("field '{name}' is not in mdvs.toml"),
@@ -83,7 +83,7 @@ pub async fn run(
     let scan_start = Instant::now();
     let scanned = match ScannedFiles::scan(path, &config.scan) {
         Ok(s) => {
-            substeps.push(Step::leaf(
+            steps.push(StepEntry::ok(
                 Outcome::Scan(ScanOutcome {
                     files_found: s.files.len(),
                     glob: config.scan.glob.clone(),
@@ -93,19 +93,19 @@ pub async fn run(
             s
         }
         Err(e) => {
-            substeps.push(Step::failed(
+            steps.push(StepEntry::err(
                 ErrorKind::Application,
                 e.to_string(),
                 scan_start.elapsed().as_millis() as u64,
             ));
-            return fail_from_last_substep(&mut substeps, start);
+            return fail_from_last_substep(&mut steps, start);
         }
     };
 
     // 3. Infer — InferredSchema::infer() is infallible
     let infer_start = Instant::now();
     let schema = InferredSchema::infer(&scanned);
-    substeps.push(Step::leaf(
+    steps.push(StepEntry::ok(
         Outcome::Infer(InferOutcome {
             fields_inferred: schema.fields.len(),
         }),
@@ -216,7 +216,7 @@ pub async fn run(
 
     // 4. Write config (Skipped if dry_run or no changes)
     if dry_run || !has_changes {
-        substeps.push(Step::skipped());
+        steps.push(StepEntry::skipped());
     } else {
         let write_start = Instant::now();
         let write_path = path.join("mdvs.toml");
@@ -224,7 +224,7 @@ pub async fn run(
 
         match config.write(&write_path) {
             Ok(()) => {
-                substeps.push(Step::leaf(
+                steps.push(StepEntry::ok(
                     Outcome::WriteConfig(WriteConfigOutcome {
                         config_path: write_path.display().to_string(),
                         fields_written: config.fields.field.len(),
@@ -233,70 +233,62 @@ pub async fn run(
                 ));
             }
             Err(e) => {
-                substeps.push(Step::failed(
+                steps.push(StepEntry::err(
                     ErrorKind::Application,
                     e.to_string(),
                     write_start.elapsed().as_millis() as u64,
                 ));
-                return Step {
-                    substeps,
-                    outcome: StepOutcome::Complete {
-                        result: Err(StepError {
-                            kind: ErrorKind::Application,
-                            message: "failed to write config".into(),
-                        }),
-                        elapsed_ms: start.elapsed().as_millis() as u64,
-                    },
+                return CommandResult {
+                    steps,
+                    result: Err(StepError {
+                        kind: ErrorKind::Application,
+                        message: "failed to write config".into(),
+                    }),
+                    elapsed_ms: start.elapsed().as_millis() as u64,
                 };
             }
         }
     }
 
-    Step {
-        substeps,
-        outcome: StepOutcome::Complete {
-            result: Ok(Outcome::Update(Box::new(UpdateOutcome {
-                files_scanned: total_files,
-                added,
-                changed,
-                removed,
-                unchanged,
-                dry_run,
-            }))),
-            elapsed_ms: start.elapsed().as_millis() as u64,
-        },
+    CommandResult {
+        steps,
+        result: Ok(Outcome::Update(Box::new(UpdateOutcome {
+            files_scanned: total_files,
+            added,
+            changed,
+            removed,
+            unchanged,
+            dry_run,
+        }))),
+        elapsed_ms: start.elapsed().as_millis() as u64,
     }
 }
 
 fn fail_early(
-    substeps: Vec<Step<Outcome>>,
+    steps: Vec<StepEntry>,
     start: Instant,
     kind: ErrorKind,
     message: String,
-) -> Step<Outcome> {
-    Step {
-        substeps,
-        outcome: StepOutcome::Complete {
-            result: Err(StepError { kind, message }),
-            elapsed_ms: start.elapsed().as_millis() as u64,
-        },
+) -> CommandResult {
+    CommandResult {
+        steps,
+        result: Err(StepError { kind, message }),
+        elapsed_ms: start.elapsed().as_millis() as u64,
     }
 }
 
-fn fail_from_last_substep(substeps: &mut Vec<Step<Outcome>>, start: Instant) -> Step<Outcome> {
-    let msg = match substeps.last().map(|s| &s.outcome) {
-        Some(StepOutcome::Complete { result: Err(e), .. }) => e.message.clone(),
+fn fail_from_last_substep(steps: &mut Vec<StepEntry>, start: Instant) -> CommandResult {
+    let msg = match steps.last() {
+        Some(StepEntry::Failed(f)) => f.message.clone(),
         _ => "step failed".into(),
     };
-    Step {
-        substeps: std::mem::take(substeps),
-        outcome: StepOutcome::Complete {
-            result: Err(StepError {
-                kind: ErrorKind::Application,
-                message: msg,
-            }),
-            elapsed_ms: start.elapsed().as_millis() as u64,
-        },
+    CommandResult {
+        steps: std::mem::take(steps),
+        result: Err(StepError {
+            kind: ErrorKind::Application,
+            message: msg,
+        }),
+        elapsed_ms: start.elapsed().as_millis() as u64,
     }
 }
 
@@ -309,12 +301,9 @@ mod tests {
     use crate::schema::shared::{FieldTypeSerde, ScanConfig};
     use std::fs;
 
-    fn unwrap_update(step: &Step<Outcome>) -> &UpdateOutcome {
-        match &step.outcome {
-            StepOutcome::Complete {
-                result: Ok(Outcome::Update(o)),
-                ..
-            } => o,
+    fn unwrap_update(result: &CommandResult) -> &UpdateOutcome {
+        match &result.result {
+            Ok(Outcome::Update(o)) => o,
             other => panic!("expected Ok(Update), got: {other:?}"),
         }
     }

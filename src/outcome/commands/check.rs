@@ -3,10 +3,7 @@
 use serde::Serialize;
 
 use crate::block::{Block, Render, TableStyle};
-use crate::output::{
-    format_file_count, FieldViolation, FieldViolationCompact, NewField, NewFieldCompact,
-    ViolationKind,
-};
+use crate::output::{format_file_count, FieldViolation, NewField, ViolationKind};
 
 /// Full outcome for the check command.
 #[derive(Debug, Serialize)]
@@ -102,97 +99,5 @@ impl Render for CheckOutcome {
         }
 
         blocks
-    }
-}
-
-/// Compact outcome for the check command.
-#[derive(Debug, Serialize)]
-pub struct CheckOutcomeCompact {
-    /// Number of markdown files checked.
-    pub files_checked: usize,
-    /// Compact violations (field + kind + count).
-    pub violations: Vec<FieldViolationCompact>,
-    /// Compact new fields (name + count).
-    pub new_fields: Vec<NewFieldCompact>,
-}
-
-impl Render for CheckOutcomeCompact {
-    fn render(&self) -> Vec<Block> {
-        let mut blocks = vec![];
-
-        let violation_part = if self.violations.is_empty() {
-            "no violations".to_string()
-        } else {
-            format!("{} violation(s)", self.violations.len())
-        };
-        let new_field_part = if self.new_fields.is_empty() {
-            String::new()
-        } else {
-            format!(", {} new field(s)", self.new_fields.len())
-        };
-        blocks.push(Block::Line(format!(
-            "Checked {} — {violation_part}{new_field_part}",
-            format_file_count(self.files_checked),
-        )));
-
-        if !self.violations.is_empty() {
-            let rows: Vec<Vec<String>> = self
-                .violations
-                .iter()
-                .map(|v| {
-                    let kind_str = match v.kind {
-                        ViolationKind::MissingRequired => "MissingRequired",
-                        ViolationKind::WrongType => "WrongType",
-                        ViolationKind::Disallowed => "Disallowed",
-                        ViolationKind::NullNotAllowed => "NullNotAllowed",
-                    };
-                    vec![
-                        format!("\"{}\"", v.field),
-                        kind_str.to_string(),
-                        format_file_count(v.file_count),
-                    ]
-                })
-                .collect();
-            blocks.push(Block::Table {
-                headers: None,
-                rows,
-                style: TableStyle::Compact,
-            });
-        }
-
-        if !self.new_fields.is_empty() {
-            let rows: Vec<Vec<String>> = self
-                .new_fields
-                .iter()
-                .map(|nf| {
-                    vec![
-                        format!("\"{}\"", nf.name),
-                        "new".to_string(),
-                        format_file_count(nf.files_found),
-                    ]
-                })
-                .collect();
-            blocks.push(Block::Table {
-                headers: None,
-                rows,
-                style: TableStyle::Compact,
-            });
-        }
-
-        blocks
-    }
-}
-
-impl From<&CheckOutcome> for CheckOutcomeCompact {
-    fn from(o: &CheckOutcome) -> Self {
-        Self {
-            files_checked: o.files_checked,
-            violations: o
-                .violations
-                .iter()
-                .map(FieldViolationCompact::from)
-                .collect(),
-            new_fields: o.new_fields.iter().map(NewFieldCompact::from).collect(),
-        }
     }
 }

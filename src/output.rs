@@ -83,33 +83,6 @@ pub struct DiscoveredField {
     pub hints: Vec<FieldHint>,
 }
 
-/// Compact version of [`DiscoveredField`] — summary only, no globs or hints.
-#[derive(Debug, Serialize)]
-pub struct DiscoveredFieldCompact {
-    /// Field name.
-    pub name: String,
-    /// Inferred type.
-    pub field_type: String,
-    /// Number of files containing this field.
-    pub files_found: usize,
-    /// Total scanned files.
-    pub total_files: usize,
-    /// Whether null values are accepted.
-    pub nullable: bool,
-}
-
-impl From<&DiscoveredField> for DiscoveredFieldCompact {
-    fn from(f: &DiscoveredField) -> Self {
-        Self {
-            name: f.name.clone(),
-            field_type: f.field_type.clone(),
-            files_found: f.files_found,
-            total_files: f.total_files,
-            nullable: f.nullable,
-        }
-    }
-}
-
 /// A field whose definition changed between the previous and current scan.
 #[derive(Debug, Serialize)]
 pub struct ChangedField {
@@ -195,39 +168,6 @@ pub struct RemovedField {
     pub allowed: Option<Vec<String>>,
 }
 
-/// Compact version of [`ChangedField`] — aspect labels only, no old/new values.
-#[derive(Debug, Serialize)]
-pub struct ChangedFieldCompact {
-    /// Field name.
-    pub name: String,
-    /// Labels of aspects that changed (e.g. `["type", "allowed"]`).
-    pub aspects: Vec<String>,
-}
-
-impl From<&ChangedField> for ChangedFieldCompact {
-    fn from(f: &ChangedField) -> Self {
-        Self {
-            name: f.name.clone(),
-            aspects: f.changes.iter().map(|c| c.label().to_string()).collect(),
-        }
-    }
-}
-
-/// Compact version of [`RemovedField`] — name only, no globs.
-#[derive(Debug, Serialize)]
-pub struct RemovedFieldCompact {
-    /// Field name.
-    pub name: String,
-}
-
-impl From<&RemovedField> for RemovedFieldCompact {
-    fn from(f: &RemovedField) -> Self {
-        Self {
-            name: f.name.clone(),
-        }
-    }
-}
-
 /// Category of a frontmatter validation failure.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub enum ViolationKind {
@@ -273,45 +213,6 @@ pub struct NewField {
     /// Paths of files containing this field (verbose only).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub files: Option<Vec<PathBuf>>,
-}
-
-/// Compact version of [`FieldViolation`] — summary counts, no file paths.
-#[derive(Debug, Serialize)]
-pub struct FieldViolationCompact {
-    /// Name of the frontmatter field.
-    pub field: String,
-    /// What kind of violation occurred.
-    pub kind: ViolationKind,
-    /// Number of files that triggered this violation.
-    pub file_count: usize,
-}
-
-impl From<&FieldViolation> for FieldViolationCompact {
-    fn from(v: &FieldViolation) -> Self {
-        Self {
-            field: v.field.clone(),
-            kind: v.kind.clone(),
-            file_count: v.files.len(),
-        }
-    }
-}
-
-/// Compact version of [`NewField`] — name and count only, no file paths.
-#[derive(Debug, Serialize)]
-pub struct NewFieldCompact {
-    /// Field name.
-    pub name: String,
-    /// Number of files containing this field.
-    pub files_found: usize,
-}
-
-impl From<&NewField> for NewFieldCompact {
-    fn from(nf: &NewField) -> Self {
-        Self {
-            name: nf.name.clone(),
-            files_found: nf.files_found,
-        }
-    }
 }
 
 /// Per-file chunk count for build output.

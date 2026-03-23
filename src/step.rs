@@ -1,93 +1,69 @@
-//! Core Step tree types for structured command output.
+//! Flat command result types for structured output.
 //!
-//! Every command returns a `Step<O>` tree where `O` is the outcome type.
-//! Leaf steps (scan, validate, etc.) have empty substeps. Commands (build,
-//! search, etc.) have populated substeps forming a tree that mirrors the
-//! execution pipeline.
-//!
-//! Two instantiations: `Step<Outcome>` (full data, verbose) and
-//! `Step<CompactOutcome>` (summary data, compact). Conversion between
-//! them is recursive via `to_compact()`.
+//! Every command returns a `CommandResult` with a flat list of process steps
+//! and a final result. No recursive nesting — steps are always leaf entries.
 
 use crate::block::{Block, Render};
-use crate::outcome::{CompactOutcome, Outcome};
+use crate::outcome::Outcome;
 use serde::ser::SerializeMap;
 use serde::{Serialize, Serializer};
 
-/// A Step tree with full outcome data (verbose mode).
-pub type FullStep = Step<Outcome>;
-
-/// A Step tree with compact outcome data (compact mode).
-pub type CompactStep = Step<CompactOutcome>;
-
-/// A node in the execution tree.
-///
-/// Leaf steps have `substeps: vec![]`. Commands have populated substeps
-/// representing the pipeline stages that ran.
+/// A process step that completed successfully.
 #[derive(Debug)]
-pub struct Step<O> {
-    /// Child steps that ran as part of this step's pipeline.
-    pub substeps: Vec<Step<O>>,
-    /// The outcome of this step itself.
-    pub outcome: StepOutcome<O>,
+pub struct ProcessStep {
+    /// The step's typed outcome data.
+    pub outcome: Outcome,
+    /// Wall-clock time for this step in milliseconds.
+    pub elapsed_ms: u64,
 }
 
-/// The result of executing a step.
+/// A process step that failed.
 #[derive(Debug)]
-pub enum StepOutcome<O> {
-    /// The step ran, producing a successful outcome or an error.
-    Complete {
-        /// The step's result: `Ok` with outcome data, or `Err` with error details.
-        result: Result<O, StepError>,
-        /// Wall-clock time for this step in milliseconds.
-        elapsed_ms: u64,
-    },
-    /// The step was skipped (upstream failure, not needed, !verbose, etc.).
+pub struct FailedStep {
+    /// Whether this is a user error or application error.
+    pub kind: ErrorKind,
+    /// Human-readable error message.
+    pub message: String,
+    /// Wall-clock time before failure in milliseconds.
+    pub elapsed_ms: u64,
+}
+
+/// An entry in the command's step list.
+#[derive(Debug)]
+pub enum StepEntry {
+    /// The step ran successfully.
+    Completed(ProcessStep),
+    /// The step failed.
+    Failed(FailedStep),
+    /// The step was skipped (not needed based on command logic).
     Skipped,
 }
 
-impl<O> StepOutcome<O> {
-    /// Returns the elapsed time if the step completed, `None` if skipped.
-    pub fn elapsed_ms(&self) -> Option<u64> {
-        match self {
-            Self::Complete { elapsed_ms, .. } => Some(*elapsed_ms),
-            Self::Skipped => None,
-        }
+impl StepEntry {
+    /// Create a successful step entry.
+    pub fn ok(outcome: Outcome, elapsed_ms: u64) -> Self {
+        Self::Completed(ProcessStep {
+            outcome,
+            elapsed_ms,
+        })
+    }
+
+    /// Create a failed step entry.
+    pub fn err(kind: ErrorKind, message: String, elapsed_ms: u64) -> Self {
+        Self::Failed(FailedStep {
+            kind,
+            message,
+            elapsed_ms,
+        })
+    }
+
+    /// Create a skipped step entry.
+    pub fn skipped() -> Self {
+        Self::Skipped
     }
 }
 
-impl Step<Outcome> {
-    /// Recursively convert the full tree to a compact tree.
-    ///
-    /// Each outcome is converted via `Outcome::to_compact()`, which may
-    /// read substep data for command-level summaries. Errors and Skipped
-    /// outcomes are preserved as-is.
-    pub fn to_compact(&self) -> Step<CompactOutcome> {
-        let compact_outcome = match &self.outcome {
-            StepOutcome::Complete {
-                result: Ok(outcome),
-                elapsed_ms,
-            } => StepOutcome::Complete {
-                result: Ok(outcome.to_compact(&self.substeps)),
-                elapsed_ms: *elapsed_ms,
-            },
-            StepOutcome::Complete {
-                result: Err(e),
-                elapsed_ms,
-            } => StepOutcome::Complete {
-                result: Err(e.clone()),
-                elapsed_ms: *elapsed_ms,
-            },
-            StepOutcome::Skipped => StepOutcome::Skipped,
-        };
-        Step {
-            substeps: self.substeps.iter().map(|s| s.to_compact()).collect(),
-            outcome: compact_outcome,
-        }
-    }
-}
-
-/// An error that occurred during a step.
+/// An error that occurred during a step or command.
 #[derive(Debug, Clone, Serialize)]
 pub struct StepError {
     /// Whether this is a user error (bad input) or application error (internal failure).
@@ -106,90 +82,145 @@ pub enum ErrorKind {
     Application,
 }
 
-impl<O> Step<O> {
-    /// Create a leaf step (no substeps) with a successful outcome.
-    pub fn leaf(outcome: O, elapsed_ms: u64) -> Self {
-        Self {
-            substeps: vec![],
-            outcome: StepOutcome::Complete {
-                result: Ok(outcome),
-                elapsed_ms,
-            },
-        }
+/// Result of running a command.
+///
+/// Contains a flat list of process steps and a final result (success or error).
+#[derive(Debug)]
+pub struct CommandResult {
+    /// Process steps that ran (or were skipped) during this command.
+    pub steps: Vec<StepEntry>,
+    /// The command's final result: `Ok` with outcome data, or `Err` with error details.
+    pub result: Result<Outcome, StepError>,
+    /// Total wall-clock time for the entire command in milliseconds.
+    pub elapsed_ms: u64,
+}
+
+impl CommandResult {
+    /// Returns a reference to the successful outcome value, if any.
+    pub fn result_value(&self) -> Option<&Outcome> {
+        self.result.as_ref().ok()
     }
 
-    /// Create a leaf step with a failed outcome.
-    pub fn failed(kind: ErrorKind, message: String, elapsed_ms: u64) -> Self {
-        Self {
-            substeps: vec![],
-            outcome: StepOutcome::Complete {
-                result: Err(StepError { kind, message }),
-                elapsed_ms,
-            },
+    /// Render verbose output: process step lines + command outcome.
+    pub fn render_verbose(&self) -> Vec<Block> {
+        let mut blocks = vec![];
+
+        // Render each step with timing
+        for entry in &self.steps {
+            blocks.extend(entry.render());
         }
+
+        // Render command outcome
+        match &self.result {
+            Ok(outcome) => blocks.extend(outcome.render()),
+            Err(e) => blocks.push(Block::Line(format!("Error: {}", e.message))),
+        }
+
+        blocks
     }
 
-    /// Create a skipped step.
-    pub fn skipped() -> Self {
-        Self {
-            substeps: vec![],
-            outcome: StepOutcome::Skipped,
+    /// Render compact output: command outcome only.
+    pub fn render_compact(&self) -> Vec<Block> {
+        match &self.result {
+            Ok(outcome) => outcome.render(),
+            Err(e) => vec![Block::Line(format!("Error: {}", e.message))],
         }
     }
 }
 
 // --- Free functions ---
 
-/// Returns `true` if any step in the tree failed (has `Err` outcome).
-pub fn has_failed<O>(step: &Step<O>) -> bool {
-    step.substeps.iter().any(|s| has_failed(s))
-        || matches!(step.outcome, StepOutcome::Complete { result: Err(_), .. })
+/// Returns `true` if the command or any step failed.
+pub fn has_failed(result: &CommandResult) -> bool {
+    result.result.is_err()
+        || result
+            .steps
+            .iter()
+            .any(|s| matches!(s, StepEntry::Failed(_)))
 }
 
-/// Returns `true` if any step in the tree contains validation violations.
-pub fn has_violations(step: &Step<Outcome>) -> bool {
-    step.substeps.iter().any(has_violations)
-        || match &step.outcome {
-            StepOutcome::Complete {
-                result: Ok(outcome),
-                ..
-            } => outcome.contains_violations(),
+/// Returns `true` if any outcome contains validation violations.
+pub fn has_violations(result: &CommandResult) -> bool {
+    let command_violations = match &result.result {
+        Ok(outcome) => outcome.contains_violations(),
+        Err(_) => false,
+    };
+    command_violations
+        || result.steps.iter().any(|s| match s {
+            StepEntry::Completed(ps) => ps.outcome.contains_violations(),
             _ => false,
-        }
+        })
 }
 
-// --- Serialize impls (hand-written, not derived) ---
+// --- Render impl for StepEntry ---
 
-impl<O: Serialize> Serialize for Step<O> {
+impl Render for StepEntry {
+    fn render(&self) -> Vec<Block> {
+        match self {
+            Self::Completed(ps) => {
+                let outcome_blocks = ps.outcome.render();
+                // Inject timing into the first Block::Line
+                let mut result = vec![];
+                let mut injected = false;
+                for block in outcome_blocks {
+                    if !injected {
+                        if let Block::Line(text) = block {
+                            result.push(Block::Line(format!("{text} ({}ms)", ps.elapsed_ms)));
+                            injected = true;
+                            continue;
+                        }
+                    }
+                    result.push(block);
+                }
+                result
+            }
+            Self::Failed(fs) => {
+                vec![Block::Line(format!(
+                    "Error: {} ({}ms)",
+                    fs.message, fs.elapsed_ms
+                ))]
+            }
+            Self::Skipped => vec![],
+        }
+    }
+}
+
+// --- Serialize impls ---
+
+impl Serialize for CommandResult {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut map = serializer.serialize_map(Some(2))?;
-        map.serialize_entry("substeps", &self.substeps)?;
-        map.serialize_entry("outcome", &self.outcome)?;
+        let mut map = serializer.serialize_map(None)?;
+        map.serialize_entry("steps", &self.steps)?;
+        match &self.result {
+            Ok(outcome) => map.serialize_entry("result", outcome)?,
+            Err(error) => map.serialize_entry("error", error)?,
+        }
+        map.serialize_entry("elapsed_ms", &self.elapsed_ms)?;
         map.end()
     }
 }
 
-impl<O: Serialize> Serialize for StepOutcome<O> {
+impl Serialize for StepEntry {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self {
-            Self::Complete {
-                result: Ok(outcome),
-                elapsed_ms,
-            } => {
+            Self::Completed(ps) => {
                 let mut map = serializer.serialize_map(Some(3))?;
                 map.serialize_entry("status", "complete")?;
-                map.serialize_entry("elapsed_ms", elapsed_ms)?;
-                map.serialize_entry("outcome", outcome)?;
+                map.serialize_entry("elapsed_ms", &ps.elapsed_ms)?;
+                map.serialize_entry("outcome", &ps.outcome)?;
                 map.end()
             }
-            Self::Complete {
-                result: Err(error),
-                elapsed_ms,
-            } => {
+            Self::Failed(fs) => {
                 let mut map = serializer.serialize_map(Some(3))?;
                 map.serialize_entry("status", "failed")?;
-                map.serialize_entry("elapsed_ms", elapsed_ms)?;
-                map.serialize_entry("error", error)?;
+                map.serialize_entry("elapsed_ms", &fs.elapsed_ms)?;
+                map.serialize_entry(
+                    "error",
+                    &StepError {
+                        kind: fs.kind.clone(),
+                        message: fs.message.clone(),
+                    },
+                )?;
                 map.end()
             }
             Self::Skipped => {
@@ -201,153 +232,102 @@ impl<O: Serialize> Serialize for StepOutcome<O> {
     }
 }
 
-// --- Render impls ---
-
-impl<O: Render> Render for Step<O> {
-    fn render(&self) -> Vec<Block> {
-        let mut blocks = vec![];
-
-        // Render all substeps first
-        for substep in &self.substeps {
-            blocks.extend(substep.render());
-        }
-
-        // Render own outcome — with timing injection for leaf steps
-        let outcome_blocks = self.outcome.render();
-        if self.substeps.is_empty() {
-            // Leaf step: inject elapsed_ms into the first Block::Line
-            if let Some(elapsed) = self.outcome.elapsed_ms() {
-                let mut injected = false;
-                for block in outcome_blocks {
-                    if !injected {
-                        if let Block::Line(text) = block {
-                            blocks.push(Block::Line(format!("{text} ({elapsed}ms)")));
-                            injected = true;
-                            continue;
-                        }
-                    }
-                    blocks.push(block);
-                }
-            } else {
-                blocks.extend(outcome_blocks);
-            }
-        } else {
-            // Command step: no timing injection, outcome renders as-is
-            blocks.extend(outcome_blocks);
-        }
-
-        blocks
-    }
-}
-
-impl<O: Render> Render for StepOutcome<O> {
-    fn render(&self) -> Vec<Block> {
-        match self {
-            Self::Complete {
-                result: Ok(outcome),
-                ..
-            } => outcome.render(),
-            Self::Complete { result: Err(e), .. } => {
-                vec![Block::Line(format!("Error: {}", e.message))]
-            }
-            Self::Skipped => vec![],
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::outcome::{CleanOutcome, DeleteIndexOutcome, Outcome};
+    use std::path::PathBuf;
 
     #[test]
-    fn leaf_step_complete() {
-        let step: Step<String> = Step {
-            substeps: vec![],
-            outcome: StepOutcome::Complete {
-                result: Ok("scanned 5 files".to_string()),
-                elapsed_ms: 42,
-            },
-        };
-        assert_eq!(step.outcome.elapsed_ms(), Some(42));
-        assert!(step.substeps.is_empty());
+    fn step_entry_ok() {
+        let entry = StepEntry::ok(
+            Outcome::Scan(crate::outcome::ScanOutcome {
+                files_found: 5,
+                glob: "**".into(),
+            }),
+            42,
+        );
+        assert!(matches!(entry, StepEntry::Completed(_)));
     }
 
     #[test]
-    fn leaf_step_failed() {
-        let step: Step<String> = Step {
-            substeps: vec![],
-            outcome: StepOutcome::Complete {
-                result: Err(StepError {
-                    kind: ErrorKind::User,
-                    message: "config not found".into(),
+    fn step_entry_err() {
+        let entry = StepEntry::err(ErrorKind::User, "not found".into(), 2);
+        assert!(matches!(entry, StepEntry::Failed(_)));
+    }
+
+    #[test]
+    fn step_entry_skipped() {
+        let entry = StepEntry::skipped();
+        assert!(matches!(entry, StepEntry::Skipped));
+    }
+
+    #[test]
+    fn command_result_has_failed_on_err() {
+        let result = CommandResult {
+            steps: vec![],
+            result: Err(StepError {
+                kind: ErrorKind::User,
+                message: "config not found".into(),
+            }),
+            elapsed_ms: 2,
+        };
+        assert!(has_failed(&result));
+    }
+
+    #[test]
+    fn command_result_has_failed_on_step_failure() {
+        let result = CommandResult {
+            steps: vec![StepEntry::err(
+                ErrorKind::Application,
+                "scan failed".into(),
+                0,
+            )],
+            result: Ok(Outcome::Clean(CleanOutcome {
+                removed: true,
+                path: PathBuf::from(".mdvs"),
+                files_removed: 1,
+                size_bytes: 100,
+            })),
+            elapsed_ms: 5,
+        };
+        assert!(has_failed(&result));
+    }
+
+    #[test]
+    fn command_result_success() {
+        let result = CommandResult {
+            steps: vec![StepEntry::ok(
+                Outcome::DeleteIndex(DeleteIndexOutcome {
+                    removed: true,
+                    path: ".mdvs".into(),
+                    files_removed: 2,
+                    size_bytes: 1024,
                 }),
-                elapsed_ms: 2,
-            },
+                3,
+            )],
+            result: Ok(Outcome::Clean(CleanOutcome {
+                removed: true,
+                path: PathBuf::from(".mdvs"),
+                files_removed: 2,
+                size_bytes: 1024,
+            })),
+            elapsed_ms: 5,
         };
-        assert_eq!(step.outcome.elapsed_ms(), Some(2));
-        match &step.outcome {
-            StepOutcome::Complete { result: Err(e), .. } => {
-                assert_eq!(e.message, "config not found");
-            }
-            _ => panic!("expected failed step"),
-        }
+        assert!(!has_failed(&result));
+        assert!(result.result_value().is_some());
     }
 
     #[test]
-    fn skipped_step() {
-        let step: Step<String> = Step {
-            substeps: vec![],
-            outcome: StepOutcome::Skipped,
-        };
-        assert_eq!(step.outcome.elapsed_ms(), None);
-    }
-
-    #[test]
-    fn step_tree_with_substeps() {
-        let leaf1: Step<String> = Step {
-            substeps: vec![],
-            outcome: StepOutcome::Complete {
-                result: Ok("scan".into()),
-                elapsed_ms: 10,
-            },
-        };
-        let leaf2: Step<String> = Step {
-            substeps: vec![],
-            outcome: StepOutcome::Complete {
-                result: Ok("validate".into()),
-                elapsed_ms: 5,
-            },
-        };
-        let command: Step<String> = Step {
-            substeps: vec![leaf1, leaf2],
-            outcome: StepOutcome::Complete {
-                result: Ok("build complete".into()),
-                elapsed_ms: 15,
-            },
-        };
-        assert_eq!(command.substeps.len(), 2);
-        assert_eq!(command.outcome.elapsed_ms(), Some(15));
-    }
-
-    // --- Render tests ---
-
-    /// Implement Render for String so we can test Step<String> rendering.
-    impl Render for String {
-        fn render(&self) -> Vec<Block> {
-            vec![Block::Line(self.clone())]
-        }
-    }
-
-    #[test]
-    fn render_leaf_step_injects_timing() {
-        let step: Step<String> = Step {
-            substeps: vec![],
-            outcome: StepOutcome::Complete {
-                result: Ok("Scan: 43 files".into()),
-                elapsed_ms: 15,
-            },
-        };
-        let blocks = step.render();
+    fn render_step_entry_with_timing() {
+        let entry = StepEntry::ok(
+            Outcome::Scan(crate::outcome::ScanOutcome {
+                files_found: 43,
+                glob: "**".into(),
+            }),
+            15,
+        );
+        let blocks = entry.render();
         assert_eq!(blocks.len(), 1);
         match &blocks[0] {
             Block::Line(s) => assert_eq!(s, "Scan: 43 files (15ms)"),
@@ -356,58 +336,9 @@ mod tests {
     }
 
     #[test]
-    fn render_command_step_no_timing() {
-        let leaf: Step<String> = Step {
-            substeps: vec![],
-            outcome: StepOutcome::Complete {
-                result: Ok("Scan: 5 files".into()),
-                elapsed_ms: 10,
-            },
-        };
-        let command: Step<String> = Step {
-            substeps: vec![leaf],
-            outcome: StepOutcome::Complete {
-                result: Ok("Built index".into()),
-                elapsed_ms: 100,
-            },
-        };
-        let blocks = command.render();
-        assert_eq!(blocks.len(), 2);
-        // First block: substep with timing
-        match &blocks[0] {
-            Block::Line(s) => assert_eq!(s, "Scan: 5 files (10ms)"),
-            _ => panic!("expected Line"),
-        }
-        // Second block: command outcome WITHOUT timing
-        match &blocks[1] {
-            Block::Line(s) => assert_eq!(s, "Built index"),
-            _ => panic!("expected Line"),
-        }
-    }
-
-    #[test]
-    fn render_skipped_step_empty() {
-        let step: Step<String> = Step {
-            substeps: vec![],
-            outcome: StepOutcome::Skipped,
-        };
-        let blocks = step.render();
-        assert!(blocks.is_empty());
-    }
-
-    #[test]
-    fn render_error_step() {
-        let step: Step<String> = Step {
-            substeps: vec![],
-            outcome: StepOutcome::Complete {
-                result: Err(StepError {
-                    kind: ErrorKind::User,
-                    message: "config not found".into(),
-                }),
-                elapsed_ms: 2,
-            },
-        };
-        let blocks = step.render();
+    fn render_failed_step() {
+        let entry = StepEntry::err(ErrorKind::User, "config not found".into(), 2);
+        let blocks = entry.render();
         assert_eq!(blocks.len(), 1);
         match &blocks[0] {
             Block::Line(s) => assert_eq!(s, "Error: config not found (2ms)"),
@@ -416,23 +347,107 @@ mod tests {
     }
 
     #[test]
-    fn render_empty_outcome_no_timing_crash() {
-        // An outcome that renders to empty vec — timing injection does nothing
-        struct EmptyOutcome;
-        impl Render for EmptyOutcome {
-            fn render(&self) -> Vec<Block> {
-                vec![]
-            }
-        }
-        let step: Step<EmptyOutcome> = Step {
-            substeps: vec![],
-            outcome: StepOutcome::Complete {
-                result: Ok(EmptyOutcome),
-                elapsed_ms: 5,
-            },
+    fn render_skipped_step_empty() {
+        let entry = StepEntry::skipped();
+        assert!(entry.render().is_empty());
+    }
+
+    #[test]
+    fn render_verbose() {
+        let result = CommandResult {
+            steps: vec![StepEntry::ok(
+                Outcome::Scan(crate::outcome::ScanOutcome {
+                    files_found: 5,
+                    glob: "**".into(),
+                }),
+                10,
+            )],
+            result: Ok(Outcome::Clean(CleanOutcome {
+                removed: true,
+                path: PathBuf::from(".mdvs"),
+                files_removed: 1,
+                size_bytes: 100,
+            })),
+            elapsed_ms: 15,
         };
-        let blocks = step.render();
-        assert!(blocks.is_empty());
+        let blocks = result.render_verbose();
+        assert_eq!(blocks.len(), 3); // step line + 2 clean lines
+        match &blocks[0] {
+            Block::Line(s) => assert!(s.contains("Scan") && s.contains("(10ms)")),
+            _ => panic!("expected Line"),
+        }
+    }
+
+    #[test]
+    fn render_compact_no_steps() {
+        let result = CommandResult {
+            steps: vec![StepEntry::ok(
+                Outcome::Scan(crate::outcome::ScanOutcome {
+                    files_found: 5,
+                    glob: "**".into(),
+                }),
+                10,
+            )],
+            result: Ok(Outcome::Clean(CleanOutcome {
+                removed: true,
+                path: PathBuf::from(".mdvs"),
+                files_removed: 1,
+                size_bytes: 100,
+            })),
+            elapsed_ms: 15,
+        };
+        let blocks = result.render_compact();
+        assert_eq!(blocks.len(), 2); // 2 clean lines, no step line
+    }
+
+    #[test]
+    fn serialize_verbose_json() {
+        let result = CommandResult {
+            steps: vec![StepEntry::ok(
+                Outcome::DeleteIndex(DeleteIndexOutcome {
+                    removed: true,
+                    path: ".mdvs".into(),
+                    files_removed: 1,
+                    size_bytes: 512,
+                }),
+                3,
+            )],
+            result: Ok(Outcome::Clean(CleanOutcome {
+                removed: true,
+                path: PathBuf::from(".mdvs"),
+                files_removed: 1,
+                size_bytes: 512,
+            })),
+            elapsed_ms: 5,
+        };
+        let json = serde_json::to_value(&result).unwrap();
+        assert_eq!(json["steps"].as_array().unwrap().len(), 1);
+        assert_eq!(json["steps"][0]["status"], "complete");
+        assert!(json["steps"][0]["outcome"]["DeleteIndex"].is_object());
+        assert!(json["result"]["Clean"].is_object());
+        assert_eq!(json["elapsed_ms"], 5);
+        assert!(json.get("error").is_none());
+    }
+
+    #[test]
+    fn serialize_error_json() {
+        let result = CommandResult {
+            steps: vec![StepEntry::err(
+                ErrorKind::User,
+                "config not found".into(),
+                2,
+            )],
+            result: Err(StepError {
+                kind: ErrorKind::User,
+                message: "config not found".into(),
+            }),
+            elapsed_ms: 2,
+        };
+        let json = serde_json::to_value(&result).unwrap();
+        assert!(json.get("result").is_none());
+        assert_eq!(json["error"]["kind"], "user");
+        assert_eq!(json["error"]["message"], "config not found");
+        assert_eq!(json["steps"][0]["status"], "failed");
     }
 
     #[test]
@@ -443,122 +458,5 @@ mod tests {
         };
         let cloned = err.clone();
         assert_eq!(cloned.message, "I/O error");
-    }
-
-    // --- Serialize tests ---
-
-    #[test]
-    fn serialize_step_complete_ok() {
-        use crate::outcome::{CleanOutcome, Outcome};
-        use std::path::PathBuf;
-
-        let step = Step {
-            substeps: vec![],
-            outcome: StepOutcome::Complete {
-                result: Ok(Outcome::Clean(CleanOutcome {
-                    removed: true,
-                    path: PathBuf::from(".mdvs"),
-                    files_removed: 2,
-                    size_bytes: 1024,
-                })),
-                elapsed_ms: 5,
-            },
-        };
-        let json = serde_json::to_value(&step).unwrap();
-        assert_eq!(json["outcome"]["status"], "complete");
-        assert_eq!(json["outcome"]["elapsed_ms"], 5);
-        assert!(json["outcome"]["outcome"]["Clean"].is_object());
-        assert_eq!(json["outcome"]["outcome"]["Clean"]["removed"], true);
-        assert_eq!(json["substeps"].as_array().unwrap().len(), 0);
-    }
-
-    #[test]
-    fn serialize_step_complete_err() {
-        let step: Step<Outcome> = Step {
-            substeps: vec![],
-            outcome: StepOutcome::Complete {
-                result: Err(StepError {
-                    kind: ErrorKind::User,
-                    message: "config not found".into(),
-                }),
-                elapsed_ms: 2,
-            },
-        };
-        let json = serde_json::to_value(&step).unwrap();
-        assert_eq!(json["outcome"]["status"], "failed");
-        assert_eq!(json["outcome"]["elapsed_ms"], 2);
-        assert_eq!(json["outcome"]["error"]["kind"], "user");
-        assert_eq!(json["outcome"]["error"]["message"], "config not found");
-    }
-
-    #[test]
-    fn serialize_step_skipped() {
-        let step: Step<Outcome> = Step {
-            substeps: vec![],
-            outcome: StepOutcome::Skipped,
-        };
-        let json = serde_json::to_value(&step).unwrap();
-        assert_eq!(json["outcome"]["status"], "skipped");
-        assert!(json["outcome"].get("elapsed_ms").is_none());
-    }
-
-    #[test]
-    fn serialize_step_tree_recursive() {
-        use crate::outcome::{DeleteIndexOutcome, Outcome};
-
-        let leaf = Step {
-            substeps: vec![],
-            outcome: StepOutcome::Complete {
-                result: Ok(Outcome::DeleteIndex(DeleteIndexOutcome {
-                    removed: true,
-                    path: ".mdvs".into(),
-                    files_removed: 1,
-                    size_bytes: 512,
-                })),
-                elapsed_ms: 3,
-            },
-        };
-        let command = Step {
-            substeps: vec![leaf],
-            outcome: StepOutcome::Complete {
-                result: Ok(Outcome::Clean(crate::outcome::CleanOutcome {
-                    removed: true,
-                    path: std::path::PathBuf::from(".mdvs"),
-                    files_removed: 1,
-                    size_bytes: 512,
-                })),
-                elapsed_ms: 3,
-            },
-        };
-        let json = serde_json::to_value(&command).unwrap();
-        assert_eq!(json["substeps"].as_array().unwrap().len(), 1);
-        let sub = &json["substeps"][0];
-        assert_eq!(sub["outcome"]["status"], "complete");
-        assert!(sub["outcome"]["outcome"]["DeleteIndex"].is_object());
-    }
-
-    #[test]
-    fn serialize_compact_step() {
-        use crate::outcome::{CleanOutcome, Outcome};
-        use std::path::PathBuf;
-
-        let step = Step {
-            substeps: vec![],
-            outcome: StepOutcome::Complete {
-                result: Ok(Outcome::Clean(CleanOutcome {
-                    removed: true,
-                    path: PathBuf::from(".mdvs"),
-                    files_removed: 2,
-                    size_bytes: 1024,
-                })),
-                elapsed_ms: 5,
-            },
-        };
-        let compact = step.to_compact();
-        let json = serde_json::to_value(&compact).unwrap();
-        assert_eq!(json["outcome"]["status"], "complete");
-        assert!(json["outcome"]["outcome"]["Clean"].is_object());
-        // Compact Clean has removed + path, no files_removed/size_bytes
-        assert_eq!(json["outcome"]["outcome"]["Clean"]["removed"], true);
     }
 }

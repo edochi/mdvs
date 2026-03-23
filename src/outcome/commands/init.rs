@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use serde::Serialize;
 
 use crate::block::{Block, Render, TableStyle};
-use crate::output::{format_file_count, format_hints, DiscoveredField, DiscoveredFieldCompact};
+use crate::output::{format_file_count, format_hints, DiscoveredField};
 
 /// Full outcome for the init command.
 #[derive(Debug, Serialize)]
@@ -87,85 +87,5 @@ impl Render for InitOutcome {
         }
 
         blocks
-    }
-}
-
-/// Compact outcome for the init command.
-#[derive(Debug, Serialize)]
-pub struct InitOutcomeCompact {
-    /// Directory where `mdvs.toml` was written.
-    pub path: PathBuf,
-    /// Number of markdown files scanned.
-    pub files_scanned: usize,
-    /// Number of fields inferred.
-    pub field_count: usize,
-    /// Whether this was a dry run.
-    pub dry_run: bool,
-    /// Compact field summaries.
-    pub fields: Vec<DiscoveredFieldCompact>,
-}
-
-impl Render for InitOutcomeCompact {
-    fn render(&self) -> Vec<Block> {
-        let mut blocks = vec![];
-
-        let field_summary = if self.fields.is_empty() {
-            "no fields found".to_string()
-        } else {
-            format!("{} field(s)", self.field_count)
-        };
-        let dry_run_suffix = if self.dry_run { " (dry run)" } else { "" };
-        blocks.push(Block::Line(format!(
-            "Initialized {} — {field_summary}{dry_run_suffix}",
-            format_file_count(self.files_scanned)
-        )));
-
-        // Compact fields table
-        if !self.fields.is_empty() {
-            let rows: Vec<Vec<String>> = self
-                .fields
-                .iter()
-                .map(|f| {
-                    let type_str = if f.nullable {
-                        format!("{}?", f.field_type)
-                    } else {
-                        f.field_type.clone()
-                    };
-                    vec![
-                        format!("\"{}\"", f.name),
-                        type_str,
-                        format!("{}/{}", f.files_found, f.total_files),
-                    ]
-                })
-                .collect();
-            blocks.push(Block::Table {
-                headers: None,
-                rows,
-                style: TableStyle::Compact,
-            });
-        }
-
-        if self.dry_run {
-            blocks.push(Block::Line("(dry run, nothing written)".into()));
-        } else {
-            blocks.push(Block::Line(format!(
-                "Initialized mdvs in '{}'",
-                self.path.display()
-            )));
-        }
-
-        blocks
-    }
-}
-
-impl From<&InitOutcome> for InitOutcomeCompact {
-    fn from(o: &InitOutcome) -> Self {
-        Self {
-            path: o.path.clone(),
-            files_scanned: o.files_scanned,
-            field_count: o.fields.len(),
-            dry_run: o.dry_run,
-            fields: o.fields.iter().map(DiscoveredFieldCompact::from).collect(),
-        }
     }
 }

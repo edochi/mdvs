@@ -5,7 +5,7 @@ use crate::outcome::{InferOutcome, Outcome, ScanOutcome, WriteConfigOutcome};
 use crate::output::DiscoveredField;
 use crate::schema::config::MdvsToml;
 use crate::schema::shared::ScanConfig;
-use crate::step::{ErrorKind, Step, StepError, StepOutcome};
+use crate::step::{CommandResult, ErrorKind, StepEntry, StepError};
 use std::path::Path;
 use std::time::Instant;
 use tracing::{info, instrument};
@@ -21,16 +21,16 @@ pub fn run(
     ignore_bare_files: bool,
     skip_gitignore: bool,
     _verbose: bool,
-) -> Step<Outcome> {
+) -> CommandResult {
     let start = Instant::now();
-    let mut substeps = Vec::new();
+    let mut steps = Vec::new();
 
     info!(path = %path.display(), "initializing");
 
     // Pre-checks
     if !path.is_dir() {
         return fail_early(
-            substeps,
+            steps,
             start,
             ErrorKind::User,
             format!("'{}' is not a directory", path.display()),
@@ -41,7 +41,7 @@ pub fn run(
     let mdvs_dir = path.join(".mdvs");
     if !force && (config_path.exists() || mdvs_dir.exists()) {
         return fail_early(
-            substeps,
+            steps,
             start,
             ErrorKind::User,
             format!(
@@ -69,7 +69,7 @@ pub fn run(
     let scan_start = Instant::now();
     let scanned = match ScannedFiles::scan(path, &scan_config) {
         Ok(s) => {
-            substeps.push(Step::leaf(
+            steps.push(StepEntry::ok(
                 Outcome::Scan(ScanOutcome {
                     files_found: s.files.len(),
                     glob: scan_config.glob.clone(),
@@ -79,43 +79,33 @@ pub fn run(
             s
         }
         Err(e) => {
-            substeps.push(Step::failed(
+            steps.push(StepEntry::err(
                 ErrorKind::Application,
                 e.to_string(),
                 scan_start.elapsed().as_millis() as u64,
             ));
-            return fail_from_last_substep(&mut substeps, start);
+            return fail_from_last_substep(&mut steps, start);
         }
     };
 
     // 2. Infer
     if scanned.files.is_empty() {
-        substeps.push(Step {
-            substeps: vec![],
-            outcome: StepOutcome::Complete {
-                result: Err(StepError {
-                    kind: ErrorKind::User,
-                    message: format!("no markdown files found in '{}'", path.display()),
-                }),
-                elapsed_ms: 0,
-            },
-        });
-        return Step {
-            substeps,
-            outcome: StepOutcome::Complete {
-                result: Err(StepError {
-                    kind: ErrorKind::User,
-                    message: format!("no markdown files found in '{}'", path.display()),
-                }),
-                elapsed_ms: start.elapsed().as_millis() as u64,
-            },
+        let msg = format!("no markdown files found in '{}'", path.display());
+        steps.push(StepEntry::err(ErrorKind::User, msg.clone(), 0));
+        return CommandResult {
+            steps,
+            result: Err(StepError {
+                kind: ErrorKind::User,
+                message: msg,
+            }),
+            elapsed_ms: start.elapsed().as_millis() as u64,
         };
     }
 
     // 2b. Infer — InferredSchema::infer() is infallible
     let infer_start = Instant::now();
     let schema = InferredSchema::infer(&scanned);
-    substeps.push(Step::leaf(
+    steps.push(StepEntry::ok(
         Outcome::Infer(InferOutcome {
             fields_inferred: schema.fields.len(),
         }),
@@ -134,13 +124,13 @@ pub fn run(
 
     // 3. Write config — MdvsToml::from_inferred() + write() directly
     if dry_run {
-        substeps.push(Step::skipped());
+        steps.push(StepEntry::skipped());
     } else {
         let write_start = Instant::now();
         let toml_doc = MdvsToml::from_inferred(&schema, scan_config);
         match toml_doc.write(&config_path) {
             Ok(()) => {
-                substeps.push(Step::leaf(
+                steps.push(StepEntry::ok(
                     Outcome::WriteConfig(WriteConfigOutcome {
                         config_path: config_path.display().to_string(),
                         fields_written: schema.fields.len(),
@@ -149,7 +139,7 @@ pub fn run(
                 ));
             }
             Err(e) => {
-                substeps.push(Step::failed(
+                steps.push(StepEntry::err(
                     ErrorKind::Application,
                     e.to_string(),
                     write_start.elapsed().as_millis() as u64,
@@ -158,51 +148,45 @@ pub fn run(
         }
     }
 
-    Step {
-        substeps,
-        outcome: StepOutcome::Complete {
-            result: Ok(Outcome::Init(Box::new(InitOutcome {
-                path: path.to_path_buf(),
-                files_scanned: total_files,
-                fields,
-                dry_run,
-            }))),
-            elapsed_ms: start.elapsed().as_millis() as u64,
-        },
+    CommandResult {
+        steps,
+        result: Ok(Outcome::Init(Box::new(InitOutcome {
+            path: path.to_path_buf(),
+            files_scanned: total_files,
+            fields,
+            dry_run,
+        }))),
+        elapsed_ms: start.elapsed().as_millis() as u64,
     }
 }
 
-/// Helper: return a failed Step with the given error.
+/// Helper: return a failed CommandResult with the given error.
 fn fail_early(
-    substeps: Vec<Step<Outcome>>,
+    steps: Vec<StepEntry>,
     start: Instant,
     kind: ErrorKind,
     message: String,
-) -> Step<Outcome> {
-    Step {
-        substeps,
-        outcome: StepOutcome::Complete {
-            result: Err(StepError { kind, message }),
-            elapsed_ms: start.elapsed().as_millis() as u64,
-        },
+) -> CommandResult {
+    CommandResult {
+        steps,
+        result: Err(StepError { kind, message }),
+        elapsed_ms: start.elapsed().as_millis() as u64,
     }
 }
 
-/// Helper: extract error from last substep and return a failed Step.
-fn fail_from_last_substep(substeps: &mut Vec<Step<Outcome>>, start: Instant) -> Step<Outcome> {
-    let msg = match substeps.last().map(|s| &s.outcome) {
-        Some(StepOutcome::Complete { result: Err(e), .. }) => e.message.clone(),
+/// Helper: extract error from last step and return a failed CommandResult.
+fn fail_from_last_substep(steps: &mut Vec<StepEntry>, start: Instant) -> CommandResult {
+    let msg = match steps.last() {
+        Some(StepEntry::Failed(f)) => f.message.clone(),
         _ => "step failed".into(),
     };
-    Step {
-        substeps: std::mem::take(substeps),
-        outcome: StepOutcome::Complete {
-            result: Err(StepError {
-                kind: ErrorKind::Application,
-                message: msg,
-            }),
-            elapsed_ms: start.elapsed().as_millis() as u64,
-        },
+    CommandResult {
+        steps: std::mem::take(steps),
+        result: Err(StepError {
+            kind: ErrorKind::Application,
+            message: msg,
+        }),
+        elapsed_ms: start.elapsed().as_millis() as u64,
     }
 }
 
@@ -211,15 +195,12 @@ mod tests {
     use super::*;
     use crate::outcome::Outcome;
     use crate::output::FieldHint;
-    use crate::step::StepOutcome;
+    use crate::step::CommandResult;
     use std::fs;
 
-    fn unwrap_init(step: &Step<Outcome>) -> &InitOutcome {
-        match &step.outcome {
-            StepOutcome::Complete {
-                result: Ok(Outcome::Init(o)),
-                ..
-            } => o,
+    fn unwrap_init(result: &CommandResult) -> &InitOutcome {
+        match &result.result {
+            Ok(Outcome::Init(o)) => o,
             other => panic!("expected Ok(Init), got: {other:?}"),
         }
     }

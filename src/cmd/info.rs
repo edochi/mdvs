@@ -4,7 +4,7 @@ use crate::outcome::commands::InfoOutcome;
 use crate::outcome::{Outcome, ReadConfigOutcome, ReadIndexOutcome, ScanOutcome};
 use crate::output::{field_hints, FieldHint};
 use crate::schema::config::MdvsToml;
-use crate::step::{ErrorKind, Step, StepError, StepOutcome};
+use crate::step::{CommandResult, ErrorKind, StepEntry, StepError};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -60,9 +60,9 @@ pub struct IndexInfo {
 
 /// Read config, scan files, and read index metadata.
 #[instrument(name = "info", skip_all)]
-pub fn run(path: &Path, _verbose: bool) -> Step<Outcome> {
+pub fn run(path: &Path, _verbose: bool) -> CommandResult {
     let start = Instant::now();
-    let mut substeps = Vec::new();
+    let mut steps = Vec::new();
 
     // 1. Read config — calls MdvsToml::read() + validate() directly
     let config_start = Instant::now();
@@ -70,7 +70,7 @@ pub fn run(path: &Path, _verbose: bool) -> Step<Outcome> {
     let config = match MdvsToml::read(&config_path_buf) {
         Ok(cfg) => match cfg.validate() {
             Ok(()) => {
-                substeps.push(Step::leaf(
+                steps.push(StepEntry::ok(
                     Outcome::ReadConfig(ReadConfigOutcome {
                         config_path: config_path_buf.display().to_string(),
                     }),
@@ -79,7 +79,7 @@ pub fn run(path: &Path, _verbose: bool) -> Step<Outcome> {
                 Some(cfg)
             }
             Err(e) => {
-                substeps.push(Step::failed(
+                steps.push(StepEntry::err(
                     ErrorKind::User,
                     format!("mdvs.toml is invalid: {e} — fix the file or run 'mdvs init --force'"),
                     config_start.elapsed().as_millis() as u64,
@@ -88,7 +88,7 @@ pub fn run(path: &Path, _verbose: bool) -> Step<Outcome> {
             }
         },
         Err(e) => {
-            substeps.push(Step::failed(
+            steps.push(StepEntry::err(
                 ErrorKind::User,
                 e.to_string(),
                 config_start.elapsed().as_millis() as u64,
@@ -100,19 +100,17 @@ pub fn run(path: &Path, _verbose: bool) -> Step<Outcome> {
     let config = match config {
         Some(c) => c,
         None => {
-            let msg = match &substeps[0].outcome {
-                StepOutcome::Complete { result: Err(e), .. } => e.message.clone(),
+            let msg = match &steps[0] {
+                StepEntry::Failed(f) => f.message.clone(),
                 _ => "failed to read config".into(),
             };
-            return Step {
-                substeps,
-                outcome: StepOutcome::Complete {
-                    result: Err(StepError {
-                        kind: ErrorKind::User,
-                        message: msg,
-                    }),
-                    elapsed_ms: start.elapsed().as_millis() as u64,
-                },
+            return CommandResult {
+                steps,
+                result: Err(StepError {
+                    kind: ErrorKind::User,
+                    message: msg,
+                }),
+                elapsed_ms: start.elapsed().as_millis() as u64,
             };
         }
     };
@@ -121,7 +119,7 @@ pub fn run(path: &Path, _verbose: bool) -> Step<Outcome> {
     let scan_start = Instant::now();
     let scanned = match ScannedFiles::scan(path, &config.scan) {
         Ok(s) => {
-            substeps.push(Step::leaf(
+            steps.push(StepEntry::ok(
                 Outcome::Scan(ScanOutcome {
                     files_found: s.files.len(),
                     glob: config.scan.glob.clone(),
@@ -131,7 +129,7 @@ pub fn run(path: &Path, _verbose: bool) -> Step<Outcome> {
             Some(s)
         }
         Err(e) => {
-            substeps.push(Step::failed(
+            steps.push(StepEntry::err(
                 ErrorKind::Application,
                 e.to_string(),
                 scan_start.elapsed().as_millis() as u64,
@@ -144,7 +142,7 @@ pub fn run(path: &Path, _verbose: bool) -> Step<Outcome> {
     let index_start = Instant::now();
     let backend = Backend::parquet(path);
     let index_data = if !backend.exists() {
-        substeps.push(Step::leaf(
+        steps.push(StepEntry::ok(
             Outcome::ReadIndex(ReadIndexOutcome {
                 exists: false,
                 files_indexed: 0,
@@ -158,7 +156,7 @@ pub fn run(path: &Path, _verbose: bool) -> Step<Outcome> {
         let idx_stats = backend.stats().ok().flatten();
         match (build_meta, idx_stats) {
             (Some(metadata), Some(stats)) => {
-                substeps.push(Step::leaf(
+                steps.push(StepEntry::ok(
                     Outcome::ReadIndex(ReadIndexOutcome {
                         exists: true,
                         files_indexed: stats.files_indexed,
@@ -169,7 +167,7 @@ pub fn run(path: &Path, _verbose: bool) -> Step<Outcome> {
                 Some((metadata, stats))
             }
             _ => {
-                substeps.push(Step::leaf(
+                steps.push(StepEntry::ok(
                     Outcome::ReadIndex(ReadIndexOutcome {
                         exists: false,
                         files_indexed: 0,
@@ -234,18 +232,16 @@ pub fn run(path: &Path, _verbose: bool) -> Step<Outcome> {
         }
     });
 
-    Step {
-        substeps,
-        outcome: StepOutcome::Complete {
-            result: Ok(Outcome::Info(Box::new(InfoOutcome {
-                scan_glob: config.scan.glob.clone(),
-                files_on_disk: total_files,
-                fields,
-                ignored_fields: config.fields.ignore.clone(),
-                index,
-            }))),
-            elapsed_ms: start.elapsed().as_millis() as u64,
-        },
+    CommandResult {
+        steps,
+        result: Ok(Outcome::Info(Box::new(InfoOutcome {
+            scan_glob: config.scan.glob.clone(),
+            files_on_disk: total_files,
+            fields,
+            ignored_fields: config.fields.ignore.clone(),
+            index,
+        }))),
+        elapsed_ms: start.elapsed().as_millis() as u64,
     }
 }
 
@@ -255,15 +251,12 @@ mod tests {
     use crate::outcome::Outcome;
     use crate::schema::config::{FieldsConfig, MdvsToml, SearchConfig, UpdateConfig};
     use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig, FieldTypeSerde, ScanConfig};
-    use crate::step::StepOutcome;
+    use crate::step::CommandResult;
     use std::fs;
 
-    fn unwrap_info(step: &Step<Outcome>) -> &InfoOutcome {
-        match &step.outcome {
-            StepOutcome::Complete {
-                result: Ok(Outcome::Info(o)),
-                ..
-            } => o,
+    fn unwrap_info(result: &CommandResult) -> &InfoOutcome {
+        match &result.result {
+            Ok(Outcome::Info(o)) => o,
             other => panic!("expected Ok(Info), got: {other:?}"),
         }
     }

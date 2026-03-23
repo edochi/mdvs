@@ -1,7 +1,7 @@
 use crate::index::backend::Backend;
 use crate::outcome::commands::CleanOutcome;
 use crate::outcome::{DeleteIndexOutcome, Outcome};
-use crate::step::{ErrorKind, Step, StepError, StepOutcome};
+use crate::step::{CommandResult, ErrorKind, StepEntry, StepError};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 use tracing::instrument;
@@ -27,36 +27,31 @@ fn walk_dir_stats(dir: &Path) -> anyhow::Result<(usize, u64)> {
 
 /// Delete the `.mdvs/` index directory if it exists.
 #[instrument(name = "clean", skip_all)]
-pub fn run(path: &Path) -> Step<Outcome> {
+pub fn run(path: &Path) -> CommandResult {
     let start = Instant::now();
-    let mut substeps = Vec::new();
+    let mut steps = Vec::new();
 
     // Delete index step — inlined from pipeline/delete_index.rs
     let delete_start = Instant::now();
     let mdvs_dir = path.join(".mdvs");
 
     if mdvs_dir.is_symlink() {
-        substeps.push(Step::failed(
-            ErrorKind::User,
-            format!(
-                "'{}' is a symlink — refusing to delete for safety",
-                mdvs_dir.display()
-            ),
-            delete_start.elapsed().as_millis() as u64,
-        ));
         let msg = format!(
             "'{}' is a symlink — refusing to delete for safety",
             mdvs_dir.display()
         );
-        return Step {
-            substeps,
-            outcome: StepOutcome::Complete {
-                result: Err(StepError {
-                    kind: ErrorKind::User,
-                    message: msg,
-                }),
-                elapsed_ms: start.elapsed().as_millis() as u64,
-            },
+        steps.push(StepEntry::err(
+            ErrorKind::User,
+            msg.clone(),
+            delete_start.elapsed().as_millis() as u64,
+        ));
+        return CommandResult {
+            steps,
+            result: Err(StepError {
+                kind: ErrorKind::User,
+                message: msg,
+            }),
+            elapsed_ms: start.elapsed().as_millis() as u64,
         };
     }
 
@@ -64,40 +59,36 @@ pub fn run(path: &Path) -> Step<Outcome> {
         let (files_removed, size_bytes) = match walk_dir_stats(&mdvs_dir) {
             Ok(stats) => stats,
             Err(e) => {
-                substeps.push(Step::failed(
+                steps.push(StepEntry::err(
                     ErrorKind::Application,
                     e.to_string(),
                     delete_start.elapsed().as_millis() as u64,
                 ));
-                return Step {
-                    substeps,
-                    outcome: StepOutcome::Complete {
-                        result: Err(StepError {
-                            kind: ErrorKind::Application,
-                            message: e.to_string(),
-                        }),
-                        elapsed_ms: start.elapsed().as_millis() as u64,
-                    },
+                return CommandResult {
+                    steps,
+                    result: Err(StepError {
+                        kind: ErrorKind::Application,
+                        message: e.to_string(),
+                    }),
+                    elapsed_ms: start.elapsed().as_millis() as u64,
                 };
             }
         };
 
         let backend = Backend::parquet(path);
         if let Err(e) = backend.clean() {
-            substeps.push(Step::failed(
+            steps.push(StepEntry::err(
                 ErrorKind::Application,
                 e.to_string(),
                 delete_start.elapsed().as_millis() as u64,
             ));
-            return Step {
-                substeps,
-                outcome: StepOutcome::Complete {
-                    result: Err(StepError {
-                        kind: ErrorKind::Application,
-                        message: e.to_string(),
-                    }),
-                    elapsed_ms: start.elapsed().as_millis() as u64,
-                },
+            return CommandResult {
+                steps,
+                result: Err(StepError {
+                    kind: ErrorKind::Application,
+                    message: e.to_string(),
+                }),
+                elapsed_ms: start.elapsed().as_millis() as u64,
             };
         }
 
@@ -111,7 +102,7 @@ pub fn run(path: &Path) -> Step<Outcome> {
         (false, mdvs_dir.display().to_string(), 0, 0)
     };
 
-    substeps.push(Step::leaf(
+    steps.push(StepEntry::ok(
         Outcome::DeleteIndex(DeleteIndexOutcome {
             removed,
             path: path_str.clone(),
@@ -121,17 +112,15 @@ pub fn run(path: &Path) -> Step<Outcome> {
         delete_start.elapsed().as_millis() as u64,
     ));
 
-    Step {
-        substeps,
-        outcome: StepOutcome::Complete {
-            result: Ok(Outcome::Clean(CleanOutcome {
-                removed,
-                path: PathBuf::from(&path_str),
-                files_removed,
-                size_bytes,
-            })),
-            elapsed_ms: start.elapsed().as_millis() as u64,
-        },
+    CommandResult {
+        steps,
+        result: Ok(Outcome::Clean(CleanOutcome {
+            removed,
+            path: PathBuf::from(&path_str),
+            files_removed,
+            size_bytes,
+        })),
+        elapsed_ms: start.elapsed().as_millis() as u64,
     }
 }
 
@@ -139,15 +128,12 @@ pub fn run(path: &Path) -> Step<Outcome> {
 mod tests {
     use super::*;
     use crate::outcome::Outcome;
-    use crate::step::StepOutcome;
+    use crate::step::CommandResult;
     use std::fs;
 
-    fn unwrap_clean(step: &Step<Outcome>) -> &CleanOutcome {
-        match &step.outcome {
-            StepOutcome::Complete {
-                result: Ok(Outcome::Clean(o)),
-                ..
-            } => o,
+    fn unwrap_clean(result: &CommandResult) -> &CleanOutcome {
+        match &result.result {
+            Ok(Outcome::Clean(o)) => o,
             other => panic!("expected Ok(Clean), got: {other:?}"),
         }
     }
@@ -160,14 +146,14 @@ mod tests {
         fs::create_dir_all(&mdvs_dir).unwrap();
         fs::write(mdvs_dir.join("files.parquet"), "dummy").unwrap();
 
-        let step = run(tmp.path());
-        assert!(!crate::step::has_failed(&step));
+        let result = run(tmp.path());
+        assert!(!crate::step::has_failed(&result));
 
-        let result = unwrap_clean(&step);
-        assert!(result.removed);
+        let outcome = unwrap_clean(&result);
+        assert!(outcome.removed);
         assert!(!mdvs_dir.exists());
-        assert_eq!(result.files_removed, 1);
-        assert_eq!(result.size_bytes, 5);
+        assert_eq!(outcome.files_removed, 1);
+        assert_eq!(outcome.size_bytes, 5);
         assert!(tmp.path().join("mdvs.toml").exists());
     }
 
@@ -175,12 +161,12 @@ mod tests {
     fn clean_nothing_to_clean() {
         let tmp = tempfile::tempdir().unwrap();
 
-        let step = run(tmp.path());
-        assert!(!crate::step::has_failed(&step));
+        let result = run(tmp.path());
+        assert!(!crate::step::has_failed(&result));
 
-        let result = unwrap_clean(&step);
-        assert!(!result.removed);
-        assert_eq!(result.files_removed, 0);
-        assert_eq!(result.size_bytes, 0);
+        let outcome = unwrap_clean(&result);
+        assert!(!outcome.removed);
+        assert_eq!(outcome.files_removed, 0);
+        assert_eq!(outcome.size_bytes, 0);
     }
 }

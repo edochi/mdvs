@@ -13,7 +13,7 @@ use crate::outcome::{
 use crate::output::BuildFileDetail;
 use crate::schema::config::{BuildConfig, MdvsToml, SearchConfig, TomlField};
 use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig, FieldTypeSerde};
-use crate::step::{ErrorKind, Step, StepError, StepOutcome};
+use crate::step::{CommandResult, ErrorKind, StepEntry, StepError};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::time::Instant;
@@ -186,9 +186,9 @@ pub async fn run(
     force: bool,
     no_update: bool,
     _verbose: bool,
-) -> Step<Outcome> {
+) -> CommandResult {
     let start = Instant::now();
-    let mut substeps = Vec::new();
+    let mut steps = Vec::new();
 
     // 1. Read config — calls MdvsToml::read() + validate() directly
     let config_start = Instant::now();
@@ -196,7 +196,7 @@ pub async fn run(
     let config = match MdvsToml::read(&config_path_buf) {
         Ok(cfg) => match cfg.validate() {
             Ok(()) => {
-                substeps.push(Step::leaf(
+                steps.push(StepEntry::ok(
                     Outcome::ReadConfig(ReadConfigOutcome {
                         config_path: config_path_buf.display().to_string(),
                     }),
@@ -205,7 +205,7 @@ pub async fn run(
                 Some(cfg)
             }
             Err(e) => {
-                substeps.push(Step::failed(
+                steps.push(StepEntry::err(
                     ErrorKind::User,
                     format!("mdvs.toml is invalid: {e} — fix the file or run 'mdvs init --force'"),
                     config_start.elapsed().as_millis() as u64,
@@ -214,7 +214,7 @@ pub async fn run(
             }
         },
         Err(e) => {
-            substeps.push(Step::failed(
+            steps.push(StepEntry::err(
                 ErrorKind::User,
                 e.to_string(),
                 config_start.elapsed().as_millis() as u64,
@@ -224,7 +224,7 @@ pub async fn run(
     };
     let mut config = match config {
         Some(c) => c,
-        None => return fail_from_last(&mut substeps, start),
+        None => return fail_from_last(&mut steps, start),
     };
 
     let should_update = !no_update && config.build.as_ref().is_some_and(|b| b.auto_update);
@@ -240,17 +240,8 @@ pub async fn run(
     );
 
     if let Some(msg) = mutation_error {
-        substeps.push(Step {
-            substeps: vec![],
-            outcome: StepOutcome::Complete {
-                result: Err(StepError {
-                    kind: ErrorKind::User,
-                    message: msg,
-                }),
-                elapsed_ms: 0,
-            },
-        });
-        return fail_from_last(&mut substeps, start);
+        steps.push(StepEntry::err(ErrorKind::User, msg, 0));
+        return fail_from_last(&mut steps, start);
     }
 
     // 3. Core build pipeline (scan → auto-update → validate → classify → embed → write)
@@ -260,20 +251,18 @@ pub async fn run(
         &config_path_buf,
         force,
         should_update,
-        &mut substeps,
+        &mut steps,
     )
     .await
     {
         Ok(result) => result,
-        Err(()) => return fail_from_last(&mut substeps, start),
+        Err(()) => return fail_from_last(&mut steps, start),
     };
 
-    Step {
-        substeps,
-        outcome: StepOutcome::Complete {
-            result: Ok(Outcome::Build(Box::new(build_outcome))),
-            elapsed_ms: start.elapsed().as_millis() as u64,
-        },
+    CommandResult {
+        steps,
+        result: Ok(Outcome::Build(Box::new(build_outcome))),
+        elapsed_ms: start.elapsed().as_millis() as u64,
     }
 }
 
@@ -284,21 +273,21 @@ pub async fn run(
 /// Core build pipeline: scan → auto-update → validate → classify → embed → write index.
 ///
 /// Returns `BuildOutcome` + optional `Embedder` (for reuse by search) on success.
-/// On failure, pushes error substeps and returns `Err(())` — the caller constructs
-/// the failed command Step from the substeps.
+/// On failure, pushes error steps and returns `Err(())` — the caller constructs
+/// the failed CommandResult from the steps.
 pub(crate) async fn build_core(
     path: &Path,
     config: &mut MdvsToml,
     config_path: &Path,
     force: bool,
     auto_update: bool,
-    substeps: &mut Vec<Step<Outcome>>,
+    steps: &mut Vec<StepEntry>,
 ) -> Result<(BuildOutcome, Option<Embedder>), ()> {
     // 1. Scan
     let scan_start = Instant::now();
     let scanned = match ScannedFiles::scan(path, &config.scan) {
         Ok(s) => {
-            substeps.push(Step::leaf(
+            steps.push(StepEntry::ok(
                 Outcome::Scan(ScanOutcome {
                     files_found: s.files.len(),
                     glob: config.scan.glob.clone(),
@@ -308,7 +297,7 @@ pub(crate) async fn build_core(
             s
         }
         Err(e) => {
-            substeps.push(Step::failed(
+            steps.push(StepEntry::err(
                 ErrorKind::Application,
                 e.to_string(),
                 scan_start.elapsed().as_millis() as u64,
@@ -321,7 +310,7 @@ pub(crate) async fn build_core(
     if auto_update {
         let infer_start = Instant::now();
         let schema = InferredSchema::infer(&scanned);
-        substeps.push(Step::leaf(
+        steps.push(StepEntry::ok(
             Outcome::Infer(InferOutcome {
                 fields_inferred: schema.fields.len(),
             }),
@@ -353,7 +342,7 @@ pub(crate) async fn build_core(
             let write_start = Instant::now();
             match config.write(config_path) {
                 Ok(()) => {
-                    substeps.push(Step::leaf(
+                    steps.push(StepEntry::ok(
                         Outcome::WriteConfig(WriteConfigOutcome {
                             config_path: config_path.display().to_string(),
                             fields_written: config.fields.field.len(),
@@ -366,7 +355,7 @@ pub(crate) async fn build_core(
                     }
                 }
                 Err(e) => {
-                    substeps.push(Step::failed(
+                    steps.push(StepEntry::err(
                         ErrorKind::Application,
                         e.to_string(),
                         write_start.elapsed().as_millis() as u64,
@@ -379,16 +368,11 @@ pub(crate) async fn build_core(
 
     // 3. Validate
     if scanned.files.is_empty() {
-        substeps.push(Step {
-            substeps: vec![],
-            outcome: StepOutcome::Complete {
-                result: Err(StepError {
-                    kind: ErrorKind::User,
-                    message: format!("no markdown files found in '{}'", path.display()),
-                }),
-                elapsed_ms: 0,
-            },
-        });
+        steps.push(StepEntry::err(
+            ErrorKind::User,
+            format!("no markdown files found in '{}'", path.display()),
+            0,
+        ));
         return Err(());
     }
 
@@ -396,7 +380,7 @@ pub(crate) async fn build_core(
     let check_result = match crate::cmd::check::validate(&scanned, config, false) {
         Ok(r) => r,
         Err(e) => {
-            substeps.push(Step::failed(
+            steps.push(StepEntry::err(
                 ErrorKind::Application,
                 e.to_string(),
                 validate_start.elapsed().as_millis() as u64,
@@ -404,7 +388,7 @@ pub(crate) async fn build_core(
             return Err(());
         }
     };
-    substeps.push(Step::leaf(
+    steps.push(StepEntry::ok(
         Outcome::Validate(ValidateOutcome {
             files_checked: check_result.files_checked,
             violations: check_result.field_violations.clone(),
@@ -416,19 +400,14 @@ pub(crate) async fn build_core(
     let new_fields = check_result.new_fields;
 
     if !violations.is_empty() {
-        substeps.push(Step {
-            substeps: vec![],
-            outcome: StepOutcome::Complete {
-                result: Err(StepError {
-                    kind: ErrorKind::User,
-                    message: format!(
-                        "{} violation(s) found. Run `mdvs check` for details.",
-                        violations.len()
-                    ),
-                }),
-                elapsed_ms: 0,
-            },
-        });
+        steps.push(StepEntry::err(
+            ErrorKind::User,
+            format!(
+                "{} violation(s) found. Run `mdvs check` for details.",
+                violations.len()
+            ),
+            0,
+        ));
         return Err(());
     }
 
@@ -446,16 +425,7 @@ pub(crate) async fn build_core(
     {
         Ok(sf) => sf,
         Err(msg) => {
-            substeps.push(Step {
-                substeps: vec![],
-                outcome: StepOutcome::Complete {
-                    result: Err(StepError {
-                        kind: ErrorKind::Application,
-                        message: msg,
-                    }),
-                    elapsed_ms: 0,
-                },
-            });
+            steps.push(StepEntry::err(ErrorKind::Application, msg, 0));
             return Err(());
         }
     };
@@ -463,32 +433,22 @@ pub(crate) async fn build_core(
     let embedding = match config.embedding_model.as_ref() {
         Some(e) => e,
         None => {
-            substeps.push(Step {
-                substeps: vec![],
-                outcome: StepOutcome::Complete {
-                    result: Err(StepError {
-                        kind: ErrorKind::User,
-                        message: "missing [embedding_model] in mdvs.toml".into(),
-                    }),
-                    elapsed_ms: 0,
-                },
-            });
+            steps.push(StepEntry::err(
+                ErrorKind::User,
+                "missing [embedding_model] in mdvs.toml".into(),
+                0,
+            ));
             return Err(());
         }
     };
     let chunking = match config.chunking.as_ref() {
         Some(c) => c,
         None => {
-            substeps.push(Step {
-                substeps: vec![],
-                outcome: StepOutcome::Complete {
-                    result: Err(StepError {
-                        kind: ErrorKind::User,
-                        message: "missing [chunking] in mdvs.toml".into(),
-                    }),
-                    elapsed_ms: 0,
-                },
-            });
+            steps.push(StepEntry::err(
+                ErrorKind::User,
+                "missing [chunking] in mdvs.toml".into(),
+                0,
+            ));
             return Err(());
         }
     };
@@ -499,16 +459,7 @@ pub(crate) async fn build_core(
     let full_rebuild = force || !backend.exists();
 
     if let Some(msg) = config_change_error {
-        substeps.push(Step {
-            substeps: vec![],
-            outcome: StepOutcome::Complete {
-                result: Err(StepError {
-                    kind: ErrorKind::User,
-                    message: msg,
-                }),
-                elapsed_ms: 0,
-            },
-        });
+        steps.push(StepEntry::err(ErrorKind::User, msg, 0));
         return Err(());
     }
 
@@ -518,16 +469,7 @@ pub(crate) async fn build_core(
         match backend.read_file_index() {
             Ok(idx) => idx,
             Err(e) => {
-                substeps.push(Step {
-                    substeps: vec![],
-                    outcome: StepOutcome::Complete {
-                        result: Err(StepError {
-                            kind: ErrorKind::Application,
-                            message: e.to_string(),
-                        }),
-                        elapsed_ms: 0,
-                    },
-                });
+                steps.push(StepEntry::err(ErrorKind::Application, e.to_string(), 0));
                 return Err(());
             }
         }
@@ -538,16 +480,7 @@ pub(crate) async fn build_core(
         match backend.read_chunk_rows() {
             Ok(crs) => crs,
             Err(e) => {
-                substeps.push(Step {
-                    substeps: vec![],
-                    outcome: StepOutcome::Complete {
-                        result: Err(StepError {
-                            kind: ErrorKind::Application,
-                            message: e.to_string(),
-                        }),
-                        elapsed_ms: 0,
-                    },
-                });
+                steps.push(StepEntry::err(ErrorKind::Application, e.to_string(), 0));
                 return Err(());
             }
         }
@@ -570,7 +503,7 @@ pub(crate) async fn build_core(
             })
             .collect();
         let count = needs_embedding.len();
-        substeps.push(Step::leaf(
+        steps.push(StepEntry::ok(
             Outcome::Classify(ClassifyOutcome {
                 full_rebuild: true,
                 needs_embedding: count,
@@ -622,7 +555,7 @@ pub(crate) async fn build_core(
         let unchanged_count = classification.unchanged_file_ids.len();
         let removed_count = classification.removed_count;
 
-        substeps.push(Step::leaf(
+        steps.push(StepEntry::ok(
             Outcome::Classify(ClassifyOutcome {
                 full_rebuild: false,
                 needs_embedding: needs_count,
@@ -650,7 +583,7 @@ pub(crate) async fn build_core(
         match ModelConfig::try_from(embedding) {
             Ok(mc) => match Embedder::load(&mc) {
                 Ok(emb) => {
-                    substeps.push(Step::leaf(
+                    steps.push(StepEntry::ok(
                         Outcome::LoadModel(LoadModelOutcome {
                             model_name: embedding.name.clone(),
                             dimension: emb.dimension(),
@@ -660,7 +593,7 @@ pub(crate) async fn build_core(
                     Some(emb)
                 }
                 Err(e) => {
-                    substeps.push(Step::failed(
+                    steps.push(StepEntry::err(
                         ErrorKind::Application,
                         e.to_string(),
                         model_start.elapsed().as_millis() as u64,
@@ -669,7 +602,7 @@ pub(crate) async fn build_core(
                 }
             },
             Err(e) => {
-                substeps.push(Step::failed(
+                steps.push(StepEntry::err(
                     ErrorKind::Application,
                     e.to_string(),
                     model_start.elapsed().as_millis() as u64,
@@ -678,7 +611,7 @@ pub(crate) async fn build_core(
             }
         }
     } else {
-        substeps.push(Step::skipped());
+        steps.push(StepEntry::skipped());
         None
     };
 
@@ -705,16 +638,11 @@ pub(crate) async fn build_core(
     };
 
     if needs_embedding && embedder.is_none() {
-        substeps.push(Step {
-            substeps: vec![],
-            outcome: StepOutcome::Complete {
-                result: Err(StepError {
-                    kind: ErrorKind::Application,
-                    message: "model loading failed".into(),
-                }),
-                elapsed_ms: 0,
-            },
-        });
+        steps.push(StepEntry::err(
+            ErrorKind::Application,
+            "model loading failed".into(),
+            0,
+        ));
         return Err(());
     }
 
@@ -723,7 +651,7 @@ pub(crate) async fn build_core(
     let built_at = chrono::Utc::now().timestamp_micros();
 
     if let Some(msg) = dim_error {
-        substeps.push(Step::failed(ErrorKind::User, msg, 0));
+        steps.push(StepEntry::err(ErrorKind::User, msg, 0));
         return Err(());
     }
 
@@ -740,7 +668,7 @@ pub(crate) async fn build_core(
             });
             embed_chunk_rows.extend(crs);
         }
-        substeps.push(Step::leaf(
+        steps.push(StepEntry::ok(
             Outcome::EmbedFiles(EmbedFilesOutcome {
                 files_embedded: classify_data.needs_embedding.len(),
                 chunks_produced: embed_chunk_rows.len(),
@@ -752,7 +680,7 @@ pub(crate) async fn build_core(
             details,
         })
     } else {
-        substeps.push(Step::skipped());
+        steps.push(StepEntry::skipped());
         None
     };
 
@@ -790,7 +718,7 @@ pub(crate) async fn build_core(
     let write_start = Instant::now();
     match backend.write_index(&schema_fields, &file_rows, &chunk_rows, build_meta) {
         Ok(()) => {
-            substeps.push(Step::leaf(
+            steps.push(StepEntry::ok(
                 Outcome::WriteIndex(WriteIndexOutcome {
                     files_written: file_rows.len(),
                     chunks_written: chunk_rows.len(),
@@ -799,7 +727,7 @@ pub(crate) async fn build_core(
             ));
         }
         Err(e) => {
-            substeps.push(Step::failed(
+            steps.push(StepEntry::err(
                 ErrorKind::Application,
                 e.to_string(),
                 write_start.elapsed().as_millis() as u64,
@@ -831,24 +759,22 @@ pub(crate) async fn build_core(
     Ok((outcome, embedder))
 }
 
-/// Extract error from last failed substep and return a failed command Step.
-fn fail_from_last(substeps: &mut Vec<Step<Outcome>>, start: Instant) -> Step<Outcome> {
-    let msg = match substeps.iter().rev().find_map(|s| match &s.outcome {
-        StepOutcome::Complete { result: Err(e), .. } => Some(e.message.clone()),
+/// Extract error from last failed step and return a failed CommandResult.
+fn fail_from_last(steps: &mut Vec<StepEntry>, start: Instant) -> CommandResult {
+    let msg = match steps.iter().rev().find_map(|s| match s {
+        StepEntry::Failed(f) => Some(f.message.clone()),
         _ => None,
     }) {
         Some(m) => m,
         None => "step failed".into(),
     };
-    Step {
-        substeps: std::mem::take(substeps),
-        outcome: StepOutcome::Complete {
-            result: Err(StepError {
-                kind: ErrorKind::Application,
-                message: msg,
-            }),
-            elapsed_ms: start.elapsed().as_millis() as u64,
-        },
+    CommandResult {
+        steps: std::mem::take(steps),
+        result: Err(StepError {
+            kind: ErrorKind::Application,
+            message: msg,
+        }),
+        elapsed_ms: start.elapsed().as_millis() as u64,
     }
 }
 
@@ -1007,19 +933,16 @@ mod tests {
     use std::collections::{HashMap, HashSet};
     use std::fs;
 
-    fn unwrap_build(step: &Step<Outcome>) -> &BuildOutcome {
-        match &step.outcome {
-            StepOutcome::Complete {
-                result: Ok(Outcome::Build(o)),
-                ..
-            } => o,
+    fn unwrap_build(result: &CommandResult) -> &BuildOutcome {
+        match &result.result {
+            Ok(Outcome::Build(o)) => o,
             other => panic!("expected Ok(Build), got: {other:?}"),
         }
     }
 
-    fn unwrap_error(step: &Step<Outcome>) -> &StepError {
-        match &step.outcome {
-            StepOutcome::Complete { result: Err(e), .. } => e,
+    fn unwrap_error(result: &CommandResult) -> &StepError {
+        match &result.result {
+            Err(e) => e,
             other => panic!("expected Err, got: {other:?}"),
         }
     }

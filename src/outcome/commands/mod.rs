@@ -1,7 +1,6 @@
 //! Outcome types for command-level results.
 //!
-//! One file per command. Each defines a full + compact outcome pair
-//! with `Render` and `From` impls.
+//! One file per command, each defining the outcome struct and its `Render` impl.
 
 pub mod build;
 pub mod check;
@@ -11,10 +10,10 @@ pub mod init;
 pub mod search;
 pub mod update;
 
-pub use build::{BuildOutcome, BuildOutcomeCompact};
-pub use check::{CheckOutcome, CheckOutcomeCompact};
-pub use clean::{CleanOutcome, CleanOutcomeCompact};
-pub use info::{InfoOutcome, InfoOutcomeCompact};
-pub use init::{InitOutcome, InitOutcomeCompact};
-pub use search::{SearchOutcome, SearchOutcomeCompact};
-pub use update::{UpdateOutcome, UpdateOutcomeCompact};
+pub use build::BuildOutcome;
+pub use check::CheckOutcome;
+pub use clean::CleanOutcome;
+pub use info::InfoOutcome;
+pub use init::InitOutcome;
+pub use search::SearchOutcome;
+pub use update::UpdateOutcome;

@@ -19,24 +19,3 @@ impl Render for InferOutcome {
         ))]
     }
 }
-
-/// Compact outcome for the infer step (identical — no verbose-only fields).
-#[derive(Debug, Serialize)]
-pub struct InferOutcomeCompact {
-    /// Number of fields inferred from frontmatter.
-    pub fields_inferred: usize,
-}
-
-impl Render for InferOutcomeCompact {
-    fn render(&self) -> Vec<Block> {
-        vec![] // Leaf compact outcomes are silent
-    }
-}
-
-impl From<&InferOutcome> for InferOutcomeCompact {
-    fn from(o: &InferOutcome) -> Self {
-        Self {
-            fields_inferred: o.fields_inferred,
-        }
-    }
-}

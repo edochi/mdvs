@@ -8,7 +8,7 @@ use crate::outcome::{
 use crate::output::{FieldViolation, NewField, ViolatingFile, ViolationKind};
 use crate::schema::config::{MdvsToml, TomlField};
 use crate::schema::shared::FieldTypeSerde;
-use crate::step::{ErrorKind, Step, StepError, StepOutcome};
+use crate::step::{CommandResult, ErrorKind, StepEntry, StepError};
 use globset::Glob;
 use serde::Serialize;
 use serde_json::Value;
@@ -46,9 +46,9 @@ impl CheckResult {
 
 /// Read config, optionally auto-update, scan files, and validate frontmatter.
 #[instrument(name = "check", skip_all)]
-pub fn run(path: &Path, no_update: bool, verbose: bool) -> Step<Outcome> {
+pub fn run(path: &Path, no_update: bool, verbose: bool) -> CommandResult {
     let start = Instant::now();
-    let mut substeps = Vec::new();
+    let mut steps = Vec::new();
 
     // 1. Read config — calls MdvsToml::read() + validate() directly
     let config_start = std::time::Instant::now();
@@ -56,7 +56,7 @@ pub fn run(path: &Path, no_update: bool, verbose: bool) -> Step<Outcome> {
     let config = match MdvsToml::read(&config_path_buf) {
         Ok(cfg) => match cfg.validate() {
             Ok(()) => {
-                substeps.push(Step::leaf(
+                steps.push(StepEntry::ok(
                     Outcome::ReadConfig(ReadConfigOutcome {
                         config_path: config_path_buf.display().to_string(),
                     }),
@@ -65,7 +65,7 @@ pub fn run(path: &Path, no_update: bool, verbose: bool) -> Step<Outcome> {
                 Some(cfg)
             }
             Err(e) => {
-                substeps.push(Step::failed(
+                steps.push(StepEntry::err(
                     ErrorKind::User,
                     format!("mdvs.toml is invalid: {e} — fix the file or run 'mdvs init --force'"),
                     config_start.elapsed().as_millis() as u64,
@@ -74,7 +74,7 @@ pub fn run(path: &Path, no_update: bool, verbose: bool) -> Step<Outcome> {
             }
         },
         Err(e) => {
-            substeps.push(Step::failed(
+            steps.push(StepEntry::err(
                 ErrorKind::User,
                 e.to_string(),
                 config_start.elapsed().as_millis() as u64,
@@ -86,19 +86,17 @@ pub fn run(path: &Path, no_update: bool, verbose: bool) -> Step<Outcome> {
     let config = match config {
         Some(c) => c,
         None => {
-            let msg = match &substeps[0].outcome {
-                StepOutcome::Complete { result: Err(e), .. } => e.message.clone(),
+            let msg = match &steps[0] {
+                StepEntry::Failed(f) => f.message.clone(),
                 _ => "failed to read config".into(),
             };
-            return Step {
-                substeps,
-                outcome: StepOutcome::Complete {
-                    result: Err(StepError {
-                        kind: ErrorKind::User,
-                        message: msg,
-                    }),
-                    elapsed_ms: start.elapsed().as_millis() as u64,
-                },
+            return CommandResult {
+                steps,
+                result: Err(StepError {
+                    kind: ErrorKind::User,
+                    message: msg,
+                }),
+                elapsed_ms: start.elapsed().as_millis() as u64,
             };
         }
     };
@@ -107,7 +105,7 @@ pub fn run(path: &Path, no_update: bool, verbose: bool) -> Step<Outcome> {
     let scan_start = Instant::now();
     let scanned = match ScannedFiles::scan(path, &config.scan) {
         Ok(s) => {
-            substeps.push(Step::leaf(
+            steps.push(StepEntry::ok(
                 Outcome::Scan(ScanOutcome {
                     files_found: s.files.len(),
                     glob: config.scan.glob.clone(),
@@ -117,21 +115,19 @@ pub fn run(path: &Path, no_update: bool, verbose: bool) -> Step<Outcome> {
             s
         }
         Err(e) => {
-            substeps.push(Step::failed(
+            steps.push(StepEntry::err(
                 ErrorKind::Application,
                 e.to_string(),
                 scan_start.elapsed().as_millis() as u64,
             ));
             let msg = e.to_string();
-            return Step {
-                substeps,
-                outcome: StepOutcome::Complete {
-                    result: Err(StepError {
-                        kind: ErrorKind::Application,
-                        message: msg,
-                    }),
-                    elapsed_ms: start.elapsed().as_millis() as u64,
-                },
+            return CommandResult {
+                steps,
+                result: Err(StepError {
+                    kind: ErrorKind::Application,
+                    message: msg,
+                }),
+                elapsed_ms: start.elapsed().as_millis() as u64,
             };
         }
     };
@@ -141,7 +137,7 @@ pub fn run(path: &Path, no_update: bool, verbose: bool) -> Step<Outcome> {
     let config = if should_update {
         let infer_start = Instant::now();
         let schema = InferredSchema::infer(&scanned);
-        substeps.push(Step::leaf(
+        steps.push(StepEntry::ok(
             Outcome::Infer(InferOutcome {
                 fields_inferred: schema.fields.len(),
             }),
@@ -177,7 +173,7 @@ pub fn run(path: &Path, no_update: bool, verbose: bool) -> Step<Outcome> {
             let write_start = Instant::now();
             match config.write(&config_path_buf) {
                 Ok(()) => {
-                    substeps.push(Step::leaf(
+                    steps.push(StepEntry::ok(
                         Outcome::WriteConfig(WriteConfigOutcome {
                             config_path: config_path_buf.display().to_string(),
                             fields_written: config.fields.field.len(),
@@ -191,20 +187,18 @@ pub fn run(path: &Path, no_update: bool, verbose: bool) -> Step<Outcome> {
                     }
                 }
                 Err(e) => {
-                    substeps.push(Step::failed(
+                    steps.push(StepEntry::err(
                         ErrorKind::Application,
                         e.to_string(),
                         write_start.elapsed().as_millis() as u64,
                     ));
-                    return Step {
-                        substeps,
-                        outcome: StepOutcome::Complete {
-                            result: Err(StepError {
-                                kind: ErrorKind::Application,
-                                message: "auto-update failed to write config".into(),
-                            }),
-                            elapsed_ms: start.elapsed().as_millis() as u64,
-                        },
+                    return CommandResult {
+                        steps,
+                        result: Err(StepError {
+                            kind: ErrorKind::Application,
+                            message: "auto-update failed to write config".into(),
+                        }),
+                        elapsed_ms: start.elapsed().as_millis() as u64,
                     };
                 }
             }
@@ -218,53 +212,41 @@ pub fn run(path: &Path, no_update: bool, verbose: bool) -> Step<Outcome> {
     let check_result = match validate(&scanned, &config, verbose) {
         Ok(r) => r,
         Err(e) => {
-            substeps.push(Step {
-                substeps: vec![],
-                outcome: StepOutcome::Complete {
-                    result: Err(StepError {
-                        kind: ErrorKind::Application,
-                        message: e.to_string(),
-                    }),
-                    elapsed_ms: validate_start.elapsed().as_millis() as u64,
-                },
-            });
-            return Step {
-                substeps,
-                outcome: StepOutcome::Complete {
-                    result: Err(StepError {
-                        kind: ErrorKind::Application,
-                        message: "validation failed".into(),
-                    }),
-                    elapsed_ms: start.elapsed().as_millis() as u64,
-                },
+            steps.push(StepEntry::err(
+                ErrorKind::Application,
+                e.to_string(),
+                validate_start.elapsed().as_millis() as u64,
+            ));
+            return CommandResult {
+                steps,
+                result: Err(StepError {
+                    kind: ErrorKind::Application,
+                    message: "validation failed".into(),
+                }),
+                elapsed_ms: start.elapsed().as_millis() as u64,
             };
         }
     };
 
-    // Push validate substep
-    substeps.push(Step {
-        substeps: vec![],
-        outcome: StepOutcome::Complete {
-            result: Ok(Outcome::Validate(ValidateOutcome {
-                files_checked: check_result.files_checked,
-                violations: check_result.field_violations.clone(),
-                new_fields: check_result.new_fields.clone(),
-            })),
-            elapsed_ms: validate_start.elapsed().as_millis() as u64,
-        },
-    });
+    // Push validate step
+    steps.push(StepEntry::ok(
+        Outcome::Validate(ValidateOutcome {
+            files_checked: check_result.files_checked,
+            violations: check_result.field_violations.clone(),
+            new_fields: check_result.new_fields.clone(),
+        }),
+        validate_start.elapsed().as_millis() as u64,
+    ));
 
     // Build command outcome
-    Step {
-        substeps,
-        outcome: StepOutcome::Complete {
-            result: Ok(Outcome::Check(Box::new(CheckOutcome {
-                files_checked: check_result.files_checked,
-                violations: check_result.field_violations,
-                new_fields: check_result.new_fields,
-            }))),
-            elapsed_ms: start.elapsed().as_millis() as u64,
-        },
+    CommandResult {
+        steps,
+        result: Ok(Outcome::Check(Box::new(CheckOutcome {
+            files_checked: check_result.files_checked,
+            violations: check_result.field_violations,
+            new_fields: check_result.new_fields,
+        }))),
+        elapsed_ms: start.elapsed().as_millis() as u64,
     }
 }
 
@@ -508,12 +490,9 @@ mod tests {
     use crate::schema::shared::ScanConfig;
     use std::fs;
 
-    fn unwrap_check(step: &Step<Outcome>) -> &CheckOutcome {
-        match &step.outcome {
-            StepOutcome::Complete {
-                result: Ok(Outcome::Check(o)),
-                ..
-            } => o,
+    fn unwrap_check(result: &CommandResult) -> &CheckOutcome {
+        match &result.result {
+            Ok(Outcome::Check(o)) => o,
             other => panic!("expected Ok(Check), got: {other:?}"),
         }
     }

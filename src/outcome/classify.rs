@@ -33,33 +33,3 @@ impl Render for ClassifyOutcome {
         }
     }
 }
-
-/// Compact outcome for the classify step (identical — no verbose-only fields).
-#[derive(Debug, Serialize)]
-pub struct ClassifyOutcomeCompact {
-    /// Whether this is a full rebuild.
-    pub full_rebuild: bool,
-    /// Number of files that need embedding.
-    pub needs_embedding: usize,
-    /// Number of files unchanged.
-    pub unchanged: usize,
-    /// Number of files removed.
-    pub removed: usize,
-}
-
-impl Render for ClassifyOutcomeCompact {
-    fn render(&self) -> Vec<Block> {
-        vec![]
-    }
-}
-
-impl From<&ClassifyOutcome> for ClassifyOutcomeCompact {
-    fn from(o: &ClassifyOutcome) -> Self {
-        Self {
-            full_rebuild: o.full_rebuild,
-            needs_embedding: o.needs_embedding,
-            unchanged: o.unchanged,
-            removed: o.removed,
-        }
-    }
-}
