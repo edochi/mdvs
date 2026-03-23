@@ -120,10 +120,10 @@
 | [0116](TODO-0116.md) | Trim DataFusion default features to reduce binary size | todo | medium | 2026-03-17 |
 | [0117](TODO-0117.md) | Fix null values skipping Disallowed and NullNotAllowed checks | done | high | 2026-03-17 |
 | [0118](TODO-0118.md) | Rework README and book intro to show directory-aware schema | todo | high | 2026-03-17 |
-| [0119](TODO-0119.md) | Unified Step tree architecture — replace pipeline/command output split | todo | high | 2026-03-18 |
+| [0119](TODO-0119.md) | Unified Step tree architecture — replace pipeline/command output split | done | high | 2026-03-18 |
 | [0120](TODO-0120.md) | Step tree: core types — Step, StepOutcome, StepError | done | high | 2026-03-19 |
 | [0121](TODO-0121.md) | Step tree: Block enum and Render trait | done | high | 2026-03-19 |
-| [0122](TODO-0122.md) | Step tree: Outcome enums and all outcome structs | todo | high | 2026-03-19 |
+| [0122](TODO-0122.md) | Step tree: Outcome enums and all outcome structs | done | high | 2026-03-19 |
 | [0123](TODO-0123.md) | Step tree: shared formatters (format_text, format_markdown) | done | high | 2026-03-19 |
 | [0124](TODO-0124.md) | Step tree: custom Serialize on Step and StepOutcome | done | high | 2026-03-19 |
 | [0125](TODO-0125.md) | Step tree: convert clean command | done | high | 2026-03-19 |
@@ -134,8 +134,10 @@
 | [0130](TODO-0130.md) | Step tree: convert build + search commands | done | high | 2026-03-19 |
 | [0131](TODO-0131.md) | Step tree: delete old pipeline, update main.rs, simplify output.rs | done | high | 2026-03-19 |
 | [0132](TODO-0132.md) | Macro for compact struct generation (crabtime) | done (subsumed by 0137) | low | 2026-03-19 |
-| [0133](TODO-0133.md) | Macro for step pipeline boilerplate (early-return pattern) | todo | low | 2026-03-19 |
-| [0134](TODO-0134.md) | Step tree post-migration cleanup | todo | medium | 2026-03-20 |
+| [0133](TODO-0133.md) | Macro for step pipeline boilerplate (early-return pattern) | done (subsumed by 0139) | low | 2026-03-19 |
+| [0134](TODO-0134.md) | Step tree post-migration cleanup | done | medium | 2026-03-20 |
 | [0135](TODO-0135.md) | Remove Skipped padding from Step tree error paths | done | medium | 2026-03-20 |
 | [0136](TODO-0136.md) | Inline auto-update and auto-build logic to eliminate redundant reads | done | high | 2026-03-20 |
 | [0137](TODO-0137.md) | Flatten Step tree into steps + result structure | done | high | 2026-03-21 |
+| [0138](TODO-0138.md) | Remove enum variant wrapper from JSON output | done | high | 2026-03-23 |
+| [0139](TODO-0139.md) | Unify fail helpers across commands | done | low | 2026-03-23 |
