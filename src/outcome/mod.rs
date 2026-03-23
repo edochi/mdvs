@@ -37,6 +37,7 @@ pub use validate::ValidateOutcome;
 /// rendering and JSON serialization. Command-level outcomes are `Box`ed
 /// to avoid bloating the enum.
 #[derive(Debug, Serialize)]
+#[serde(untagged)]
 pub enum Outcome {
     /// Delete the `.mdvs/` directory.
     DeleteIndex(DeleteIndexOutcome),

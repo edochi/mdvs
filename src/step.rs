@@ -7,6 +7,7 @@ use crate::block::{Block, Render};
 use crate::outcome::Outcome;
 use serde::ser::SerializeMap;
 use serde::{Serialize, Serializer};
+use std::time::Instant;
 
 /// A process step that completed successfully.
 #[derive(Debug)]
@@ -117,6 +118,35 @@ impl CommandResult {
         }
 
         blocks
+    }
+
+    /// Create a failed result by extracting the error message from the last failed step.
+    pub fn failed_from_steps(steps: Vec<StepEntry>, start: Instant) -> Self {
+        let msg = steps
+            .iter()
+            .rev()
+            .find_map(|s| match s {
+                StepEntry::Failed(f) => Some(f.message.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| "step failed".into());
+        Self {
+            steps,
+            result: Err(StepError {
+                kind: ErrorKind::Application,
+                message: msg,
+            }),
+            elapsed_ms: start.elapsed().as_millis() as u64,
+        }
+    }
+
+    /// Create a failed result with an explicit error.
+    pub fn failed(steps: Vec<StepEntry>, kind: ErrorKind, message: String, start: Instant) -> Self {
+        Self {
+            steps,
+            result: Err(StepError { kind, message }),
+            elapsed_ms: start.elapsed().as_millis() as u64,
+        }
     }
 
     /// Render compact output: command outcome only.
@@ -423,8 +453,8 @@ mod tests {
         let json = serde_json::to_value(&result).unwrap();
         assert_eq!(json["steps"].as_array().unwrap().len(), 1);
         assert_eq!(json["steps"][0]["status"], "complete");
-        assert!(json["steps"][0]["outcome"]["DeleteIndex"].is_object());
-        assert!(json["result"]["Clean"].is_object());
+        assert!(json["steps"][0]["outcome"]["removed"].is_boolean()); // untagged: fields directly
+        assert!(json["result"]["removed"].is_boolean()); // untagged: no "Clean" wrapper
         assert_eq!(json["elapsed_ms"], 5);
         assert!(json.get("error").is_none());
     }
@@ -458,5 +488,78 @@ mod tests {
         };
         let cloned = err.clone();
         assert_eq!(cloned.message, "I/O error");
+    }
+
+    // --- has_violations tests ---
+
+    #[test]
+    fn has_violations_none() {
+        let result = CommandResult {
+            steps: vec![],
+            result: Ok(Outcome::Clean(CleanOutcome {
+                removed: true,
+                path: PathBuf::from(".mdvs"),
+                files_removed: 1,
+                size_bytes: 100,
+            })),
+            elapsed_ms: 5,
+        };
+        assert!(!has_violations(&result));
+    }
+
+    #[test]
+    fn has_violations_in_result() {
+        use crate::outcome::CheckOutcome;
+        use crate::output::{FieldViolation, ViolatingFile, ViolationKind};
+
+        let result = CommandResult {
+            steps: vec![],
+            result: Ok(Outcome::Check(Box::new(CheckOutcome {
+                files_checked: 1,
+                violations: vec![FieldViolation {
+                    field: "draft".into(),
+                    kind: ViolationKind::WrongType,
+                    rule: "type Boolean".into(),
+                    files: vec![ViolatingFile {
+                        path: "post.md".into(),
+                        detail: None,
+                    }],
+                }],
+                new_fields: vec![],
+            }))),
+            elapsed_ms: 5,
+        };
+        assert!(has_violations(&result));
+    }
+
+    #[test]
+    fn has_violations_in_step() {
+        use crate::outcome::ValidateOutcome;
+        use crate::output::{FieldViolation, ViolatingFile, ViolationKind};
+
+        let result = CommandResult {
+            steps: vec![StepEntry::ok(
+                Outcome::Validate(ValidateOutcome {
+                    files_checked: 1,
+                    violations: vec![FieldViolation {
+                        field: "title".into(),
+                        kind: ViolationKind::MissingRequired,
+                        rule: "required".into(),
+                        files: vec![ViolatingFile {
+                            path: "bare.md".into(),
+                            detail: None,
+                        }],
+                    }],
+                    new_fields: vec![],
+                }),
+                10,
+            )],
+            result: Err(StepError {
+                kind: ErrorKind::User,
+                message: "violations found".into(),
+            }),
+            elapsed_ms: 15,
+        };
+        assert!(has_violations(&result));
     }
 }
