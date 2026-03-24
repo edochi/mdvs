@@ -5,8 +5,7 @@
 //! format means writing one function here — no command code changes needed.
 
 use tabled::settings::{
-    object::Cell, peaker::PriorityMax, span::ColumnSpan, style::Style, themes::BorderCorrection,
-    width::Width, Modify,
+    object::Column, style::Style, themes::BorderCorrection, width::Width, Modify, Panel,
 };
 
 use crate::block::{Block, TableStyle};
@@ -34,39 +33,86 @@ fn format_text_block(block: &Block, out: &mut String, indent: usize) {
             rows,
             style,
         } => {
-            let mut builder = Builder::default();
-            if let Some(hdrs) = headers {
-                builder.push_record(hdrs.iter().map(String::as_str));
-            }
-            for row in rows {
-                builder.push_record(row.iter().map(String::as_str));
-            }
-            let mut table = builder.build();
-
-            match style {
+            let mut table = match style {
                 TableStyle::Compact => {
+                    let mut builder = Builder::default();
+                    if let Some(hdrs) = headers {
+                        builder.push_record(hdrs.iter().map(String::as_str));
+                    }
+                    for row in rows {
+                        builder.push_record(row.iter().map(String::as_str));
+                    }
+                    let mut table = builder.build();
                     style_compact(&mut table);
+                    table
                 }
                 TableStyle::Record { detail_rows } => {
+                    // Build table with only non-detail rows so detail text
+                    // doesn't inflate column widths
+                    let mut builder = Builder::default();
+                    if let Some(hdrs) = headers {
+                        builder.push_record(hdrs.iter().map(String::as_str));
+                    }
+                    for (i, row) in rows.iter().enumerate() {
+                        if !detail_rows.contains(&i) {
+                            builder.push_record(row.iter().map(String::as_str));
+                        }
+                    }
+                    let mut table = builder.build();
+                    let w = term_width();
+                    let header_offset = if headers.is_some() { 1 } else { 0 };
+                    table.with(Style::rounded());
+
+                    // Insert detail rows as Panels (spanning rows that don't
+                    // affect column width calculation).
+                    // Panel::horizontal(n, text) inserts a new row at position n.
+                    // We insert after the data row that precedes each detail row.
+                    let mut panels_inserted = 0;
+                    for &row_idx in detail_rows {
+                        let detail_text = &rows[row_idx][0];
+                        if !detail_text.is_empty() {
+                            // Count non-detail rows before this detail row
+                            let data_rows_before =
+                                (0..row_idx).filter(|i| !detail_rows.contains(i)).count();
+                            // Insert position: after the last data row + header + previously inserted panels
+                            let pos = data_rows_before + header_offset + panels_inserted;
+                            table.with(Panel::horizontal(pos, detail_text));
+                            panels_inserted += 1;
+                        }
+                    }
+
+                    table.with(BorderCorrection {});
+                    // Fixed proportional column widths via per-column Modify
                     let col_count = headers
                         .as_ref()
                         .map(|h| h.len())
                         .or_else(|| rows.first().map(|r| r.len()))
-                        .unwrap_or(1) as isize;
-                    let w = term_width();
-                    let header_offset = if headers.is_some() { 1 } else { 0 };
-                    table.with(Style::rounded());
-                    for &row_idx in detail_rows {
-                        let actual_row = row_idx + header_offset;
-                        table.with(
-                            Modify::new(Cell::new(actual_row, 0)).with(ColumnSpan::new(col_count)),
-                        );
+                        .unwrap_or(1);
+                    // Overhead: borders (col_count + 1 chars) + padding (2 per col)
+                    let overhead = (col_count + 1) + (col_count * 2);
+                    let available = w.saturating_sub(overhead);
+                    if col_count == 3 {
+                        // 40% / 30% / 30%
+                        let c0 = available * 40 / 100;
+                        let c1 = available * 30 / 100;
+                        let c2 = available - c0 - c1;
+                        table.with(Modify::new(Column::from(0)).with(Width::wrap(c0)));
+                        table.with(Modify::new(Column::from(1)).with(Width::wrap(c1)));
+                        table.with(Modify::new(Column::from(2)).with(Width::wrap(c2)));
+                        table.with(Modify::new(Column::from(0)).with(Width::increase(c0)));
+                        table.with(Modify::new(Column::from(1)).with(Width::increase(c1)));
+                        table.with(Modify::new(Column::from(2)).with(Width::increase(c2)));
+                    } else {
+                        // Fallback: distribute evenly
+                        let each = available / col_count.max(1);
+                        for i in 0..col_count {
+                            table.with(Modify::new(Column::from(i)).with(Width::wrap(each)));
+                            table.with(Modify::new(Column::from(i)).with(Width::increase(each)));
+                        }
                     }
-                    table.with(BorderCorrection {});
-                    table.with(Width::increase(w));
-                    table.with(Width::wrap(w).priority(PriorityMax::left()));
+                    table
                 }
-            }
+            };
 
             let rendered = table.to_string();
             if indent > 0 {
