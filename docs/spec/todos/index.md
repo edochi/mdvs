@@ -141,3 +141,4 @@
 | [0137](TODO-0137.md) | Flatten Step tree into steps + result structure | done | high | 2026-03-21 |
 | [0138](TODO-0138.md) | Remove enum variant wrapper from JSON output | done | high | 2026-03-23 |
 | [0139](TODO-0139.md) | Unify fail helpers across commands | done | low | 2026-03-23 |
+| [0140](TODO-0140.md) | Global --dry-run flag | todo | medium | 2026-03-28 |
