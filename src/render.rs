@@ -6,7 +6,7 @@
 
 use tabled::settings::{
     object::{Column, Rows},
-    style::{HorizontalLine, LineText, Style},
+    style::{LineText, Style},
     themes::BorderCorrection,
     width::Width,
     Modify, Panel,
@@ -37,7 +37,7 @@ fn format_text_block(block: &Block, out: &mut String, indent: usize) {
             rows,
             style,
         } => {
-            let mut table = match style {
+            let table = match style {
                 TableStyle::Compact => {
                     let mut builder = Builder::default();
                     if let Some(hdrs) = headers {
@@ -125,31 +125,29 @@ fn format_text_block(block: &Block, out: &mut String, indent: usize) {
 
                     let w = term_width();
                     let available = w.saturating_sub(7); // 3 borders + 4 padding
-                    let half = available / 2;
+                    let col0 = available / 3;
+                    let col1 = available - col0;
 
                     // modern() has horizontal lines between ALL rows
                     table.with(Style::modern());
 
-                    // Fixed 50/50 column widths
-                    table.with(
-                        Modify::new(Column::from(0)).with(Width::increase(half)),
-                    );
-                    table.with(Modify::new(Column::from(0)).with(Width::wrap(half)));
-                    table.with(
-                        Modify::new(Column::from(1)).with(Width::increase(half)),
-                    );
-                    table.with(Modify::new(Column::from(1)).with(Width::wrap(half)));
+                    // Fixed 1/3 and 2/3 column widths
+                    table.with(Modify::new(Column::from(0)).with(Width::increase(col0)));
+                    table.with(Modify::new(Column::from(0)).with(Width::wrap(col0)));
+                    table.with(Modify::new(Column::from(1)).with(Width::increase(col1)));
+                    table.with(Modify::new(Column::from(1)).with(Width::wrap(col1)));
 
-                    // Item name on top border
-                    table.with(
-                        LineText::new(format!(" {title} "), Rows::first()).offset(1),
-                    );
+                    // Item name on top border (skip if empty)
+                    if !title.is_empty() {
+                        table.with(LineText::new(format!(" {title} "), Rows::first()).offset(1));
+                    }
 
                     table
                 }
             };
 
             let rendered = table.to_string();
+            let extra_newline = matches!(style, TableStyle::KeyValue { .. });
             if indent > 0 {
                 for line in rendered.lines() {
                     out.push_str(&prefix);
@@ -158,6 +156,9 @@ fn format_text_block(block: &Block, out: &mut String, indent: usize) {
                 }
             } else {
                 out.push_str(&rendered);
+                out.push('\n');
+            }
+            if extra_newline {
                 out.push('\n');
             }
         }

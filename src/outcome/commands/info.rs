@@ -25,6 +25,7 @@ impl Render for InfoOutcome {
     fn render(&self) -> Vec<Block> {
         let mut blocks = vec![];
 
+        // Summary line
         let one_liner = match &self.index {
             Some(idx) => format!(
                 "{} files, {} fields, {} chunks",
@@ -35,58 +36,71 @@ impl Render for InfoOutcome {
             None => format!("{} files, {} fields", self.files_on_disk, self.fields.len()),
         };
         blocks.push(Block::Line(one_liner));
+        blocks.push(Block::Line(String::new()));
 
+        // Index metadata
         if let Some(idx) = &self.index {
             let rev = idx.revision.as_deref().unwrap_or("none");
             let rows = vec![
-                vec!["model:".into(), idx.model.clone()],
-                vec!["revision:".into(), rev.to_string()],
-                vec!["chunk size:".into(), idx.chunk_size.to_string()],
-                vec!["built:".into(), idx.built_at.clone()],
-                vec!["config:".into(), idx.config_status.clone()],
+                vec!["model".into(), idx.model.clone()],
+                vec!["revision".into(), rev.to_string()],
+                vec!["chunk size".into(), idx.chunk_size.to_string()],
+                vec!["built".into(), idx.built_at.clone()],
+                vec!["config".into(), idx.config_status.clone()],
                 vec![
-                    "files:".into(),
-                    format!("{}/{}", idx.files_indexed, idx.files_on_disk),
+                    "files".into(),
+                    format!("{} out of {}", idx.files_indexed, idx.files_on_disk),
                 ],
             ];
+            blocks.push(Block::Line("Index:".into()));
             blocks.push(Block::Table {
                 headers: None,
                 rows,
-                style: TableStyle::Compact,
+                style: TableStyle::KeyValue {
+                    title: String::new(),
+                },
             });
         }
 
+        // Per-field KeyValue tables
+        if !self.fields.is_empty() {
+            blocks.push(Block::Line(format!("{} fields:", self.fields.len())));
+        }
         for f in &self.fields {
-            let count_str = match (f.count, f.total_files) {
-                (Some(c), Some(t)) => format!("{c}/{t}"),
+            let files_str = match (f.count, f.total_files) {
+                (Some(c), Some(t)) => format!("{c} out of {t}"),
                 _ => String::new(),
             };
-            let mut detail_lines = Vec::new();
-            if !f.required.is_empty() {
-                detail_lines.push("  required:".to_string());
-                for g in &f.required {
-                    detail_lines.push(format!("    - \"{g}\""));
-                }
-            }
-            detail_lines.push("  allowed:".to_string());
-            for g in &f.allowed {
-                detail_lines.push(format!("    - \"{g}\""));
-            }
-            if f.nullable {
-                detail_lines.push("  nullable: true".to_string());
-            }
+
+            let mut rows = vec![
+                vec!["type".into(), f.field_type.clone()],
+                vec!["files".into(), files_str],
+                vec!["nullable".into(), f.nullable.to_string()],
+            ];
+
+            let req_val = if f.required.is_empty() {
+                "(none)".into()
+            } else {
+                f.required.join("\n")
+            };
+            rows.push(vec!["required".into(), req_val]);
+
+            let allow_val = if f.allowed.is_empty() {
+                "**".into()
+            } else {
+                f.allowed.join("\n")
+            };
+            rows.push(vec!["allowed".into(), allow_val]);
+
             if !f.hints.is_empty() {
-                detail_lines.push(format!("  hints: {}", format_hints(&f.hints)));
+                rows.push(vec!["hints".into(), format_hints(&f.hints)]);
             }
 
             blocks.push(Block::Table {
                 headers: None,
-                rows: vec![
-                    vec![format!("\"{}\"", f.name), f.field_type.clone(), count_str],
-                    vec![detail_lines.join("\n"), String::new(), String::new()],
-                ],
-                style: TableStyle::Record {
-                    detail_rows: vec![1],
+                rows,
+                style: TableStyle::KeyValue {
+                    title: f.name.clone(),
                 },
             });
         }

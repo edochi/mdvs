@@ -37,6 +37,9 @@ impl Render for InitOutcome {
         )));
 
         // Per-field key-value tables
+        if !self.fields.is_empty() {
+            blocks.push(Block::Line(String::new()));
+        }
         for field in &self.fields {
             let mut rows = vec![
                 vec!["type".into(), field.field_type.clone()],
