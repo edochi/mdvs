@@ -5,7 +5,11 @@
 //! format means writing one function here — no command code changes needed.
 
 use tabled::settings::{
-    object::Column, style::Style, themes::BorderCorrection, width::Width, Modify, Panel,
+    object::{Column, Rows},
+    style::{HorizontalLine, LineText, Style},
+    themes::BorderCorrection,
+    width::Width,
+    Modify, Panel,
 };
 
 use crate::block::{Block, TableStyle};
@@ -110,6 +114,37 @@ fn format_text_block(block: &Block, out: &mut String, indent: usize) {
                             table.with(Modify::new(Column::from(i)).with(Width::increase(each)));
                         }
                     }
+                    table
+                }
+                TableStyle::KeyValue { title } => {
+                    let mut builder = Builder::default();
+                    for row in rows {
+                        builder.push_record(row.iter().map(String::as_str));
+                    }
+                    let mut table = builder.build();
+
+                    let w = term_width();
+                    let available = w.saturating_sub(7); // 3 borders + 4 padding
+                    let half = available / 2;
+
+                    // modern() has horizontal lines between ALL rows
+                    table.with(Style::modern());
+
+                    // Fixed 50/50 column widths
+                    table.with(
+                        Modify::new(Column::from(0)).with(Width::increase(half)),
+                    );
+                    table.with(Modify::new(Column::from(0)).with(Width::wrap(half)));
+                    table.with(
+                        Modify::new(Column::from(1)).with(Width::increase(half)),
+                    );
+                    table.with(Modify::new(Column::from(1)).with(Width::wrap(half)));
+
+                    // Item name on top border
+                    table.with(
+                        LineText::new(format!(" {title} "), Rows::first()).offset(1),
+                    );
+
                     table
                 }
             };

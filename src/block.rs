@@ -34,11 +34,17 @@ pub enum Block {
 pub enum TableStyle {
     /// No internal horizontal separators. For compact summary tables.
     Compact,
-    /// Detail rows span all columns (via ColumnSpan in text formatter).
+    /// Detail rows span all columns (via Panel in text formatter).
     /// For per-item record tables with expandable detail.
     Record {
         /// Zero-based row indices that should span all columns as detail rows.
         detail_rows: Vec<usize>,
+    },
+    /// Two-column key-value table with item name on top border.
+    /// Horizontal separators between all rows. Fixed 50/50 column widths.
+    KeyValue {
+        /// Item name displayed on the top border.
+        title: String,
     },
 }
 
