@@ -32,6 +32,7 @@ impl Render for UpdateOutcome {
     fn render(&self) -> Vec<Block> {
         let mut blocks = vec![];
 
+        // Summary line
         let total_changes = self.added.len() + self.changed.len() + self.removed.len();
         let summary = if total_changes == 0 {
             "no changes".to_string()
@@ -48,84 +49,88 @@ impl Render for UpdateOutcome {
             return blocks;
         }
 
-        for field in &self.added {
-            let mut detail_lines = Vec::new();
-            if let Some(ref globs) = field.allowed {
-                detail_lines.push("  found in:".to_string());
-                for g in globs {
-                    detail_lines.push(format!("    - \"{g}\""));
-                }
-            }
-            if field.nullable {
-                detail_lines.push("  nullable: true".to_string());
-            }
-            if !field.hints.is_empty() {
-                detail_lines.push(format!("  hints: {}", format_hints(&field.hints)));
-            }
-            blocks.push(Block::Table {
-                headers: None,
-                rows: vec![
+        // Added fields — same KeyValue format as init
+        if !self.added.is_empty() {
+            blocks.push(Block::Line(String::new()));
+            blocks.push(Block::Line(format!("Added ({}):", self.added.len())));
+            for field in &self.added {
+                let mut rows = vec![
+                    vec!["type".into(), field.field_type.clone()],
                     vec![
-                        format!("\"{}\"", field.name),
-                        "added".to_string(),
-                        field.field_type.clone(),
+                        "files".into(),
+                        format!("{} out of {}", field.files_found, field.total_files),
                     ],
-                    vec![detail_lines.join("\n"), String::new(), String::new()],
-                ],
-                style: TableStyle::Record {
-                    detail_rows: vec![1],
-                },
-            });
-        }
+                    vec!["nullable".into(), field.nullable.to_string()],
+                ];
 
-        for field in &self.changed {
-            let mut rows = vec![vec![
-                "field".into(),
-                "aspect".into(),
-                "old".into(),
-                "new".into(),
-            ]];
-            for (i, change) in field.changes.iter().enumerate() {
-                let name_col = if i == 0 {
-                    format!("\"{}\"", field.name)
-                } else {
-                    String::new()
+                let req_val = match &field.required {
+                    Some(r) if !r.is_empty() => r.join("\n"),
+                    _ => "(none)".into(),
                 };
-                let (old, new) = change.format_old_new();
-                rows.push(vec![name_col, change.label().to_string(), old, new]);
+                rows.push(vec!["required".into(), req_val]);
+
+                let allow_val = match &field.allowed {
+                    Some(a) if !a.is_empty() => a.join("\n"),
+                    _ => "**".into(),
+                };
+                rows.push(vec!["allowed".into(), allow_val]);
+
+                if !field.hints.is_empty() {
+                    rows.push(vec!["hints".into(), format_hints(&field.hints)]);
+                }
+
+                blocks.push(Block::Table {
+                    headers: None,
+                    rows,
+                    style: TableStyle::KeyValue {
+                        title: field.name.clone(),
+                    },
+                });
             }
-            blocks.push(Block::Table {
-                headers: None,
-                rows,
-                style: TableStyle::Compact,
-            });
         }
 
-        for field in &self.removed {
-            let detail = match &field.allowed {
-                Some(globs) => {
-                    let mut lines = vec!["  previously in:".to_string()];
-                    for g in globs {
-                        lines.push(format!("    - \"{g}\""));
+        // Changed fields — one row per changed aspect with old → new
+        if !self.changed.is_empty() {
+            blocks.push(Block::Line(String::new()));
+            blocks.push(Block::Line(format!("Changed ({}):", self.changed.len())));
+            for field in &self.changed {
+                let rows: Vec<Vec<String>> = field
+                    .changes
+                    .iter()
+                    .map(|c| {
+                        let (old, new) = c.format_old_new();
+                        vec![c.label().to_string(), format!("{old} \u{2192} {new}")]
+                    })
+                    .collect();
+                blocks.push(Block::Table {
+                    headers: None,
+                    rows,
+                    style: TableStyle::KeyValue {
+                        title: field.name.clone(),
+                    },
+                });
+            }
+        }
+
+        // Removed fields
+        if !self.removed.is_empty() {
+            blocks.push(Block::Line(String::new()));
+            blocks.push(Block::Line(format!("Removed ({}):", self.removed.len())));
+            for field in &self.removed {
+                let rows = match &field.allowed {
+                    Some(globs) if !globs.is_empty() => {
+                        vec![vec!["previously allowed".into(), globs.join("\n")]]
                     }
-                    lines.join("\n")
-                }
-                None => String::new(),
-            };
-            blocks.push(Block::Table {
-                headers: None,
-                rows: vec![
-                    vec![
-                        format!("\"{}\"", field.name),
-                        "removed".to_string(),
-                        String::new(),
-                    ],
-                    vec![detail, String::new(), String::new()],
-                ],
-                style: TableStyle::Record {
-                    detail_rows: vec![1],
-                },
-            });
+                    _ => vec![vec!["status".into(), "removed".into()]],
+                };
+                blocks.push(Block::Table {
+                    headers: None,
+                    rows,
+                    style: TableStyle::KeyValue {
+                        title: field.name.clone(),
+                    },
+                });
+            }
         }
 
         blocks
