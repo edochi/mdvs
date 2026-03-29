@@ -142,3 +142,4 @@
 | [0138](TODO-0138.md) | Remove enum variant wrapper from JSON output | done | high | 2026-03-23 |
 | [0139](TODO-0139.md) | Unify fail helpers across commands | done | low | 2026-03-23 |
 | [0140](TODO-0140.md) | Global --dry-run flag | todo | medium | 2026-03-28 |
+| [0141](TODO-0141.md) | Global --quiet flag to suppress output on success | todo | medium | 2026-03-29 |
