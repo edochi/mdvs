@@ -133,7 +133,7 @@ mod tests {
             size_bytes: 100,
         });
         let blocks = outcome.render();
-        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks.len(), 3); // summary line + empty line + table
     }
 
     #[test]

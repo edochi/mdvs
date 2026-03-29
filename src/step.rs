@@ -401,7 +401,7 @@ mod tests {
             elapsed_ms: 15,
         };
         let blocks = result.render_verbose();
-        assert_eq!(blocks.len(), 3); // step line + 2 clean lines
+        assert_eq!(blocks.len(), 4); // step line + summary + empty line + table
         match &blocks[0] {
             Block::Line(s) => assert!(s.contains("Scan") && s.contains("(10ms)")),
             _ => panic!("expected Line"),
@@ -427,7 +427,7 @@ mod tests {
             elapsed_ms: 15,
         };
         let blocks = result.render_compact();
-        assert_eq!(blocks.len(), 2); // 2 clean lines, no step line
+        assert_eq!(blocks.len(), 3); // summary + empty line + table, no step line
     }
 
     #[test]

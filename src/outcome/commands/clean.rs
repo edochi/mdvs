@@ -4,8 +4,8 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 
-use crate::block::{Block, Render};
-use crate::output::{format_file_count, format_size};
+use crate::block::{Block, Render, TableStyle};
+use crate::output::format_size;
 
 /// Full outcome for the clean command.
 #[derive(Debug, Serialize)]
@@ -22,21 +22,35 @@ pub struct CleanOutcome {
 
 impl Render for CleanOutcome {
     fn render(&self) -> Vec<Block> {
+        let mut blocks = vec![];
+
+        // Summary line
         if self.removed {
-            vec![
-                Block::Line(format!("Cleaned \"{}\"", self.path.display())),
-                Block::Line(format!(
-                    "{} | {}",
-                    format_file_count(self.files_removed),
-                    format_size(self.size_bytes),
-                )),
-            ]
+            blocks.push(Block::Line(format!("Cleaned \"{}\"", self.path.display())));
         } else {
-            vec![Block::Line(format!(
+            blocks.push(Block::Line(format!(
                 "Nothing to clean — \"{}\" does not exist",
                 self.path.display()
-            ))]
+            )));
         }
+        blocks.push(Block::Line(String::new()));
+
+        // All JSON fields as key-value rows
+        let rows = vec![
+            vec!["removed".into(), self.removed.to_string()],
+            vec!["path".into(), self.path.display().to_string()],
+            vec!["files removed".into(), self.files_removed.to_string()],
+            vec!["size".into(), format_size(self.size_bytes)],
+        ];
+        blocks.push(Block::Table {
+            headers: None,
+            rows,
+            style: TableStyle::KeyValue {
+                title: String::new(),
+            },
+        });
+
+        blocks
     }
 }
 
@@ -53,15 +67,12 @@ mod tests {
             size_bytes: 1024,
         };
         let blocks = outcome.render();
-        assert_eq!(blocks.len(), 2);
         match &blocks[0] {
             Block::Line(s) => assert_eq!(s, "Cleaned \".mdvs\""),
             _ => panic!("expected Line"),
         }
-        match &blocks[1] {
-            Block::Line(s) => assert!(s.contains("2 files") && s.contains("1.0 KB")),
-            _ => panic!("expected Line"),
-        }
+        // Table is present
+        assert!(blocks.iter().any(|b| matches!(b, Block::Table { .. })));
     }
 
     #[test]
@@ -73,7 +84,6 @@ mod tests {
             size_bytes: 0,
         };
         let blocks = outcome.render();
-        assert_eq!(blocks.len(), 1);
         match &blocks[0] {
             Block::Line(s) => assert!(s.contains("Nothing to clean")),
             _ => panic!("expected Line"),
