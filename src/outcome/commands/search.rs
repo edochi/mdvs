@@ -22,61 +22,51 @@ impl Render for SearchOutcome {
     fn render(&self) -> Vec<Block> {
         let mut blocks = vec![];
 
+        // Summary line
         let hit_word = if self.hits.len() == 1 { "hit" } else { "hits" };
         blocks.push(Block::Line(format!(
             "Searched \"{}\" — {} {hit_word}",
             self.query,
             self.hits.len()
         )));
+        blocks.push(Block::Line(String::new()));
 
-        if self.hits.is_empty() {
-            return blocks;
-        }
+        // Top-level fields
+        blocks.push(Block::Table {
+            headers: None,
+            rows: vec![
+                vec!["query".into(), self.query.clone()],
+                vec!["model".into(), self.model_name.clone()],
+                vec!["limit".into(), self.limit.to_string()],
+            ],
+            style: TableStyle::KeyValue {
+                title: String::new(),
+            },
+        });
 
-        // Per-hit record tables with chunk text
+        // Per-hit KeyValue tables
         for (i, hit) in self.hits.iter().enumerate() {
-            let idx = format!("{}", i + 1);
-            let path = format!("\"{}\"", hit.filename);
-            let score = format!("{:.3}", hit.score);
+            let mut rows = vec![
+                vec!["file".into(), hit.filename.clone()],
+                vec!["score".into(), format!("{:.3}", hit.score)],
+            ];
 
-            let detail = match (&hit.chunk_text, hit.start_line, hit.end_line) {
-                (Some(text), Some(start), Some(end)) => {
-                    let indented: String = text
-                        .lines()
-                        .map(|l| format!("    {l}"))
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    format!("  lines {start}-{end}:\n{indented}")
-                }
-                (None, Some(start), Some(end)) => format!("  lines {start}-{end}"),
-                _ => String::new(),
-            };
+            if let (Some(start), Some(end)) = (hit.start_line, hit.end_line) {
+                rows.push(vec!["lines".into(), format!("{start}-{end}")]);
+            }
 
-            let mut rows = vec![vec![idx, path, score]];
-            if !detail.is_empty() {
-                rows.push(vec![detail, String::new(), String::new()]);
+            if let Some(ref text) = hit.chunk_text {
+                rows.push(vec!["text".into(), text.trim().to_string()]);
             }
 
             blocks.push(Block::Table {
                 headers: None,
-                rows: rows.clone(),
-                style: if rows.len() > 1 {
-                    TableStyle::Record {
-                        detail_rows: vec![1],
-                    }
-                } else {
-                    TableStyle::Compact
+                rows,
+                style: TableStyle::KeyValue {
+                    title: format!("#{}", i + 1),
                 },
             });
         }
-
-        // Footer
-        blocks.push(Block::Line(format!(
-            "{} {hit_word} | model: \"{}\" | limit: {}",
-            self.hits.len(),
-            self.model_name,
-            self.limit,
-        )));
 
         blocks
     }
