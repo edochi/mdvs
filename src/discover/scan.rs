@@ -36,6 +36,9 @@ pub struct ScannedFile {
     pub data: Option<Value>,
     /// Markdown body (after frontmatter extraction), trimmed.
     pub content: String,
+    /// Number of lines before the body in the original file (frontmatter + delimiters).
+    /// Used to offset chunk line numbers so they reference the full file.
+    pub body_line_offset: usize,
 }
 
 /// Collection of scanned markdown files from a directory walk.
@@ -115,6 +118,7 @@ impl ScannedFiles {
                     path: rel_path,
                     data: None,
                     content: raw.trim().to_string(),
+                    body_line_offset: 0,
                 });
                 continue;
             };
@@ -154,11 +158,13 @@ impl ScannedFiles {
             }
 
             let content = parsed.content.trim().to_string();
+            let body_line_offset = raw.lines().count().saturating_sub(content.lines().count());
 
             files.push(ScannedFile {
                 path: rel_path,
                 data,
                 content,
+                body_line_offset,
             });
         }
 

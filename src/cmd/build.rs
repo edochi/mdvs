@@ -165,8 +165,8 @@ async fn embed_file(
             chunk_id: uuid::Uuid::new_v4().to_string(),
             file_id: file_id.to_string(),
             chunk_index: chunk.chunk_index as i32,
-            start_line: chunk.start_line as i32,
-            end_line: chunk.end_line as i32,
+            start_line: (chunk.start_line + file.body_line_offset) as i32,
+            end_line: (chunk.end_line + file.body_line_offset) as i32,
             embedding,
         })
         .collect()
@@ -1846,6 +1846,7 @@ mod tests {
                     path: std::path::PathBuf::from(path),
                     data: None,
                     content: body.to_string(),
+                    body_line_offset: 0,
                 })
                 .collect(),
         }
