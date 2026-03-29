@@ -47,21 +47,7 @@ impl Render for BuildOutcome {
     fn render(&self) -> Vec<Block> {
         let mut blocks = vec![];
 
-        // New fields (shown before stats)
-        for nf in &self.new_fields {
-            blocks.push(Block::Line(format!(
-                "  new field: {} ({})",
-                nf.name,
-                format_file_count(nf.files_found)
-            )));
-        }
-        if !self.new_fields.is_empty() {
-            blocks.push(Block::Line(
-                "Run 'mdvs update' to incorporate new fields.".into(),
-            ));
-        }
-
-        // One-liner
+        // Summary line
         let rebuild_suffix = if self.full_rebuild {
             " (full rebuild)"
         } else {
@@ -72,63 +58,61 @@ impl Render for BuildOutcome {
             format_file_count(self.files_total),
             format_chunk_count(self.chunks_total)
         )));
+        blocks.push(Block::Line(String::new()));
 
-        // Record tables per category with file-by-file detail
-        if self.files_embedded > 0 {
-            let detail = self
-                .embedded_files
+        // All JSON fields as key-value rows
+        let new_fields_str = if self.new_fields.is_empty() {
+            "(none)".into()
+        } else {
+            self.new_fields
                 .iter()
-                .map(|f| format!("  - \"{}\" ({})", f.filename, format_chunk_count(f.chunks)))
+                .map(|nf| format!("{} ({})", nf.name, format_file_count(nf.files_found)))
                 .collect::<Vec<_>>()
-                .join("\n");
-            blocks.push(Block::Table {
-                headers: None,
-                rows: vec![
-                    vec![
-                        "embedded".to_string(),
-                        format_file_count(self.files_embedded),
-                        format_chunk_count(self.chunks_embedded),
-                    ],
-                    vec![detail, String::new(), String::new()],
-                ],
-                style: TableStyle::Record {
-                    detail_rows: vec![1],
-                },
-            });
-        }
-        if self.files_unchanged > 0 {
-            blocks.push(Block::Table {
-                headers: None,
-                rows: vec![vec![
-                    "unchanged".to_string(),
-                    format_file_count(self.files_unchanged),
-                    format_chunk_count(self.chunks_unchanged),
-                ]],
-                style: TableStyle::Compact,
-            });
-        }
-        if self.files_removed > 0 {
-            let detail = self
-                .removed_files
+                .join("\n")
+        };
+
+        let embedded_files_str = if self.embedded_files.is_empty() {
+            "(none)".into()
+        } else {
+            self.embedded_files
                 .iter()
-                .map(|f| format!("  - \"{}\" ({})", f.filename, format_chunk_count(f.chunks)))
+                .map(|f| format!("{} ({})", f.filename, format_chunk_count(f.chunks)))
                 .collect::<Vec<_>>()
-                .join("\n");
-            blocks.push(Block::Table {
-                headers: None,
-                rows: vec![
-                    vec![
-                        "removed".to_string(),
-                        format_file_count(self.files_removed),
-                        format_chunk_count(self.chunks_removed),
-                    ],
-                    vec![detail, String::new(), String::new()],
-                ],
-                style: TableStyle::Record {
-                    detail_rows: vec![1],
-                },
-            });
-        }
+                .join("\n")
+        };
+
+        let removed_files_str = if self.removed_files.is_empty() {
+            "(none)".into()
+        } else {
+            self.removed_files
+                .iter()
+                .map(|f| format!("{} ({})", f.filename, format_chunk_count(f.chunks)))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+
+        let rows = vec![
+            vec!["full rebuild".into(), self.full_rebuild.to_string()],
+            vec!["files total".into(), self.files_total.to_string()],
+            vec!["files embedded".into(), self.files_embedded.to_string()],
+            vec!["files unchanged".into(), self.files_unchanged.to_string()],
+            vec!["files removed".into(), self.files_removed.to_string()],
+            vec!["chunks total".into(), self.chunks_total.to_string()],
+            vec!["chunks embedded".into(), self.chunks_embedded.to_string()],
+            vec!["chunks unchanged".into(), self.chunks_unchanged.to_string()],
+            vec!["chunks removed".into(), self.chunks_removed.to_string()],
+            vec!["new fields".into(), new_fields_str],
+            vec!["embedded files".into(), embedded_files_str],
+            vec!["removed files".into(), removed_files_str],
+        ];
+
+        blocks.push(Block::Table {
+            headers: None,
+            rows,
+            style: TableStyle::KeyValue {
+                title: String::new(),
+            },
+        });
 
         blocks
     }
