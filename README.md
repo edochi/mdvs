@@ -11,6 +11,8 @@
 
 </div>
 
+mdvs infers a typed schema from your markdown frontmatter, validates it, and lets you search everything with natural language + SQL. Single binary, runs locally, no setup.
+
 <div align="center">
 
   :x: A Document Database
@@ -19,7 +21,7 @@
 
 </div>
 
-Schema inference, frontmatter validation, and semantic search for markdown directories. Single binary, no cloud, no setup.
+Schema inference, frontmatter validation, and semantic search for markdown directories. For Obsidian vaults, Zettelkasten, docs-as-code, research notes, wikis — any directory of markdown files with (or without) frontmatter.
 
 ## Why mdvs?
 
@@ -93,34 +95,44 @@ mdvs scans every file, extracts frontmatter, and infers which fields belong wher
 
 ```
 Initialized 5 files — 7 field(s)
-┌ title ────────────┬───────────────────┐
-│ type              │ String            │
-├───────────────────┼───────────────────┤
-│ files             │ 5 out of 5        │
-├───────────────────┼───────────────────┤
-│ required          │ **                │
-├───────────────────┼───────────────────┤
-│ allowed           │ **                │
-└───────────────────┴───────────────────┘
-┌ draft ────────────┬───────────────────┐
-│ type              │ Boolean           │
-├───────────────────┼───────────────────┤
-│ files             │ 2 out of 5        │
-├───────────────────┼───────────────────┤
-│ required          │ (none)            │
-├───────────────────┼───────────────────┤
-│ allowed           │ blog/**           │
-└───────────────────┴───────────────────┘
-┌ role ─────────────┬───────────────────┐
-│ type              │ String            │
-├───────────────────┼───────────────────┤
-│ files             │ 2 out of 5        │
-├───────────────────┼───────────────────┤
-│ required          │ team/**           │
-├───────────────────┼───────────────────┤
-│ allowed           │ team/**           │
-└───────────────────┴───────────────────┘
-  ...
+
+┌ title ───────────────────┬───────────────────────────────────────────────────┐
+│ type                     │ String                                            │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ files                    │ 5 out of 5                                        │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ nullable                 │ false                                             │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ required                 │ **                                                │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ allowed                  │ **                                                │
+└──────────────────────────┴───────────────────────────────────────────────────┘
+
+┌ draft ───────────────────┬───────────────────────────────────────────────────┐
+│ type                     │ Boolean                                           │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ files                    │ 2 out of 5                                        │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ nullable                 │ false                                             │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ required                 │ (none)                                            │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ allowed                  │ blog/**                                           │
+└──────────────────────────┴───────────────────────────────────────────────────┘
+
+┌ role ────────────────────┬───────────────────────────────────────────────────┐
+│ type                     │ String                                            │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ files                    │ 2 out of 5                                        │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ nullable                 │ false                                             │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ required                 │ team/**                                           │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ allowed                  │ team/**                                           │
+└──────────────────────────┴───────────────────────────────────────────────────┘
+
+...
 ```
 
 `draft` belongs in `blog/`. `role` belongs in `team/`. The directory structure is the schema.
@@ -144,11 +156,15 @@ mdvs check notes/
 
 ```
 Checked 7 files — 1 violation(s)
-┌ role ─────────────┬───────────────────┐
-│ kind              │ Missing required  │
-├───────────────────┼───────────────────┤
-│ files             │ team/charlie.md   │
-└───────────────────┴───────────────────┘
+
+Violations (1):
+┌ role ────────────────────┬───────────────────────────────────────────────────┐
+│ kind                     │ Missing required                                  │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ rule                     │ required in ["team/**"]                           │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ files                    │ team/charlie.md                                   │
+└──────────────────────────┴───────────────────────────────────────────────────┘
 ```
 
 `charlie.md` is missing `role` — but `new-post.md` isn't flagged. mdvs knows `role` belongs in `team/`, not in `blog/`.
@@ -156,24 +172,35 @@ Checked 7 files — 1 violation(s)
 ### Search
 
 ```bash
-mdvs search "weekly sync" notes/
+mdvs search "how to get in touch" notes/
 ```
 
 ```
-Searched "weekly sync" — 2 hits
-┌ #1 ───────────────┬───────────────────┐
-│ file              │ meetings/weekly.md│
-├───────────────────┼───────────────────┤
-│ score             │ 0.820             │
-└───────────────────┴───────────────────┘
-┌ #2 ───────────────┬───────────────────┐
-│ file              │ team/alice.md     │
-├───────────────────┼───────────────────┤
-│ score             │ 0.450             │
-└───────────────────┴───────────────────┘
+Searched "how to get in touch" — 3 hits
+
+┌──────────────────────────┬───────────────────────────────────────────────────┐
+│ query                    │ how to get in touch                               │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ model                    │ minishlab/potion-base-8M                          │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ limit                    │ 10                                                │
+└──────────────────────────┴───────────────────────────────────────────────────┘
+
+┌ #1 ──────────────────────┬───────────────────────────────────────────────────┐
+│ file                     │ team/alice.md                                     │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ score                    │ 0.612                                             │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ lines                    │ 5-8                                               │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ text                     │ Alice leads the backend team. Reach her at        │
+│                          │ alice@example.com or on Slack.                    │
+└──────────────────────────┴───────────────────────────────────────────────────┘
+
+...
 ```
 
-Filter with SQL on frontmatter fields:
+`alice.md` doesn't contain "get in touch" — mdvs finds it by meaning, not keywords. Filter with SQL on frontmatter:
 
 ```bash
 mdvs search "rust" notes/ --where "draft = false"
@@ -181,13 +208,14 @@ mdvs search "rust" notes/ --where "draft = false"
 
 No config files to write. No models to download manually. No services to start.
 
-> **Try it yourself!** Clone the repo and explore a richer example — 43 files across 8 directories, with type widening, nullable fields, nested objects, and deliberate edge cases:
+> **Try it on your own files:**
 > ```bash
-> git clone https://github.com/edochi/mdvs.git
-> cd mdvs
-> mdvs init example_kb/
-> mdvs search "experiment" example_kb/
+> cargo install mdvs
+> mdvs init your-notes/
+> mdvs search "your query" your-notes/
 > ```
+>
+> Or explore the repo's [example_kb/](example_kb/) — 43 files across 8 directories with type widening, nullable fields, nested objects, and deliberate edge cases.
 
 ## Features
 
@@ -197,6 +225,7 @@ No config files to write. No models to download manually. No services to start.
 - **SQL filtering** — `--where` clauses on any frontmatter field, powered by [DataFusion](https://datafusion.apache.org/). Arrays, nested objects, LIKE, IS NULL — full SQL.
 - **Incremental builds** — only changed files are re-embedded. Unchanged files keep their chunks. If nothing changed, the model isn't even loaded.
 - **Auto pipeline** — `search` auto-builds the index. `build` auto-updates the schema. One command does everything: `mdvs search "query"`.
+- **CI-ready** — `mdvs check` returns exit code 1 on violations. Add it to your pipeline to enforce frontmatter consistency across contributors.
 - **JSON output** — all commands support `--output json` for scripting and CI.
 
 ## Commands
