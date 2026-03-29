@@ -1136,7 +1136,7 @@ mod tests {
         assert!(!crate::step::has_failed(&output));
 
         // Verify no model/chunking sections (auto-flag sections are present from init)
-        let mut config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
+        let config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
         assert!(config.embedding_model.is_none());
         assert!(config.chunking.is_none());
 
@@ -1149,7 +1149,7 @@ mod tests {
         );
 
         // Verify sections were written
-        let mut config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
+        let config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
         assert_eq!(config.embedding_model.as_ref().unwrap().name, DEFAULT_MODEL);
         assert!(config.embedding_model.as_ref().unwrap().revision.is_none());
         assert_eq!(
@@ -1254,7 +1254,7 @@ mod tests {
             output
         );
 
-        let mut config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
+        let config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
         assert_eq!(config.chunking.as_ref().unwrap().max_chunk_size, 512);
     }
 
