@@ -267,7 +267,6 @@ mod tests {
     use super::*;
     use crate::outcome::commands::UpdateOutcome;
     use crate::schema::config::MdvsToml;
-    use crate::schema::shared::{FieldTypeSerde, ScanConfig};
     use std::fs;
 
     fn unwrap_update(result: &CommandResult) -> &UpdateOutcome {

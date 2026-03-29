@@ -707,7 +707,7 @@ mod tests {
                 file_id: "id-2".into(),
                 filename: "b.md".into(),
                 frontmatter: Some(
-                    serde_json::json!({"title": "hello", "count": 5, "score": 3.14, "draft": true}),
+                    serde_json::json!({"title": "hello", "count": 5, "score": 3.15, "draft": true}),
                 ),
                 content_hash: "h2".into(),
                 built_at: 1_700_000_000_000_000,
@@ -756,7 +756,7 @@ mod tests {
         // Row 1: real values preserved
         assert_eq!(title.value(1), "hello");
         assert_eq!(count.value(1), 5);
-        assert!((score.value(1) - 3.14).abs() < f64::EPSILON);
+        assert!((score.value(1) - 3.15).abs() < f64::EPSILON);
         assert!(draft.value(1));
     }
 

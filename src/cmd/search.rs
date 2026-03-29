@@ -462,7 +462,7 @@ mod tests {
         create_test_vault(tmp.path());
         init_and_build(tmp.path()).await;
 
-        let mut config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
+        let config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
         let backend = Backend::parquet(tmp.path());
         let embedding = config.embedding_model.as_ref().unwrap();
         let model_config = ModelConfig::try_from(embedding).unwrap();
@@ -488,7 +488,7 @@ mod tests {
         create_test_vault(tmp.path());
         init_and_build(tmp.path()).await;
 
-        let mut config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
+        let config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
         let backend = Backend::parquet(tmp.path());
         let embedding = config.embedding_model.as_ref().unwrap();
         let model_config = ModelConfig::try_from(embedding).unwrap();

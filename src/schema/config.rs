@@ -366,7 +366,7 @@ mod tests {
 
     #[test]
     fn mdvs_toml_roundtrip() {
-        let mut toml_doc = MdvsToml {
+        let toml_doc = MdvsToml {
             scan: ScanConfig {
                 glob: "**".into(),
                 include_bare_files: false,
@@ -499,7 +499,7 @@ default_limit = 10
 
     #[test]
     fn empty_fields_list_roundtrip() {
-        let mut doc = full_toml(vec![]);
+        let doc = full_toml(vec![]);
         let toml_str = toml::to_string(&doc).unwrap();
         let parsed: MdvsToml = toml::from_str(&toml_str).unwrap();
         assert_eq!(parsed.fields.field.len(), 0);
@@ -541,7 +541,7 @@ default_limit = 10
             include_bare_files: false,
             skip_gitignore: false,
         };
-        let mut toml_doc = MdvsToml::from_inferred(&schema, scan);
+        let toml_doc = MdvsToml::from_inferred(&schema, scan);
 
         assert_eq!(toml_doc.scan.glob, "**");
         assert!(!toml_doc.scan.include_bare_files);
@@ -574,7 +574,7 @@ default_limit = 10
             include_bare_files: true,
             skip_gitignore: false,
         };
-        let mut toml_doc = MdvsToml::from_inferred(&schema, scan);
+        let toml_doc = MdvsToml::from_inferred(&schema, scan);
         assert_eq!(toml_doc.scan.glob, "docs/**");
         assert!(toml_doc.scan.include_bare_files);
         assert!(toml_doc.embedding_model.is_none());
@@ -589,7 +589,7 @@ default_limit = 10
             include_bare_files: false,
             skip_gitignore: false,
         };
-        let mut toml_doc = MdvsToml::from_inferred(&schema, scan);
+        let toml_doc = MdvsToml::from_inferred(&schema, scan);
         assert!(toml_doc.embedding_model.is_none());
         assert!(toml_doc.chunking.is_none());
         assert!(toml_doc.build.is_some());
@@ -676,7 +676,7 @@ default_limit = 10
 
     #[test]
     fn validation_only_roundtrip() {
-        let mut doc = MdvsToml {
+        let doc = MdvsToml {
             scan: ScanConfig {
                 glob: "**".into(),
                 include_bare_files: false,

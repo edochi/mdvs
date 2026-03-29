@@ -32,14 +32,14 @@ refactor: extract validate() from check command
 ## Build & Verify
 
 ```bash
-cargo build              # build
-cargo run                # run mdvs
-cargo test               # run all tests
-cargo clippy             # lint
-cargo fmt                # format
+cargo build                  # build
+cargo run                    # run mdvs
+cargo test                   # run all tests
+cargo clippy --all-targets   # lint (including test code)
+cargo fmt                    # format
 ```
 
-**Always run `cargo fmt` after `cargo clippy`** when verifying changes.
+**Always use `cargo clippy --all-targets`** — plain `cargo clippy` misses warnings in test code. **Always run `cargo fmt` after `cargo clippy`** when verifying changes.
 
 ## Architecture
 
