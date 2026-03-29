@@ -27,56 +27,58 @@ Run `mdvs init` on the example directory:
 mdvs init example_kb
 ```
 
-mdvs scans every markdown file, extracts frontmatter, and infers a typed schema:
+mdvs scans every markdown file, extracts frontmatter, and infers a typed schema. Each discovered field is shown as its own key-value table:
 
 ```
 Initialized 43 files — 37 field(s)
 
-╭─────────────────────┬───────────────────────┬───────┬────────────────────────╮
-│ "action_items"      │ String[]              │ 9/43  │                        │
-│ "algorithm"         │ String                │ 2/43  │                        │
-│ "ambient_humidity"  │ Float                 │ 1/43  │                        │
-│ "approved_by"       │ String                │ 4/43  │                        │
-│ "attendees"         │ String[]              │ 10/43 │                        │
-│ "author"            │ String                │ 18/43 │                        │
-│ "author's_note"     │ String                │ 3/43  │ ' → '' in --where      │
-│ "calibration"       │ {adjusted: {intensity │ 2/43  │                        │
-│                     │ : Float, wavelength:  │       │                        │
-│                     │ Float}, baseline: {in │       │                        │
-│                     │ tensity: Float, notes │       │                        │
-│                     │ : String, wavelength: │       │                        │
-│                     │  Float}}              │       │                        │
-│ "commission_date"   │ String                │ 1/43  │                        │
-│ "convergence_ms"    │ Integer               │ 1/43  │                        │
-│ "dataset"           │ String                │ 2/43  │                        │
-│ "date"              │ String                │ 17/43 │                        │
-│ "draft"             │ Boolean               │ 8/43  │                        │
-│ "drift_rate"        │ Float?                │ 3/43  │                        │
-│ "duration_minutes"  │ Integer               │ 10/43 │                        │
-│ "email"             │ String                │ 4/43  │                        │
-│ "equipment_id"      │ String                │ 2/43  │                        │
-│ "firmware_version"  │ String                │ 1/43  │                        │
-│ "joined"            │ String                │ 5/43  │                        │
-│ "lab section"       │ String                │ 4/43  │ use "field name" in -- │
-│                     │                       │       │ where                  │
-│ "last_reviewed"     │ String                │ 4/43  │                        │
-│ "notes"v2""         │ Boolean               │ 1/43  │ " → "" in --where      │
-│ "observation_notes" │ String                │ 1/43  │                        │
-│ "priority"          │ String                │ 7/43  │                        │
-│ "project"           │ String                │ 4/43  │                        │
-│ "publications"      │ Integer               │ 2/43  │                        │
-│ "review_score"      │ String?               │ 1/43  │                        │
-│ "role"              │ String                │ 5/43  │                        │
-│ "sample_count"      │ Integer               │ 3/43  │                        │
-│ "sensor_type"       │ String                │ 3/43  │                        │
-│ "specialization"    │ String                │ 2/43  │                        │
-│ "status"            │ String                │ 17/43 │                        │
-│ "tags"              │ String[]              │ 16/43 │                        │
-│ "title"             │ String                │ 37/43 │                        │
-│ "unit_id"           │ String                │ 1/43  │                        │
-│ "version"           │ String                │ 4/43  │                        │
-│ "wavelength_nm"     │ Float                 │ 3/43  │                        │
-╰─────────────────────┴───────────────────────┴───────┴────────────────────────╯
+┌ draft ───────────────────┬───────────────────────────────────────────────────┐
+│ type                     │ Boolean                                           │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ files                    │ 8 out of 43                                       │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ nullable                 │ false                                             │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ required                 │ blog/**                                           │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ allowed                  │ blog/**                                           │
+└──────────────────────────┴───────────────────────────────────────────────────┘
+
+...
+
+┌ sensor_type ─────────────┬───────────────────────────────────────────────────┐
+│ type                     │ String                                            │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ files                    │ 3 out of 43                                       │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ nullable                 │ false                                             │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ required                 │ projects/alpha/notes/**                           │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ allowed                  │ projects/alpha/notes/**                           │
+└──────────────────────────┴───────────────────────────────────────────────────┘
+
+...
+
+┌ title ───────────────────┬───────────────────────────────────────────────────┐
+│ type                     │ String                                            │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ files                    │ 37 out of 43                                      │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ nullable                 │ false                                             │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ required                 │ blog/**                                           │
+│                          │ meetings/**                                       │
+│                          │ people/**                                         │
+│                          │ projects/**                                       │
+│                          │ reference/protocols/**                            │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ allowed                  │ blog/**                                           │
+│                          │ meetings/**                                       │
+│                          │ people/**                                         │
+│                          │ projects/**                                       │
+│                          │ reference/protocols/**                            │
+└──────────────────────────┴───────────────────────────────────────────────────┘
 
 Initialized mdvs in 'example_kb'
 ```
@@ -87,7 +89,7 @@ That command did three things:
 2. **Inferred** 37 typed fields — strings, integers, floats, booleans, arrays, even a nested object (`calibration`)
 3. **Wrote** `mdvs.toml` with the inferred schema
 
-Notice the third column: `draft` appears in 8/43 files — all in `blog/`. `sensor_type` in 3/43 — all in `projects/alpha/notes/`. mdvs captured not just the types, but *where* each field belongs. Run `mdvs init example_kb -v` to see the full path patterns.
+Notice the `files` row: `draft` appears in 8 out of 43 files — all in `blog/`. `sensor_type` in 3 out of 43 — all in `projects/alpha/notes/`. mdvs captured not just the types, but *where* each field belongs, via the `required` and `allowed` glob patterns.
 
 Here's what a field definition looks like in `mdvs.toml`:
 
@@ -136,24 +138,52 @@ mdvs check example_kb
 ```
 Checked 43 files — 4 violation(s)
 
-╭───────────────────────────────┬───────────────────────────┬──────────────────╮
-│ "convergence_ms"              │ WrongType                 │ 1 file           │
-│ "drift_rate"                  │ NullNotAllowed            │ 1 file           │
-│ "firmware_version"            │ Disallowed                │ 1 file           │
-│ "observation_notes"           │ MissingRequired           │ 2 files          │
-╰───────────────────────────────┴───────────────────────────┴──────────────────╯
+Violations (4):
+┌ convergence_ms ──────────┬───────────────────────────────────────────────────┐
+│ kind                     │ Wrong type                                        │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ rule                     │ type Boolean                                      │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ files                    │ projects/beta/notes/initial-findings.md (got Inte │
+│                          │ ger)                                              │
+└──────────────────────────┴───────────────────────────────────────────────────┘
+
+┌ drift_rate ──────────────┬───────────────────────────────────────────────────┐
+│ kind                     │ Null value not allowed                            │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ rule                     │ not nullable                                      │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ files                    │ projects/alpha/notes/experiment-2.md              │
+└──────────────────────────┴───────────────────────────────────────────────────┘
+
+┌ firmware_version ────────┬───────────────────────────────────────────────────┐
+│ kind                     │ Not allowed                                       │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ rule                     │ allowed in ["people/interns/**"]                  │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ files                    │ people/remo.md                                    │
+└──────────────────────────┴───────────────────────────────────────────────────┘
+
+┌ observation_notes ───────┬───────────────────────────────────────────────────┐
+│ kind                     │ Missing required                                  │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ rule                     │ required in ["projects/alpha/notes/**"]           │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ files                    │ projects/alpha/notes/experiment-1.md              │
+│                          │ projects/alpha/notes/experiment-2.md              │
+└──────────────────────────┴───────────────────────────────────────────────────┘
 ```
 
 Four violation types, each catching a different kind of problem:
 
 | Violation | Meaning |
 |---|---|
-| `MissingRequired` | A file in a required path is missing the field |
-| `WrongType` | The value doesn't match the declared type |
-| `NullNotAllowed` | The field is present but `null`, and `nullable` is `false` |
-| `Disallowed` | The field appears in a file outside its `allowed` paths |
+| `Missing required` | A file in a required path is missing the field |
+| `Wrong type` | The value doesn't match the declared type |
+| `Null value not allowed` | The field is present but `null`, and `nullable` is `false` |
+| `Not allowed` | The field appears in a file outside its `allowed` paths |
 
-This is the compact output — it groups violations by field. Add `-v` for verbose output showing every affected file and the specific value that caused the violation. See [check](./commands/check.md) for the full reference.
+Each violation table shows the field name, the kind of violation, the violated rule, and the affected files. See [check](./commands/check.md) for the full reference.
 
 Revert your changes to `mdvs.toml` before continuing (or re-run `mdvs init example_kb --force` to regenerate it).
 
@@ -168,29 +198,36 @@ mdvs search "calibration" example_kb
 ```
 
 ```
-Built index — 43 files, 59 chunks (full rebuild)
-
-╭─────────────────────────┬─────────────────────────┬──────────────────────────╮
-│ embedded                │ 43 files                │ 59 chunks                │
-╰─────────────────────────┴─────────────────────────┴──────────────────────────╯
-
 Searched "calibration" — 10 hits
 
-╭────────────┬──────────────────────────────────────────────────┬──────────────╮
-│ 1          │ "projects/alpha/meetings/2031-06-15.md"          │ 0.585        │
-│ 2          │ "projects/alpha/meetings/2031-10-10.md"          │ 0.501        │
-│ 3          │ "projects/alpha/notes/experiment-1.md"           │ 0.478        │
-│ 4          │ "blog/drafts/upcoming-talk.md"                   │ 0.470        │
-│ 5          │ "blog/published/2032/q1/new-equipment.md"        │ 0.466        │
-│ 6          │ "meetings/all-hands/2032-01.md"                  │ 0.465        │
-│ 7          │ "projects/alpha/overview.md"                     │ 0.462        │
-│ 8          │ "projects/beta/overview.md"                      │ 0.449        │
-│ 9          │ "reference/tools.md"                             │ 0.445        │
-│ 10         │ "people/remo.md"                                 │ 0.437        │
-╰────────────┴──────────────────────────────────────────────────┴──────────────╯
+┌──────────────────────────┬───────────────────────────────────────────────────┐
+│ query                    │ calibration                                       │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ model                    │ minishlab/potion-base-8M                          │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ limit                    │ 10                                                │
+└──────────────────────────┴───────────────────────────────────────────────────┘
+
+┌ #1 ──────────────────────┬───────────────────────────────────────────────────┐
+│ file                     │ projects/alpha/meetings/2031-06-15.md             │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ score                    │ 0.585                                             │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ lines                    │ 14-22                                             │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ text                     │ # Alpha Kickoff — Calibration Campaign ...        │
+└──────────────────────────┴───────────────────────────────────────────────────┘
+
+┌ #2 ──────────────────────┬───────────────────────────────────────────────────┐
+│ file                     │ projects/alpha/meetings/2031-10-10.md             │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ score                    │ 0.501                                             │
+...
+
+...
 ```
 
-Results are ranked by semantic similarity — not keyword matching. The score column is cosine similarity (higher means more similar).
+Results are ranked by semantic similarity — not keyword matching. The `score` is cosine similarity (higher means more similar). The `text` row shows the best-matching chunk from each file.
 
 ### Filtering with `--where`
 
@@ -203,11 +240,21 @@ mdvs search "quantum" example_kb --where "status = 'active'"
 ```
 Searched "quantum" — 3 hits
 
-╭───────────────┬──────────────────────────────────────────┬───────────────────╮
-│ 1             │ "projects/beta/overview.md"              │ 0.123             │
-│ 2             │ "projects/alpha/overview.md"             │ 0.101             │
-│ 3             │ "projects/alpha/budget.md"               │ 0.055             │
-╰───────────────┴──────────────────────────────────────────┴───────────────────╯
+┌──────────────────────────┬───────────────────────────────────────────────────┐
+│ query                    │ quantum                                           │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ model                    │ minishlab/potion-base-8M                          │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ limit                    │ 10                                                │
+└──────────────────────────┴───────────────────────────────────────────────────┘
+
+┌ #1 ──────────────────────┬───────────────────────────────────────────────────┐
+│ file                     │ projects/beta/overview.md                         │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ score                    │ 0.123                                             │
+...
+
+...
 ```
 
 Only files with `status: active` in their frontmatter are included. The `--where` clause supports any SQL expression — boolean logic, comparisons, array functions, and more. See the [Search Guide](./search-guide.md) for the full syntax.

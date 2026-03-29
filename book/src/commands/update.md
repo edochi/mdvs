@@ -54,78 +54,68 @@ All other config sections (`[scan]`, `[embedding_model]`, `[chunking]`, `[search
 When the schema is already up to date:
 
 ```
-Scanned 43 files — no changes (dry run)
+Scanned 43 files — no changes (37 unchanged) (dry run)
 ```
 
-When new fields are discovered:
+When new fields are discovered, they appear in an "Added" section with the same key-value format as [init](./init.md):
 
 ```
-Scanned 44 files — 1 field(s) changed (dry run)
+Scanned 44 files — 1 field(s) changed (37 unchanged) (dry run)
 
-╭────────────────────────┬───────────────────┬───────────────────┬─────────────╮
-│ "category"             │ added             │ String            │             │
-╰────────────────────────┴───────────────────┴───────────────────┴─────────────╯
+Added (1):
+┌ category ────────────────┬───────────────────────────────────────────────────┐
+│ type                     │ String                                            │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ files                    │ 3 out of 44                                       │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ nullable                 │ false                                             │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ required                 │ (none)                                            │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ allowed                  │ projects/alpha/notes/**                           │
+└──────────────────────────┴───────────────────────────────────────────────────┘
 ```
 
-When `--reinfer` detects a type change:
+When `--reinfer` detects a type change, the "Changed" section shows old and new values with an arrow:
 
 ```
-Scanned 44 files — 2 field(s) changed (dry run)
+Scanned 43 files — 1 field(s) changed (36 unchanged)
 
-╭────────────────────────┬───────────────────┬───────────────────┬─────────────╮
-│ "category"             │ added             │ String            │             │
-╰────────────────────────┴───────────────────┴───────────────────┴─────────────╯
-╭───────────────────────────────────────────┬──────────────────────────────────╮
-│ "drift_rate"                              │ type                             │
-╰───────────────────────────────────────────┴──────────────────────────────────╯
+Changed (1):
+┌ drift_rate ──────────────┬───────────────────────────────────────────────────┐
+│ type                     │ Float → String                                    │
+└──────────────────────────┴───────────────────────────────────────────────────┘
 ```
 
-When a reinferred field no longer exists:
+When a reinferred field no longer exists in any file:
 
 ```
-Scanned 43 files — 1 field(s) changed (dry run)
+Scanned 43 files — 1 field(s) changed (36 unchanged)
 
-╭────────────────────────────────────────┬─────────────────────────────────────╮
-│ "category"                             │ removed                             │
-╰────────────────────────────────────────┴─────────────────────────────────────╯
+Removed (1):
+┌ category ────────────────┬───────────────────────────────────────────────────┐
+│ previously allowed       │ projects/alpha/notes/**                           │
+└──────────────────────────┴───────────────────────────────────────────────────┘
 ```
 
 ### Verbose (`-v`)
 
-Added fields show the inferred path patterns:
+Verbose output adds pipeline timing lines before the result:
 
 ```
-Scanned 44 files — 1 field(s) changed (dry run)
+Read config: example_kb/mdvs.toml (2ms)
+Scan: 44 files (3ms)
+Infer: 38 field(s) (0ms)
+Write config: example_kb/mdvs.toml (1ms)
+Scanned 44 files — 1 field(s) changed (37 unchanged)
 
-╭─────────────────────────────┬───────────────────────┬────────────────────────╮
-│ "category"                  │ added                 │ String                 │
-├─────────────────────────────┴───────────────────────┴────────────────────────┤
-│   found in:                                                                  │
-│     - "projects/alpha/notes/**"                                              │
-╰──────────────────────────────────────────────────────────────────────────────╯
+Added (1):
+┌ category ────────────────┬───────────────────────────────────────────────────┐
+│ type                     │ String                                            │
+...
 ```
 
-Changed fields show old and new values for each aspect that differs:
-
-```
-╭────────────────────────┬──────────────────┬────────────────┬─────────────────╮
-│ field                  │ aspect           │ old            │ new             │
-│ "drift_rate"           │ type             │ Float          │ String          │
-╰────────────────────────┴──────────────────┴────────────────┴─────────────────╯
-```
-
-Removed fields show where they were previously allowed:
-
-```
-╭──────────────────────────────┬───────────────────────────┬───────────────────╮
-│ "category"                   │ removed                   │                   │
-├──────────────────────────────┴───────────────────────────┴───────────────────┤
-│   previously in:                                                             │
-│     - "projects/**"                                                          │
-╰──────────────────────────────────────────────────────────────────────────────╯
-```
-
-Verbose output also shows the pipeline steps before the result (Read config, Scan, Infer, Write config, etc.).
+The field tables are identical in both modes — verbose only adds the step lines showing processing times.
 
 ## Exit codes
 

@@ -83,25 +83,36 @@ On the first build (no existing `.mdvs/`), `--force` is never needed.
 
 ### Compact (default)
 
-Incremental build with one new file:
-
-```
-Built index — 44 files, 60 chunks
-
-╭──────────────────────────┬─────────────────────────┬─────────────────────────╮
-│ embedded                 │ 1 file                  │ 1 chunk                 │
-│ unchanged                │ 43 files                │ 59 chunks               │
-╰──────────────────────────┴─────────────────────────┴─────────────────────────╯
-```
-
-When nothing needs embedding:
+When nothing needs embedding (incremental build, all files unchanged):
 
 ```
 Built index — 43 files, 59 chunks
 
-╭──────────────────────────┬─────────────────────────┬─────────────────────────╮
-│ unchanged                │ 43 files                │ 59 chunks               │
-╰──────────────────────────┴─────────────────────────┴─────────────────────────╯
+┌──────────────────────────┬───────────────────────────────────────────────────┐
+│ full rebuild             │ false                                             │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ files total              │ 43                                                │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ files embedded           │ 0                                                 │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ files unchanged          │ 43                                                │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ files removed            │ 0                                                 │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ chunks total             │ 59                                                │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ chunks embedded          │ 0                                                 │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ chunks unchanged         │ 59                                                │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ chunks removed           │ 0                                                 │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ new fields               │ (none)                                            │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ embedded files           │ (none)                                            │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ removed files            │ (none)                                            │
+└──────────────────────────┴───────────────────────────────────────────────────┘
 ```
 
 When violations are found, the build aborts:
@@ -112,29 +123,39 @@ Build aborted — 6 violation(s) found. Run `mdvs check` for details.
 
 ### Verbose (`-v`)
 
+Verbose output adds pipeline timing lines before the result:
+
 ```
-Read config: example_kb/mdvs.toml
-Scan: 44 files
-Validate: 44 files — no violations
-Classify: 44 files (full rebuild)
-Load model: "minishlab/potion-base-8M" (256d)
-Embed: 44 files (60 chunks)
-Write index: 44 files, 60 chunks
+Read config: example_kb/mdvs.toml (4ms)
+Scan: 43 files (4ms)
+Infer: 37 field(s) (0ms)
+Validate: 43 files — no violations (87ms)
+Classify: 43 files (full rebuild) (0ms)
+Load model: minishlab/potion-base-8M (24ms)
+Embed: 43 files, 59 chunks (12ms)
+Write index: 43 files, 59 chunks (1ms)
+Built index — 43 files, 59 chunks (full rebuild)
 
-Built index — 44 files, 60 chunks (full rebuild)
-
-╭─────────────────────────┬─────────────────────────┬──────────────────────────╮
-│ embedded                │ 44 files                │ 60 chunks                │
-├─────────────────────────┴─────────────────────────┴──────────────────────────┤
-│   - "README.md" (7 chunks)                                                   │
-│   - "blog/drafts/grant-ideas.md" (2 chunks)                                  │
-│   - "blog/drafts/upcoming-talk.md" (1 chunk)                                 │
-│   ...                                                                        │
-│   - "scratch.md" (1 chunk)                                                   │
-╰──────────────────────────────────────────────────────────────────────────────╯
+┌──────────────────────────┬───────────────────────────────────────────────────┐
+│ full rebuild             │ true                                              │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ files total              │ 43                                                │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ files embedded           │ 43                                                │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ files unchanged          │ 0                                                 │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ ...                                                                          │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ embedded files           │ README.md (7 chunks)                              │
+│                          │ blog/drafts/grant-ideas.md (2 chunks)             │
+│                          │ ...                                               │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ removed files            │ (none)                                            │
+└──────────────────────────┴───────────────────────────────────────────────────┘
 ```
 
-Verbose output shows each pipeline step with its result, and expands embedded files with per-file chunk counts.
+The key-value table is identical in both modes — verbose only adds the step lines showing processing times. When files are embedded, the `embedded files` row lists each file with its chunk count.
 
 ## Exit codes
 

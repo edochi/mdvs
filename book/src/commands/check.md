@@ -48,60 +48,69 @@ mdvs check example_kb
 Checked 43 files — no violations
 ```
 
-When violations are found:
+When violations are found, each violation is shown as a key-value table with the field name, violation kind, the violated rule, and the affected files:
 
 ```
-Checked 43 files — 3 violation(s), 1 new field(s)
+Checked 43 files — 3 violation(s)
 
-╭──────────────────────────┬─────────────────────────────┬─────────────────────╮
-│ "drift_rate"             │ NullNotAllowed              │ 1 file              │
-│ "priority"               │ WrongType                   │ 2 files             │
-│ "title"                  │ MissingRequired             │ 6 files             │
-╰──────────────────────────┴─────────────────────────────┴─────────────────────╯
+Violations (3):
+┌ drift_rate ──────────────┬───────────────────────────────────────────────────┐
+│ kind                     │ Null value not allowed                            │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ rule                     │ not nullable                                      │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ files                    │ projects/alpha/notes/experiment-2.md              │
+└──────────────────────────┴───────────────────────────────────────────────────┘
 
-╭──────────────────────────────┬─────────────────────┬─────────────────────────╮
-│ "algorithm"                  │ new                 │ 2 files                 │
-╰──────────────────────────────┴─────────────────────┴─────────────────────────╯
+┌ priority ────────────────┬───────────────────────────────────────────────────┐
+│ kind                     │ Wrong type                                        │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ rule                     │ type Integer                                      │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ files                    │ projects/beta/notes/initial-findings.md (got Stri │
+│                          │ ng)                                               │
+│                          │ projects/beta/overview.md (got String)            │
+└──────────────────────────┴───────────────────────────────────────────────────┘
+
+┌ title ───────────────────┬───────────────────────────────────────────────────┐
+│ kind                     │ Missing required                                  │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ rule                     │ required in ["**"]                                │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ files                    │ README.md                                         │
+│                          │ lab-values.md                                     │
+│                          │ reference/glossary.md                             │
+│                          │ reference/quick-start.md                          │
+│                          │ reference/tools.md                                │
+│                          │ scratch.md                                        │
+└──────────────────────────┴───────────────────────────────────────────────────┘
 ```
 
-Each violation row shows the field name, violation kind, and how many files are affected. New fields appear in a separate table below.
+`WrongType` violations include the actual type in parentheses (e.g., `got String`).
 
 ### Verbose (`-v`)
 
+Verbose output adds pipeline timing lines before the result:
+
 ```
-Checked 43 files — 3 violation(s), 1 new field(s)
+Read config: example_kb/mdvs.toml (3ms)
+Scan: 43 files (2ms)
+Validate: 43 files — 3 violation(s) (78ms)
+Checked 43 files — 3 violation(s)
 
-╭────────────────────────────┬────────────────────────────┬────────────────────╮
-│ "drift_rate"               │ NullNotAllowed             │ 1 file             │
-├────────────────────────────┴────────────────────────────┴────────────────────┤
-│   - "projects/alpha/notes/experiment-2.md"                                   │
-╰──────────────────────────────────────────────────────────────────────────────╯
-╭────────────────────────────┬─────────────────────────┬───────────────────────╮
-│ "priority"                 │ WrongType               │ 2 files               │
-├────────────────────────────┴─────────────────────────┴───────────────────────┤
-│   - "projects/beta/notes/initial-findings.md" (got String)                   │
-│   - "projects/beta/overview.md" (got String)                                 │
-╰──────────────────────────────────────────────────────────────────────────────╯
-╭───────────────────────┬───────────────────────────────┬──────────────────────╮
-│ "title"               │ MissingRequired               │ 6 files              │
-├───────────────────────┴───────────────────────────────┴──────────────────────┤
-│   - "README.md"                                                              │
-│   - "lab-values.md"                                                          │
-│   - "reference/glossary.md"                                                  │
-│   - "reference/quick-start.md"                                               │
-│   - "reference/tools.md"                                                     │
-│   - "scratch.md"                                                             │
-╰──────────────────────────────────────────────────────────────────────────────╯
+Violations (3):
+┌ drift_rate ──────────────┬───────────────────────────────────────────────────┐
+│ kind                     │ Null value not allowed                            │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ rule                     │ not nullable                                      │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ files                    │ projects/alpha/notes/experiment-2.md              │
+└──────────────────────────┴───────────────────────────────────────────────────┘
 
-╭──────────────────────────────┬─────────────────────┬─────────────────────────╮
-│ "algorithm"                  │ new                 │ 2 files                 │
-├──────────────────────────────┴─────────────────────┴─────────────────────────┤
-│   - "projects/beta/notes/initial-findings.md"                                │
-│   - "projects/beta/notes/replication.md"                                     │
-╰──────────────────────────────────────────────────────────────────────────────╯
+...
 ```
 
-Verbose output expands each violation into a record with the offending file paths. `WrongType` violations include the actual type in parentheses (e.g., `got String`).
+The violation tables are identical in both modes — verbose only adds the step lines showing processing times.
 
 ## Exit codes
 

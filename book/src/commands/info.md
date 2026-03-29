@@ -30,83 +30,102 @@ Use it to check which fields are configured, whether the index is up to date, or
 mdvs info example_kb
 ```
 
+The output is organized into sections: Config, Index (if built), and one key-value table per field. Only a few fields are shown here:
+
 ```
 43 files, 37 fields, 59 chunks
 
-╭──────────────────────────────┬───────────────────────────────────────────────╮
-│ model:                       │ minishlab/potion-base-8M                      │
-│ config:                      │ match                                         │
-│ files:                       │ 43/43                                         │
-╰──────────────────────────────┴───────────────────────────────────────────────╯
+Config:
+┌──────────────────────────┬───────────────────────────────────────────────────┐
+│ scan glob                │ **                                                │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ ignored fields           │ (none)                                            │
+└──────────────────────────┴───────────────────────────────────────────────────┘
 
-╭──────────────┬───────────────┬───────────────┬───────────────┬───────────────╮
-│ "title"      │ String        │ required: "bl │ allowed: "blo │               │
-│              │               │ og/**", ...   │ g/**", ...    │               │
-│ "tags"       │ String[]      │ required: "bl │ allowed: "blo │               │
-│              │               │ og/published/ │ g/**", ...    │               │
-│              │               │ **", ...      │               │               │
-│ "draft"      │ Boolean       │ required: "bl │ allowed: "blo │               │
-│              │               │ og/**"        │ g/**"         │               │
-│ "drift_rate" │ Float?        │ required: "pr │ allowed: "pro │               │
-│              │               │ ojects/alpha/ │ jects/alpha/n │               │
-│              │               │ notes/**"     │ otes/**"      │               │
-│ ...          │               │               │               │               │
-╰──────────────┴───────────────┴───────────────┴───────────────┴───────────────╯
+Index:
+┌──────────────────────────┬───────────────────────────────────────────────────┐
+│ model                    │ minishlab/potion-base-8M                          │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ revision                 │ none                                              │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ chunk size               │ 1024                                              │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ built                    │ 2026-03-29T15:22:21.347671+00:00                  │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ config                   │ match                                             │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ files                    │ 43 out of 43                                      │
+└──────────────────────────┴───────────────────────────────────────────────────┘
+
+37 fields:
+┌ action_items ────────────┬───────────────────────────────────────────────────┐
+│ type                     │ String[]                                          │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ files                    │ 9 out of 43                                       │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ nullable                 │ false                                             │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ required                 │ meetings/all-hands/**                             │
+│                          │ projects/alpha/meetings/**                        │
+│                          │ projects/beta/meetings/**                         │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ allowed                  │ meetings/**                                       │
+│                          │ projects/alpha/meetings/**                        │
+│                          │ projects/beta/meetings/**                         │
+└──────────────────────────┴───────────────────────────────────────────────────┘
+
+...
+
+┌ drift_rate ──────────────┬───────────────────────────────────────────────────┐
+│ type                     │ Float                                             │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ files                    │ 3 out of 43                                       │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ nullable                 │ true                                              │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ required                 │ projects/alpha/notes/**                           │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ allowed                  │ projects/alpha/notes/**                           │
+└──────────────────────────┴───────────────────────────────────────────────────┘
+
+...
 ```
 
-The summary line shows files on disk, field count, and chunk count. The index block shows the embedding model, whether the config matches the index (`match` or `changed`), and how many files are indexed vs on disk. The field table lists every `[[fields.field]]` entry with its type, required patterns, and allowed patterns.
+The `config` row shows `match` when `mdvs.toml` matches the index metadata, or `changed` when the config has been modified since the last build. The `files` row shows indexed files vs files on disk.
 
 When no index has been built:
 
 ```
 43 files, 37 fields
-```
 
-The index block is omitted and the summary shows only files and fields.
+Config:
+┌──────────────────────────┬───────────────────────────────────────────────────┐
+│ scan glob                │ **                                                │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ ignored fields           │ (none)                                            │
+└──────────────────────────┴───────────────────────────────────────────────────┘
 
-### Verbose (`-v`)
-
-```
-Read config: example_kb/mdvs.toml
-Scan: 43 files
-Read index: 43 files, 59 chunks
-
-43 files, 37 fields, 59 chunks
-
-╭────────────────────────────┬─────────────────────────────────────────────────╮
-│ model:                     │ minishlab/potion-base-8M                        │
-│ revision:                  │ none                                            │
-│ chunk size:                │ 1024                                            │
-│ built:                     │ 2026-03-13T22:46:02.902129+00:00                │
-│ config:                    │ match                                           │
-│ files:                     │ 43/43                                           │
-╰────────────────────────────┴─────────────────────────────────────────────────╯
-
-╭────────────────────────────────┬────────────────────────┬────────────────────╮
-│ "action_items"                 │ String[]               │ 9/43               │
-├────────────────────────────────┴────────────────────────┴────────────────────┤
-│   required:                                                                  │
-│     - "meetings/all-hands/**"                                                │
-│     - "projects/alpha/meetings/**"                                           │
-│     - "projects/beta/meetings/**"                                            │
-│   allowed:                                                                   │
-│     - "meetings/**"                                                          │
-│     - "projects/alpha/meetings/**"                                           │
-│     - "projects/beta/meetings/**"                                            │
-╰──────────────────────────────────────────────────────────────────────────────╯
-╭──────────────────────────────┬────────────────────────┬──────────────────────╮
-│ "drift_rate"                 │ Float?                 │ 3/43                 │
-├──────────────────────────────┴────────────────────────┴──────────────────────┤
-│   required:                                                                  │
-│     - "projects/alpha/notes/**"                                              │
-│   allowed:                                                                   │
-│     - "projects/alpha/notes/**"                                              │
-│   nullable: true                                                             │
-╰──────────────────────────────────────────────────────────────────────────────╯
+37 fields:
 ...
 ```
 
-Verbose output adds pipeline steps, the full index details (revision, chunk size, build timestamp), and expands each field into a record showing its glob patterns. The count column (e.g., `9/43`) shows how many scanned files contain the field.
+The Index section is omitted and the summary shows only files and fields (no chunk count).
+
+### Verbose (`-v`)
+
+Verbose output adds pipeline timing lines before the result:
+
+```
+Read config: example_kb/mdvs.toml (2ms)
+Scan: 43 files (3ms)
+Read index: 43 files, 59 chunks (2ms)
+43 files, 37 fields, 59 chunks
+
+Config:
+...
+```
+
+The tables are identical in both modes — verbose only adds the step lines showing processing times.
 
 ## Exit codes
 
