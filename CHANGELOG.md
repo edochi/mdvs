@@ -2,6 +2,52 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## v0.2.0 - 2026-03-29
+#### Bug Fixes
+- (**check**) deduplicate NullNotAllowed violation for required+non-nullable fields - (e6b2458) - edoch, *Claude*
+- offset chunk line numbers by frontmatter length - (9870ca5) - edoch, *Claude*
+#### Documentation
+- update all book output examples to KeyValue table format - (e7c383c) - edoch, *Claude*
+- add TODO-0142 (fix chunk line numbers to exclude frontmatter) - (b21c272) - edoch, *Claude*
+- add TODO-0141 (global --quiet flag) - (ab6b493) - edoch, *Claude*
+- add TODO-0140 (global --dry-run flag) - (dd0bd15) - edoch, *Claude*
+- update README output examples to key-value table format - (6c1eb65) - edoch, *Claude*
+- close TODOs 0119, 0122, 0133, 0134, 0138, 0139; add 0138, 0139; update 0100 - (eb0440f) - edoch, *Claude*
+- mark TODOs 0131, 0132, 0135, 0136, 0137 as done - (cb14a57) - edoch, *Claude*
+- add TODO-0137 (flatten Step tree into steps + result) - (fe4bf55) - edoch, *Claude*
+- add TODO-0136 (inline auto-update/auto-build) and Justfile - (bfd20e5) - edoch, *Claude*
+- add post-migration cleanup TODOs (0134, 0135) - (b4f2c54) - edoch, *Claude*
+- update TODO status for Step tree implementation - (c64118a) - edoch
+- add incremental checklists to Step tree implementation TODOs - (78366dc) - edoch
+- add Step tree architecture design and implementation TODOs - (8b91902) - edoch
+- rework book intro and getting-started for directory-aware schema - (dd14032) - edoch
+- rework README to show directory-aware schema inference - (3c9ce8b) - edoch
+- fix nullable description — all four checks are independent - (03a5124) - edoch
+#### Refactoring
+- redesign clean output to KeyValue style - (0bdfe7d) - edoch, *Claude*
+- redesign search output to KeyValue style - (50293e9) - edoch, *Claude*
+- redesign build output to KeyValue style - (730fbb1) - edoch, *Claude*
+- fill text output gaps — match JSON fields exactly - (0552f45) - edoch, *Claude*
+- redesign check output to KeyValue style - (daf77c0) - edoch, *Claude*
+- redesign update output to KeyValue style - (e7ce7fa) - edoch, *Claude*
+- redesign info output, tweak KeyValue rendering - (8763b4b) - edoch, *Claude*
+- add KeyValue table style, redesign init output - (a7f4b09) - edoch, *Claude*
+- redesign init output — skip default constraints, no headers - (81733d1) - edoch, *Claude*
+- use Panel for detail rows, fix column width proportions - (dc42fde) - edoch, *Claude*
+- sort fields in mdvs.toml, add unit tests, unify fail helpers - (6ade7eb) - edoch, *Claude*
+- use untagged serialization for Outcome enum - (5a962f8) - edoch, *Claude*
+- flatten Step tree into CommandResult, delete CompactOutcome - (4623b5e) - edoch, *Claude*
+- inline auto-update and auto-build to eliminate redundant reads - (6fa9210) - edoch, *Claude*
+- delete src/pipeline/ directory - (96f0974) - edoch, *Claude*
+- inline all pipeline calls into commands, remove migration helpers - (78c7a0f) - edoch, *Claude*
+- begin pipeline cleanup — delete delete_index, move BuildFileDetail - (6d64c18) - edoch
+- convert all 7 commands to Step tree architecture - (1243d1c) - edoch
+- add Step tree infrastructure and outcome types - (7368642) - edoch
+#### Miscellaneous Chores
+- add book serve target to Justfile - (a32a0ea) - edoch, *Claude*
+
+- - -
+
 ## v0.1.1 - 2026-03-17
 #### Bug Fixes
 - null values now trigger Disallowed and NullNotAllowed checks - (d6e4484) - edoch
