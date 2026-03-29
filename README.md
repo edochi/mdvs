@@ -93,14 +93,34 @@ mdvs scans every file, extracts frontmatter, and infers which fields belong wher
 
 ```
 Initialized 5 files — 7 field(s)
-
- "title"      String    5/5   required everywhere
- "draft"      Boolean   2/5   only in blog/
- "tags"       String[]  1/5   only in blog/
- "role"       String    2/5   required in team/
- "email"      String    1/5   only in team/
- "date"       String    1/5   only in meetings/
- "attendees"  String[]  1/5   only in meetings/
+┌ title ────────────┬───────────────────┐
+│ type              │ String            │
+├───────────────────┼───────────────────┤
+│ files             │ 5 out of 5        │
+├───────────────────┼───────────────────┤
+│ required          │ **                │
+├───────────────────┼───────────────────┤
+│ allowed           │ **                │
+└───────────────────┴───────────────────┘
+┌ draft ────────────┬───────────────────┐
+│ type              │ Boolean           │
+├───────────────────┼───────────────────┤
+│ files             │ 2 out of 5        │
+├───────────────────┼───────────────────┤
+│ required          │ (none)            │
+├───────────────────┼───────────────────┤
+│ allowed           │ blog/**           │
+└───────────────────┴───────────────────┘
+┌ role ─────────────┬───────────────────┐
+│ type              │ String            │
+├───────────────────┼───────────────────┤
+│ files             │ 2 out of 5        │
+├───────────────────┼───────────────────┤
+│ required          │ team/**           │
+├───────────────────┼───────────────────┤
+│ allowed           │ team/**           │
+└───────────────────┴───────────────────┘
+  ...
 ```
 
 `draft` belongs in `blog/`. `role` belongs in `team/`. The directory structure is the schema.
@@ -123,7 +143,12 @@ mdvs check notes/
 ```
 
 ```
-1 violation — "role" MissingRequired in team/charlie.md
+Checked 7 files — 1 violation(s)
+┌ role ─────────────┬───────────────────┐
+│ kind              │ Missing required  │
+├───────────────────┼───────────────────┤
+│ files             │ team/charlie.md   │
+└───────────────────┴───────────────────┘
 ```
 
 `charlie.md` is missing `role` — but `new-post.md` isn't flagged. mdvs knows `role` belongs in `team/`, not in `blog/`.
@@ -135,8 +160,17 @@ mdvs search "weekly sync" notes/
 ```
 
 ```
-1  meetings/weekly.md   0.82
-2  team/alice.md        0.45
+Searched "weekly sync" — 2 hits
+┌ #1 ───────────────┬───────────────────┐
+│ file              │ meetings/weekly.md│
+├───────────────────┼───────────────────┤
+│ score             │ 0.820             │
+└───────────────────┴───────────────────┘
+┌ #2 ───────────────┬───────────────────┐
+│ file              │ team/alice.md     │
+├───────────────────┼───────────────────┤
+│ score             │ 0.450             │
+└───────────────────┴───────────────────┘
 ```
 
 Filter with SQL on frontmatter fields:

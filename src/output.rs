@@ -182,7 +182,7 @@ pub enum ViolationKind {
 }
 
 /// A single file that failed a particular field validation rule.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ViolatingFile {
     /// Path to the offending markdown file.
     pub path: PathBuf,
@@ -191,7 +191,7 @@ pub struct ViolatingFile {
 }
 
 /// Groups all files that violate a specific validation rule on a single field.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct FieldViolation {
     /// Name of the frontmatter field.
     pub field: String,
@@ -204,7 +204,7 @@ pub struct FieldViolation {
 }
 
 /// A frontmatter field found during check that is not yet tracked in `mdvs.toml`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct NewField {
     /// Field name.
     pub name: String,
@@ -213,6 +213,15 @@ pub struct NewField {
     /// Paths of files containing this field (verbose only).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub files: Option<Vec<PathBuf>>,
+}
+
+/// Per-file chunk count for build output.
+#[derive(Debug, Serialize)]
+pub struct BuildFileDetail {
+    /// Relative path of the file.
+    pub filename: String,
+    /// Number of chunks produced for this file.
+    pub chunks: usize,
 }
 
 /// Format a file count with correct pluralization: `"1 file"` / `"3 files"`.
@@ -237,56 +246,6 @@ pub fn format_size(bytes: u64) -> String {
         format!("{:.1} KB", bytes as f64 / KB as f64)
     } else {
         format!("{bytes} B")
-    }
-}
-
-/// Shared interface for command result structs, providing text and JSON rendering.
-///
-/// Every command collects its results into a struct that implements this trait.
-/// JSON output is derived automatically via `Serialize`; commands only need to
-/// implement `format_text`.
-pub trait CommandOutput: Serialize {
-    /// Render this result as human-readable text (tables, summaries).
-    /// When `verbose` is true, output includes expanded details and a metadata footer.
-    fn format_text(&self, verbose: bool) -> String;
-
-    /// Render this result as JSON. Default serializes the full struct.
-    /// Command output wrappers override this to omit `process` in compact mode.
-    /// Infallible: all CommandOutput types derive Serialize with simple field types
-    /// (strings, numbers, vecs, options). serde_json only fails on non-string map keys
-    /// or infinite recursion, neither of which applies here.
-    fn format_json(&self, verbose: bool) -> String {
-        let _ = verbose;
-        serde_json::to_string_pretty(self).expect("CommandOutput types must be JSON-serializable")
-    }
-
-    /// Print to stdout in the requested format.
-    /// Default implementation handles dispatch — commands don't need to override this.
-    fn print(&self, format: &OutputFormat, verbose: bool) {
-        match format {
-            OutputFormat::Text => print!("{}", self.format_text(verbose)),
-            OutputFormat::Json => print!("{}", self.format_json(verbose)),
-        }
-    }
-}
-
-/// Serialize command output as JSON, omitting process steps in compact mode.
-///
-/// In compact mode (not verbose), only the result is emitted: `{"result": ...}`.
-/// In verbose mode or when the result is absent (error), the full struct is serialized.
-/// Serialize command output as JSON, omitting process steps in compact mode.
-///
-/// Infallible: same reasoning as `format_json` — all types are simple Serialize derivations.
-pub fn format_json_compact<T: Serialize, R: Serialize>(
-    full: &T,
-    result: Option<&R>,
-    verbose: bool,
-) -> String {
-    if result.is_some() && !verbose {
-        serde_json::to_string_pretty(&serde_json::json!({ "result": result }))
-            .expect("CommandOutput types must be JSON-serializable")
-    } else {
-        serde_json::to_string_pretty(full).expect("CommandOutput types must be JSON-serializable")
     }
 }
 

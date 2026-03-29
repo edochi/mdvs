@@ -46,68 +46,90 @@ Both re-infer the schema from scratch, but they differ in scope:
 mdvs init example_kb
 ```
 
+Each discovered field is shown as its own key-value table with the field name on the top border. Only a few fields are shown here — the full output includes all 37:
+
 ```
 Initialized 43 files — 37 field(s)
 
-╭─────────────────────┬───────────────────────┬───────┬────────────────────────╮
-│ "action_items"      │ String[]              │ 9/43  │                        │
-│ "algorithm"         │ String                │ 2/43  │                        │
-│ "ambient_humidity"  │ Float                 │ 1/43  │                        │
-│ ...                 │                       │       │                        │
-│ "drift_rate"        │ Float?                │ 3/43  │                        │
-│ ...                 │                       │       │                        │
-│ "lab section"       │ String                │ 4/43  │ use "field name" in -- │
-│                     │                       │       │ where                  │
-│ ...                 │                       │       │                        │
-│ "title"             │ String                │ 37/43 │                        │
-│ "wavelength_nm"     │ Float                 │ 3/43  │                        │
-╰─────────────────────┴───────────────────────┴───────┴────────────────────────╯
+┌ action_items ────────────┬───────────────────────────────────────────────────┐
+│ type                     │ String[]                                          │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ files                    │ 9 out of 43                                       │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ nullable                 │ false                                             │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ required                 │ meetings/all-hands/**                             │
+│                          │ projects/alpha/meetings/**                        │
+│                          │ projects/beta/meetings/**                         │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ allowed                  │ meetings/**                                       │
+│                          │ projects/alpha/meetings/**                        │
+│                          │ projects/beta/meetings/**                         │
+└──────────────────────────┴───────────────────────────────────────────────────┘
+
+...
+
+┌ drift_rate ──────────────┬───────────────────────────────────────────────────┐
+│ type                     │ Float                                             │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ files                    │ 3 out of 43                                       │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ nullable                 │ true                                              │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ required                 │ projects/alpha/notes/**                           │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ allowed                  │ projects/alpha/notes/**                           │
+└──────────────────────────┴───────────────────────────────────────────────────┘
+
+...
+
+┌ title ───────────────────┬───────────────────────────────────────────────────┐
+│ type                     │ String                                            │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ files                    │ 37 out of 43                                      │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ nullable                 │ false                                             │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ required                 │ blog/**                                           │
+│                          │ meetings/**                                       │
+│                          │ people/**                                         │
+│                          │ projects/**                                       │
+│                          │ reference/protocols/**                            │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ allowed                  │ blog/**                                           │
+│                          │ meetings/**                                       │
+│                          │ people/**                                         │
+│                          │ projects/**                                       │
+│                          │ reference/protocols/**                            │
+└──────────────────────────┴───────────────────────────────────────────────────┘
 
 Initialized mdvs in 'example_kb'
 ```
 
-Each row shows the field name, inferred type, how many files contain it (e.g., `9/43`), and optional hints for `--where` syntax (see [Search Guide](../search-guide.md) for details on quoting and escaping). The `?` suffix on a type (e.g., `Float?`) means the field is nullable.
+Each table shows the inferred type, file count, nullable status, and inferred `required`/`allowed` glob patterns. Fields with special characters in their name (e.g., `lab section`) include a `hints` row with `--where` syntax advice (see [Search Guide](../search-guide.md)).
 
 ### Verbose (`-v`)
+
+Verbose output adds pipeline timing lines before the result:
 
 ```bash
 mdvs init example_kb -v
 ```
 
 ```
+Scan: 43 files (5ms)
+Infer: 37 field(s) (0ms)
+Write config: example_kb/mdvs.toml (0ms)
 Initialized 43 files — 37 field(s)
 
-╭────────────────────────────────┬────────────────────────┬────────────────────╮
-│ "action_items"                 │ String[]               │ 9/43               │
-├────────────────────────────────┴────────────────────────┴────────────────────┤
-│   required:                                                                  │
-│     - "meetings/all-hands/**"                                                │
-│     - "projects/alpha/meetings/**"                                           │
-│     - "projects/beta/meetings/**"                                            │
-│   allowed:                                                                   │
-│     - "meetings/**"                                                          │
-│     - "projects/alpha/meetings/**"                                           │
-│     - "projects/beta/meetings/**"                                            │
-╰──────────────────────────────────────────────────────────────────────────────╯
-╭───────────────────────────────────┬─────────────────────┬────────────────────╮
-│ "ambient_humidity"                │ Float               │ 1/43               │
-├───────────────────────────────────┴─────────────────────┴────────────────────┤
-│   allowed:                                                                   │
-│     - "projects/alpha/notes/**"                                              │
-╰──────────────────────────────────────────────────────────────────────────────╯
-╭──────────────────────────────┬──────────────────────────┬────────────────────╮
-│ "drift_rate"                 │ Float?                   │ 3/43               │
-├──────────────────────────────┴──────────────────────────┴────────────────────┤
-│   required:                                                                  │
-│     - "projects/alpha/notes/**"                                              │
-│   allowed:                                                                   │
-│     - "projects/alpha/notes/**"                                              │
-│   nullable: true                                                             │
-╰──────────────────────────────────────────────────────────────────────────────╯
+┌ action_items ────────────┬───────────────────────────────────────────────────┐
+│ type                     │ String[]                                          │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ files                    │ 9 out of 43                                       │
 ...
 ```
 
-Verbose output shows each field as a record with its `required` and `allowed` glob patterns. Fields with `required = []` omit the required line. Nullable fields show `nullable: true`.
+The field tables are identical in both modes — verbose only adds the step lines showing processing times.
 
 ## Examples
 
@@ -123,23 +145,13 @@ Nothing is written — the output shows the same discovery table, followed by `(
 
 ### Exclude bare files
 
-By default, files without frontmatter are included in the scan. This affects field counts — a bare file at the root means `title` appears in 37/43 files instead of 37/37:
+By default, files without frontmatter are included in the scan. This affects field counts — a bare file at the root means `title` appears in `37 out of 43` files instead of `37 out of 37`:
 
 ```bash
 mdvs init example_kb --dry-run --force --ignore-bare-files
 ```
 
-```
-Initialized 37 files — 37 field(s) (dry run)
-
-╭─────────────────────┬───────────────────────┬───────┬────────────────────────╮
-│ ...                 │                       │       │                        │
-│ "title"             │ String                │ 37/37 │                        │
-│ ...                 │                       │       │                        │
-╰─────────────────────┴───────────────────────┴───────┴────────────────────────╯
-```
-
-With `--ignore-bare-files`, only 37 files are scanned and `title` becomes 37/37. This also affects the inferred `required` patterns — without bare files diluting the counts, more fields can be required in broader paths.
+With `--ignore-bare-files`, only 37 files are scanned. The `files` row for `title` becomes `37 out of 37`. This also affects the inferred `required` patterns — without bare files diluting the counts, more fields can be required in broader paths.
 
 ## Errors
 

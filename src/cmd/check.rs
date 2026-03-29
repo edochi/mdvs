@@ -1,24 +1,28 @@
 use crate::discover::field_type::FieldType;
+use crate::discover::infer::InferredSchema;
 use crate::discover::scan::ScannedFiles;
-use crate::output::{
-    format_file_count, format_json_compact, CommandOutput, FieldViolation, NewField, ViolatingFile,
-    ViolationKind,
+use crate::outcome::commands::CheckOutcome;
+use crate::outcome::{
+    InferOutcome, Outcome, ReadConfigOutcome, ScanOutcome, ValidateOutcome, WriteConfigOutcome,
 };
-use crate::pipeline::read_config::ReadConfigOutput;
-use crate::pipeline::scan::ScanOutput;
-use crate::pipeline::validate::ValidateOutput;
-use crate::pipeline::ProcessingStepResult;
-use crate::schema::config::MdvsToml;
+use crate::output::{FieldViolation, NewField, ViolatingFile, ViolationKind};
+use crate::schema::config::{MdvsToml, TomlField};
 use crate::schema::shared::FieldTypeSerde;
-use crate::table::{style_compact, style_record, Builder};
+use crate::step::{CommandResult, ErrorKind, StepEntry};
 use globset::Glob;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 use tracing::{info, instrument};
 
-/// Result of the `check` command: validation violations and unknown fields.
+// ============================================================================
+// CheckResult — kept for build compatibility during migration
+// ============================================================================
+
+/// Result of validation. Used by both `check` and `build` commands.
+/// Kept during migration; build still references this type.
 #[derive(Debug, Serialize)]
 pub struct CheckResult {
     /// Number of markdown files checked.
@@ -36,296 +40,196 @@ impl CheckResult {
     }
 }
 
-impl CommandOutput for CheckResult {
-    fn format_text(&self, verbose: bool) -> String {
-        let mut out = String::new();
-
-        // One-liner
-        let violations_part = if self.has_violations() {
-            format!("{} violation(s)", self.field_violations.len())
-        } else {
-            "no violations".to_string()
-        };
-        let new_fields_part = if self.new_fields.is_empty() {
-            String::new()
-        } else {
-            format!(", {} new field(s)", self.new_fields.len())
-        };
-        out.push_str(&format!(
-            "Checked {} files — {violations_part}{new_fields_part}\n",
-            self.files_checked
-        ));
-
-        // Violations table
-        if self.has_violations() {
-            out.push('\n');
-            if verbose {
-                for v in &self.field_violations {
-                    let mut builder = Builder::default();
-                    let kind_str = match v.kind {
-                        ViolationKind::MissingRequired => "MissingRequired",
-                        ViolationKind::WrongType => "WrongType",
-                        ViolationKind::Disallowed => "Disallowed",
-                        ViolationKind::NullNotAllowed => "NullNotAllowed",
-                    };
-                    builder.push_record([
-                        format!("\"{}\"", v.field),
-                        kind_str.to_string(),
-                        format_file_count(v.files.len()),
-                    ]);
-                    let detail: String = v
-                        .files
-                        .iter()
-                        .map(|f| match &f.detail {
-                            Some(d) => format!("  - \"{}\" ({d})", f.path.display()),
-                            None => format!("  - \"{}\"", f.path.display()),
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    builder.push_record([detail, String::new(), String::new()]);
-                    let mut table = builder.build();
-                    style_record(&mut table, 3);
-                    out.push_str(&format!("{table}\n"));
-                }
-            } else {
-                let mut builder = Builder::default();
-                for v in &self.field_violations {
-                    let kind_str = match v.kind {
-                        ViolationKind::MissingRequired => "MissingRequired",
-                        ViolationKind::WrongType => "WrongType",
-                        ViolationKind::Disallowed => "Disallowed",
-                        ViolationKind::NullNotAllowed => "NullNotAllowed",
-                    };
-                    builder.push_record([
-                        format!("\"{}\"", v.field),
-                        kind_str.to_string(),
-                        format_file_count(v.files.len()),
-                    ]);
-                }
-                let mut table = builder.build();
-                style_compact(&mut table);
-                out.push_str(&format!("{table}\n"));
-            }
-        }
-
-        // New fields table
-        if !self.new_fields.is_empty() {
-            out.push('\n');
-            if verbose {
-                for nf in &self.new_fields {
-                    let mut builder = Builder::default();
-                    builder.push_record([
-                        format!("\"{}\"", nf.name),
-                        "new".to_string(),
-                        format_file_count(nf.files_found),
-                    ]);
-                    let detail = match &nf.files {
-                        Some(files) => files
-                            .iter()
-                            .map(|p| format!("  - \"{}\"", p.display()))
-                            .collect::<Vec<_>>()
-                            .join("\n"),
-                        None => String::new(),
-                    };
-                    builder.push_record([detail, String::new(), String::new()]);
-                    let mut table = builder.build();
-                    style_record(&mut table, 3);
-                    out.push_str(&format!("{table}\n"));
-                }
-            } else {
-                let mut builder = Builder::default();
-                for nf in &self.new_fields {
-                    builder.push_record([
-                        format!("\"{}\"", nf.name),
-                        "new".to_string(),
-                        format_file_count(nf.files_found),
-                    ]);
-                }
-                let mut table = builder.build();
-                style_compact(&mut table);
-                out.push_str(&format!("{table}\n"));
-            }
-        }
-
-        out
-    }
-}
-
 // ============================================================================
-// CheckCommandOutput (pipeline-based)
+// run()
 // ============================================================================
-
-/// Pipeline record for the check command.
-#[derive(Debug, Serialize)]
-pub struct CheckProcessOutput {
-    /// Auto-update output (if auto-update was triggered).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub auto_update: Option<crate::cmd::update::UpdateCommandOutput>,
-    /// Read config step result.
-    pub read_config: ProcessingStepResult<ReadConfigOutput>,
-    /// Scan step result.
-    pub scan: ProcessingStepResult<ScanOutput>,
-    /// Validate step result.
-    pub validate: ProcessingStepResult<ValidateOutput>,
-}
-
-/// Full output of the check command: pipeline steps + command result.
-#[derive(Debug, Serialize)]
-pub struct CheckCommandOutput {
-    /// Processing steps and their outcomes.
-    pub process: CheckProcessOutput,
-    /// Command result (None if pipeline didn't complete).
-    pub result: Option<CheckResult>,
-}
-
-impl CheckCommandOutput {
-    /// Returns `true` if any processing step failed.
-    pub fn has_failed_step(&self) -> bool {
-        self.process
-            .auto_update
-            .as_ref()
-            .is_some_and(|u| u.has_failed_step())
-            || matches!(self.process.read_config, ProcessingStepResult::Failed(_))
-            || matches!(self.process.scan, ProcessingStepResult::Failed(_))
-            || matches!(self.process.validate, ProcessingStepResult::Failed(_))
-    }
-}
-
-impl CommandOutput for CheckCommandOutput {
-    fn format_json(&self, verbose: bool) -> String {
-        format_json_compact(self, self.result.as_ref(), verbose)
-    }
-
-    fn format_text(&self, verbose: bool) -> String {
-        let mut out = String::new();
-
-        // Render auto-update if present
-        if let Some(ref update_output) = self.process.auto_update {
-            if verbose {
-                out.push_str("Auto-update:\n");
-                let update_text = update_output.format_text(true);
-                for line in update_text.lines() {
-                    out.push_str(&format!("  {line}\n"));
-                }
-                out.push('\n');
-            } else if let Some(ref ur) = update_output.result {
-                let total = ur.added.len() + ur.changed.len() + ur.removed.len();
-                if total > 0 {
-                    out.push_str(&format!("Auto-updated schema ({total} change(s))\n"));
-                }
-            }
-        }
-
-        // If pipeline completed successfully, delegate to CheckResult
-        if let Some(result) = &self.result {
-            if verbose {
-                out.push_str(&format!(
-                    "{}\n",
-                    self.process.read_config.format_line("Read config")
-                ));
-                out.push_str(&format!("{}\n", self.process.scan.format_line("Scan")));
-                out.push_str(&format!(
-                    "{}\n",
-                    self.process.validate.format_line("Validate")
-                ));
-                out.push('\n');
-                out.push_str(&result.format_text(verbose));
-                out
-            } else {
-                out.push_str(&result.format_text(verbose));
-                out
-            }
-        } else {
-            // Pipeline didn't complete — show steps up to the failure
-            out.push_str(&format!(
-                "{}\n",
-                self.process.read_config.format_line("Read config")
-            ));
-            if !matches!(self.process.scan, ProcessingStepResult::Skipped) {
-                out.push_str(&format!("{}\n", self.process.scan.format_line("Scan")));
-            }
-            if !matches!(self.process.validate, ProcessingStepResult::Skipped) {
-                out.push_str(&format!(
-                    "{}\n",
-                    self.process.validate.format_line("Validate")
-                ));
-            }
-            out
-        }
-    }
-}
 
 /// Read config, optionally auto-update, scan files, and validate frontmatter.
 #[instrument(name = "check", skip_all)]
-pub async fn run(path: &Path, no_update: bool, verbose: bool) -> CheckCommandOutput {
-    use crate::pipeline::read_config::run_read_config;
-    use crate::pipeline::scan::run_scan;
-    use crate::pipeline::validate::run_validate;
+pub fn run(path: &Path, no_update: bool, verbose: bool) -> CommandResult {
+    let start = Instant::now();
+    let mut steps = Vec::new();
 
-    // Read config first to check auto_update setting
-    let (read_config_step, config) = run_read_config(path);
-
-    // Auto-update: run update before validating if configured
-    let auto_update = if let Some(ref cfg) = config {
-        let should_update = !no_update && cfg.check.as_ref().is_some_and(|c| c.auto_update);
-        if should_update {
-            let update_output = crate::cmd::update::run(path, &[], false, false, verbose).await;
-            if update_output.has_failed_step() {
-                return CheckCommandOutput {
-                    process: CheckProcessOutput {
-                        auto_update: Some(update_output),
-                        read_config: read_config_step,
-                        scan: ProcessingStepResult::Skipped,
-                        validate: ProcessingStepResult::Skipped,
-                    },
-                    result: None,
-                };
+    // 1. Read config — calls MdvsToml::read() + validate() directly
+    let config_start = std::time::Instant::now();
+    let config_path_buf = path.join("mdvs.toml");
+    let config = match MdvsToml::read(&config_path_buf) {
+        Ok(cfg) => match cfg.validate() {
+            Ok(()) => {
+                steps.push(StepEntry::ok(
+                    Outcome::ReadConfig(ReadConfigOutcome {
+                        config_path: config_path_buf.display().to_string(),
+                    }),
+                    config_start.elapsed().as_millis() as u64,
+                ));
+                Some(cfg)
             }
-            Some(update_output)
-        } else {
+            Err(e) => {
+                steps.push(StepEntry::err(
+                    ErrorKind::User,
+                    format!("mdvs.toml is invalid: {e} — fix the file or run 'mdvs init --force'"),
+                    config_start.elapsed().as_millis() as u64,
+                ));
+                None
+            }
+        },
+        Err(e) => {
+            steps.push(StepEntry::err(
+                ErrorKind::User,
+                e.to_string(),
+                config_start.elapsed().as_millis() as u64,
+            ));
             None
         }
-    } else {
-        None
     };
 
-    // Re-read config if auto-update ran (it may have changed the toml)
-    let (read_config_step, config) = if auto_update.is_some() {
-        run_read_config(path)
-    } else {
-        (read_config_step, config)
-    };
-
-    let (scan_step, scanned) = match &config {
-        Some(cfg) => run_scan(path, &cfg.scan),
-        None => (ProcessingStepResult::Skipped, None),
-    };
-
-    let (validate_step, validation_data) = match (&scanned, &config) {
-        (Some(scanned), Some(cfg)) => run_validate(scanned, cfg, verbose),
-        _ => (ProcessingStepResult::Skipped, None),
-    };
-
-    // Build CheckResult from validation data (if completed)
-    let result = validation_data.map(|(field_violations, new_fields)| {
-        let files_checked = scanned.as_ref().map_or(0, |s| s.files.len());
-        CheckResult {
-            files_checked,
-            field_violations,
-            new_fields,
+    let config = match config {
+        Some(c) => c,
+        None => {
+            return CommandResult::failed_from_steps(steps, start);
         }
-    });
+    };
 
-    CheckCommandOutput {
-        process: CheckProcessOutput {
-            auto_update,
-            read_config: read_config_step,
-            scan: scan_step,
-            validate: validate_step,
-        },
-        result,
+    // 2. Scan (once — shared between auto-update and validate)
+    let scan_start = Instant::now();
+    let scanned = match ScannedFiles::scan(path, &config.scan) {
+        Ok(s) => {
+            steps.push(StepEntry::ok(
+                Outcome::Scan(ScanOutcome {
+                    files_found: s.files.len(),
+                    glob: config.scan.glob.clone(),
+                }),
+                scan_start.elapsed().as_millis() as u64,
+            ));
+            s
+        }
+        Err(e) => {
+            steps.push(StepEntry::err(
+                ErrorKind::Application,
+                e.to_string(),
+                scan_start.elapsed().as_millis() as u64,
+            ));
+            return CommandResult::failed_from_steps(steps, start);
+        }
+    };
+
+    // 3. Auto-update: infer new fields, write config if changed
+    let should_update = !no_update && config.check.as_ref().is_some_and(|c| c.auto_update);
+    let config = if should_update {
+        let infer_start = Instant::now();
+        let schema = InferredSchema::infer(&scanned);
+        steps.push(StepEntry::ok(
+            Outcome::Infer(InferOutcome {
+                fields_inferred: schema.fields.len(),
+            }),
+            infer_start.elapsed().as_millis() as u64,
+        ));
+
+        // Find truly new fields (not in config, not ignored)
+        let existing: HashSet<&str> = config
+            .fields
+            .field
+            .iter()
+            .map(|f| f.name.as_str())
+            .collect();
+        let new_toml_fields: Vec<TomlField> = schema
+            .fields
+            .iter()
+            .filter(|f| !existing.contains(f.name.as_str()))
+            .filter(|f| !config.fields.ignore.contains(&f.name))
+            .map(|f| TomlField {
+                name: f.name.clone(),
+                field_type: FieldTypeSerde::from(&f.field_type),
+                allowed: f.allowed.clone(),
+                required: f.required.clone(),
+                nullable: f.nullable,
+            })
+            .collect();
+
+        if new_toml_fields.is_empty() {
+            config
+        } else {
+            let mut config = config;
+            config.fields.field.extend(new_toml_fields);
+            let write_start = Instant::now();
+            match config.write(&config_path_buf) {
+                Ok(()) => {
+                    steps.push(StepEntry::ok(
+                        Outcome::WriteConfig(WriteConfigOutcome {
+                            config_path: config_path_buf.display().to_string(),
+                            fields_written: config.fields.field.len(),
+                        }),
+                        write_start.elapsed().as_millis() as u64,
+                    ));
+                    // Re-read to pick up normalized TOML
+                    match MdvsToml::read(&config_path_buf) {
+                        Ok(c) => c,
+                        Err(_) => config,
+                    }
+                }
+                Err(e) => {
+                    steps.push(StepEntry::err(
+                        ErrorKind::Application,
+                        e.to_string(),
+                        write_start.elapsed().as_millis() as u64,
+                    ));
+                    return CommandResult::failed(
+                        steps,
+                        ErrorKind::Application,
+                        "auto-update failed to write config".into(),
+                        start,
+                    );
+                }
+            }
+        }
+    } else {
+        config
+    };
+
+    // 4. Validate
+    let validate_start = std::time::Instant::now();
+    let check_result = match validate(&scanned, &config, verbose) {
+        Ok(r) => r,
+        Err(e) => {
+            steps.push(StepEntry::err(
+                ErrorKind::Application,
+                e.to_string(),
+                validate_start.elapsed().as_millis() as u64,
+            ));
+            return CommandResult::failed(
+                steps,
+                ErrorKind::Application,
+                "validation failed".into(),
+                start,
+            );
+        }
+    };
+
+    // Push validate step
+    steps.push(StepEntry::ok(
+        Outcome::Validate(ValidateOutcome {
+            files_checked: check_result.files_checked,
+            violations: check_result.field_violations.clone(),
+            new_fields: check_result.new_fields.clone(),
+        }),
+        validate_start.elapsed().as_millis() as u64,
+    ));
+
+    // Build command outcome
+    CommandResult {
+        steps,
+        result: Ok(Outcome::Check(Box::new(CheckOutcome {
+            files_checked: check_result.files_checked,
+            violations: check_result.field_violations,
+            new_fields: check_result.new_fields,
+        }))),
+        elapsed_ms: start.elapsed().as_millis() as u64,
     }
 }
+
+// ============================================================================
+// validate() — core validation logic, reused by build
+// ============================================================================
 
 /// Accumulator key for grouping violations by field, kind, and rule.
 #[derive(PartialEq, Eq, Hash)]
@@ -479,34 +383,17 @@ fn check_required_fields(
                 .and_then(|v| v.as_object())
                 .and_then(|map| map.get(&toml_field.name));
 
-            match value {
-                None => {
-                    // Key absent → MissingRequired
-                    let key = ViolationKey {
-                        field: toml_field.name.clone(),
-                        kind: ViolationKind::MissingRequired,
-                        rule: format!("required in {:?}", toml_field.required),
-                    };
-                    violations.entry(key).or_default().push(ViolatingFile {
-                        path: file.path.clone(),
-                        detail: None,
-                    });
-                }
-                Some(v) if v.is_null() && !toml_field.nullable => {
-                    // Key present but null on non-nullable field → NullNotAllowed
-                    let key = ViolationKey {
-                        field: toml_field.name.clone(),
-                        kind: ViolationKind::NullNotAllowed,
-                        rule: format!("not nullable, required in {:?}", toml_field.required),
-                    };
-                    violations.entry(key).or_default().push(ViolatingFile {
-                        path: file.path.clone(),
-                        detail: None,
-                    });
-                }
-                _ => {
-                    // Key present with value (or null on nullable field) → pass
-                }
+            // Null on non-nullable is caught by check_field_values — only check absence here
+            if value.is_none() {
+                let key = ViolationKey {
+                    field: toml_field.name.clone(),
+                    kind: ViolationKind::MissingRequired,
+                    rule: format!("required in {:?}", toml_field.required),
+                };
+                violations.entry(key).or_default().push(ViolatingFile {
+                    path: file.path.clone(),
+                    detail: None,
+                });
             }
         }
     }
@@ -549,11 +436,10 @@ fn collect_new_fields(
 
 fn type_matches(expected: &FieldType, value: &Value) -> bool {
     match (expected, value) {
-        // String is the top type in the widening hierarchy — accepts any value
         (FieldType::String, _) => true,
         (FieldType::Boolean, Value::Bool(_)) => true,
         (FieldType::Integer, Value::Number(n)) => n.is_i64() || n.is_u64(),
-        (FieldType::Float, Value::Number(_)) => true, // lenient: accepts integers
+        (FieldType::Float, Value::Number(_)) => true,
         (FieldType::Array(inner), Value::Array(arr)) => arr.iter().all(|v| type_matches(inner, v)),
         (FieldType::Object(_), Value::Object(_)) => true,
         _ => false,
@@ -576,9 +462,17 @@ fn actual_type_name(value: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::outcome::commands::CheckOutcome;
     use crate::schema::config::{FieldsConfig, TomlField, UpdateConfig};
     use crate::schema::shared::ScanConfig;
     use std::fs;
+
+    fn unwrap_check(result: &CommandResult) -> &CheckOutcome {
+        match &result.result {
+            Ok(Outcome::Check(o)) => o,
+            other => panic!("expected Ok(Check), got: {other:?}"),
+        }
+    }
 
     fn create_test_vault(dir: &Path) {
         let blog_dir = dir.join("blog");
@@ -598,7 +492,7 @@ mod tests {
     }
 
     fn write_toml(dir: &Path, fields: Vec<TomlField>, ignore: Vec<String>) {
-        let config = MdvsToml {
+        let mut config = MdvsToml {
             scan: ScanConfig {
                 glob: "**".into(),
                 include_bare_files: false,
@@ -638,8 +532,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn clean_check() {
+    #[test]
+    fn clean_check() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
         write_toml(
@@ -660,19 +554,19 @@ mod tests {
             vec![],
         );
 
-        let result = run(tmp.path(), true, false).await.result.unwrap();
+        let step = run(tmp.path(), true, false);
+        let result = unwrap_check(&step);
 
-        assert!(!result.has_violations());
+        assert!(result.violations.is_empty());
         assert!(result.new_fields.is_empty());
         assert_eq!(result.files_checked, 2);
     }
 
-    #[tokio::test]
-    async fn missing_required() {
+    #[test]
+    fn missing_required() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
-        // tags is required in blog/**, but post2 doesn't have tags
         write_toml(
             tmp.path(),
             vec![
@@ -691,23 +585,23 @@ mod tests {
             vec![],
         );
 
-        let result = run(tmp.path(), true, false).await.result.unwrap();
+        let step = run(tmp.path(), true, false);
+        let result = unwrap_check(&step);
 
-        assert!(result.has_violations());
-        let v = &result.field_violations[0];
+        assert!(!result.violations.is_empty());
+        let v = &result.violations[0];
         assert_eq!(v.field, "tags");
         assert!(matches!(v.kind, ViolationKind::MissingRequired));
         assert_eq!(v.files.len(), 1);
         assert_eq!(v.files[0].path.display().to_string(), "blog/post2.md");
     }
 
-    #[tokio::test]
-    async fn wrong_type() {
+    #[test]
+    fn wrong_type() {
         let tmp = tempfile::tempdir().unwrap();
         let blog_dir = tmp.path().join("blog");
         fs::create_dir_all(&blog_dir).unwrap();
 
-        // draft is declared as Boolean but file has string value
         fs::write(
             blog_dir.join("post1.md"),
             "---\ntitle: Hello\ndraft: \"yes\"\n---\n# Hello\nBody.",
@@ -720,21 +614,21 @@ mod tests {
             vec![],
         );
 
-        let result = run(tmp.path(), true, false).await.result.unwrap();
+        let step = run(tmp.path(), true, false);
+        let result = unwrap_check(&step);
 
-        assert!(result.has_violations());
-        let v = &result.field_violations[0];
+        assert!(!result.violations.is_empty());
+        let v = &result.violations[0];
         assert_eq!(v.field, "draft");
         assert!(matches!(v.kind, ViolationKind::WrongType));
         assert_eq!(v.files[0].detail.as_deref(), Some("got String"));
     }
 
-    #[tokio::test]
-    async fn wrong_type_int_in_float_lenient() {
+    #[test]
+    fn wrong_type_int_in_float_lenient() {
         let tmp = tempfile::tempdir().unwrap();
         fs::create_dir_all(tmp.path().join("blog")).unwrap();
 
-        // rating is declared Float, file has integer 5 — should be OK
         fs::write(
             tmp.path().join("blog/post1.md"),
             "---\nrating: 5\n---\n# Post\nBody.",
@@ -753,18 +647,17 @@ mod tests {
             vec![],
         );
 
-        let result = run(tmp.path(), true, false).await.result.unwrap();
-
-        assert!(!result.has_violations());
+        let step = run(tmp.path(), true, false);
+        let result = unwrap_check(&step);
+        assert!(result.violations.is_empty());
     }
 
-    #[tokio::test]
-    async fn disallowed_field() {
+    #[test]
+    fn disallowed_field() {
         let tmp = tempfile::tempdir().unwrap();
         let notes_dir = tmp.path().join("notes");
         fs::create_dir_all(&notes_dir).unwrap();
 
-        // draft is only allowed in blog/**, but appears in notes/
         fs::write(
             notes_dir.join("idea.md"),
             "---\ndraft: true\n---\n# Idea\nContent.",
@@ -783,38 +676,38 @@ mod tests {
             vec![],
         );
 
-        let result = run(tmp.path(), true, false).await.result.unwrap();
+        let step = run(tmp.path(), true, false);
+        let result = unwrap_check(&step);
 
-        assert!(result.has_violations());
-        let v = &result.field_violations[0];
+        assert!(!result.violations.is_empty());
+        let v = &result.violations[0];
         assert_eq!(v.field, "draft");
         assert!(matches!(v.kind, ViolationKind::Disallowed));
         assert_eq!(v.files[0].path.display().to_string(), "notes/idea.md");
     }
 
-    #[tokio::test]
-    async fn new_fields_informational() {
+    #[test]
+    fn new_fields_informational() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
-        // Only declare title — tags and draft are new
         write_toml(tmp.path(), vec![string_field("title")], vec![]);
 
-        let result = run(tmp.path(), true, false).await.result.unwrap();
+        let step = run(tmp.path(), true, false);
+        let result = unwrap_check(&step);
 
-        assert!(!result.has_violations());
+        assert!(result.violations.is_empty());
         assert_eq!(result.new_fields.len(), 2);
         assert!(result.new_fields.iter().any(|f| f.name == "draft"));
         assert!(result.new_fields.iter().any(|f| f.name == "tags"));
     }
 
-    #[tokio::test]
-    async fn string_top_type_accepts_any_value() {
+    #[test]
+    fn string_top_type_accepts_any_value() {
         let tmp = tempfile::tempdir().unwrap();
         let blog_dir = tmp.path().join("blog");
         fs::create_dir_all(&blog_dir).unwrap();
 
-        // String field with boolean, integer, array, and object values
         fs::write(
             blog_dir.join("bool.md"),
             "---\nfield: false\n---\n# Bool\nBody.",
@@ -834,26 +727,25 @@ mod tests {
 
         write_toml(tmp.path(), vec![string_field("field")], vec![]);
 
-        let result = run(tmp.path(), true, false).await.result.unwrap();
+        let step = run(tmp.path(), true, false);
+        let result = unwrap_check(&step);
 
-        assert!(!result.has_violations());
+        assert!(result.violations.is_empty());
         assert_eq!(result.files_checked, 4);
     }
 
-    #[tokio::test]
-    async fn bare_files_trigger_required() {
+    #[test]
+    fn bare_files_trigger_required() {
         let tmp = tempfile::tempdir().unwrap();
         fs::create_dir_all(tmp.path().join("blog")).unwrap();
 
-        // A bare file (no frontmatter) in blog/ — should violate required
         fs::write(
             tmp.path().join("blog/bare.md"),
             "# No frontmatter\nJust content.",
         )
         .unwrap();
 
-        // title required in blog/** with include_bare_files=true
-        let config = MdvsToml {
+        let mut config = MdvsToml {
             scan: ScanConfig {
                 glob: "**".into(),
                 include_bare_files: true,
@@ -878,46 +770,43 @@ mod tests {
         };
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
 
-        let result = run(tmp.path(), true, false).await.result.unwrap();
-
-        // Bare files missing required fields are violations
-        assert!(result.has_violations());
+        let step = run(tmp.path(), true, false);
+        let result = unwrap_check(&step);
+        assert!(!result.violations.is_empty());
     }
 
-    #[tokio::test]
-    async fn ignored_fields_skipped() {
+    #[test]
+    fn ignored_fields_skipped() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
-        // draft is in the ignore list — should not be flagged as new or violating
         write_toml(
             tmp.path(),
             vec![string_field("title")],
             vec!["draft".into(), "tags".into()],
         );
 
-        let result = run(tmp.path(), true, false).await.result.unwrap();
+        let step = run(tmp.path(), true, false);
+        let result = unwrap_check(&step);
 
-        assert!(!result.has_violations());
-        assert!(result.new_fields.is_empty()); // draft and tags are ignored, not new
+        assert!(result.violations.is_empty());
+        assert!(result.new_fields.is_empty());
     }
 
-    #[tokio::test]
-    async fn multiple_violations() {
+    #[test]
+    fn multiple_violations() {
         let tmp = tempfile::tempdir().unwrap();
         let blog_dir = tmp.path().join("blog");
         let notes_dir = tmp.path().join("notes");
         fs::create_dir_all(&blog_dir).unwrap();
         fs::create_dir_all(&notes_dir).unwrap();
 
-        // post1: draft is string "yes" (wrong type for Boolean), missing tags
         fs::write(
             blog_dir.join("post1.md"),
             "---\ntitle: Hello\ndraft: \"yes\"\n---\n# Post\nBody.",
         )
         .unwrap();
 
-        // note1: has draft (disallowed outside blog/)
         fs::write(
             notes_dir.join("note1.md"),
             "---\ntitle: Note\ndraft: true\n---\n# Note\nBody.",
@@ -954,15 +843,15 @@ mod tests {
             vec![],
         );
 
-        let result = run(tmp.path(), true, false).await.result.unwrap();
+        let step = run(tmp.path(), true, false);
+        let result = unwrap_check(&step);
 
-        assert!(result.has_violations());
-        // Should have: draft wrong type, tags missing required, draft disallowed
-        assert!(result.field_violations.len() >= 3);
+        assert!(!result.violations.is_empty());
+        assert!(result.violations.len() >= 3);
     }
 
-    #[tokio::test]
-    async fn null_on_non_nullable_non_required_field() {
+    #[test]
+    fn null_on_non_nullable_non_required_field() {
         let tmp = tempfile::tempdir().unwrap();
         fs::create_dir_all(tmp.path().join("notes")).unwrap();
 
@@ -972,7 +861,6 @@ mod tests {
         )
         .unwrap();
 
-        // status: nullable=false, required=[], allowed=["**"]
         write_toml(
             tmp.path(),
             vec![
@@ -988,18 +876,19 @@ mod tests {
             vec![],
         );
 
-        let result = run(tmp.path(), true, false).await.result.unwrap();
-        assert!(result.has_violations());
+        let step = run(tmp.path(), true, false);
+        let result = unwrap_check(&step);
+        assert!(!result.violations.is_empty());
         let v = result
-            .field_violations
+            .violations
             .iter()
             .find(|v| v.field == "status")
             .expect("expected NullNotAllowed for status");
         assert!(matches!(v.kind, ViolationKind::NullNotAllowed));
     }
 
-    #[tokio::test]
-    async fn null_on_nullable_non_required_field() {
+    #[test]
+    fn null_on_nullable_non_required_field() {
         let tmp = tempfile::tempdir().unwrap();
         fs::create_dir_all(tmp.path().join("notes")).unwrap();
 
@@ -1009,7 +898,6 @@ mod tests {
         )
         .unwrap();
 
-        // status: nullable=true, required=[], allowed=["**"]
         write_toml(
             tmp.path(),
             vec![
@@ -1025,12 +913,13 @@ mod tests {
             vec![],
         );
 
-        let result = run(tmp.path(), true, false).await.result.unwrap();
-        assert!(!result.has_violations());
+        let step = run(tmp.path(), true, false);
+        let result = unwrap_check(&step);
+        assert!(result.violations.is_empty());
     }
 
-    #[tokio::test]
-    async fn null_on_disallowed_path() {
+    #[test]
+    fn null_on_disallowed_path() {
         let tmp = tempfile::tempdir().unwrap();
         fs::create_dir_all(tmp.path().join("notes")).unwrap();
 
@@ -1040,7 +929,6 @@ mod tests {
         )
         .unwrap();
 
-        // draft: allowed only in blog/**, but file is in notes/
         write_toml(
             tmp.path(),
             vec![
@@ -1056,18 +944,19 @@ mod tests {
             vec![],
         );
 
-        let result = run(tmp.path(), true, false).await.result.unwrap();
-        assert!(result.has_violations());
+        let step = run(tmp.path(), true, false);
+        let result = unwrap_check(&step);
+        assert!(!result.violations.is_empty());
         let v = result
-            .field_violations
+            .violations
             .iter()
             .find(|v| v.field == "draft")
             .expect("expected Disallowed for draft");
         assert!(matches!(v.kind, ViolationKind::Disallowed));
     }
 
-    #[tokio::test]
-    async fn null_on_disallowed_path_and_not_nullable() {
+    #[test]
+    fn null_on_disallowed_path_and_not_nullable() {
         let tmp = tempfile::tempdir().unwrap();
         fs::create_dir_all(tmp.path().join("notes")).unwrap();
 
@@ -1077,8 +966,6 @@ mod tests {
         )
         .unwrap();
 
-        // draft: allowed only in blog/**, nullable=false
-        // Should trigger BOTH Disallowed AND NullNotAllowed
         write_toml(
             tmp.path(),
             vec![
@@ -1094,19 +981,130 @@ mod tests {
             vec![],
         );
 
-        let result = run(tmp.path(), true, false).await.result.unwrap();
-        assert!(result.has_violations());
+        let step = run(tmp.path(), true, false);
+        let result = unwrap_check(&step);
+        assert!(!result.violations.is_empty());
 
         let has_disallowed = result
-            .field_violations
+            .violations
             .iter()
             .any(|v| v.field == "draft" && matches!(v.kind, ViolationKind::Disallowed));
         let has_null_not_allowed = result
-            .field_violations
+            .violations
             .iter()
             .any(|v| v.field == "draft" && matches!(v.kind, ViolationKind::NullNotAllowed));
 
         assert!(has_disallowed, "expected Disallowed for draft");
         assert!(has_null_not_allowed, "expected NullNotAllowed for draft");
+    }
+
+    #[test]
+    fn null_on_required_non_nullable_produces_single_violation() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("notes")).unwrap();
+
+        fs::write(
+            tmp.path().join("notes/note1.md"),
+            "---\ntitle: Hello\nstatus:\n---\n# Hello\nBody.",
+        )
+        .unwrap();
+
+        write_toml(
+            tmp.path(),
+            vec![
+                string_field("title"),
+                TomlField {
+                    name: "status".into(),
+                    field_type: FieldTypeSerde::Scalar("String".into()),
+                    allowed: vec!["**".into()],
+                    required: vec!["**".into()],
+                    nullable: false,
+                },
+            ],
+            vec![],
+        );
+
+        let step = run(tmp.path(), true, false);
+        let result = unwrap_check(&step);
+
+        // Should produce exactly 1 NullNotAllowed — not duplicated by check_required_fields
+        let null_violations: Vec<_> = result
+            .violations
+            .iter()
+            .filter(|v| v.field == "status" && matches!(v.kind, ViolationKind::NullNotAllowed))
+            .collect();
+        assert_eq!(
+            null_violations.len(),
+            1,
+            "expected exactly 1 NullNotAllowed, got {}",
+            null_violations.len()
+        );
+    }
+
+    // --- Unit tests for type_matches ---
+
+    #[test]
+    fn string_matches_anything() {
+        use serde_json::json;
+        assert!(type_matches(&FieldType::String, &json!(true)));
+        assert!(type_matches(&FieldType::String, &json!(42)));
+        assert!(type_matches(&FieldType::String, &json!("hello")));
+        assert!(type_matches(&FieldType::String, &json!([1, 2])));
+        assert!(type_matches(&FieldType::String, &json!({"a": 1})));
+    }
+
+    #[test]
+    fn bool_matches_bool() {
+        use serde_json::json;
+        assert!(type_matches(&FieldType::Boolean, &json!(true)));
+        assert!(type_matches(&FieldType::Boolean, &json!(false)));
+        assert!(!type_matches(&FieldType::Boolean, &json!("yes")));
+    }
+
+    #[test]
+    fn int_matches_int() {
+        use serde_json::json;
+        assert!(type_matches(&FieldType::Integer, &json!(42)));
+        assert!(!type_matches(&FieldType::Integer, &json!(1.5)));
+        assert!(!type_matches(&FieldType::Integer, &json!("42")));
+    }
+
+    #[test]
+    fn float_matches_any_number() {
+        use serde_json::json;
+        assert!(type_matches(&FieldType::Float, &json!(1.5)));
+        assert!(type_matches(&FieldType::Float, &json!(42))); // int-in-float lenient
+        assert!(!type_matches(&FieldType::Float, &json!("1.5")));
+    }
+
+    #[test]
+    fn array_checks_elements() {
+        use serde_json::json;
+        let arr_str = FieldType::Array(Box::new(FieldType::String));
+        assert!(type_matches(&arr_str, &json!(["a", "b"])));
+        assert!(type_matches(&arr_str, &json!([1, 2]))); // String matches anything
+
+        let arr_int = FieldType::Array(Box::new(FieldType::Integer));
+        assert!(type_matches(&arr_int, &json!([1, 2])));
+        assert!(!type_matches(&arr_int, &json!([1.5, 2.5])));
+    }
+
+    // --- Unit tests for matches_any_glob ---
+
+    #[test]
+    fn glob_star_star_matches_all() {
+        assert!(matches_any_glob(&["**".into()], "blog/post.md"));
+        assert!(matches_any_glob(&["**".into()], "deep/nested/path.md"));
+    }
+
+    #[test]
+    fn glob_specific_path() {
+        assert!(matches_any_glob(&["blog/**".into()], "blog/post.md"));
+        assert!(!matches_any_glob(&["blog/**".into()], "notes/idea.md"));
+    }
+
+    #[test]
+    fn glob_empty_patterns() {
+        assert!(!matches_any_glob(&[], "anything.md"));
     }
 }

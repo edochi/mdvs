@@ -1,5 +1,4 @@
 use clap::{Parser, Subcommand};
-use mdvs::output::CommandOutput;
 use std::path::PathBuf;
 
 /// Stderr logging level for `--logs`.
@@ -167,7 +166,7 @@ async fn main() -> anyhow::Result<()> {
             ignore_bare_files,
             skip_gitignore,
         } => {
-            let output = mdvs::cmd::init::run(
+            let result = mdvs::cmd::init::run(
                 &path,
                 &glob,
                 force,
@@ -176,8 +175,25 @@ async fn main() -> anyhow::Result<()> {
                 skip_gitignore,
                 cli.verbose,
             );
-            output.print(&cli.output, cli.verbose);
-            if output.has_failed_step() {
+            let failed = mdvs::step::has_failed(&result);
+            let verbose = cli.verbose || failed;
+            let output_str = match (&cli.output, verbose) {
+                (mdvs::output::OutputFormat::Text, true) => {
+                    mdvs::render::format_text(&result.render_verbose())
+                }
+                (mdvs::output::OutputFormat::Text, false) => {
+                    mdvs::render::format_text(&result.render_compact())
+                }
+                (mdvs::output::OutputFormat::Json, true) => {
+                    serde_json::to_string_pretty(&result).unwrap()
+                }
+                (mdvs::output::OutputFormat::Json, false) => match result.result_value() {
+                    Some(outcome) => serde_json::to_string_pretty(outcome).unwrap(),
+                    None => serde_json::to_string_pretty(&result).unwrap(),
+                },
+            };
+            print!("{output_str}");
+            if failed {
                 std::process::exit(2);
             }
             Ok(())
@@ -190,7 +206,7 @@ async fn main() -> anyhow::Result<()> {
             force,
             no_update,
         } => {
-            let output = mdvs::cmd::build::run(
+            let result = mdvs::cmd::build::run(
                 &path,
                 set_model.as_deref(),
                 set_revision.as_deref(),
@@ -200,11 +216,29 @@ async fn main() -> anyhow::Result<()> {
                 cli.verbose,
             )
             .await;
-            output.print(&cli.output, cli.verbose);
-            if output.has_failed_step() {
+            let failed = mdvs::step::has_failed(&result);
+            let violations = mdvs::step::has_violations(&result);
+            let verbose = cli.verbose || failed;
+            let output_str = match (&cli.output, verbose) {
+                (mdvs::output::OutputFormat::Text, true) => {
+                    mdvs::render::format_text(&result.render_verbose())
+                }
+                (mdvs::output::OutputFormat::Text, false) => {
+                    mdvs::render::format_text(&result.render_compact())
+                }
+                (mdvs::output::OutputFormat::Json, true) => {
+                    serde_json::to_string_pretty(&result).unwrap()
+                }
+                (mdvs::output::OutputFormat::Json, false) => match result.result_value() {
+                    Some(outcome) => serde_json::to_string_pretty(outcome).unwrap(),
+                    None => serde_json::to_string_pretty(&result).unwrap(),
+                },
+            };
+            print!("{output_str}");
+            if failed {
                 std::process::exit(2);
             }
-            if output.has_violations() {
+            if violations {
                 std::process::exit(1);
             }
             Ok(())
@@ -217,7 +251,7 @@ async fn main() -> anyhow::Result<()> {
             no_update,
             no_build,
         } => {
-            let output = mdvs::cmd::search::run(
+            let result = mdvs::cmd::search::run(
                 &path,
                 &query,
                 limit,
@@ -227,19 +261,54 @@ async fn main() -> anyhow::Result<()> {
                 cli.verbose,
             )
             .await;
-            output.print(&cli.output, cli.verbose);
-            if output.has_failed_step() {
+            let failed = mdvs::step::has_failed(&result);
+            let verbose = cli.verbose || failed;
+            let output_str = match (&cli.output, verbose) {
+                (mdvs::output::OutputFormat::Text, true) => {
+                    mdvs::render::format_text(&result.render_verbose())
+                }
+                (mdvs::output::OutputFormat::Text, false) => {
+                    mdvs::render::format_text(&result.render_compact())
+                }
+                (mdvs::output::OutputFormat::Json, true) => {
+                    serde_json::to_string_pretty(&result).unwrap()
+                }
+                (mdvs::output::OutputFormat::Json, false) => match result.result_value() {
+                    Some(outcome) => serde_json::to_string_pretty(outcome).unwrap(),
+                    None => serde_json::to_string_pretty(&result).unwrap(),
+                },
+            };
+            print!("{output_str}");
+            if failed {
                 std::process::exit(2);
             }
             Ok(())
         }
         Command::Check { path, no_update } => {
-            let output = mdvs::cmd::check::run(&path, no_update, cli.verbose).await;
-            output.print(&cli.output, cli.verbose);
-            if output.has_failed_step() {
+            let result = mdvs::cmd::check::run(&path, no_update, cli.verbose);
+            let failed = mdvs::step::has_failed(&result);
+            let violations = mdvs::step::has_violations(&result);
+            let verbose = cli.verbose || failed;
+            let output_str = match (&cli.output, verbose) {
+                (mdvs::output::OutputFormat::Text, true) => {
+                    mdvs::render::format_text(&result.render_verbose())
+                }
+                (mdvs::output::OutputFormat::Text, false) => {
+                    mdvs::render::format_text(&result.render_compact())
+                }
+                (mdvs::output::OutputFormat::Json, true) => {
+                    serde_json::to_string_pretty(&result).unwrap()
+                }
+                (mdvs::output::OutputFormat::Json, false) => match result.result_value() {
+                    Some(outcome) => serde_json::to_string_pretty(outcome).unwrap(),
+                    None => serde_json::to_string_pretty(&result).unwrap(),
+                },
+            };
+            print!("{output_str}");
+            if failed {
                 std::process::exit(2);
             }
-            if output.result.as_ref().is_some_and(|r| r.has_violations()) {
+            if violations {
                 std::process::exit(1);
             }
             Ok(())
@@ -250,26 +319,77 @@ async fn main() -> anyhow::Result<()> {
             reinfer_all,
             dry_run,
         } => {
-            let output =
+            let result =
                 mdvs::cmd::update::run(&path, &reinfer, reinfer_all, dry_run, cli.verbose).await;
-            output.print(&cli.output, cli.verbose);
-            if output.has_failed_step() {
+            let failed = mdvs::step::has_failed(&result);
+            let verbose = cli.verbose || failed;
+            let output_str = match (&cli.output, verbose) {
+                (mdvs::output::OutputFormat::Text, true) => {
+                    mdvs::render::format_text(&result.render_verbose())
+                }
+                (mdvs::output::OutputFormat::Text, false) => {
+                    mdvs::render::format_text(&result.render_compact())
+                }
+                (mdvs::output::OutputFormat::Json, true) => {
+                    serde_json::to_string_pretty(&result).unwrap()
+                }
+                (mdvs::output::OutputFormat::Json, false) => match result.result_value() {
+                    Some(outcome) => serde_json::to_string_pretty(outcome).unwrap(),
+                    None => serde_json::to_string_pretty(&result).unwrap(),
+                },
+            };
+            print!("{output_str}");
+            if failed {
                 std::process::exit(2);
             }
             Ok(())
         }
         Command::Clean { path } => {
-            let output = mdvs::cmd::clean::run(&path);
-            output.print(&cli.output, cli.verbose);
-            if output.has_failed_step() {
+            let result = mdvs::cmd::clean::run(&path);
+            let failed = mdvs::step::has_failed(&result);
+            let verbose = cli.verbose || failed;
+            let output_str = match (&cli.output, verbose) {
+                (mdvs::output::OutputFormat::Text, true) => {
+                    mdvs::render::format_text(&result.render_verbose())
+                }
+                (mdvs::output::OutputFormat::Text, false) => {
+                    mdvs::render::format_text(&result.render_compact())
+                }
+                (mdvs::output::OutputFormat::Json, true) => {
+                    serde_json::to_string_pretty(&result).unwrap()
+                }
+                (mdvs::output::OutputFormat::Json, false) => match result.result_value() {
+                    Some(outcome) => serde_json::to_string_pretty(outcome).unwrap(),
+                    None => serde_json::to_string_pretty(&result).unwrap(),
+                },
+            };
+            print!("{output_str}");
+            if failed {
                 std::process::exit(2);
             }
             Ok(())
         }
         Command::Info { path } => {
-            let output = mdvs::cmd::info::run(&path, cli.verbose);
-            output.print(&cli.output, cli.verbose);
-            if output.has_failed_step() {
+            let result = mdvs::cmd::info::run(&path, cli.verbose);
+            let failed = mdvs::step::has_failed(&result);
+            let verbose = cli.verbose || failed;
+            let output_str = match (&cli.output, verbose) {
+                (mdvs::output::OutputFormat::Text, true) => {
+                    mdvs::render::format_text(&result.render_verbose())
+                }
+                (mdvs::output::OutputFormat::Text, false) => {
+                    mdvs::render::format_text(&result.render_compact())
+                }
+                (mdvs::output::OutputFormat::Json, true) => {
+                    serde_json::to_string_pretty(&result).unwrap()
+                }
+                (mdvs::output::OutputFormat::Json, false) => match result.result_value() {
+                    Some(outcome) => serde_json::to_string_pretty(outcome).unwrap(),
+                    None => serde_json::to_string_pretty(&result).unwrap(),
+                },
+            };
+            print!("{output_str}");
+            if failed {
                 std::process::exit(2);
             }
             Ok(())

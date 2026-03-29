@@ -77,25 +77,58 @@ See [Search Guide](../search-guide.md) for the full `--where` reference, includi
 ### Compact (default)
 
 ```bash
-mdvs search "experiment" example_kb
+mdvs search "experiment" example_kb -n 3
 ```
 
+A header table shows the query metadata, followed by one key-value table per hit numbered `#1`, `#2`, etc. Each hit includes the file, similarity score, line range, and the best-matching chunk text:
+
 ```
-Searched "experiment" — 10 hits
+Searched "experiment" — 3 hits
 
-╭───────────┬────────────────────────────────────────────────────┬─────────────╮
-│ 1         │ "projects/archived/gamma/lessons-learned.md"       │ 0.487       │
-│ 2         │ "blog/published/2031/founding-story.md"            │ 0.470       │
-│ 3         │ "projects/archived/gamma/post-mortem.md"           │ 0.457       │
-│ 4         │ "projects/alpha/notes/experiment-3.md"             │ 0.420       │
-│ 5         │ "blog/drafts/grant-ideas.md"                       │ 0.406       │
-│ ...       │                                                    │             │
-╰───────────┴────────────────────────────────────────────────────┴─────────────╯
+┌──────────────────────────┬───────────────────────────────────────────────────┐
+│ query                    │ experiment                                        │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ model                    │ minishlab/potion-base-8M                          │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ limit                    │ 3                                                 │
+└──────────────────────────┴───────────────────────────────────────────────────┘
+
+┌ #1 ──────────────────────┬───────────────────────────────────────────────────┐
+│ file                     │ projects/archived/gamma/lessons-learned.md        │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ score                    │ 0.487                                             │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ lines                    │ 26-28                                             │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ text                     │ ## On REMO                                        │
+│                          │                                                   │
+│                          │ REMO's environmental monitoring data from the out │
+│                          │ door tests was the most useful output of the enti │
+│                          │ re project. ...                                   │
+└──────────────────────────┴───────────────────────────────────────────────────┘
+
+┌ #2 ──────────────────────┬───────────────────────────────────────────────────┐
+│ file                     │ blog/published/2031/founding-story.md             │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ score                    │ 0.470                                             │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ lines                    │ 21-21                                             │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ text                     │ We are a small lab and we intend to stay small... │
+└──────────────────────────┴───────────────────────────────────────────────────┘
+
+┌ #3 ──────────────────────┬───────────────────────────────────────────────────┐
+│ file                     │ projects/archived/gamma/post-mortem.md            │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ score                    │ 0.457                                             │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ lines                    │ 11-21                                             │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ text                     │ # Project Gamma — Post-Mortem ...                 │
+└──────────────────────────┴───────────────────────────────────────────────────┘
 ```
 
-Each row shows rank, filename, and cosine similarity score.
-
-With `--where` filtering:
+With `--where` filtering, only files matching the SQL clause are included:
 
 ```bash
 mdvs search "experiment" example_kb --where "status = 'active'" -n 5
@@ -104,47 +137,44 @@ mdvs search "experiment" example_kb --where "status = 'active'" -n 5
 ```
 Searched "experiment" — 3 hits
 
-╭───────────────┬──────────────────────────────────────────┬───────────────────╮
-│ 1             │ "projects/alpha/overview.md"             │ 0.391             │
-│ 2             │ "projects/beta/overview.md"              │ 0.358             │
-│ 3             │ "projects/alpha/budget.md"               │ 0.001             │
-╰───────────────┴──────────────────────────────────────────┴───────────────────╯
+┌──────────────────────────┬───────────────────────────────────────────────────┐
+│ query                    │ experiment                                        │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ model                    │ minishlab/potion-base-8M                          │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ limit                    │ 5                                                 │
+└──────────────────────────┴───────────────────────────────────────────────────┘
+
+┌ #1 ──────────────────────┬───────────────────────────────────────────────────┐
+│ file                     │ projects/alpha/overview.md                        │
+├──────────────────────────┼───────────────────────────────────────────────────┤
+│ score                    │ 0.391                                             │
+...
 ```
 
 ### Verbose (`-v`)
+
+Verbose output adds pipeline timing lines before the result:
 
 ```bash
 mdvs search "experiment" example_kb -v -n 3
 ```
 
 ```
+Read config: example_kb/mdvs.toml (2ms)
+Scan: 43 files (2ms)
+...
+Load model: minishlab/potion-base-8M (22ms)
+Embed query: "experiment" (0ms)
+Execute search: 3 hits (5ms)
 Searched "experiment" — 3 hits
 
-╭──────────┬─────────────────────────────────────────────────────┬─────────────╮
-│ 1        │ "projects/archived/gamma/lessons-learned.md"        │ 0.487       │
-├──────────┴─────────────────────────────────────────────────────┴─────────────┤
-│   lines 17-19:                                                               │
-│                                                                              │
-│     ## On Timelines                                                          │
-╰──────────────────────────────────────────────────────────────────────────────╯
-╭────────────┬─────────────────────────────────────────────────┬───────────────╮
-│ 2          │ "blog/published/2031/founding-story.md"         │ 0.470         │
-├────────────┴─────────────────────────────────────────────────┴───────────────┤
-│   lines 11-11:                                                               │
-│     # How Prismatiq Started                                                  │
-╰──────────────────────────────────────────────────────────────────────────────╯
-╭───────────┬──────────────────────────────────────────────────┬───────────────╮
-│ 3         │ "projects/archived/gamma/post-mortem.md"         │ 0.457         │
-├───────────┴──────────────────────────────────────────────────┴───────────────┤
-│   lines 1-11:                                                                │
-│     ---                                                                      │
-│     title: "Project Gamma — Post-Mortem"                                     │
-│     ...                                                                      │
-╰──────────────────────────────────────────────────────────────────────────────╯
-3 hits | model: "minishlab/potion-base-8M" | limit: 10
+┌──────────────────────────┬───────────────────────────────────────────────────┐
+│ query                    │ experiment                                        │
+...
 ```
 
-Verbose output expands each result into a record showing the best-matching chunk text with its line range. The footer shows total hits, model name, and limit.
+The hit tables are identical in both modes — verbose only adds the step lines showing processing times.
 
 ## Exit codes
 

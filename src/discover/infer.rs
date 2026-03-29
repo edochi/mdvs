@@ -446,6 +446,7 @@ mod tests {
             path: PathBuf::from(path),
             data,
             content: content.to_string(),
+            body_line_offset: 0,
         }
     }
 
