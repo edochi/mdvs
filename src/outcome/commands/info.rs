@@ -38,6 +38,24 @@ impl Render for InfoOutcome {
         blocks.push(Block::Line(one_liner));
         blocks.push(Block::Line(String::new()));
 
+        // Config section (always shown)
+        let ignored_str = if self.ignored_fields.is_empty() {
+            "(none)".into()
+        } else {
+            self.ignored_fields.join("\n")
+        };
+        blocks.push(Block::Line("Config:".into()));
+        blocks.push(Block::Table {
+            headers: None,
+            rows: vec![
+                vec!["scan glob".into(), self.scan_glob.clone()],
+                vec!["ignored fields".into(), ignored_str],
+            ],
+            style: TableStyle::KeyValue {
+                title: String::new(),
+            },
+        });
+
         // Index metadata
         if let Some(idx) = &self.index {
             let rev = idx.revision.as_deref().unwrap_or("none");

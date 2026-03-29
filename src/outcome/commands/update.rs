@@ -39,9 +39,14 @@ impl Render for UpdateOutcome {
         } else {
             format!("{total_changes} field(s) changed")
         };
+        let unchanged_suffix = if self.unchanged > 0 {
+            format!(" ({} unchanged)", self.unchanged)
+        } else {
+            String::new()
+        };
         let dry_run_suffix = if self.dry_run { " (dry run)" } else { "" };
         blocks.push(Block::Line(format!(
-            "Scanned {} — {summary}{dry_run_suffix}",
+            "Scanned {} — {summary}{unchanged_suffix}{dry_run_suffix}",
             format_file_count(self.files_scanned)
         )));
 
