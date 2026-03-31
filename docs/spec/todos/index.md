@@ -144,3 +144,5 @@
 | [0140](TODO-0140.md) | Global --dry-run flag | todo | medium | 2026-03-28 |
 | [0141](TODO-0141.md) | Global --quiet flag to suppress output on success | todo | medium | 2026-03-29 |
 | [0142](TODO-0142.md) | Fix chunk line numbers to exclude frontmatter | done | high | 2026-03-29 |
+| [0143](TODO-0143.md) | Additional constraint kinds — design discussion | todo | low | 2026-03-30 |
+| [0144](TODO-0144.md) | Embedded Lua scripting for user-side customization | todo | medium | 2026-03-30 |
