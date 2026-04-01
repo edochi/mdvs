@@ -360,10 +360,12 @@ mod tests {
 
         assert_eq!(result.changed.len(), 1);
         assert_eq!(result.changed[0].name, "tags");
-        assert!(result.changed[0]
-            .changes
-            .iter()
-            .any(|c| matches!(c, FieldChange::Type { new, .. } if new == "String")));
+        assert!(
+            result.changed[0]
+                .changes
+                .iter()
+                .any(|c| matches!(c, FieldChange::Type { new, .. } if new == "String"))
+        );
     }
 
     #[tokio::test]

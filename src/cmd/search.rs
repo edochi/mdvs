@@ -190,8 +190,10 @@ pub async fn run(
             if data.metadata.embedding_model != *emb {
                 Some(format!(
                     "model mismatch: config has '{}' (rev {:?}) but index was built with '{}' (rev {:?}) — run 'mdvs build' to rebuild",
-                    emb.name, emb.revision,
-                    data.metadata.embedding_model.name, data.metadata.embedding_model.revision,
+                    emb.name,
+                    emb.revision,
+                    data.metadata.embedding_model.name,
+                    data.metadata.embedding_model.revision,
                 ))
             } else {
                 None
@@ -268,11 +270,11 @@ pub async fn run(
         None => ("", &std::collections::HashMap::new()),
     };
 
-    if let Some(w) = where_clause {
-        if let Err(msg) = validate_where_clause(w) {
-            steps.push(StepEntry::err(ErrorKind::User, msg, 0));
-            return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
-        }
+    if let Some(w) = where_clause
+        && let Err(msg) = validate_where_clause(w)
+    {
+        steps.push(StepEntry::err(ErrorKind::User, msg, 0));
+        return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
     }
 
     let search_start = Instant::now();

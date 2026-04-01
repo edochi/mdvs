@@ -4,7 +4,7 @@ use serde::Serialize;
 
 use crate::block::{Block, Render, TableStyle};
 use crate::output::BuildFileDetail;
-use crate::output::{format_file_count, NewField};
+use crate::output::{NewField, format_file_count};
 
 fn format_chunk_count(n: usize) -> String {
     if n == 1 {

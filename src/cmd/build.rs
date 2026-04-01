@@ -2,9 +2,9 @@ use crate::discover::field_type::FieldType;
 use crate::discover::infer::InferredSchema;
 use crate::discover::scan::{ScannedFile, ScannedFiles};
 use crate::index::backend::Backend;
-use crate::index::chunk::{extract_plain_text, Chunks};
+use crate::index::chunk::{Chunks, extract_plain_text};
 use crate::index::embed::{Embedder, ModelConfig};
-use crate::index::storage::{content_hash, BuildMetadata, ChunkRow, FileIndexEntry, FileRow};
+use crate::index::storage::{BuildMetadata, ChunkRow, FileIndexEntry, FileRow, content_hash};
 use crate::outcome::commands::BuildOutcome;
 use crate::outcome::{
     ClassifyOutcome, EmbedFilesOutcome, InferOutcome, LoadModelOutcome, Outcome, ReadConfigOutcome,
@@ -624,7 +624,9 @@ pub(crate) async fn build_core(
                 Ok(Some(existing_dim)) => {
                     let model_dim = emb.dimension() as i32;
                     if existing_dim != model_dim {
-                        Some(format!("dimension mismatch: model produces {model_dim}-dim embeddings but existing index has {existing_dim}-dim"))
+                        Some(format!(
+                            "dimension mismatch: model produces {model_dim}-dim embeddings but existing index has {existing_dim}-dim"
+                        ))
                     } else {
                         None
                     }
@@ -849,10 +851,8 @@ pub(crate) fn mutate_config(
         config_changed = true;
     }
 
-    if config_changed {
-        if let Err(e) = config.write(&config_path) {
-            return Some(format!("failed to write config: {e}"));
-        }
+    if config_changed && let Err(e) = config.write(&config_path) {
+        return Some(format!("failed to write config: {e}"));
     }
 
     None
@@ -1025,7 +1025,7 @@ mod tests {
 
     #[tokio::test]
     async fn dimension_mismatch() {
-        use crate::index::storage::{build_chunks_batch, write_parquet, ChunkRow};
+        use crate::index::storage::{ChunkRow, build_chunks_batch, write_parquet};
 
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
@@ -1074,7 +1074,7 @@ mod tests {
 
     #[tokio::test]
     async fn dimension_mismatch_with_force_succeeds() {
-        use crate::index::storage::{build_chunks_batch, write_parquet, ChunkRow};
+        use crate::index::storage::{ChunkRow, build_chunks_batch, write_parquet};
 
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());

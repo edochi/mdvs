@@ -264,12 +264,12 @@ fn glob_is_covered(required: &str, allowed: &[String]) -> bool {
 
         // Glob-based containment: strip suffix from required and test against allowed
         let req_dir = strip_glob_suffix(required);
-        if !req_dir.is_empty() {
-            if let Ok(glob) = globset::Glob::new(allowed_glob) {
-                let matcher = glob.compile_matcher();
-                if matcher.is_match(req_dir) {
-                    return true;
-                }
+        if !req_dir.is_empty()
+            && let Ok(glob) = globset::Glob::new(allowed_glob)
+        {
+            let matcher = glob.compile_matcher();
+            if matcher.is_match(req_dir) {
+                return true;
             }
         }
     }
@@ -297,21 +297,20 @@ fn strip_glob_suffix(glob: &str) -> &str {
 fn inline_field_types(toml_str: &str) -> anyhow::Result<String> {
     let mut doc = toml_str.parse::<toml_edit::DocumentMut>()?;
 
-    if let Some(fields) = doc.get_mut("fields") {
-        if let Some(field_array) = fields.get_mut("field") {
-            if let Some(array_of_tables) = field_array.as_array_of_tables_mut() {
-                for table in array_of_tables.iter_mut() {
-                    if let Some(type_item) = table.get_mut("type") {
-                        if let Some(t) = type_item.as_table_mut() {
-                            let inline = t.clone().into_inline_table();
-                            *type_item = toml_edit::Item::Value(inline.into());
-                        }
-                    }
-                    // Normalize key formatting (fix missing space before `=`)
-                    if let Some(mut key) = table.key_mut("type") {
-                        key.fmt();
-                    }
-                }
+    if let Some(fields) = doc.get_mut("fields")
+        && let Some(field_array) = fields.get_mut("field")
+        && let Some(array_of_tables) = field_array.as_array_of_tables_mut()
+    {
+        for table in array_of_tables.iter_mut() {
+            if let Some(type_item) = table.get_mut("type")
+                && let Some(t) = type_item.as_table_mut()
+            {
+                let inline = t.clone().into_inline_table();
+                *type_item = toml_edit::Item::Value(inline.into());
+            }
+            // Normalize key formatting (fix missing space before `=`)
+            if let Some(mut key) = table.key_mut("type") {
+                key.fmt();
             }
         }
     }

@@ -5,15 +5,15 @@
 //! format means writing one function here — no command code changes needed.
 
 use tabled::settings::{
+    Modify, Panel,
     object::{Column, Rows},
     style::{LineText, Style},
     themes::BorderCorrection,
     width::Width,
-    Modify, Panel,
 };
 
 use crate::block::{Block, TableStyle};
-use crate::table::{style_compact, term_width, Builder};
+use crate::table::{Builder, style_compact, term_width};
 
 /// Format blocks as terminal text with box-drawing tables.
 pub fn format_text(blocks: &[Block]) -> String {

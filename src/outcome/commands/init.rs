@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use serde::Serialize;
 
 use crate::block::{Block, Render, TableStyle};
-use crate::output::{format_file_count, format_hints, DiscoveredField};
+use crate::output::{DiscoveredField, format_file_count, format_hints};
 
 /// Full outcome for the init command.
 #[derive(Debug, Serialize)]

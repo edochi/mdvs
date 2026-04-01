@@ -2,7 +2,7 @@ use crate::discover::scan::ScannedFiles;
 use crate::index::backend::Backend;
 use crate::outcome::commands::InfoOutcome;
 use crate::outcome::{Outcome, ReadConfigOutcome, ReadIndexOutcome, ScanOutcome};
-use crate::output::{field_hints, FieldHint};
+use crate::output::{FieldHint, field_hints};
 use crate::schema::config::MdvsToml;
 use crate::step::{CommandResult, ErrorKind, StepEntry};
 use serde::Serialize;
@@ -417,8 +417,10 @@ mod tests {
         let result = unwrap_info(&step);
         assert_eq!(result.fields.len(), 1);
         assert_eq!(result.fields[0].name, "author's_note");
-        assert!(result.fields[0]
-            .hints
-            .contains(&FieldHint::EscapeSingleQuotes));
+        assert!(
+            result.fields[0]
+                .hints
+                .contains(&FieldHint::EscapeSingleQuotes)
+        );
     }
 }

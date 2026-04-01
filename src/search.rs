@@ -1,4 +1,4 @@
-use crate::index::storage::{resolve_view_name, COL_DATA, FILES_INTERNAL_COLUMNS};
+use crate::index::storage::{COL_DATA, FILES_INTERNAL_COLUMNS, resolve_view_name};
 use datafusion::arrow::array::{Array, ArrayRef, FixedSizeListArray, Float32Array, Float64Array};
 use datafusion::arrow::datatypes::{DataType, Field};
 use datafusion::arrow::record_batch::RecordBatch;
@@ -122,7 +122,8 @@ impl ScalarUDFImpl for CosineSimilarityUDF {
             })
             .collect();
 
-        Ok(ColumnarValue::from(Arc::new(results) as ArrayRef))
+        let result_array: ArrayRef = Arc::new(results);
+        Ok(ColumnarValue::from(result_array))
     }
 }
 
@@ -171,16 +172,16 @@ impl SearchContext {
         let mut frontmatter_names: Vec<String> = Vec::new();
         let mut frontmatter_projections = Vec::new();
         for field in schema.fields() {
-            if field.name() == COL_DATA {
-                if let DataType::Struct(children) = field.data_type() {
-                    for child in children {
-                        frontmatter_names.push(child.name().clone());
-                        let escaped_accessor = child.name().replace('\'', "''");
-                        let escaped_alias = child.name().replace('"', "\"\"");
-                        frontmatter_projections.push(format!(
-                            "{COL_DATA}['{escaped_accessor}'] AS \"{escaped_alias}\"",
-                        ));
-                    }
+            if field.name() == COL_DATA
+                && let DataType::Struct(children) = field.data_type()
+            {
+                for child in children {
+                    frontmatter_names.push(child.name().clone());
+                    let escaped_accessor = child.name().replace('\'', "''");
+                    let escaped_alias = child.name().replace('"', "\"\"");
+                    frontmatter_projections.push(format!(
+                        "{COL_DATA}['{escaped_accessor}'] AS \"{escaped_alias}\"",
+                    ));
                 }
             }
         }
@@ -248,7 +249,7 @@ mod tests {
     use super::*;
     use crate::discover::field_type::FieldType;
     use crate::index::storage::{
-        build_chunks_batch, build_files_batch, write_parquet, ChunkRow, FileRow,
+        ChunkRow, FileRow, build_chunks_batch, build_files_batch, write_parquet,
     };
     use datafusion::arrow::array::{Array, Float64Array, Int64Array, StringArray, StringViewArray};
 

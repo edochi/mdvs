@@ -193,12 +193,10 @@ impl Render for StepEntry {
                 let mut result = vec![];
                 let mut injected = false;
                 for block in outcome_blocks {
-                    if !injected {
-                        if let Block::Line(text) = block {
-                            result.push(Block::Line(format!("{text} ({}ms)", ps.elapsed_ms)));
-                            injected = true;
-                            continue;
-                        }
+                    if !injected && let Block::Line(text) = block {
+                        result.push(Block::Line(format!("{text} ({}ms)", ps.elapsed_ms)));
+                        injected = true;
+                        continue;
                     }
                     result.push(block);
                 }
