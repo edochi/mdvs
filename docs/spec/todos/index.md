@@ -146,3 +146,4 @@
 | [0142](TODO-0142.md) | Fix chunk line numbers to exclude frontmatter | done | high | 2026-03-29 |
 | [0143](TODO-0143.md) | Additional constraint kinds — design discussion | todo | low | 2026-03-30 |
 | [0144](TODO-0144.md) | Embedded Lua scripting for user-side customization | todo | medium | 2026-03-30 |
+| [0145](TODO-0145.md) | Support regex pattern constraints on string fields | todo | low | 2026-04-02 |
