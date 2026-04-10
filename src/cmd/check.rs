@@ -1307,4 +1307,89 @@ mod tests {
         assert_eq!(result.violations.len(), 1);
         assert_eq!(result.violations[0].kind, ViolationKind::WrongType);
     }
+
+    // -----------------------------------------------------------------------
+    // Integration: init → check with categories
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn init_then_check_with_categories_passes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let blog = tmp.path().join("blog");
+        fs::create_dir_all(&blog).unwrap();
+        for (i, status) in [
+            "draft",
+            "draft",
+            "published",
+            "published",
+            "archived",
+            "archived",
+        ]
+        .iter()
+        .enumerate()
+        {
+            fs::write(
+                blog.join(format!("post{i}.md")),
+                format!("---\nstatus: {status}\ntitle: Post {i}\n---\nBody."),
+            )
+            .unwrap();
+        }
+
+        // Init infers categories on status
+        let init_step = crate::cmd::init::run(tmp.path(), "**", false, false, true, false, false);
+        assert!(!crate::step::has_failed(&init_step));
+
+        // Check should pass — inferred categories match actual data
+        let check_step = run(tmp.path(), true, false);
+        let result = unwrap_check(&check_step);
+        assert!(result.violations.is_empty());
+    }
+
+    #[test]
+    fn init_then_corrupt_then_check_catches_invalid_category() {
+        let tmp = tempfile::tempdir().unwrap();
+        let blog = tmp.path().join("blog");
+        fs::create_dir_all(&blog).unwrap();
+        for (i, status) in [
+            "draft",
+            "draft",
+            "published",
+            "published",
+            "archived",
+            "archived",
+        ]
+        .iter()
+        .enumerate()
+        {
+            fs::write(
+                blog.join(format!("post{i}.md")),
+                format!("---\nstatus: {status}\ntitle: Post {i}\n---\nBody."),
+            )
+            .unwrap();
+        }
+
+        // Init infers categories
+        let init_step = crate::cmd::init::run(tmp.path(), "**", false, false, true, false, false);
+        assert!(!crate::step::has_failed(&init_step));
+
+        // Corrupt a file with an out-of-category value
+        fs::write(
+            blog.join("post0.md"),
+            "---\nstatus: pending\ntitle: Post 0\n---\nBody.",
+        )
+        .unwrap();
+
+        // Check should catch InvalidCategory
+        let check_step = run(tmp.path(), true, false);
+        let result = unwrap_check(&check_step);
+        assert_eq!(result.violations.len(), 1);
+        assert_eq!(result.violations[0].kind, ViolationKind::InvalidCategory);
+        assert!(
+            result.violations[0].files[0]
+                .detail
+                .as_ref()
+                .unwrap()
+                .contains("\"pending\"")
+        );
+    }
 }

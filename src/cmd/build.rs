@@ -1951,4 +1951,95 @@ mod tests {
         assert_eq!(c.removed_count, 1);
         assert!(!c.file_id_map.contains_key("d.md"));
     }
+
+    // ========================================================================
+    // Categorical constraint integration tests
+    // ========================================================================
+
+    #[tokio::test]
+    async fn build_succeeds_with_categorical_fields() {
+        let tmp = tempfile::tempdir().unwrap();
+        let blog = tmp.path().join("blog");
+        fs::create_dir_all(&blog).unwrap();
+        for (i, status) in [
+            "draft",
+            "draft",
+            "published",
+            "published",
+            "archived",
+            "archived",
+        ]
+        .iter()
+        .enumerate()
+        {
+            fs::write(
+                blog.join(format!("post{i}.md")),
+                format!("---\nstatus: {status}\ntitle: Post {i}\n---\n# Post {i}\nBody text."),
+            )
+            .unwrap();
+        }
+
+        // Init with auto-build disabled, then verify categories inferred
+        let init_step = crate::cmd::init::run(tmp.path(), "**", false, false, true, false, false);
+        assert!(!crate::step::has_failed(&init_step));
+
+        let toml = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
+        let status = toml
+            .fields
+            .field
+            .iter()
+            .find(|f| f.name == "status")
+            .unwrap();
+        assert!(
+            status.constraints.is_some(),
+            "categories should be inferred on status"
+        );
+
+        // Build should succeed despite constraints in toml
+        let build_step = run(tmp.path(), None, None, None, false, false, false).await;
+        assert!(!crate::step::has_failed(&build_step));
+        let result = unwrap_build(&build_step);
+        assert_eq!(result.files_embedded, 6);
+        assert!(tmp.path().join(".mdvs/files.parquet").exists());
+        assert!(tmp.path().join(".mdvs/chunks.parquet").exists());
+    }
+
+    #[tokio::test]
+    async fn build_aborts_on_invalid_category() {
+        let tmp = tempfile::tempdir().unwrap();
+        let blog = tmp.path().join("blog");
+        fs::create_dir_all(&blog).unwrap();
+        for (i, status) in [
+            "draft",
+            "draft",
+            "published",
+            "published",
+            "archived",
+            "archived",
+        ]
+        .iter()
+        .enumerate()
+        {
+            fs::write(
+                blog.join(format!("post{i}.md")),
+                format!("---\nstatus: {status}\ntitle: Post {i}\n---\n# Post {i}\nBody text."),
+            )
+            .unwrap();
+        }
+
+        // Init (infers categories on status)
+        let init_step = crate::cmd::init::run(tmp.path(), "**", false, false, true, false, false);
+        assert!(!crate::step::has_failed(&init_step));
+
+        // Corrupt a file with an out-of-category value
+        fs::write(
+            blog.join("post0.md"),
+            "---\nstatus: pending\ntitle: Post 0\n---\n# Post 0\nBody text.",
+        )
+        .unwrap();
+
+        // Build should abort (build includes check internally)
+        let build_step = run(tmp.path(), None, None, None, false, false, false).await;
+        assert!(crate::step::has_failed(&build_step));
+    }
 }

@@ -804,4 +804,62 @@ mod tests {
         let step = run(tmp.path(), Some(&args), false, false).await;
         assert!(crate::step::has_failed(&step));
     }
+
+    #[tokio::test]
+    async fn init_then_reinfer_then_check_passes() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_categorical_vault(tmp.path());
+        init_no_build(tmp.path());
+
+        // Reinfer status
+        let step = run(tmp.path(), Some(&reinfer_args(&["status"])), false, false).await;
+        assert!(!crate::step::has_failed(&step));
+
+        // Check should still pass after reinfer
+        let check_step = crate::cmd::check::run(tmp.path(), true, false);
+        let check_result = match &check_step.result {
+            Ok(crate::outcome::Outcome::Check(o)) => o,
+            other => panic!("expected Ok(Check), got: {other:?}"),
+        };
+        assert!(check_result.violations.is_empty());
+    }
+
+    #[tokio::test]
+    async fn init_then_reinfer_all_preserves_categories() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_categorical_vault(tmp.path());
+        init_no_build(tmp.path());
+
+        // Verify categories exist after init
+        let toml_before = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
+        let status_before = toml_before
+            .fields
+            .field
+            .iter()
+            .find(|f| f.name == "status")
+            .unwrap();
+        assert!(status_before.constraints.is_some());
+
+        // Reinfer all
+        let step = run(tmp.path(), Some(&reinfer_args(&[])), false, false).await;
+        assert!(!crate::step::has_failed(&step));
+
+        // Categories should still be present on status
+        let toml_after = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
+        let status_after = toml_after
+            .fields
+            .field
+            .iter()
+            .find(|f| f.name == "status")
+            .unwrap();
+        assert!(status_after.constraints.is_some());
+        let cats = status_after
+            .constraints
+            .as_ref()
+            .unwrap()
+            .categories
+            .as_ref()
+            .unwrap();
+        assert_eq!(cats.len(), 3);
+    }
 }
