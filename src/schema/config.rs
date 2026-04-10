@@ -1,5 +1,5 @@
 use crate::discover::field_type::FieldType;
-use crate::discover::infer::InferredSchema;
+use crate::discover::infer::{InferredSchema, infer_constraints};
 use crate::schema::constraints::Constraints;
 use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig, FieldTypeSerde, ScanConfig};
 use serde::{Deserialize, Serialize};
@@ -180,13 +180,17 @@ impl MdvsToml {
                 field: schema
                     .fields
                     .iter()
-                    .map(|f| TomlField {
-                        name: f.name.clone(),
-                        field_type: FieldTypeSerde::from(&f.field_type),
-                        allowed: f.allowed.clone(),
-                        required: f.required.clone(),
-                        nullable: f.nullable,
-                        constraints: None,
+                    .map(|f| {
+                        let max_cat = default_max_categories();
+                        let min_rep = default_min_category_repetition();
+                        TomlField {
+                            name: f.name.clone(),
+                            field_type: FieldTypeSerde::from(&f.field_type),
+                            allowed: f.allowed.clone(),
+                            required: f.required.clone(),
+                            nullable: f.nullable,
+                            constraints: infer_constraints(f, max_cat, min_rep),
+                        }
                     })
                     .collect(),
                 max_categories: default_max_categories(),
@@ -576,6 +580,8 @@ default_limit = 10
                     allowed: vec!["blog/**".into()],
                     required: vec!["blog/**".into()],
                     nullable: false,
+                    distinct_values: vec![],
+                    occurrence_count: 0,
                 },
                 InferredField {
                     name: "tags".into(),
@@ -584,6 +590,8 @@ default_limit = 10
                     allowed: vec!["blog/**".into(), "notes/**".into()],
                     required: vec!["notes/**".into()],
                     nullable: false,
+                    distinct_values: vec![],
+                    occurrence_count: 0,
                 },
                 InferredField {
                     name: "title".into(),
@@ -592,6 +600,8 @@ default_limit = 10
                     allowed: vec!["**".into()],
                     required: vec!["**".into()],
                     nullable: false,
+                    distinct_values: vec![],
+                    occurrence_count: 0,
                 },
             ],
         };
@@ -667,6 +677,8 @@ default_limit = 10
                 allowed: vec!["**".into()],
                 required: vec!["**".into()],
                 nullable: false,
+                distinct_values: vec![],
+                occurrence_count: 0,
             }],
         };
         let scan = ScanConfig {
