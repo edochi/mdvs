@@ -143,6 +143,7 @@ pub fn run(path: &Path, no_update: bool, verbose: bool) -> CommandResult {
                 allowed: f.allowed.clone(),
                 required: f.required.clone(),
                 nullable: f.nullable,
+                constraints: None,
             })
             .collect();
 
@@ -503,6 +504,8 @@ mod tests {
             fields: FieldsConfig {
                 ignore,
                 field: fields,
+                max_categories: 10,
+                min_category_repetition: 2,
             },
             embedding_model: None,
             chunking: None,
@@ -519,6 +522,7 @@ mod tests {
             allowed: vec!["**".into()],
             required: vec![],
             nullable: false,
+            constraints: None,
         }
     }
 
@@ -529,6 +533,7 @@ mod tests {
             allowed: vec!["**".into()],
             required: vec![],
             nullable: false,
+            constraints: None,
         }
     }
 
@@ -548,6 +553,7 @@ mod tests {
                     allowed: vec!["**".into()],
                     required: vec![],
                     nullable: false,
+                    constraints: None,
                 },
                 bool_field("draft"),
             ],
@@ -579,6 +585,7 @@ mod tests {
                     allowed: vec!["**".into()],
                     required: vec!["blog/**".into()],
                     nullable: false,
+                    constraints: None,
                 },
                 bool_field("draft"),
             ],
@@ -643,6 +650,7 @@ mod tests {
                 allowed: vec!["**".into()],
                 required: vec![],
                 nullable: false,
+                constraints: None,
             }],
             vec![],
         );
@@ -672,6 +680,7 @@ mod tests {
                 allowed: vec!["blog/**".into()],
                 required: vec![],
                 nullable: false,
+                constraints: None,
             }],
             vec![],
         );
@@ -761,7 +770,10 @@ mod tests {
                     allowed: vec!["**".into()],
                     required: vec!["blog/**".into()],
                     nullable: false,
+                    constraints: None,
                 }],
+                max_categories: 10,
+                min_category_repetition: 2,
             },
             embedding_model: None,
             chunking: None,
@@ -822,6 +834,7 @@ mod tests {
                     allowed: vec!["**".into()],
                     required: vec!["**".into()],
                     nullable: false,
+                    constraints: None,
                 },
                 TomlField {
                     name: "tags".into(),
@@ -831,6 +844,7 @@ mod tests {
                     allowed: vec!["**".into()],
                     required: vec!["blog/**".into()],
                     nullable: false,
+                    constraints: None,
                 },
                 TomlField {
                     name: "draft".into(),
@@ -838,6 +852,7 @@ mod tests {
                     allowed: vec!["blog/**".into()],
                     required: vec![],
                     nullable: false,
+                    constraints: None,
                 },
             ],
             vec![],
@@ -871,6 +886,7 @@ mod tests {
                     allowed: vec!["**".into()],
                     required: vec![],
                     nullable: false,
+                    constraints: None,
                 },
             ],
             vec![],
@@ -908,6 +924,7 @@ mod tests {
                     allowed: vec!["**".into()],
                     required: vec![],
                     nullable: true,
+                    constraints: None,
                 },
             ],
             vec![],
@@ -939,6 +956,7 @@ mod tests {
                     allowed: vec!["blog/**".into()],
                     required: vec![],
                     nullable: true,
+                    constraints: None,
                 },
             ],
             vec![],
@@ -976,6 +994,7 @@ mod tests {
                     allowed: vec!["blog/**".into()],
                     required: vec![],
                     nullable: false,
+                    constraints: None,
                 },
             ],
             vec![],
@@ -1019,6 +1038,7 @@ mod tests {
                     allowed: vec!["**".into()],
                     required: vec!["**".into()],
                     nullable: false,
+                    constraints: None,
                 },
             ],
             vec![],

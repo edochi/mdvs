@@ -150,6 +150,7 @@ pub async fn run(
             allowed: inf.allowed.clone(),
             required: inf.required.clone(),
             nullable: inf.nullable,
+            constraints: None,
         };
 
         if let Some(old_field) = old_fields.get(inf.name.as_str()) {

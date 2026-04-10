@@ -283,6 +283,7 @@ mod tests {
                         allowed: vec!["**".into()],
                         required: vec!["**".into()],
                         nullable: false,
+                        constraints: None,
                     },
                     crate::schema::config::TomlField {
                         name: "tags".into(),
@@ -292,6 +293,7 @@ mod tests {
                         allowed: vec!["blog/**".into()],
                         required: vec![],
                         nullable: false,
+                        constraints: None,
                     },
                     crate::schema::config::TomlField {
                         name: "draft".into(),
@@ -299,8 +301,11 @@ mod tests {
                         allowed: vec!["**".into()],
                         required: vec![],
                         nullable: false,
+                        constraints: None,
                     },
                 ],
+                max_categories: 10,
+                min_category_repetition: 2,
             },
             embedding_model: Some(EmbeddingModelConfig {
                 provider: "model2vec".into(),
@@ -404,7 +409,10 @@ mod tests {
                     allowed: vec!["**".into()],
                     required: vec![],
                     nullable: false,
+                    constraints: None,
                 }],
+                max_categories: 10,
+                min_category_repetition: 2,
             },
             embedding_model: None,
             chunking: None,

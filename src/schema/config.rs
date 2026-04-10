@@ -1,4 +1,6 @@
+use crate::discover::field_type::FieldType;
 use crate::discover::infer::InferredSchema;
+use crate::schema::constraints::Constraints;
 use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig, FieldTypeSerde, ScanConfig};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -73,6 +75,9 @@ pub struct TomlField {
     /// Whether null values are accepted for this field.
     #[serde(default = "default_nullable")]
     pub nullable: bool,
+    /// Optional value constraints (categories, range, length, etc.).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub constraints: Option<Constraints>,
 }
 
 fn default_field_type() -> FieldTypeSerde {
@@ -87,7 +92,7 @@ fn default_nullable() -> bool {
     true
 }
 
-/// The `[fields]` section: ignore list and per-field definitions.
+/// The `[fields]` section: ignore list, per-field definitions, and inference thresholds.
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct FieldsConfig {
@@ -97,6 +102,34 @@ pub struct FieldsConfig {
     /// Constrained field definitions (`[[fields.field]]` entries).
     #[serde(default, rename = "field")]
     pub field: Vec<TomlField>,
+    /// Maximum distinct values for a field to be auto-inferred as categorical.
+    #[serde(
+        default = "default_max_categories",
+        skip_serializing_if = "is_default_max_categories"
+    )]
+    pub max_categories: usize,
+    /// Minimum average repetition (occurrences / distinct) for categorical inference.
+    #[serde(
+        default = "default_min_category_repetition",
+        skip_serializing_if = "is_default_min_category_repetition"
+    )]
+    pub min_category_repetition: usize,
+}
+
+fn default_max_categories() -> usize {
+    10
+}
+
+fn is_default_max_categories(v: &usize) -> bool {
+    *v == default_max_categories()
+}
+
+fn default_min_category_repetition() -> usize {
+    2
+}
+
+fn is_default_min_category_repetition(v: &usize) -> bool {
+    *v == default_min_category_repetition()
 }
 
 /// Top-level representation of `mdvs.toml`, the single source of truth for
@@ -153,8 +186,11 @@ impl MdvsToml {
                         allowed: f.allowed.clone(),
                         required: f.required.clone(),
                         nullable: f.nullable,
+                        constraints: None,
                     })
                     .collect(),
+                max_categories: default_max_categories(),
+                min_category_repetition: default_min_category_repetition(),
             },
             embedding_model: None,
             chunking: None,
@@ -179,11 +215,13 @@ impl MdvsToml {
 
     /// Validate config invariants that can be broken by manual edits.
     ///
-    /// Three invariants are checked:
+    /// Four invariants are checked:
     /// 1. A field cannot appear in both `[fields].ignore` and `[[fields.field]]`.
     /// 2. All globs in `allowed` and `required` must end with `/*` or `/**`, or be
     ///    exactly `*` or `**`.
     /// 3. Every required glob must be covered by some allowed glob.
+    /// 4. Constraints are valid for the field's type (type applicability,
+    ///    well-formed values, pairwise compatibility).
     pub fn validate(&self) -> anyhow::Result<()> {
         // Invariant 1: ignore and [[fields.field]] are mutually exclusive
         for ignored in &self.fields.ignore {
@@ -215,6 +253,21 @@ impl MdvsToml {
                         field.name,
                         req
                     );
+                }
+            }
+
+            // Invariant 4: constraints are valid for field type
+            if let Some(ref constraints) = field.constraints {
+                match FieldType::try_from(&field.field_type) {
+                    Ok(ft) => {
+                        let errors = constraints.validate_config(&field.name, &ft);
+                        if let Some(first) = errors.into_iter().next() {
+                            anyhow::bail!("{first}");
+                        }
+                    }
+                    Err(e) => {
+                        anyhow::bail!("field '{}': invalid type — {e}", field.name);
+                    }
                 }
             }
         }
@@ -343,6 +396,8 @@ mod tests {
             fields: FieldsConfig {
                 ignore: vec![],
                 field: fields,
+                max_categories: 10,
+                min_category_repetition: 2,
             },
             embedding_model: Some(EmbeddingModelConfig {
                 provider: "model2vec".into(),
@@ -382,6 +437,7 @@ mod tests {
                         allowed: vec!["**".into()],
                         required: vec!["**".into()],
                         nullable: false,
+                        constraints: None,
                     },
                     TomlField {
                         name: "tags".into(),
@@ -391,6 +447,7 @@ mod tests {
                         allowed: vec!["blog/**".into(), "notes/**".into()],
                         required: vec!["blog/drafts/**".into(), "notes/**".into()],
                         nullable: false,
+                        constraints: None,
                     },
                     TomlField {
                         name: "draft".into(),
@@ -398,6 +455,7 @@ mod tests {
                         allowed: vec!["blog/**".into()],
                         required: vec![],
                         nullable: false,
+                        constraints: None,
                     },
                     TomlField {
                         name: "meta".into(),
@@ -410,8 +468,11 @@ mod tests {
                         allowed: vec!["**".into()],
                         required: vec!["**".into()],
                         nullable: false,
+                        constraints: None,
                     },
                 ],
+                max_categories: 10,
+                min_category_repetition: 2,
             },
             embedding_model: Some(EmbeddingModelConfig {
                 provider: "model2vec".into(),
@@ -634,6 +695,7 @@ default_limit = 10
                 allowed: vec!["**".into()],
                 required: vec![],
                 nullable: false,
+                constraints: None,
             },
             TomlField {
                 name: "meta".into(),
@@ -646,6 +708,7 @@ default_limit = 10
                 allowed: vec!["**".into()],
                 required: vec![],
                 nullable: false,
+                constraints: None,
             },
         ]);
 
@@ -686,6 +749,8 @@ default_limit = 10
             fields: FieldsConfig {
                 ignore: vec![],
                 field: vec![],
+                max_categories: 10,
+                min_category_repetition: 2,
             },
             embedding_model: None,
             chunking: None,
@@ -812,6 +877,7 @@ nullable = false
             allowed: vec!["**".into()],
             required: vec![],
             nullable: true,
+            constraints: None,
         }]);
         config.fields.ignore = vec!["tags".into()];
         let err = config.validate().unwrap_err();
@@ -831,6 +897,7 @@ nullable = false
             allowed: vec!["**".into()],
             required: vec![],
             nullable: true,
+            constraints: None,
         }]);
         config.fields.ignore = vec!["other_field".into()];
         assert!(config.validate().is_ok());
@@ -846,6 +913,7 @@ nullable = false
             allowed: vec!["blog".into()],
             required: vec![],
             nullable: false,
+            constraints: None,
         }]);
         let err = config.validate().unwrap_err();
         assert!(
@@ -863,6 +931,7 @@ nullable = false
             allowed: vec!["**".into()],
             required: vec!["blog/post.md".into()],
             nullable: false,
+            constraints: None,
         }]);
         let err = config.validate().unwrap_err();
         assert!(
@@ -882,6 +951,7 @@ nullable = false
                 allowed: vec!["**".into()],
                 required: vec!["*".into()],
                 nullable: false,
+                constraints: None,
             },
             TomlField {
                 name: "b".into(),
@@ -889,6 +959,7 @@ nullable = false
                 allowed: vec!["blog/**".into()],
                 required: vec!["blog/**".into()],
                 nullable: false,
+                constraints: None,
             },
             TomlField {
                 name: "c".into(),
@@ -896,6 +967,7 @@ nullable = false
                 allowed: vec!["people/*".into()],
                 required: vec![],
                 nullable: false,
+                constraints: None,
             },
         ]);
         assert!(config.validate().is_ok());
@@ -911,6 +983,7 @@ nullable = false
             allowed: vec!["notes/**".into()],
             required: vec!["blog/**".into()],
             nullable: false,
+            constraints: None,
         }]);
         let err = config.validate().unwrap_err();
         assert!(
@@ -929,6 +1002,7 @@ nullable = false
             allowed: vec!["**".into()],
             required: vec!["blog/**".into()],
             nullable: false,
+            constraints: None,
         }]);
         assert!(config.validate().is_ok());
     }
@@ -941,6 +1015,7 @@ nullable = false
             allowed: vec!["meetings/**".into()],
             required: vec!["meetings/all-hands/**".into()],
             nullable: false,
+            constraints: None,
         }]);
         assert!(config.validate().is_ok());
     }
@@ -953,6 +1028,7 @@ nullable = false
             allowed: vec!["blog/**".into(), "notes/**".into()],
             required: vec!["blog/**".into()],
             nullable: false,
+            constraints: None,
         }]);
         assert!(config.validate().is_ok());
     }
@@ -965,6 +1041,7 @@ nullable = false
             allowed: vec!["**".into()],
             required: vec![],
             nullable: false,
+            constraints: None,
         }]);
         assert!(config.validate().is_ok());
     }
@@ -977,6 +1054,7 @@ nullable = false
             allowed: vec!["blog/**".into(), "notes/**".into()],
             required: vec!["blog/**".into()],
             nullable: false,
+            constraints: None,
         }]);
         assert!(config.validate().is_ok());
     }
@@ -1093,5 +1171,210 @@ nullable = false
         let config: MdvsToml = toml::from_str(toml_str).unwrap();
         assert_eq!(config.scan.glob, "**");
         assert_eq!(config.fields.field[0].name, "title");
+    }
+
+    // --- constraints integration tests ---
+
+    #[test]
+    fn toml_field_with_constraints_roundtrip() {
+        let doc = full_toml(vec![TomlField {
+            name: "status".into(),
+            field_type: FieldTypeSerde::Scalar("String".into()),
+            allowed: vec!["**".into()],
+            required: vec![],
+            nullable: false,
+            constraints: Some(Constraints {
+                categories: Some(vec![
+                    toml::Value::String("draft".into()),
+                    toml::Value::String("published".into()),
+                ]),
+            }),
+        }]);
+        let toml_str = toml::to_string(&doc).unwrap();
+        let parsed: MdvsToml = toml::from_str(&toml_str).unwrap();
+        assert_eq!(parsed, doc);
+    }
+
+    #[test]
+    fn parse_handwritten_constraints() {
+        let toml_str = r#"
+[scan]
+glob = "**"
+include_bare_files = false
+
+[fields]
+
+[[fields.field]]
+name = "status"
+type = "String"
+
+[fields.field.constraints]
+categories = ["draft", "published", "archived"]
+"#;
+        let parsed: MdvsToml = toml::from_str(toml_str).unwrap();
+        let f = &parsed.fields.field[0];
+        assert_eq!(f.name, "status");
+        let cats = f.constraints.as_ref().unwrap().categories.as_ref().unwrap();
+        assert_eq!(cats.len(), 3);
+    }
+
+    #[test]
+    fn absent_constraints_parses_to_none() {
+        let toml_str = r#"
+[scan]
+glob = "**"
+include_bare_files = false
+
+[fields]
+
+[[fields.field]]
+name = "title"
+type = "String"
+"#;
+        let parsed: MdvsToml = toml::from_str(toml_str).unwrap();
+        assert!(parsed.fields.field[0].constraints.is_none());
+    }
+
+    #[test]
+    fn none_constraints_not_serialized() {
+        let doc = full_toml(vec![TomlField {
+            name: "title".into(),
+            field_type: FieldTypeSerde::Scalar("String".into()),
+            allowed: vec!["**".into()],
+            required: vec![],
+            nullable: false,
+            constraints: None,
+        }]);
+        let toml_str = toml::to_string(&doc).unwrap();
+        assert!(!toml_str.contains("constraints"));
+    }
+
+    #[test]
+    fn validate_rejects_categories_on_boolean() {
+        let config = full_toml(vec![TomlField {
+            name: "draft".into(),
+            field_type: FieldTypeSerde::Scalar("Boolean".into()),
+            allowed: vec!["**".into()],
+            required: vec![],
+            nullable: false,
+            constraints: Some(Constraints {
+                categories: Some(vec![toml::Value::String("yes".into())]),
+            }),
+        }]);
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("does not apply"));
+    }
+
+    #[test]
+    fn validate_accepts_valid_string_categories() {
+        let config = full_toml(vec![TomlField {
+            name: "status".into(),
+            field_type: FieldTypeSerde::Scalar("String".into()),
+            allowed: vec!["**".into()],
+            required: vec![],
+            nullable: false,
+            constraints: Some(Constraints {
+                categories: Some(vec![
+                    toml::Value::String("draft".into()),
+                    toml::Value::String("published".into()),
+                ]),
+            }),
+        }]);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_mismatched_category_values() {
+        let config = full_toml(vec![TomlField {
+            name: "status".into(),
+            field_type: FieldTypeSerde::Scalar("String".into()),
+            allowed: vec!["**".into()],
+            required: vec![],
+            nullable: false,
+            constraints: Some(Constraints {
+                categories: Some(vec![toml::Value::Integer(1)]),
+            }),
+        }]);
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("does not match field type"));
+    }
+
+    #[test]
+    fn validate_rejects_invalid_type_with_constraints() {
+        let config = full_toml(vec![TomlField {
+            name: "status".into(),
+            field_type: FieldTypeSerde::Scalar("Strng".into()),
+            allowed: vec!["**".into()],
+            required: vec![],
+            nullable: false,
+            constraints: Some(Constraints {
+                categories: Some(vec![toml::Value::String("a".into())]),
+            }),
+        }]);
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("invalid type"));
+    }
+
+    #[test]
+    fn threshold_fields_roundtrip() {
+        let toml_str = r#"
+[scan]
+glob = "**"
+include_bare_files = false
+
+[fields]
+max_categories = 15
+min_category_repetition = 3
+"#;
+        let parsed: MdvsToml = toml::from_str(toml_str).unwrap();
+        assert_eq!(parsed.fields.max_categories, 15);
+        assert_eq!(parsed.fields.min_category_repetition, 3);
+    }
+
+    #[test]
+    fn threshold_fields_default_when_absent() {
+        let toml_str = r#"
+[scan]
+glob = "**"
+include_bare_files = false
+
+[fields]
+"#;
+        let parsed: MdvsToml = toml::from_str(toml_str).unwrap();
+        assert_eq!(parsed.fields.max_categories, 10);
+        assert_eq!(parsed.fields.min_category_repetition, 2);
+    }
+
+    #[test]
+    fn default_thresholds_not_serialized() {
+        let doc = full_toml(vec![]);
+        let toml_str = toml::to_string(&doc).unwrap();
+        assert!(!toml_str.contains("max_categories"));
+        assert!(!toml_str.contains("min_category_repetition"));
+    }
+
+    #[test]
+    fn write_preserves_constraints_subtable() {
+        let mut doc = full_toml(vec![TomlField {
+            name: "status".into(),
+            field_type: FieldTypeSerde::Scalar("String".into()),
+            allowed: vec!["**".into()],
+            required: vec![],
+            nullable: false,
+            constraints: Some(Constraints {
+                categories: Some(vec![
+                    toml::Value::String("draft".into()),
+                    toml::Value::String("published".into()),
+                ]),
+            }),
+        }]);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mdvs.toml");
+        doc.write(&path).unwrap();
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.contains("[fields.field.constraints]"));
+        assert!(content.contains("categories"));
+        let loaded = MdvsToml::read(&path).unwrap();
+        assert_eq!(loaded, doc);
     }
 }
