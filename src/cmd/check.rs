@@ -336,7 +336,8 @@ fn check_field_values(
                             FieldType::try_from(&toml_field.field_type).map_err(|e| {
                                 anyhow::anyhow!("invalid type for '{}': {}", field_name, e)
                             })?;
-                        if !type_matches(&expected, value) {
+                        let matches = type_matches(&expected, value);
+                        if !matches {
                             let key = ViolationKey {
                                 field: field_name.clone(),
                                 kind: ViolationKind::WrongType,
@@ -346,6 +347,23 @@ fn check_field_values(
                                 path: file.path.clone(),
                                 detail: Some(format!("got {}", actual_type_name(value))),
                             });
+                        }
+
+                        // Constraint validation (only if type matches)
+                        if matches && let Some(ref constraints) = toml_field.constraints {
+                            for ck in constraints.active() {
+                                if let Some(cv) = ck.validate_value(value, &expected) {
+                                    let key = ViolationKey {
+                                        field: field_name.clone(),
+                                        kind: ViolationKind::InvalidCategory,
+                                        rule: cv.rule,
+                                    };
+                                    violations.entry(key).or_default().push(ViolatingFile {
+                                        path: file.path.clone(),
+                                        detail: Some(cv.detail),
+                                    });
+                                }
+                            }
                         }
                     }
                 } else {
@@ -1126,5 +1144,167 @@ mod tests {
     #[test]
     fn glob_empty_patterns() {
         assert!(!matches_any_glob(&[], "anything.md"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Constraint validation (InvalidCategory)
+    // -----------------------------------------------------------------------
+
+    fn categorical_field(name: &str, categories: Vec<&str>) -> TomlField {
+        use crate::schema::constraints::Constraints;
+        TomlField {
+            name: name.into(),
+            field_type: FieldTypeSerde::Scalar("String".into()),
+            allowed: vec!["**".into()],
+            required: vec![],
+            nullable: false,
+            constraints: Some(Constraints {
+                categories: Some(
+                    categories
+                        .into_iter()
+                        .map(|s| toml::Value::String(s.into()))
+                        .collect(),
+                ),
+            }),
+        }
+    }
+
+    #[test]
+    fn invalid_category_string_detected() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(
+            tmp.path().join("post.md"),
+            "---\nstatus: pending\n---\nBody.",
+        )
+        .unwrap();
+        write_toml(
+            tmp.path(),
+            vec![categorical_field("status", vec!["draft", "published"])],
+            vec![],
+        );
+        let step = run(tmp.path(), true, false);
+        let result = unwrap_check(&step);
+        assert_eq!(result.violations.len(), 1);
+        assert_eq!(result.violations[0].kind, ViolationKind::InvalidCategory);
+        assert!(
+            result.violations[0].files[0]
+                .detail
+                .as_ref()
+                .unwrap()
+                .contains("\"pending\"")
+        );
+    }
+
+    #[test]
+    fn valid_category_passes() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("post.md"), "---\nstatus: draft\n---\nBody.").unwrap();
+        write_toml(
+            tmp.path(),
+            vec![categorical_field("status", vec!["draft", "published"])],
+            vec![],
+        );
+        let step = run(tmp.path(), true, false);
+        let result = unwrap_check(&step);
+        assert!(result.violations.is_empty());
+    }
+
+    #[test]
+    fn invalid_category_array_element() {
+        use crate::schema::constraints::Constraints;
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(
+            tmp.path().join("post.md"),
+            "---\ntags:\n  - rust\n  - java\n---\nBody.",
+        )
+        .unwrap();
+        write_toml(
+            tmp.path(),
+            vec![TomlField {
+                name: "tags".into(),
+                field_type: FieldTypeSerde::Array {
+                    array: Box::new(FieldTypeSerde::Scalar("String".into())),
+                },
+                allowed: vec!["**".into()],
+                required: vec![],
+                nullable: false,
+                constraints: Some(Constraints {
+                    categories: Some(vec![
+                        toml::Value::String("rust".into()),
+                        toml::Value::String("python".into()),
+                        toml::Value::String("go".into()),
+                    ]),
+                }),
+            }],
+            vec![],
+        );
+        let step = run(tmp.path(), true, false);
+        let result = unwrap_check(&step);
+        assert_eq!(result.violations.len(), 1);
+        assert_eq!(result.violations[0].kind, ViolationKind::InvalidCategory);
+        let detail = result.violations[0].files[0].detail.as_ref().unwrap();
+        assert!(detail.contains("\"java\""));
+        assert!(!detail.contains("\"rust\""));
+    }
+
+    #[test]
+    fn null_on_categorical_nullable_passes() {
+        use crate::schema::constraints::Constraints;
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("post.md"), "---\nstatus:\n---\nBody.").unwrap();
+        write_toml(
+            tmp.path(),
+            vec![TomlField {
+                name: "status".into(),
+                field_type: FieldTypeSerde::Scalar("String".into()),
+                allowed: vec!["**".into()],
+                required: vec![],
+                nullable: true,
+                constraints: Some(Constraints {
+                    categories: Some(vec![
+                        toml::Value::String("draft".into()),
+                        toml::Value::String("published".into()),
+                    ]),
+                }),
+            }],
+            vec![],
+        );
+        let step = run(tmp.path(), true, false);
+        let result = unwrap_check(&step);
+        assert!(result.violations.is_empty());
+    }
+
+    #[test]
+    fn wrong_type_on_categorical_no_double_violation() {
+        use crate::schema::constraints::Constraints;
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(
+            tmp.path().join("post.md"),
+            "---\ncount: not_a_number\n---\nBody.",
+        )
+        .unwrap();
+        write_toml(
+            tmp.path(),
+            vec![TomlField {
+                name: "count".into(),
+                field_type: FieldTypeSerde::Scalar("Integer".into()),
+                allowed: vec!["**".into()],
+                required: vec![],
+                nullable: false,
+                constraints: Some(Constraints {
+                    categories: Some(vec![
+                        toml::Value::Integer(1),
+                        toml::Value::Integer(2),
+                        toml::Value::Integer(3),
+                    ]),
+                }),
+            }],
+            vec![],
+        );
+        let step = run(tmp.path(), true, false);
+        let result = unwrap_check(&step);
+        // Only WrongType, not InvalidCategory (constraints skipped when type fails)
+        assert_eq!(result.violations.len(), 1);
+        assert_eq!(result.violations[0].kind, ViolationKind::WrongType);
     }
 }

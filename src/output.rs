@@ -179,6 +179,8 @@ pub enum ViolationKind {
     Disallowed,
     /// A non-nullable field has a null value.
     NullNotAllowed,
+    /// The field's value is not in the declared categories.
+    InvalidCategory,
 }
 
 /// A single file that failed a particular field validation rule.
