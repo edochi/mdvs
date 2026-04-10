@@ -29,6 +29,9 @@ pub struct ReinferArgs {
     /// Min average repetition for categorical inference
     #[arg(long)]
     pub min_repetition: Option<usize>,
+    /// Show what would change, write nothing
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 /// Re-scan files, infer field changes, and update `mdvs.toml`.
@@ -387,6 +390,7 @@ mod tests {
             no_categorical: false,
             max_categories: None,
             min_repetition: None,
+            dry_run: false,
         }
     }
 
@@ -711,6 +715,7 @@ mod tests {
             no_categorical: true,
             max_categories: None,
             min_repetition: None,
+            dry_run: false,
         };
         let step = run(tmp.path(), Some(&args), false, false).await;
         assert!(!crate::step::has_failed(&step));
@@ -739,6 +744,7 @@ mod tests {
             no_categorical: false,
             max_categories: None,
             min_repetition: None,
+            dry_run: false,
         };
         let step = run(tmp.path(), Some(&args), false, false).await;
         assert!(!crate::step::has_failed(&step));
@@ -774,6 +780,7 @@ mod tests {
             no_categorical: false,
             max_categories: None,
             min_repetition: Some(3),
+            dry_run: false,
         };
         let step = run(tmp.path(), Some(&args), false, false).await;
         assert!(!crate::step::has_failed(&step));
@@ -800,6 +807,7 @@ mod tests {
             no_categorical: false,
             max_categories: None,
             min_repetition: None,
+            dry_run: false,
         };
         let step = run(tmp.path(), Some(&args), false, false).await;
         assert!(crate::step::has_failed(&step));
