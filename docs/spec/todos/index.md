@@ -147,3 +147,4 @@
 | [0143](TODO-0143.md) | Additional constraint kinds — design discussion | todo | low | 2026-03-30 |
 | [0144](TODO-0144.md) | Embedded Lua scripting for user-side customization | todo | medium | 2026-03-30 |
 | [0145](TODO-0145.md) | Support regex pattern constraints on string fields | todo | low | 2026-04-02 |
+| [0146](TODO-0146.md) | Update mdBook for categorical constraints and reinfer subcommand | todo | high | 2026-04-11 |
