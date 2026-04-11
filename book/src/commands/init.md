@@ -31,12 +31,12 @@ One artifact is created: **`mdvs.toml`** — the schema file. Commit this to ver
 
 If `mdvs.toml` or `.mdvs/` already exists, `init` refuses to run unless you pass `--force`. With `--force`, both `mdvs.toml` and `.mdvs/` are deleted before proceeding. To update an existing schema without overwriting it, use [update](./update.md) instead.
 
-### `init --force` vs `update --reinfer-all`
+### `init --force` vs `update reinfer`
 
 Both re-infer the schema from scratch, but they differ in scope:
 
 - `init --force` overwrites the entire `mdvs.toml` — all sections, including `[scan]`, `[fields]`, and any build sections. Any manual edits are lost. `.mdvs/` is also deleted.
-- `update --reinfer-all` re-infers only the `[fields]` section. All other config is preserved.
+- `update reinfer` re-infers only the `[fields]` section. All other config is preserved.
 
 ## Output
 

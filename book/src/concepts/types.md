@@ -224,6 +224,6 @@ There's also a leniency for Float fields: integer values like `5` pass as Float 
 
 ## Edge cases
 
-- **Empty arrays** `[]` default to **String[]** — if real values are added later, the field must be re-inferred with `mdvs update --reinfer <field>` to pick up the new element type
+- **Empty arrays** `[]` default to **String[]** — if real values are added later, the field must be re-inferred with `mdvs update reinfer <field>` to pick up the new element type
 - **Empty frontmatter** (`---` followed immediately by `---`) is a file with zero fields — not a bare file. It still counts as "having frontmatter" for inference purposes.
 - **Bare files** (no `---` fences at all) are handled differently — see [Schema Inference](./schema.md)

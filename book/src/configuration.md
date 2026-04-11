@@ -204,6 +204,7 @@ nullable = false
 | `allowed` | String[] | `["**"]` | Glob patterns where the field may appear |
 | `required` | String[] | `[]` | Glob patterns where the field must be present |
 | `nullable` | Boolean | `true` | Whether null values are accepted |
+| `constraints` | Table | (absent) | Optional value constraints (see [Constraints](#constraints)) |
 
 All fields except `name` have permissive defaults. A minimal entry with just a name:
 
@@ -223,7 +224,7 @@ required = []
 nullable = true
 ```
 
-This is not the same as putting the field in the `ignore` list. Both prevent the field from being reported as new during `update`, but a `[[fields.field]]` entry tracks the field — it appears in `info` output with its type and patterns, and can be targeted by `update --reinfer`. The `ignore` list simply silences the field: no validation, no detail in `info`.
+This is not the same as putting the field in the `ignore` list. Both prevent the field from being reported as new during `update`, but a `[[fields.field]]` entry tracks the field — it appears in `info` output with its type and patterns, and can be targeted by `update reinfer`. The `ignore` list simply silences the field: no validation, no detail in `info`.
 
 ### Type syntax
 
@@ -261,6 +262,38 @@ Patterns must end with `/*` (direct children) or `/**` (full subtree), or be exa
 The invariant `required ⊆ allowed` is enforced — every required glob must be covered by some allowed glob. For example, `allowed = ["meetings/**"]` covers `required = ["meetings/all-hands/**"]` because any path matching the required pattern also matches the allowed one.
 
 See [Schema Inference](./concepts/schema.md#path-patterns) for how these patterns are computed.
+
+### Constraints
+
+The optional `[fields.field.constraints]` sub-table adds value constraints beyond type checking. Currently, the `categories` key restricts values to an enumerated set:
+
+```toml
+[[fields.field]]
+name = "status"
+type = "String"
+
+[fields.field.constraints]
+categories = ["active", "archived", "completed", "draft", "published"]
+```
+
+Categories are auto-inferred during `init` and `update reinfer`. See [Constraints](./concepts/constraints.md) for the full reference.
+
+### Inference thresholds
+
+Two optional fields in `[fields]` control categorical auto-inference:
+
+```toml
+[fields]
+max_categories = 10
+min_category_repetition = 2
+```
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `max_categories` | Integer | `10` | Max distinct values for a field to be inferred as categorical |
+| `min_category_repetition` | Integer | `2` | Min average repetition (occurrences / distinct) for categorical inference |
+
+These are hidden from `mdvs.toml` when set to their defaults. They only affect auto-inference — manually written `categories` are unaffected.
 
 ## Example
 

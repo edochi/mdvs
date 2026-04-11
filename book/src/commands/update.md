@@ -5,7 +5,8 @@ Re-scan files, infer new fields, and update the schema.
 ## Usage
 
 ```bash
-mdvs update [path] [flags]
+mdvs update [path] [--dry-run]
+mdvs update [path] reinfer [fields..] [flags]
 ```
 
 ## Flags
@@ -13,11 +14,7 @@ mdvs update [path] [flags]
 | Flag | Default | Description |
 |---|---|---|
 | `path` | `.` | Directory containing `mdvs.toml` |
-| `--reinfer <field>` | | Re-infer a specific field (repeatable) |
-| `--reinfer-all` | | Re-infer all fields from scratch |
 | `--dry-run` | | Preview changes without writing anything |
-
-`--reinfer` and `--reinfer-all` cannot be used together.
 
 Global flags (`-o`, `-v`, `--logs`) are described in [Configuration](../configuration.md).
 
@@ -27,23 +24,47 @@ Global flags (`-o`, `-v`, `--logs`) are described in [Configuration](../configur
 
 ### Default mode
 
-By default, `update` only discovers **new** fields — fields that appear in frontmatter but aren't yet in `mdvs.toml` (either as `[[fields.field]]` entries or in the `ignore` list). Existing fields are protected: their types, allowed/required patterns, and nullable flags don't change.
+By default, `update` only discovers **new** fields — fields that appear in frontmatter but aren't yet in `mdvs.toml` (either as `[[fields.field]]` entries or in the `ignore` list). Existing fields are protected: their types, allowed/required patterns, nullable flags, and constraints don't change.
 
 Fields that disappear (no longer in any file) are kept in `mdvs.toml` by default. This is conservative — removing a field from the schema is an explicit action.
 
-### `--reinfer`
+### `reinfer` subcommand
 
-Re-infer one or more specific fields. The named fields are removed from `mdvs.toml` and re-inferred from scratch, as if they'd never been seen. All other fields stay protected.
+Re-infer field definitions from scratch. This is a subcommand of `update` with its own flags:
+
+| Flag | Description |
+|---|---|
+| `fields..` | Fields to reinfer (all if none specified) |
+| `--categorical` | Force categorical on named fields (skip heuristic) |
+| `--no-categorical` | Force NOT categorical on named fields (strip categories) |
+| `--max-categories <N>` | Override max distinct values for categorical inference |
+| `--min-repetition <N>` | Override min average repetition for categorical inference |
+| `--dry-run` | Preview changes without writing anything |
+
+**Reinfer specific fields:**
 
 ```bash
-mdvs update example_kb --reinfer drift_rate --reinfer priority
+mdvs update example_kb reinfer drift_rate priority
 ```
 
-Fails if a named field isn't in `mdvs.toml`.
+The named fields are removed from `mdvs.toml` and re-inferred from scratch, as if they'd never been seen. All other fields stay protected. Fails if a named field isn't in `mdvs.toml`.
 
-### `--reinfer-all`
+Categorical constraints are inferred using the heuristic (see [Constraints](../concepts/constraints.md)). Use `--categorical` to force categories or `--no-categorical` to strip them:
 
-Re-infer every field from scratch. All `[[fields.field]]` entries are removed and rebuilt from the current files. Fields that no longer exist in any file are reported as removed.
+```bash
+mdvs update example_kb reinfer status --no-categorical
+mdvs update example_kb reinfer title --categorical
+```
+
+`--categorical` and `--no-categorical` require named fields.
+
+**Reinfer all fields:**
+
+```bash
+mdvs update example_kb reinfer
+```
+
+When no fields are specified, all `[[fields.field]]` entries are removed and rebuilt from the current files. Fields that no longer exist in any file are reported as removed.
 
 All other config sections (`[scan]`, `[embedding_model]`, `[chunking]`, `[search]`, `[update]`) are preserved. This is the key difference from `init --force`, which rewrites the entire `mdvs.toml`.
 
@@ -76,7 +97,7 @@ Added (1):
 └──────────────────────────┴───────────────────────────────────────────────────┘
 ```
 
-When `--reinfer` detects a type change, the "Changed" section shows old and new values with an arrow:
+When `reinfer` detects a type change, the "Changed" section shows old and new values with an arrow:
 
 ```
 Scanned 43 files — 1 field(s) changed (36 unchanged)
@@ -129,6 +150,6 @@ The field tables are identical in both modes — verbose only adds the step line
 | Error | Cause |
 |---|---|
 | `no mdvs.toml found` | Config doesn't exist — run `mdvs init` first |
-| `field '<name>' is not in mdvs.toml` | `--reinfer` names a field that doesn't exist |
-| `cannot use --reinfer and --reinfer-all together` | Conflicting flags |
+| `field '<name>' is not in mdvs.toml` | `reinfer` names a field that doesn't exist |
+| `--categorical and --no-categorical require named fields` | Override flags used without specifying fields |
 | `field name conflicts with internal column` | New field name collides with reserved names |

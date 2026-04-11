@@ -7,7 +7,7 @@
 | [0003](TODO-0003.md) | Fix --auto-build flag on init | done | medium | 2026-03-02 |
 | [0004](TODO-0004.md) | Rename --where-clause to --where | done | low | 2026-03-02 |
 | [0005](TODO-0005.md) | Differentiate null from absent in check | done | high | 2026-03-02 |
-| [0006](TODO-0006.md) | Support categorical constraints on fields | todo | medium | 2026-03-02 |
+| [0006](TODO-0006.md) | Support categorical constraints on fields | done | medium | 2026-03-02 |
 | [0007](TODO-0007.md) | Support Date field type | todo | medium | 2026-03-02 |
 | [0008](TODO-0008.md) | Support value boundary constraints on numeric fields | todo | low | 2026-03-02 |
 | [0009](TODO-0009.md) | Custom field and text processors | todo | low | 2026-03-02 |
@@ -147,4 +147,4 @@
 | [0143](TODO-0143.md) | Additional constraint kinds — design discussion | todo | low | 2026-03-30 |
 | [0144](TODO-0144.md) | Embedded Lua scripting for user-side customization | todo | medium | 2026-03-30 |
 | [0145](TODO-0145.md) | Support regex pattern constraints on string fields | todo | low | 2026-04-02 |
-| [0146](TODO-0146.md) | Update mdBook for categorical constraints and reinfer subcommand | todo | high | 2026-04-11 |
+| [0146](TODO-0146.md) | Update mdBook for categorical constraints and reinfer subcommand | done | high | 2026-04-11 |

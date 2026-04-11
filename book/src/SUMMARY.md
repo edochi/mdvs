@@ -9,6 +9,7 @@
   - [Types & Widening](./concepts/types.md)
   - [Schema Inference](./concepts/schema.md)
   - [Validation](./concepts/validation.md)
+  - [Constraints](./concepts/constraints.md)
   - [Search & Indexing](./concepts/search.md)
 
 - [Commands](./commands.md)

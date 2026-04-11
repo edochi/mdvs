@@ -110,7 +110,7 @@ When you introduce new frontmatter fields, run `update` to incorporate them:
 mdvs update path/to/vault
 ```
 
-This discovers new fields and adds them to `mdvs.toml` without touching existing field definitions. Use `--reinfer` to re-infer specific fields if you've reorganized your vault.
+This discovers new fields and adds them to `mdvs.toml` without touching existing field definitions. Use the `reinfer` subcommand to re-infer specific fields if you've reorganized your vault.
 
 ## Search
 

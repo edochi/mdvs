@@ -2,7 +2,7 @@
 
 `mdvs check` validates every file's frontmatter against the schema in `mdvs.toml`. It's read-only, deterministic, and produces no side effects — it just tells you what's wrong.
 
-## The four violations
+## The five violations
 
 | Violation | Meaning |
 |---|---|
@@ -10,6 +10,7 @@
 | `Disallowed` | The field appears in a file outside its `allowed` paths |
 | `MissingRequired` | A file matches a `required` glob but doesn't have the field |
 | `NullNotAllowed` | The field is present but `null`, and `nullable` is `false` |
+| `InvalidCategory` | The value is not in the field's declared `categories` |
 
 ### WrongType
 
@@ -33,6 +34,16 @@ Fires when a field is present with an explicit `null` value, but `nullable` is `
 
 This is distinct from a missing field — see [Null vs absent](#null-vs-absent) below.
 
+### InvalidCategory
+
+Fires when a field has a `categories` constraint and the value is not in the declared list. For example, if `status` has `categories = ["draft", "published", "archived"]` and a file has `status: pending`, the value `"pending"` is not in the list.
+
+For array fields, each element is checked individually. The violation detail lists the specific offending elements.
+
+This check only runs on non-null values that pass the type check. If the value has the wrong type, only `WrongType` fires — `InvalidCategory` is skipped. If the value is null and the field is nullable, the category check is skipped entirely.
+
+See [Constraints](./constraints.md) for how categories are configured and auto-inferred.
+
 ## Type checking rules
 
 Two leniencies make validation practical for real-world YAML:
@@ -49,12 +60,13 @@ Objects just check that the value is an object — individual keys are not valid
 
 Null interacts with validation in specific ways:
 
-**All four checks are independent.** A null value is checked like any other value — each violation type is evaluated separately:
+**All five checks are independent.** A null value is checked like any other value — each violation type is evaluated separately:
 
 - **`WrongType`** — null is accepted by any type, so this never fires on null.
 - **`Disallowed`** — the field is present (the key exists), so `Disallowed` fires if the path isn't in `allowed`.
 - **`MissingRequired`** — null counts as "present", so this never fires on null.
 - **`NullNotAllowed`** — fires when the value is null and `nullable = false`.
+- **`InvalidCategory`** — null skips the category check (same as `WrongType`), so this never fires on null.
 
 A single null field can trigger both `Disallowed` and `NullNotAllowed` at the same time.
 
