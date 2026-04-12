@@ -1,229 +1,128 @@
 # Shared Types
 
-**Status: DRAFT**
+Output and validation types used across commands. All defined in `src/output.rs` unless noted.
 
-Output structs shared across multiple commands. Each command collects its results
-into a struct before display — these are the types that appear in more than one command.
-
----
-
-## CommandOutput trait
-
-Every command's output struct implements this trait to support multiple output formats.
-JSON output comes for free via `Serialize`. Human output is implemented per struct.
-
-### Trait definition
+## Output Format
 
 ```rust
-trait CommandOutput: Serialize {
-    /// Render this result as human-readable text (tables, summaries).
-    fn format_human(&self) -> String;
-
-    /// Print to stdout in the requested format.
-    /// Default implementation handles dispatch — commands don't need to override this.
-    fn print(&self, format: OutputFormat) {
-        match format {
-            OutputFormat::Human => print!("{}", self.format_human()),
-            OutputFormat::Json => print!("{}", serde_json::to_string_pretty(self).unwrap()),
-        }
-    }
-}
+pub enum OutputFormat { Text, Json }  // output.rs:7
 ```
 
-### OutputFormat
+Global `--output`/`-o` flag. Default `Text`. JSON is free via `#[derive(Serialize)]` on all outcome structs.
+
+## Field Hints
 
 ```rust
-#[derive(Clone, clap::ValueEnum)]
-enum OutputFormat {
-    Human,
-    Json,
+pub enum FieldHint {                   // output.rs:16
+    EscapeSingleQuotes,                // field name contains '
+    EscapeDoubleQuotes,                // field name contains "
+    ContainsSpaces,                    // field name contains spaces
 }
 ```
 
-| Variant | Flag value | Description                    |
-|---------|------------|--------------------------------|
-| Human   | `human`    | Readable tables (default)      |
-| Json    | `json`     | Structured JSON for piping     |
+`field_hints(name)` at `output.rs:39` detects special characters in field names and suggests escaping for `--where` queries. Used in `info` and `check` output.
 
-### Global flag via clap
-
-The `--output` flag is defined once on the root `Cli` struct and propagated to all
-subcommands via `#[arg(global = true)]`.
+## Discovered Field
 
 ```rust
-#[derive(Parser)]
-struct Cli {
-    /// Output format
-    #[arg(short, long, global = true, default_value = "human")]
-    output: OutputFormat,
-
-    #[command(subcommand)]
-    command: Command,
+pub struct DiscoveredField {           // output.rs:64
+    pub name: String,
+    pub field_type: String,            // display form: "String", "Integer[]", etc.
+    pub files_found: usize,
+    pub total_files: usize,
+    pub allowed: Option<Vec<String>>,  // verbose only
+    pub required: Option<Vec<String>>, // verbose only
+    pub nullable: bool,
+    pub hints: Vec<FieldHint>,
 }
 ```
 
-### Implementing for a command
+Used in `InitOutcome.fields` and `UpdateOutcome.added`.
 
-Each command's result struct derives `Serialize` and implements `CommandOutput`.
-The `format_human` method returns the full human-readable output as a string.
+## Changed Field
 
 ```rust
-#[derive(Serialize)]
-pub struct CheckResult {
-    pub files_checked: usize,
-    pub field_violations: Vec<FieldViolation>,
-    pub new_fields: Vec<NewField>,
+pub struct ChangedField {              // output.rs:88
+    pub name: String,
+    pub changes: Vec<FieldChange>,
 }
 
-impl CommandOutput for CheckResult {
-    fn format_human(&self) -> String {
-        if self.field_violations.is_empty() {
-            return format!("Checked {} files — no violations\n", self.files_checked);
-        }
-        let mut out = String::new();
-        for v in &self.field_violations {
-            out.push_str(&format!("{}: {}\n", v.field, v.rule));
-            for f in &v.files {
-                out.push_str(&format!("  {}\n", f.path.display()));
-            }
-            out.push('\n');
-        }
-        out.push_str(&format!(
-            "Checked {} files — {} field violations\n",
-            self.files_checked, self.field_violations.len()
-        ));
-        out
-    }
+pub enum FieldChange {                 // output.rs:98
+    Type { old: String, new: String },
+    Allowed { old: Vec<String>, new: Vec<String> },
+    Required { old: Vec<String>, new: Vec<String> },
+    Nullable { old: bool, new: bool },
 }
 ```
 
-### Usage in main.rs
+Used in `UpdateOutcome.changed`. Each variant carries old and new values.
 
-Every subcommand follows the same pattern: run the command, print the result.
+## Removed Field
 
 ```rust
-fn main() {
-    let cli = Cli::parse();
-
-    match cli.command {
-        Command::Init { .. } => {
-            let result = init::run(..)?;
-            result.print(cli.output);
-        }
-        Command::Check { .. } => {
-            let result = check::run(..)?;
-            result.print(cli.output);
-        }
-        Command::Search { .. } => {
-            let result = search::run(..)?;
-            result.print(cli.output);
-        }
-        // ... same for all commands
-    }
+pub struct RemovedField {              // output.rs:163
+    pub name: String,
+    pub allowed: Option<Vec<String>>,  // previous allowed globs (verbose only)
 }
 ```
 
-### Design notes
+Used in `UpdateOutcome.removed`.
 
-- **JSON is automatic**: `#[derive(Serialize)]` is all that's needed. No manual JSON formatting.
-- **Human is explicit**: each command controls its own human-readable output via `format_human`.
-- **Progress to stderr**: progress messages ("Loading model...") go to stderr.
-  Only the final result goes through `CommandOutput::print` to stdout.
-- **Extensible**: adding a new format (csv, yaml) means adding a variant to `OutputFormat`
-  and a method to the trait with a default (e.g. `fn format_csv(&self) -> Option<String> { None }`).
-- **No dynamic dispatch needed**: each match arm in main.rs knows the concrete type. No `Box<dyn CommandOutput>`.
+## Violations
 
----
+```rust
+pub enum ViolationKind {               // output.rs:173
+    MissingRequired,
+    WrongType,
+    Disallowed,
+    NullNotAllowed,
+    InvalidCategory,
+}
 
-## FieldTypeSerde (TOML representation)
+pub struct ViolatingFile {             // output.rs:188
+    pub path: PathBuf,
+    pub detail: Option<String>,        // e.g., "got String", "got \"pending\""
+}
 
-Field types are stored in `mdvs.toml` using `#[serde(untagged)]` on the `FieldTypeSerde` enum.
-This is a **settled decision** — no further format discussion needed.
-
-### Scalar types
-
-| Type name   | Example TOML                  | Matches                       |
-|-------------|-------------------------------|-------------------------------|
-| `String`    | `type = "String"`             | Any value (top type)          |
-| `Boolean`   | `type = "Boolean"`            | `true` / `false`              |
-| `Integer`   | `type = "Integer"`            | Whole numbers (i64/u64)       |
-| `Float`     | `type = "Float"`              | Any number (int-in-float OK)  |
-
-### Compound types
-
-| Kind    | TOML representation                                     | Example                                          |
-|---------|---------------------------------------------------------|--------------------------------------------------|
-| Array   | inline table with `array` key                           | `type = { array = "String" }`                    |
-| Object  | inline table with `object` key (maps field→type)        | `type = { object = { name = "String" } }`        |
-
-### Nesting
-
-Arrays and objects compose arbitrarily:
-
-```toml
-# Array of arrays
-type = { array = { array = "String" } }
-
-# Object with mixed fields
-type = { object = { title = "String", count = "Integer", tags = { array = "String" } } }
+pub struct FieldViolation {            // output.rs:197
+    pub field: String,
+    pub kind: ViolationKind,
+    pub rule: String,                  // e.g., "type Integer", "categories = [...]"
+    pub files: Vec<ViolatingFile>,
+}
 ```
 
----
+Used in `CheckOutcome.violations` and `ValidateOutcome.violations`.
 
-## DiscoveredField
+## New Field
 
-Represents a single frontmatter field found during scanning.
+```rust
+pub struct NewField {                  // output.rs:210
+    pub name: String,
+    pub files: Vec<PathBuf>,
+}
+```
 
-**Used by:** init, update, info
+Informational — fields in frontmatter but not in `mdvs.toml`. Does not affect exit code.
 
-| Field       | Type   | Description                              |
-|-------------|--------|------------------------------------------|
-| name        | String | Field name (e.g. "title", "tags")        |
-| field_type  | String | Inferred type (e.g. "String", "Boolean") |
-| files_found | usize  | Number of files containing this field    |
-| total_files | usize  | Total files scanned (for "N/M" display)  |
+## Constraint Violation
 
----
+```rust
+pub(crate) struct ConstraintViolation { // schema/constraints/mod.rs:52
+    pub rule: String,                   // "categories = [\"draft\", \"published\"]"
+    pub detail: String,                 // "got \"pending\""
+}
+```
 
-## FieldViolation
+Internal type — mapped to `ViolationKind::InvalidCategory` + `ViolatingFile::detail` in the check pipeline.
 
-A single rule violation for a field, grouped with all offending files.
+## Build File Detail
 
-**Used by:** check, update
+```rust
+pub struct BuildFileDetail {           // output.rs:222
+    pub filepath: String,
+    pub chunks: usize,
+}
+```
 
-| Field  | Type              | Description                                              |
-|--------|-------------------|----------------------------------------------------------|
-| field  | String            | Field name                                               |
-| kind   | ViolationKind     | Type of violation                                        |
-| rule   | String            | The toml rule (e.g. `required in ["blog/**"]`)           |
-| files  | Vec\<ViolatingFile\> | Files that violate this rule                          |
-
-A single field can appear in multiple `FieldViolation` entries if it violates different rules.
-
-### ViolationKind
-
-| Variant          | Meaning                                                        |
-|------------------|----------------------------------------------------------------|
-| MissingRequired  | File matches a `required` glob but doesn't have the field      |
-| WrongType        | Field value doesn't match declared type (String accepts any value; int-in-float lenient) |
-| Disallowed       | File has the field but doesn't match any `allowed` glob        |
-
-### ViolatingFile
-
-| Field  | Type            | Description                                          |
-|--------|-----------------|------------------------------------------------------|
-| path   | PathBuf         | File path                                            |
-| detail | Option\<String\> | Extra info (e.g. "got Integer" for WrongType)       |
-
----
-
-## NewField
-
-A frontmatter field found in files but not present in `mdvs.toml` (neither in `[[fields.field]]` nor in `[fields].ignore`).
-
-**Used by:** check, update
-
-| Field       | Type   | Description                           |
-|-------------|--------|---------------------------------------|
-| name        | String | Field name                            |
-| files_found | usize  | Number of files containing this field |
+Used in `BuildOutcome.file_details` for verbose build output.

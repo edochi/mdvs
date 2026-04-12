@@ -1,146 +1,31 @@
 # `mdvs update`
 
-**Status: DRAFT**
+Re-scan files, infer field changes, and update `mdvs.toml`. Pure inference — no build step.
 
-**See also:** [Shared Types](../shared.md), [check](check.md), [build](build.md)
+## Pipeline
 
----
+`cmd/update.rs` → `run()`
 
-## Synopsis
+1. **Read config** — `MdvsToml::read()` + `validate()`
+2. **Pre-check** — validate reinfer field names exist in config; validate `--categorical`/`--no-categorical` require named fields
+3. **Scan** — `ScannedFiles::scan(path, &config.scan)`
+4. **Infer** — `InferredSchema::infer(&scanned)` — full inference (types, paths, distinct values)
+5. **Partition** — split config fields into `protected` (keep) and `targets` (reinfer):
+   - No reinfer → all protected, empty targets (only new fields discovered)
+   - `reinfer field1 field2` → named fields are targets, rest protected
+   - `reinfer` (no fields) → all are targets
+6. **Compare** — for each inferred field: if protected → skip; if in ignore → skip; else construct `TomlField` with constraints, compare against old definition → added/changed/unchanged/removed
+7. **Write** — update `config.fields.field` with new list, write TOML (unless dry_run or no changes)
 
-```
-mdvs update [path] [flags]
-```
+Returns `UpdateOutcome` with `files_scanned`, `added`, `changed`, `removed`, `unchanged`, `dry_run`.
 
-| Flag              | Type       | Default     | Description                                       |
-|-------------------|------------|-------------|---------------------------------------------------|
-| `path`            | positional | `.`         | Directory containing mdvs.toml                    |
-| `--reinfer`       | string[]   | (none)      | Re-infer specific field(s) — can be repeated      |
-| `--reinfer-all`   | bool       | false       | Re-infer all fields                                |
-| `--build`         | bool       | (from toml) | Override `auto_build` from `[update]`             |
-| `--dry-run`       | bool       | false       | Show what would change, write nothing             |
+## Categorical inference in reinfer
 
----
+When constructing `TomlField` for reinferred fields, constraints are determined by the `ReinferArgs`:
 
-## Behavior
+- **No reinfer** (default mode) → `constraints: None` (no constraint changes on new fields)
+- **`--no-categorical`** → `None` (strip categories)
+- **`--categorical`** → `force_categorical(&inf)` (all distinct values as categories, skip heuristic)
+- **Default heuristic** → `infer_constraints(&inf, max_cat, min_rep)` where thresholds come from `--max-categories`/`--min-repetition` flags or `config.fields` defaults
 
-1. Read `mdvs.toml` (see [Prerequisites](check.md#prerequisites))
-2. Scan all markdown files using `[scan]` config
-3. Determine inference mode:
-   - **Default**: infer only new fields (not in `[[fields.field]]`, not in `[fields].ignore`)
-   - **`--reinfer <field>`**: remove named field(s) from toml, re-infer from scan data
-   - **`--reinfer-all`**: remove all `[[fields.field]]` entries, re-infer everything
-4. Run inference on target fields
-5. Collect `UpdateResult`
-6. If `--dry-run`: print result, return
-7. Write updated `mdvs.toml` (only `[fields]` section changes — all other config untouched)
-8. If `auto_build` (or `--build`): trigger `build` (which internally runs check → embed)
-9. Print result
-
-**Disappearing fields:** a field in the toml that no longer appears in any file stays in the toml by default. Only during `--reinfer` or `--reinfer-all` is it removed (and the removal is reported).
-
-**`--reinfer-all` vs `init --force`:** reinfer-all only re-runs field inference — all other config (`[scan]`, `[embedding_model]`, `[chunking]`, `[search]`) is preserved. `init --force` deletes and rewrites the entire `mdvs.toml`.
-
----
-
-## Output
-
-```rust
-pub struct UpdateResult {
-    pub files_scanned: usize,
-    pub added: Vec<DiscoveredField>,     // new fields added to toml
-    pub changed: Vec<ChangedField>,      // reinferred fields whose type changed
-    pub removed: Vec<String>,            // fields removed (disappeared during reinfer)
-    pub unchanged: usize,                // count of fields that stayed the same
-    pub build: Option<BuildResult>,      // present if auto_build ran — see build.md
-    pub dry_run: bool,
-}
-
-/// A field whose inferred type changed during reinfer.
-pub struct ChangedField {
-    pub name: String,
-    pub old_type: String,
-    pub new_type: String,
-}
-```
-
-### Human format (new fields only)
-
-```
-Scanned 12 files
-
-Added 2 fields:
-  category  String   4/12
-  author    String   7/12
-
-Updated mdvs.toml
-```
-
-### Human format (reinfer)
-
-```
-Scanned 12 files
-
-Changed 1 field:
-  tags  String -> String[]
-
-Removed 1 field:
-  old_field  (no longer found)
-
-2 fields unchanged
-
-Updated mdvs.toml
-```
-
-### Human format (nothing to do)
-
-```
-Scanned 12 files — no changes
-```
-
-### Dry run
-
-With `--dry-run`, nothing is written. Output ends with:
-
-```
-(dry run, nothing written)
-```
-
----
-
-## Errors
-
-| Condition                              | Message                                            |
-|----------------------------------------|----------------------------------------------------|
-| `--reinfer` field not in toml          | `field '<name>' is not in mdvs.toml`               |
-| `--reinfer` and `--reinfer-all` both   | `cannot use --reinfer and --reinfer-all together`  |
-| Build failed (violations)              | reports violations, `build aborted — fix violations first` |
-
-See also [Prerequisites](check.md#prerequisites) for toml validation errors.
-
----
-
-## Examples
-
-```bash
-# Update: discover new fields
-mdvs update
-
-# Re-infer a specific field
-mdvs update --reinfer tags
-
-# Re-infer multiple fields
-mdvs update --reinfer tags --reinfer author
-
-# Re-infer all fields (keeps other config)
-mdvs update --reinfer-all
-
-# Preview changes without writing
-mdvs update --dry-run
-
-# Update without triggering build
-mdvs update --build false
-
-# Force build even if auto_build is false in toml
-mdvs update --build true
-```
+`force_categorical()` at `cmd/update.rs` checks type applicability (String/Integer/Array) and collects all distinct values as sorted `toml::Value` categories. Unlike the heuristic, it has no cardinality or repetition threshold.
