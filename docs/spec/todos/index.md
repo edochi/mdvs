@@ -148,3 +148,4 @@
 | [0144](TODO-0144.md) | Embedded Lua scripting for user-side customization | todo | medium | 2026-03-30 |
 | [0145](TODO-0145.md) | Support regex pattern constraints on string fields | todo | low | 2026-04-02 |
 | [0146](TODO-0146.md) | Update mdBook for categorical constraints and reinfer subcommand | done | high | 2026-04-11 |
+| [0147](TODO-0147.md) | Restructure specs as developer code map | todo | medium | 2026-04-12 |
