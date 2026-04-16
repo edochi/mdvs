@@ -149,3 +149,4 @@
 | [0145](TODO-0145.md) | Support regex pattern constraints on string fields | todo | low | 2026-04-02 |
 | [0146](TODO-0146.md) | Update mdBook for categorical constraints and reinfer subcommand | done | high | 2026-04-11 |
 | [0147](TODO-0147.md) | Restructure specs as developer code map | done | medium | 2026-04-12 |
+| [0148](TODO-0148.md) | Generate llms.txt and llms-full.txt from mdBook in CI | todo | medium | 2026-04-16 |
