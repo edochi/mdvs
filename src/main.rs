@@ -127,6 +127,8 @@ enum Command {
         #[arg(default_value = ".")]
         path: PathBuf,
     },
+    /// Print the agent skill file to stdout
+    Skill,
 }
 
 #[derive(Subcommand)]
@@ -375,6 +377,10 @@ async fn main() -> anyhow::Result<()> {
             if failed {
                 std::process::exit(2);
             }
+            Ok(())
+        }
+        Command::Skill => {
+            print!("{}", include_str!("../skills/mdvs/SKILL.md"));
             Ok(())
         }
         Command::Info { path } => {

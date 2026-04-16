@@ -6,7 +6,7 @@
 [![crates.io](https://img.shields.io/crates/v/mdvs)](https://crates.io/crates/mdvs)
 [![downloads](https://img.shields.io/crates/d/mdvs)](https://crates.io/crates/mdvs)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Rust](https://img.shields.io/badge/rust-2021-orange.svg)](https://www.rust-lang.org/)
+[![Rust](https://img.shields.io/badge/rust-2024-orange.svg)](https://www.rust-lang.org/)
 [![Docs](https://img.shields.io/badge/docs-mdBook-green.svg)](https://edochi.github.io/mdvs/)
 
 </div>
