@@ -2,9 +2,9 @@ use crate::discover::field_type::FieldType;
 use crate::discover::infer::InferredSchema;
 use crate::discover::scan::{ScannedFile, ScannedFiles};
 use crate::index::backend::Backend;
-use crate::index::chunk::{extract_plain_text, Chunks};
+use crate::index::chunk::{Chunks, extract_plain_text};
 use crate::index::embed::{Embedder, ModelConfig};
-use crate::index::storage::{content_hash, BuildMetadata, ChunkRow, FileIndexEntry, FileRow};
+use crate::index::storage::{BuildMetadata, ChunkRow, FileIndexEntry, FileRow, content_hash};
 use crate::outcome::commands::BuildOutcome;
 use crate::outcome::{
     ClassifyOutcome, EmbedFilesOutcome, InferOutcome, LoadModelOutcome, Outcome, ReadConfigOutcome,
@@ -334,6 +334,7 @@ pub(crate) async fn build_core(
                 allowed: f.allowed.clone(),
                 required: f.required.clone(),
                 nullable: f.nullable,
+                constraints: None,
             })
             .collect();
 
@@ -624,7 +625,9 @@ pub(crate) async fn build_core(
                 Ok(Some(existing_dim)) => {
                     let model_dim = emb.dimension() as i32;
                     if existing_dim != model_dim {
-                        Some(format!("dimension mismatch: model produces {model_dim}-dim embeddings but existing index has {existing_dim}-dim"))
+                        Some(format!(
+                            "dimension mismatch: model produces {model_dim}-dim embeddings but existing index has {existing_dim}-dim"
+                        ))
                     } else {
                         None
                     }
@@ -849,10 +852,8 @@ pub(crate) fn mutate_config(
         config_changed = true;
     }
 
-    if config_changed {
-        if let Err(e) = config.write(&config_path) {
-            return Some(format!("failed to write config: {e}"));
-        }
+    if config_changed && let Err(e) = config.write(&config_path) {
+        return Some(format!("failed to write config: {e}"));
     }
 
     None
@@ -1025,7 +1026,7 @@ mod tests {
 
     #[tokio::test]
     async fn dimension_mismatch() {
-        use crate::index::storage::{build_chunks_batch, write_parquet, ChunkRow};
+        use crate::index::storage::{ChunkRow, build_chunks_batch, write_parquet};
 
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
@@ -1074,7 +1075,7 @@ mod tests {
 
     #[tokio::test]
     async fn dimension_mismatch_with_force_succeeds() {
-        use crate::index::storage::{build_chunks_batch, write_parquet, ChunkRow};
+        use crate::index::storage::{ChunkRow, build_chunks_batch, write_parquet};
 
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
@@ -1329,6 +1330,7 @@ mod tests {
                         allowed: vec!["**".into()],
                         required: vec![],
                         nullable: false,
+                        constraints: None,
                     },
                     crate::schema::config::TomlField {
                         name: "draft".into(),
@@ -1337,8 +1339,11 @@ mod tests {
                         allowed: vec!["**".into()],
                         required: vec![],
                         nullable: false,
+                        constraints: None,
                     },
                 ],
+                max_categories: 10,
+                min_category_repetition: 3,
             },
             embedding_model: Some(EmbeddingModelConfig {
                 provider: "model2vec".into(),
@@ -1401,6 +1406,7 @@ mod tests {
                         allowed: vec!["**".into()],
                         required: vec![],
                         nullable: false,
+                        constraints: None,
                     },
                     crate::schema::config::TomlField {
                         name: "tags".into(),
@@ -1412,8 +1418,11 @@ mod tests {
                         allowed: vec!["**".into()],
                         required: vec!["blog/**".into()],
                         nullable: false,
+                        constraints: None,
                     },
                 ],
+                max_categories: 10,
+                min_category_repetition: 3,
             },
             embedding_model: Some(EmbeddingModelConfig {
                 provider: "model2vec".into(),
@@ -1471,7 +1480,10 @@ mod tests {
                     allowed: vec!["**".into()],
                     required: vec![],
                     nullable: false,
+                    constraints: None,
                 }],
+                max_categories: 10,
+                min_category_repetition: 3,
             },
             embedding_model: Some(EmbeddingModelConfig {
                 provider: "model2vec".into(),
@@ -1938,5 +1950,102 @@ mod tests {
 
         assert_eq!(c.removed_count, 1);
         assert!(!c.file_id_map.contains_key("d.md"));
+    }
+
+    // ========================================================================
+    // Categorical constraint integration tests
+    // ========================================================================
+
+    #[tokio::test]
+    async fn build_succeeds_with_categorical_fields() {
+        let tmp = tempfile::tempdir().unwrap();
+        let blog = tmp.path().join("blog");
+        fs::create_dir_all(&blog).unwrap();
+        for (i, status) in [
+            "draft",
+            "draft",
+            "draft",
+            "published",
+            "published",
+            "published",
+            "archived",
+            "archived",
+            "archived",
+        ]
+        .iter()
+        .enumerate()
+        {
+            fs::write(
+                blog.join(format!("post{i}.md")),
+                format!("---\nstatus: {status}\ntitle: Post {i}\n---\n# Post {i}\nBody text."),
+            )
+            .unwrap();
+        }
+
+        // Init with auto-build disabled, then verify categories inferred
+        let init_step = crate::cmd::init::run(tmp.path(), "**", false, false, true, false, false);
+        assert!(!crate::step::has_failed(&init_step));
+
+        let toml = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
+        let status = toml
+            .fields
+            .field
+            .iter()
+            .find(|f| f.name == "status")
+            .unwrap();
+        assert!(
+            status.constraints.is_some(),
+            "categories should be inferred on status"
+        );
+
+        // Build should succeed despite constraints in toml
+        let build_step = run(tmp.path(), None, None, None, false, false, false).await;
+        assert!(!crate::step::has_failed(&build_step));
+        let result = unwrap_build(&build_step);
+        assert_eq!(result.files_embedded, 9);
+        assert!(tmp.path().join(".mdvs/files.parquet").exists());
+        assert!(tmp.path().join(".mdvs/chunks.parquet").exists());
+    }
+
+    #[tokio::test]
+    async fn build_aborts_on_invalid_category() {
+        let tmp = tempfile::tempdir().unwrap();
+        let blog = tmp.path().join("blog");
+        fs::create_dir_all(&blog).unwrap();
+        for (i, status) in [
+            "draft",
+            "draft",
+            "draft",
+            "published",
+            "published",
+            "published",
+            "archived",
+            "archived",
+            "archived",
+        ]
+        .iter()
+        .enumerate()
+        {
+            fs::write(
+                blog.join(format!("post{i}.md")),
+                format!("---\nstatus: {status}\ntitle: Post {i}\n---\n# Post {i}\nBody text."),
+            )
+            .unwrap();
+        }
+
+        // Init (infers categories on status)
+        let init_step = crate::cmd::init::run(tmp.path(), "**", false, false, true, false, false);
+        assert!(!crate::step::has_failed(&init_step));
+
+        // Corrupt a file with an out-of-category value
+        fs::write(
+            blog.join("post0.md"),
+            "---\nstatus: pending\ntitle: Post 0\n---\n# Post 0\nBody text.",
+        )
+        .unwrap();
+
+        // Build should abort (build includes check internally)
+        let build_step = run(tmp.path(), None, None, None, false, false, false).await;
+        assert!(crate::step::has_failed(&build_step));
     }
 }

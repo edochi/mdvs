@@ -2,7 +2,7 @@
 title: Alpha Budget Summary
 status: active
 author: Sara Dell'Acqua
-priority: 1
+priority: high
 ---
 # Alpha Budget Summary
 

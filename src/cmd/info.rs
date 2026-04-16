@@ -2,7 +2,7 @@ use crate::discover::scan::ScannedFiles;
 use crate::index::backend::Backend;
 use crate::outcome::commands::InfoOutcome;
 use crate::outcome::{Outcome, ReadConfigOutcome, ReadIndexOutcome, ScanOutcome};
-use crate::output::{field_hints, FieldHint};
+use crate::output::{FieldHint, field_hints};
 use crate::schema::config::MdvsToml;
 use crate::step::{CommandResult, ErrorKind, StepEntry};
 use serde::Serialize;
@@ -283,6 +283,7 @@ mod tests {
                         allowed: vec!["**".into()],
                         required: vec!["**".into()],
                         nullable: false,
+                        constraints: None,
                     },
                     crate::schema::config::TomlField {
                         name: "tags".into(),
@@ -292,6 +293,7 @@ mod tests {
                         allowed: vec!["blog/**".into()],
                         required: vec![],
                         nullable: false,
+                        constraints: None,
                     },
                     crate::schema::config::TomlField {
                         name: "draft".into(),
@@ -299,8 +301,11 @@ mod tests {
                         allowed: vec!["**".into()],
                         required: vec![],
                         nullable: false,
+                        constraints: None,
                     },
                 ],
+                max_categories: 10,
+                min_category_repetition: 3,
             },
             embedding_model: Some(EmbeddingModelConfig {
                 provider: "model2vec".into(),
@@ -404,7 +409,10 @@ mod tests {
                     allowed: vec!["**".into()],
                     required: vec![],
                     nullable: false,
+                    constraints: None,
                 }],
+                max_categories: 10,
+                min_category_repetition: 3,
             },
             embedding_model: None,
             chunking: None,
@@ -417,8 +425,10 @@ mod tests {
         let result = unwrap_info(&step);
         assert_eq!(result.fields.len(), 1);
         assert_eq!(result.fields[0].name, "author's_note");
-        assert!(result.fields[0]
-            .hints
-            .contains(&FieldHint::EscapeSingleQuotes));
+        assert!(
+            result.fields[0]
+                .hints
+                .contains(&FieldHint::EscapeSingleQuotes)
+        );
     }
 }

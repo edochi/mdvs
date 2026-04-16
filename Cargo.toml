@@ -1,7 +1,7 @@
 [package]
 name = "mdvs"
 version = "0.2.0"
-edition = "2021"
+edition = "2024"
 description = "A database of markdown documents — schema validation and semantic search"
 license = "MIT"
 repository = "https://github.com/edochi/mdvs"
@@ -16,10 +16,18 @@ include = ["src/", "Cargo.toml", "Cargo.lock", "LICENSE", "README.md"]
 clap = { version = "4", features = ["derive"] }
 
 # Async (required by DataFusion)
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
 # Query engine (re-exports arrow 57 + parquet 57)
-datafusion = "52"
+datafusion = { version = "52", default-features = false, features = [
+    "parquet",
+    "sql",
+    "nested_expressions",
+    "string_expressions",
+    "datetime_expressions",
+    "regex_expressions",
+    "recursive_protection",
+] }
 
 # Error handling
 anyhow = "1"
@@ -47,8 +55,8 @@ ignore = "0.4"
 globset = "0.4"
 
 # IDs + hashing
-uuid = { version = "1", features = ["v4"] }
-chrono = "0.4"
+uuid = { version = "1", default-features = false, features = ["v4"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 # Table rendering
 tabled = "0.20"

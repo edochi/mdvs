@@ -6,7 +6,8 @@ tags:
   - calibration
   - environment
   - SPR-A1
-priority: 2
+priority: medium
+batch: 5
 sensor_type: SPR-A1
 wavelength_nm: 780.0
 sample_count: 32

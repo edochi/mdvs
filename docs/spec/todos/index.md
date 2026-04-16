@@ -7,7 +7,7 @@
 | [0003](TODO-0003.md) | Fix --auto-build flag on init | done | medium | 2026-03-02 |
 | [0004](TODO-0004.md) | Rename --where-clause to --where | done | low | 2026-03-02 |
 | [0005](TODO-0005.md) | Differentiate null from absent in check | done | high | 2026-03-02 |
-| [0006](TODO-0006.md) | Support enum constraints on string fields | todo | medium | 2026-03-02 |
+| [0006](TODO-0006.md) | Support categorical constraints on fields | done | medium | 2026-03-02 |
 | [0007](TODO-0007.md) | Support Date field type | todo | medium | 2026-03-02 |
 | [0008](TODO-0008.md) | Support value boundary constraints on numeric fields | todo | low | 2026-03-02 |
 | [0009](TODO-0009.md) | Custom field and text processors | todo | low | 2026-03-02 |
@@ -101,7 +101,7 @@
 | [0097](TODO-0097.md) | Explode nested Object fields into dot-separated leaf keys | todo | medium | 2026-03-12 |
 | [0098](TODO-0098.md) | Build --force should handle dimension mismatch without requiring clean | done | medium | 2026-03-13 |
 | [0099](TODO-0099.md) | Redesign auto-update/auto-build pipeline across commands | done | high | 2026-03-13 |
-| [0100](TODO-0100.md) | Redesign text output format for all commands | todo | high | 2026-03-13 |
+| [0100](TODO-0100.md) | Redesign text output format for all commands | done | high | 2026-03-13 |
 | [0101](TODO-0101.md) | Add markdown output format, rename text to pretty | todo | high | 2026-03-13 |
 | [0102](TODO-0102.md) | Write and distribute SKILL.md for end-user projects | todo | medium | 2026-03-14 |
 | [0103](TODO-0103.md) | Validate config invariants on mdvs.toml load | done | high | 2026-03-14 |
@@ -119,7 +119,7 @@
 | [0115](TODO-0115.md) | Embed asciinema recordings in mdBook for interactive demos | todo | medium | 2026-03-17 |
 | [0116](TODO-0116.md) | Trim DataFusion default features to reduce binary size | todo | medium | 2026-03-17 |
 | [0117](TODO-0117.md) | Fix null values skipping Disallowed and NullNotAllowed checks | done | high | 2026-03-17 |
-| [0118](TODO-0118.md) | Rework README and book intro to show directory-aware schema | todo | high | 2026-03-17 |
+| [0118](TODO-0118.md) | Rework README and book intro to show directory-aware schema | done | high | 2026-03-17 |
 | [0119](TODO-0119.md) | Unified Step tree architecture — replace pipeline/command output split | done | high | 2026-03-18 |
 | [0120](TODO-0120.md) | Step tree: core types — Step, StepOutcome, StepError | done | high | 2026-03-19 |
 | [0121](TODO-0121.md) | Step tree: Block enum and Render trait | done | high | 2026-03-19 |
@@ -143,4 +143,9 @@
 | [0139](TODO-0139.md) | Unify fail helpers across commands | done | low | 2026-03-23 |
 | [0140](TODO-0140.md) | Global --dry-run flag | todo | medium | 2026-03-28 |
 | [0141](TODO-0141.md) | Global --quiet flag to suppress output on success | todo | medium | 2026-03-29 |
-| [0142](TODO-0142.md) | Fix chunk line numbers to exclude frontmatter | todo | high | 2026-03-29 |
+| [0142](TODO-0142.md) | Fix chunk line numbers to exclude frontmatter | done | high | 2026-03-29 |
+| [0143](TODO-0143.md) | Additional constraint kinds — design discussion | todo | low | 2026-03-30 |
+| [0144](TODO-0144.md) | Embedded Lua scripting for user-side customization | todo | medium | 2026-03-30 |
+| [0145](TODO-0145.md) | Support regex pattern constraints on string fields | todo | low | 2026-04-02 |
+| [0146](TODO-0146.md) | Update mdBook for categorical constraints and reinfer subcommand | done | high | 2026-04-11 |
+| [0147](TODO-0147.md) | Restructure specs as developer code map | done | medium | 2026-04-12 |

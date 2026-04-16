@@ -109,15 +109,11 @@ enum Command {
         /// Directory containing mdvs.toml
         #[arg(default_value = ".")]
         path: PathBuf,
-        /// Re-infer specific field(s) — can be repeated
-        #[arg(long)]
-        reinfer: Vec<String>,
-        /// Re-infer all fields
-        #[arg(long)]
-        reinfer_all: bool,
         /// Show what would change, write nothing
         #[arg(long)]
         dry_run: bool,
+        #[command(subcommand)]
+        subcommand: Option<UpdateCommand>,
     },
     /// Remove the .mdvs/ directory
     Clean {
@@ -131,6 +127,12 @@ enum Command {
         #[arg(default_value = ".")]
         path: PathBuf,
     },
+}
+
+#[derive(Subcommand)]
+enum UpdateCommand {
+    /// Re-infer field definitions from scanned files
+    Reinfer(mdvs::cmd::update::ReinferArgs),
 }
 
 #[tokio::main]
@@ -315,12 +317,18 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::Update {
             path,
-            reinfer,
-            reinfer_all,
             dry_run,
+            subcommand,
         } => {
-            let result =
-                mdvs::cmd::update::run(&path, &reinfer, reinfer_all, dry_run, cli.verbose).await;
+            let reinfer_args = subcommand.map(|UpdateCommand::Reinfer(args)| args);
+            let effective_dry_run = dry_run || reinfer_args.as_ref().is_some_and(|a| a.dry_run);
+            let result = mdvs::cmd::update::run(
+                &path,
+                reinfer_args.as_ref(),
+                effective_dry_run,
+                cli.verbose,
+            )
+            .await;
             let failed = mdvs::step::has_failed(&result);
             let verbose = cli.verbose || failed;
             let output_str = match (&cli.output, verbose) {

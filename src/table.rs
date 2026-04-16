@@ -4,8 +4,8 @@
 //! spanning all columns) — both using rounded borders and auto-sized to terminal width.
 
 use tabled::settings::{
-    object::Cell, peaker::PriorityMax, span::ColumnSpan, style::Style, themes::BorderCorrection,
-    width::Width, Modify,
+    Modify, object::Cell, peaker::PriorityMax, span::ColumnSpan, style::Style,
+    themes::BorderCorrection, width::Width,
 };
 
 pub use tabled::builder::Builder;

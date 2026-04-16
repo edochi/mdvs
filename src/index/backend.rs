@@ -1,9 +1,9 @@
 use crate::discover::field_type::FieldType;
 use crate::index::storage::{
-    build_chunks_batch, build_files_batch, read_build_metadata, read_chunk_rows, read_file_index,
-    read_parquet, resolve_view_name, write_parquet, write_parquet_with_metadata, BuildMetadata,
-    ChunkRow, FileIndexEntry, FileRow, COL_EMBEDDING, COL_END_LINE, COL_FILEPATH, COL_FILE_ID,
-    COL_START_LINE,
+    BuildMetadata, COL_EMBEDDING, COL_END_LINE, COL_FILE_ID, COL_FILEPATH, COL_START_LINE,
+    ChunkRow, FileIndexEntry, FileRow, build_chunks_batch, build_files_batch, read_build_metadata,
+    read_chunk_rows, read_file_index, read_parquet, resolve_view_name, write_parquet,
+    write_parquet_with_metadata,
 };
 use crate::search::SearchContext;
 use anyhow::Context;
@@ -200,12 +200,11 @@ impl ParquetBackend {
             return Ok(None);
         }
         let batches = read_parquet(&self.chunks_parquet())?;
-        if let Some(batch) = batches.first() {
-            if let Ok(field) = batch.schema().field_with_name(COL_EMBEDDING) {
-                if let DataType::FixedSizeList(_, dim) = field.data_type() {
-                    return Ok(Some(*dim));
-                }
-            }
+        if let Some(batch) = batches.first()
+            && let Ok(field) = batch.schema().field_with_name(COL_EMBEDDING)
+            && let DataType::FixedSizeList(_, dim) = field.data_type()
+        {
+            return Ok(Some(*dim));
         }
         Ok(None)
     }

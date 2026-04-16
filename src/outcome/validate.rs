@@ -3,7 +3,7 @@
 use serde::Serialize;
 
 use crate::block::{Block, Render};
-use crate::output::{format_file_count, FieldViolation, NewField};
+use crate::output::{FieldViolation, NewField, format_file_count};
 
 /// Full outcome for the validate step.
 #[derive(Debug, Serialize)]

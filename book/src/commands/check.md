@@ -23,12 +23,13 @@ Global flags (`-o`, `-v`, `--logs`) are described in [Configuration](../configur
 
 By default, `check` auto-updates the schema before validating (see [`[check].auto_update`](../configuration.md#check)). Use `--no-update` to skip this and validate against the current `mdvs.toml` as-is.
 
-It reports four kinds of violations:
+It reports five kinds of violations:
 
 - **`WrongType`** — value doesn't match the declared `type`
 - **`Disallowed`** — field appears in a file whose path doesn't match any `allowed` glob
 - **`MissingRequired`** — file matches a `required` glob but the field is absent
 - **`NullNotAllowed`** — field is `null` but `nullable = false`
+- **`InvalidCategory`** — value is not in the field's declared `categories` (see [Constraints](../concepts/constraints.md))
 
 Fields not in `mdvs.toml` (and not in the `ignore` list) are reported as **new fields** — these are informational and don't count as violations.
 

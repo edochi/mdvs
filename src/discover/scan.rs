@@ -125,24 +125,20 @@ impl ScannedFiles {
 
             let data = parsed.data.and_then(|d: Pod| {
                 let json: Value = d.deserialize().ok()?;
-                if json.is_object() {
-                    Some(json)
-                } else {
-                    None
-                }
+                if json.is_object() { Some(json) } else { None }
             });
 
             // Safety limits on frontmatter complexity
             if let Some(ref val) = data {
-                if let Value::Object(map) = val {
-                    if map.len() > MAX_FIELD_COUNT {
-                        warn!(
-                            path = %rel_path.display(),
-                            fields = map.len(),
-                            "frontmatter exceeds {MAX_FIELD_COUNT} fields, skipping"
-                        );
-                        continue;
-                    }
+                if let Value::Object(map) = val
+                    && map.len() > MAX_FIELD_COUNT
+                {
+                    warn!(
+                        path = %rel_path.display(),
+                        fields = map.len(),
+                        "frontmatter exceeds {MAX_FIELD_COUNT} fields, skipping"
+                    );
+                    continue;
                 }
                 if !check_depth(val, MAX_NESTING_DEPTH) {
                     warn!(

@@ -1,4 +1,5 @@
 use crate::discover::infer::InferredSchema;
+use crate::discover::infer::constraints::infer_constraints;
 use crate::discover::scan::ScannedFiles;
 use crate::outcome::commands::UpdateOutcome;
 use crate::outcome::{InferOutcome, Outcome, ReadConfigOutcome, ScanOutcome, WriteConfigOutcome};
@@ -11,25 +12,49 @@ use std::path::Path;
 use std::time::Instant;
 use tracing::{info, instrument};
 
+/// Arguments for the `update reinfer` subcommand.
+#[derive(Debug, Clone, clap::Args)]
+pub struct ReinferArgs {
+    /// Fields to reinfer (all if none specified)
+    pub fields: Vec<String>,
+    /// Force categorical on named fields (skip heuristic)
+    #[arg(long)]
+    pub categorical: bool,
+    /// Force NOT categorical on named fields (strip categories)
+    #[arg(long, conflicts_with = "categorical")]
+    pub no_categorical: bool,
+    /// Max distinct values for categorical inference
+    #[arg(long)]
+    pub max_categories: Option<usize>,
+    /// Min average repetition for categorical inference
+    #[arg(long)]
+    pub min_repetition: Option<usize>,
+    /// Show what would change, write nothing
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
 /// Re-scan files, infer field changes, and update `mdvs.toml`.
 /// Pure inference — no build step.
 #[instrument(name = "update", skip_all)]
 pub async fn run(
     path: &Path,
-    reinfer: &[String],
-    reinfer_all: bool,
+    reinfer: Option<&ReinferArgs>,
     dry_run: bool,
     _verbose: bool,
 ) -> CommandResult {
     let start = Instant::now();
     let mut steps = Vec::new();
 
-    // Pre-check: flag conflict
-    if !reinfer.is_empty() && reinfer_all {
+    // Pre-check: --categorical/--no-categorical require named fields
+    if let Some(args) = reinfer
+        && args.fields.is_empty()
+        && (args.categorical || args.no_categorical)
+    {
         return CommandResult::failed(
             steps,
             ErrorKind::User,
-            "cannot use --reinfer and --reinfer-all together".into(),
+            "--categorical and --no-categorical require named fields".into(),
             start,
         );
     }
@@ -68,14 +93,16 @@ pub async fn run(
     };
 
     // Pre-check: reinfer field names exist
-    for name in reinfer {
-        if !config.fields.field.iter().any(|f| f.name == *name) {
-            return CommandResult::failed(
-                std::mem::take(&mut steps),
-                ErrorKind::User,
-                format!("field '{name}' is not in mdvs.toml"),
-                start,
-            );
+    if let Some(args) = reinfer {
+        for name in &args.fields {
+            if !config.fields.field.iter().any(|f| f.name == *name) {
+                return CommandResult::failed(
+                    std::mem::take(&mut steps),
+                    ErrorKind::User,
+                    format!("field '{name}' is not in mdvs.toml"),
+                    start,
+                );
+            }
         }
     }
 
@@ -114,15 +141,18 @@ pub async fn run(
 
     let total_files = scanned.files.len();
 
-    // --- Field comparison logic (inline, unchanged from original) ---
+    // --- Field comparison logic ---
+    let reinfer_all = reinfer.is_some_and(|a| a.fields.is_empty());
+    let reinfer_fields: Vec<String> = reinfer.map(|a| a.fields.clone()).unwrap_or_default();
+
     let (protected, targets): (Vec<TomlField>, Vec<TomlField>) = if reinfer_all {
         (vec![], config.fields.field.drain(..).collect())
-    } else if !reinfer.is_empty() {
+    } else if !reinfer_fields.is_empty() {
         config
             .fields
             .field
             .drain(..)
-            .partition(|f| !reinfer.contains(&f.name))
+            .partition(|f| !reinfer_fields.contains(&f.name))
     } else {
         (config.fields.field.drain(..).collect(), vec![])
     };
@@ -144,12 +174,28 @@ pub async fn run(
         }
 
         let new_type = FieldTypeSerde::from(&inf.field_type);
+        let constraints = if let Some(args) = reinfer {
+            if args.no_categorical {
+                None
+            } else if args.categorical {
+                force_categorical(inf)
+            } else {
+                let max_cat = args.max_categories.unwrap_or(config.fields.max_categories);
+                let min_rep = args
+                    .min_repetition
+                    .unwrap_or(config.fields.min_category_repetition);
+                infer_constraints(inf, max_cat, min_rep)
+            }
+        } else {
+            None
+        };
         let toml_field = TomlField {
             name: inf.name.clone(),
             field_type: new_type.clone(),
             allowed: inf.allowed.clone(),
             required: inf.required.clone(),
             nullable: inf.nullable,
+            constraints,
         };
 
         if let Some(old_field) = old_fields.get(inf.name.as_str()) {
@@ -262,6 +308,47 @@ pub async fn run(
     }
 }
 
+/// Force categorical constraints on a field: collect all distinct values as categories
+/// without applying the heuristic. Only applicable types get categories.
+fn force_categorical(
+    field: &crate::discover::infer::InferredField,
+) -> Option<crate::schema::constraints::Constraints> {
+    use crate::discover::field_type::FieldType;
+    use crate::schema::constraints::Constraints;
+
+    let applicable = match &field.field_type {
+        FieldType::String | FieldType::Integer => true,
+        FieldType::Array(inner) => {
+            matches!(inner.as_ref(), FieldType::String | FieldType::Integer)
+        }
+        _ => false,
+    };
+
+    if !applicable || field.distinct_values.is_empty() {
+        return None;
+    }
+
+    let mut categories: Vec<toml::Value> = field
+        .distinct_values
+        .iter()
+        .filter_map(|v| match v {
+            serde_json::Value::String(s) => Some(toml::Value::String(s.clone())),
+            serde_json::Value::Number(n) => n.as_i64().map(toml::Value::Integer),
+            _ => None,
+        })
+        .collect();
+
+    categories.sort_by(|a, b| match (a, b) {
+        (toml::Value::String(a), toml::Value::String(b)) => a.cmp(b),
+        (toml::Value::Integer(a), toml::Value::Integer(b)) => a.cmp(b),
+        _ => std::cmp::Ordering::Equal,
+    });
+
+    Some(Constraints {
+        categories: Some(categories),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -296,13 +383,24 @@ mod tests {
         assert!(!crate::step::has_failed(&step));
     }
 
+    fn reinfer_args(fields: &[&str]) -> ReinferArgs {
+        ReinferArgs {
+            fields: fields.iter().map(|s| s.to_string()).collect(),
+            categorical: false,
+            no_categorical: false,
+            max_categories: None,
+            min_repetition: None,
+            dry_run: false,
+        }
+    }
+
     #[tokio::test]
     async fn no_changes() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
         init_no_build(tmp.path());
 
-        let step = run(tmp.path(), &[], false, false, false).await;
+        let step = run(tmp.path(), None, false, false).await;
         assert!(!crate::step::has_failed(&step));
         let result = unwrap_update(&step);
 
@@ -325,7 +423,7 @@ mod tests {
         )
         .unwrap();
 
-        let step = run(tmp.path(), &[], false, false, false).await;
+        let step = run(tmp.path(), None, false, false).await;
         assert!(!crate::step::has_failed(&step));
         let result = unwrap_update(&step);
 
@@ -354,16 +452,18 @@ mod tests {
         )
         .unwrap();
 
-        let step = run(tmp.path(), &["tags".to_string()], false, false, false).await;
+        let step = run(tmp.path(), Some(&reinfer_args(&["tags"])), false, false).await;
         assert!(!crate::step::has_failed(&step));
         let result = unwrap_update(&step);
 
         assert_eq!(result.changed.len(), 1);
         assert_eq!(result.changed[0].name, "tags");
-        assert!(result.changed[0]
-            .changes
-            .iter()
-            .any(|c| matches!(c, FieldChange::Type { new, .. } if new == "String")));
+        assert!(
+            result.changed[0]
+                .changes
+                .iter()
+                .any(|c| matches!(c, FieldChange::Type { new, .. } if new == "String"))
+        );
     }
 
     #[tokio::test]
@@ -378,7 +478,7 @@ mod tests {
         )
         .unwrap();
 
-        let step = run(tmp.path(), &["tags".to_string()], false, false, false).await;
+        let step = run(tmp.path(), Some(&reinfer_args(&["tags"])), false, false).await;
         assert!(!crate::step::has_failed(&step));
         let result = unwrap_update(&step);
 
@@ -397,22 +497,11 @@ mod tests {
 
         let step = run(
             tmp.path(),
-            &["nonexistent".to_string()],
-            false,
+            Some(&reinfer_args(&["nonexistent"])),
             false,
             false,
         )
         .await;
-        assert!(crate::step::has_failed(&step));
-    }
-
-    #[tokio::test]
-    async fn reinfer_and_reinfer_all_conflict() {
-        let tmp = tempfile::tempdir().unwrap();
-        create_test_vault(tmp.path());
-        init_no_build(tmp.path());
-
-        let step = run(tmp.path(), &["tags".to_string()], true, false, false).await;
         assert!(crate::step::has_failed(&step));
     }
 
@@ -424,7 +513,7 @@ mod tests {
 
         let toml_before = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
 
-        let step = run(tmp.path(), &[], true, false, false).await;
+        let step = run(tmp.path(), Some(&reinfer_args(&[])), false, false).await;
         assert!(!crate::step::has_failed(&step));
         let result = unwrap_update(&step);
 
@@ -451,7 +540,7 @@ mod tests {
 
         let toml_before = fs::read_to_string(tmp.path().join("mdvs.toml")).unwrap();
 
-        let step = run(tmp.path(), &[], false, true, false).await;
+        let step = run(tmp.path(), None, true, false).await;
         assert!(!crate::step::has_failed(&step));
         let result = unwrap_update(&step);
 
@@ -474,7 +563,7 @@ mod tests {
         )
         .unwrap();
 
-        let step = run(tmp.path(), &[], false, false, false).await;
+        let step = run(tmp.path(), None, false, false).await;
         assert!(!crate::step::has_failed(&step));
         assert!(!tmp.path().join(".mdvs").exists());
     }
@@ -513,7 +602,7 @@ mod tests {
         config.scan.include_bare_files = true;
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
 
-        let step = run(tmp.path(), &[], true, false, false).await;
+        let step = run(tmp.path(), Some(&reinfer_args(&[])), false, false).await;
         assert!(!crate::step::has_failed(&step));
         let result = unwrap_update(&step);
         assert!(
@@ -542,12 +631,246 @@ mod tests {
         )
         .unwrap();
 
-        let step = run(tmp.path(), &[], false, false, false).await;
+        let step = run(tmp.path(), None, false, false).await;
         assert!(!crate::step::has_failed(&step));
         let result = unwrap_update(&step);
         assert!(result.added.is_empty() && result.changed.is_empty() && result.removed.is_empty());
 
         let toml = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
         assert!(toml.fields.field.iter().any(|f| f.name == "tags"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Categorical inference in reinfer
+    // -----------------------------------------------------------------------
+
+    fn create_categorical_vault(dir: &Path) {
+        let blog = dir.join("blog");
+        fs::create_dir_all(&blog).unwrap();
+        for (i, status) in [
+            "draft",
+            "draft",
+            "draft",
+            "published",
+            "published",
+            "published",
+            "archived",
+            "archived",
+            "archived",
+        ]
+        .iter()
+        .enumerate()
+        {
+            fs::write(
+                blog.join(format!("post{i}.md")),
+                format!("---\nstatus: {status}\ntitle: Post {i}\n---\nBody."),
+            )
+            .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn reinfer_infers_categories() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_categorical_vault(tmp.path());
+        init_no_build(tmp.path());
+
+        // Init should have inferred categories on status (3 distinct, 9 files, ratio=3)
+        let toml = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
+        let status = toml
+            .fields
+            .field
+            .iter()
+            .find(|f| f.name == "status")
+            .unwrap();
+        assert!(status.constraints.is_some());
+
+        // Reinfer status — should re-infer categories
+        let step = run(tmp.path(), Some(&reinfer_args(&["status"])), false, false).await;
+        assert!(!crate::step::has_failed(&step));
+
+        let toml = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
+        let status = toml
+            .fields
+            .field
+            .iter()
+            .find(|f| f.name == "status")
+            .unwrap();
+        let cats = status
+            .constraints
+            .as_ref()
+            .unwrap()
+            .categories
+            .as_ref()
+            .unwrap();
+        assert_eq!(cats.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn reinfer_no_categorical_strips() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_categorical_vault(tmp.path());
+        init_no_build(tmp.path());
+
+        let args = ReinferArgs {
+            fields: vec!["status".into()],
+            categorical: false,
+            no_categorical: true,
+            max_categories: None,
+            min_repetition: None,
+            dry_run: false,
+        };
+        let step = run(tmp.path(), Some(&args), false, false).await;
+        assert!(!crate::step::has_failed(&step));
+
+        let toml = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
+        let status = toml
+            .fields
+            .field
+            .iter()
+            .find(|f| f.name == "status")
+            .unwrap();
+        assert!(status.constraints.is_none());
+    }
+
+    #[tokio::test]
+    async fn reinfer_categorical_forces() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_categorical_vault(tmp.path());
+        init_no_build(tmp.path());
+
+        // title has 9 distinct values across 9 files — ratio=1, below threshold
+        // But --categorical should force it
+        let args = ReinferArgs {
+            fields: vec!["title".into()],
+            categorical: true,
+            no_categorical: false,
+            max_categories: None,
+            min_repetition: None,
+            dry_run: false,
+        };
+        let step = run(tmp.path(), Some(&args), false, false).await;
+        assert!(!crate::step::has_failed(&step));
+
+        let toml = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
+        let title = toml
+            .fields
+            .field
+            .iter()
+            .find(|f| f.name == "title")
+            .unwrap();
+        let cats = title
+            .constraints
+            .as_ref()
+            .unwrap()
+            .categories
+            .as_ref()
+            .unwrap();
+        assert_eq!(cats.len(), 9);
+    }
+
+    #[tokio::test]
+    async fn reinfer_threshold_override() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_categorical_vault(tmp.path());
+        init_no_build(tmp.path());
+
+        // status has 3 distinct, 9 occurrences → ratio 3
+        // Set min_repetition=4 → should NOT be categorical
+        let args = ReinferArgs {
+            fields: vec!["status".into()],
+            categorical: false,
+            no_categorical: false,
+            max_categories: None,
+            min_repetition: Some(4),
+            dry_run: false,
+        };
+        let step = run(tmp.path(), Some(&args), false, false).await;
+        assert!(!crate::step::has_failed(&step));
+
+        let toml = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
+        let status = toml
+            .fields
+            .field
+            .iter()
+            .find(|f| f.name == "status")
+            .unwrap();
+        assert!(status.constraints.is_none());
+    }
+
+    #[tokio::test]
+    async fn categorical_without_fields_errors() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_categorical_vault(tmp.path());
+        init_no_build(tmp.path());
+
+        let args = ReinferArgs {
+            fields: vec![],
+            categorical: true,
+            no_categorical: false,
+            max_categories: None,
+            min_repetition: None,
+            dry_run: false,
+        };
+        let step = run(tmp.path(), Some(&args), false, false).await;
+        assert!(crate::step::has_failed(&step));
+    }
+
+    #[tokio::test]
+    async fn init_then_reinfer_then_check_passes() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_categorical_vault(tmp.path());
+        init_no_build(tmp.path());
+
+        // Reinfer status
+        let step = run(tmp.path(), Some(&reinfer_args(&["status"])), false, false).await;
+        assert!(!crate::step::has_failed(&step));
+
+        // Check should still pass after reinfer
+        let check_step = crate::cmd::check::run(tmp.path(), true, false);
+        let check_result = match &check_step.result {
+            Ok(crate::outcome::Outcome::Check(o)) => o,
+            other => panic!("expected Ok(Check), got: {other:?}"),
+        };
+        assert!(check_result.violations.is_empty());
+    }
+
+    #[tokio::test]
+    async fn init_then_reinfer_all_preserves_categories() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_categorical_vault(tmp.path());
+        init_no_build(tmp.path());
+
+        // Verify categories exist after init
+        let toml_before = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
+        let status_before = toml_before
+            .fields
+            .field
+            .iter()
+            .find(|f| f.name == "status")
+            .unwrap();
+        assert!(status_before.constraints.is_some());
+
+        // Reinfer all
+        let step = run(tmp.path(), Some(&reinfer_args(&[])), false, false).await;
+        assert!(!crate::step::has_failed(&step));
+
+        // Categories should still be present on status
+        let toml_after = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
+        let status_after = toml_after
+            .fields
+            .field
+            .iter()
+            .find(|f| f.name == "status")
+            .unwrap();
+        assert!(status_after.constraints.is_some());
+        let cats = status_after
+            .constraints
+            .as_ref()
+            .unwrap()
+            .categories
+            .as_ref()
+            .unwrap();
+        assert_eq!(cats.len(), 3);
     }
 }

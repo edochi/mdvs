@@ -6,7 +6,8 @@ tags:
   - calibration
   - SPR-A1
   - baseline
-priority: 2
+priority: medium
+batch: 3
 sensor_type: SPR-A1
 wavelength_nm: 850
 sample_count: 24

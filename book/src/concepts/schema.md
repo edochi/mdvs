@@ -138,7 +138,7 @@ Every field in `mdvs.toml` is in one of three states:
 
 ### Constrained
 
-Listed under `[[fields.field]]`. Validation enforces type, allowed paths, required paths, and nullable. `mdvs update` preserves constrained fields unless you explicitly pass `--reinfer`.
+Listed under `[[fields.field]]`. Validation enforces type, allowed paths, required paths, and nullable. `mdvs update` preserves constrained fields unless you explicitly use `update reinfer`.
 
 ```toml
 [[fields.field]]
@@ -194,7 +194,7 @@ Fields that disappear from all files still stay in the toml. This prevents accid
 ### Re-inferring specific fields
 
 ```bash
-mdvs update example_kb --reinfer tags
+mdvs update example_kb reinfer tags
 ```
 
 Treats `tags` as if it had never been seen — removes it from the schema, re-scans, and infers it fresh. Use this when you've fixed bad data (like a `tags: [1, 2, 3]` that should have been strings) and want the type or paths to update.
@@ -202,10 +202,10 @@ Treats `tags` as if it had never been seen — removes it from the schema, re-sc
 ### Re-inferring everything
 
 ```bash
-mdvs update example_kb --reinfer-all
+mdvs update example_kb reinfer
 ```
 
-Equivalent to running `--reinfer` on every field. The entire `[[fields.field]]` section is rebuilt from scratch, but all other config (`[scan]`, `[embedding_model]`, etc.) is preserved.
+When no fields are named, every field is reinferred. The entire `[[fields.field]]` section is rebuilt from scratch, but all other config (`[scan]`, `[embedding_model]`, etc.) is preserved.
 
 This is different from `mdvs init --force`, which overwrites the entire `mdvs.toml` including non-field config.
 
@@ -214,4 +214,4 @@ This is different from `mdvs init --force`, which overwrites the entire `mdvs.to
 - **Fields in a single file** — get a narrow `allowed` glob matching just that file's directory. Example: `unit_id` only in `people/remo.md` → `allowed = ["people/*"]`.
 - **Null-only fields** — type defaults to String (see [Types & Widening](./types.md#nullable)). Example: `review_score` is always `null` → `String?`.
 - **Special characters in field names** — names with spaces (`lab section`), single quotes (`author's_note`), or double quotes (`notes"v2"`) are preserved as-is. They need quoting in `--where` clauses (see [Search Guide](../search-guide.md)).
-- **Empty arrays** `[]` — element type defaults to String, giving `String[]`. If real values appear later, use `--reinfer` to pick up the correct element type.
+- **Empty arrays** `[]` — element type defaults to String, giving `String[]`. If real values appear later, use `update reinfer` to pick up the correct element type.
