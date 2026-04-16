@@ -2,6 +2,40 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## v0.3.0 - 2026-04-16
+#### Features
+- refactor update reinfer into subcommand with categorical flags - (1f29ce5) - edoch, *Claude*
+- wire InvalidCategory violation into check command - (9b0ee8c) - edoch, *Claude*
+- add categorical inference and restructure into submodules - (0e23762) - edoch, *Claude*
+- add constraint infrastructure and wire into config - (b776eeb) - edoch, *Claude*
+#### Bug Fixes
+- raise min_category_repetition default from 2 to 3 - (5c441b2) - edoch, *Claude*
+- add --dry-run to reinfer subcommand for CLI ergonomics - (f2d34bd) - edoch, *Claude*
+- resolve clippy --all-targets warnings in test code - (c27ae5b) - edoch, *Claude*
+#### Documentation
+- mark TODO-0147 as done - (6094922) - edoch, *Claude*
+- rewrite command specs as developer pipeline docs, clean up shared types - (3e92c5d) - edoch, *Claude*
+- add deep-dive specs for inference, storage, and search - (3afce25) - edoch, *Claude*
+- add architecture.md as developer code map - (2d1063a) - edoch, *Claude*
+- add TODO-0147 for spec restructure as developer code map - (9c30cc3) - edoch, *Claude*
+- update mdBook for reinfer subcommand and categorical constraints - (845092e) - edoch, *Claude*
+- add TODO-0146 for mdBook updates (constraints + reinfer subcommand) - (6154ada) - edoch, *Claude*
+- design constraint architecture for TODO-0006/0008/0010, add TODO-0145 - (dc5853b) - edoch, *Claude*
+- update TODO-0144 with scripting language evaluation - (fd4c419) - edoch, *Claude*
+- update TODO-0006/0008/0010 designs, add TODO-0143/0144 - (0546d93) - edoch, *Claude*
+- update TODO-0006 design (categorical constraints), mark 0100/0118/0142 done - (742e9fd) - edoch
+- polish README for promotion - (7c95b6f) - edoch, *Claude*
+#### Tests
+- add integration tests for categorical constraints pipeline - (1a5fa1b) - edoch, *Claude*
+#### Continuous Integration
+- bump actions/checkout from v4 to v5 - (52c79d8) - edoch, *Claude*
+#### Miscellaneous Chores
+- (**deps**) update rustls-webpki 0.103.10 → 0.103.12 - (76d1ba0) - edoch, *Claude*
+- upgrade to Rust edition 2024 - (0a6c65e) - edoch, *Claude*
+- slim dependencies and add supply chain audit tooling - (1187a70) - edoch, *Claude*
+
+- - -
+
 ## v0.2.0 - 2026-03-29
 #### Bug Fixes
 - (**check**) deduplicate NullNotAllowed violation for required+non-nullable fields - (e6b2458) - edoch, *Claude*
