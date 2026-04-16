@@ -1,10 +1,11 @@
 use crate::discover::infer::InferredSchema;
-use crate::discover::infer::constraints::infer_constraints;
+use crate::discover::infer::constraints::{infer_constraints, infer_range};
 use crate::discover::scan::ScannedFiles;
 use crate::outcome::commands::UpdateOutcome;
 use crate::outcome::{InferOutcome, Outcome, ReadConfigOutcome, ScanOutcome, WriteConfigOutcome};
 use crate::output::{ChangedField, FieldChange, RemovedField};
 use crate::schema::config::{MdvsToml, TomlField};
+use crate::schema::constraints::Constraints;
 use crate::schema::shared::FieldTypeSerde;
 use crate::step::{CommandResult, ErrorKind, StepEntry};
 use std::collections::HashMap;
@@ -29,6 +30,12 @@ pub struct ReinferArgs {
     /// Min average repetition for categorical inference
     #[arg(long)]
     pub min_repetition: Option<usize>,
+    /// Infer range (min/max) on named numeric fields
+    #[arg(long)]
+    pub range: bool,
+    /// Strip range constraints on named fields
+    #[arg(long, conflicts_with = "range")]
+    pub no_range: bool,
     /// Show what would change, write nothing
     #[arg(long)]
     pub dry_run: bool,
@@ -46,15 +53,15 @@ pub async fn run(
     let start = Instant::now();
     let mut steps = Vec::new();
 
-    // Pre-check: --categorical/--no-categorical require named fields
+    // Pre-check: modifier flags require named fields
     if let Some(args) = reinfer
         && args.fields.is_empty()
-        && (args.categorical || args.no_categorical)
+        && (args.categorical || args.no_categorical || args.range || args.no_range)
     {
         return CommandResult::failed(
             steps,
             ErrorKind::User,
-            "--categorical and --no-categorical require named fields".into(),
+            "--categorical, --no-categorical, --range, and --no-range require named fields".into(),
             start,
         );
     }
@@ -175,16 +182,42 @@ pub async fn run(
 
         let new_type = FieldTypeSerde::from(&inf.field_type);
         let constraints = if let Some(args) = reinfer {
+            // Build constraints by merging categorical and range independently.
+            let mut c = Constraints::default();
+
+            // Categorical
             if args.no_categorical {
-                None
+                // leave categories None
             } else if args.categorical {
-                force_categorical(inf)
+                if let Some(forced) = force_categorical(inf) {
+                    c.categories = forced.categories;
+                }
             } else {
                 let max_cat = args.max_categories.unwrap_or(config.fields.max_categories);
                 let min_rep = args
                     .min_repetition
                     .unwrap_or(config.fields.min_category_repetition);
-                infer_constraints(inf, max_cat, min_rep)
+                if let Some(inferred) = infer_constraints(inf, max_cat, min_rep) {
+                    c.categories = inferred.categories;
+                }
+            }
+
+            // Range
+            if args.no_range {
+                // leave min/max None
+            } else if args.range
+                && let Some(range) = infer_range(inf)
+            {
+                c.min = range.min;
+                c.max = range.max;
+            }
+            // else: neither --range nor --no-range → don't touch range constraints
+            // (existing range constraints will be dropped since we rebuild the field)
+
+            if c == Constraints::default() {
+                None
+            } else {
+                Some(c)
             }
         } else {
             None
@@ -391,6 +424,8 @@ mod tests {
             no_categorical: false,
             max_categories: None,
             min_repetition: None,
+            range: false,
+            no_range: false,
             dry_run: false,
         }
     }
@@ -719,6 +754,8 @@ mod tests {
             no_categorical: true,
             max_categories: None,
             min_repetition: None,
+            range: false,
+            no_range: false,
             dry_run: false,
         };
         let step = run(tmp.path(), Some(&args), false, false).await;
@@ -748,6 +785,8 @@ mod tests {
             no_categorical: false,
             max_categories: None,
             min_repetition: None,
+            range: false,
+            no_range: false,
             dry_run: false,
         };
         let step = run(tmp.path(), Some(&args), false, false).await;
@@ -784,6 +823,8 @@ mod tests {
             no_categorical: false,
             max_categories: None,
             min_repetition: Some(4),
+            range: false,
+            no_range: false,
             dry_run: false,
         };
         let step = run(tmp.path(), Some(&args), false, false).await;
@@ -811,6 +852,8 @@ mod tests {
             no_categorical: false,
             max_categories: None,
             min_repetition: None,
+            range: false,
+            no_range: false,
             dry_run: false,
         };
         let step = run(tmp.path(), Some(&args), false, false).await;
