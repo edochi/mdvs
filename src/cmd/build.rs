@@ -1343,7 +1343,7 @@ mod tests {
                     },
                 ],
                 max_categories: 10,
-                min_category_repetition: 2,
+                min_category_repetition: 3,
             },
             embedding_model: Some(EmbeddingModelConfig {
                 provider: "model2vec".into(),
@@ -1422,7 +1422,7 @@ mod tests {
                     },
                 ],
                 max_categories: 10,
-                min_category_repetition: 2,
+                min_category_repetition: 3,
             },
             embedding_model: Some(EmbeddingModelConfig {
                 provider: "model2vec".into(),
@@ -1483,7 +1483,7 @@ mod tests {
                     constraints: None,
                 }],
                 max_categories: 10,
-                min_category_repetition: 2,
+                min_category_repetition: 3,
             },
             embedding_model: Some(EmbeddingModelConfig {
                 provider: "model2vec".into(),
@@ -1964,8 +1964,11 @@ mod tests {
         for (i, status) in [
             "draft",
             "draft",
+            "draft",
             "published",
             "published",
+            "published",
+            "archived",
             "archived",
             "archived",
         ]
@@ -1999,7 +2002,7 @@ mod tests {
         let build_step = run(tmp.path(), None, None, None, false, false, false).await;
         assert!(!crate::step::has_failed(&build_step));
         let result = unwrap_build(&build_step);
-        assert_eq!(result.files_embedded, 6);
+        assert_eq!(result.files_embedded, 9);
         assert!(tmp.path().join(".mdvs/files.parquet").exists());
         assert!(tmp.path().join(".mdvs/chunks.parquet").exists());
     }
@@ -2012,8 +2015,11 @@ mod tests {
         for (i, status) in [
             "draft",
             "draft",
+            "draft",
             "published",
             "published",
+            "published",
+            "archived",
             "archived",
             "archived",
         ]

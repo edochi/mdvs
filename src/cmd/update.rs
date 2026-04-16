@@ -650,8 +650,11 @@ mod tests {
         for (i, status) in [
             "draft",
             "draft",
+            "draft",
             "published",
             "published",
+            "published",
+            "archived",
             "archived",
             "archived",
         ]
@@ -672,7 +675,7 @@ mod tests {
         create_categorical_vault(tmp.path());
         init_no_build(tmp.path());
 
-        // Init should have inferred categories on status (3 distinct, 6 files, ratio=2)
+        // Init should have inferred categories on status (3 distinct, 9 files, ratio=3)
         let toml = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
         let status = toml
             .fields
@@ -736,7 +739,7 @@ mod tests {
         create_categorical_vault(tmp.path());
         init_no_build(tmp.path());
 
-        // title has 6 distinct values across 6 files — ratio=1, below threshold
+        // title has 9 distinct values across 9 files — ratio=1, below threshold
         // But --categorical should force it
         let args = ReinferArgs {
             fields: vec!["title".into()],
@@ -763,7 +766,7 @@ mod tests {
             .categories
             .as_ref()
             .unwrap();
-        assert_eq!(cats.len(), 6);
+        assert_eq!(cats.len(), 9);
     }
 
     #[tokio::test]
@@ -772,14 +775,14 @@ mod tests {
         create_categorical_vault(tmp.path());
         init_no_build(tmp.path());
 
-        // status has 3 distinct, 6 occurrences → ratio 2
-        // Set min_repetition=3 → should NOT be categorical
+        // status has 3 distinct, 9 occurrences → ratio 3
+        // Set min_repetition=4 → should NOT be categorical
         let args = ReinferArgs {
             fields: vec!["status".into()],
             categorical: false,
             no_categorical: false,
             max_categories: None,
-            min_repetition: Some(3),
+            min_repetition: Some(4),
             dry_run: false,
         };
         let step = run(tmp.path(), Some(&args), false, false).await;

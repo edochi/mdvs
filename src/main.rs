@@ -321,11 +321,14 @@ async fn main() -> anyhow::Result<()> {
             subcommand,
         } => {
             let reinfer_args = subcommand.map(|UpdateCommand::Reinfer(args)| args);
-            let effective_dry_run =
-                dry_run || reinfer_args.as_ref().is_some_and(|a| a.dry_run);
-            let result =
-                mdvs::cmd::update::run(&path, reinfer_args.as_ref(), effective_dry_run, cli.verbose)
-                    .await;
+            let effective_dry_run = dry_run || reinfer_args.as_ref().is_some_and(|a| a.dry_run);
+            let result = mdvs::cmd::update::run(
+                &path,
+                reinfer_args.as_ref(),
+                effective_dry_run,
+                cli.verbose,
+            )
+            .await;
             let failed = mdvs::step::has_failed(&result);
             let verbose = cli.verbose || failed;
             let output_str = match (&cli.output, verbose) {

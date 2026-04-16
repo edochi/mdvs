@@ -1,6 +1,8 @@
 ---
 title: Wavelet denoising — replication attempt
 author: Chiara Russo
+priority: low
+batch: "pilot"
 tags:
   - 1
   - 2

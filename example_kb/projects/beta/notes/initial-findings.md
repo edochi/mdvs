@@ -7,6 +7,7 @@ tags:
   - kalman-filter
   - latency
 priority: medium
+batch: "3b-rerun"
 algorithm: Adaptive Kalman Filter
 dataset: alpha-calibration-2031-q3
 convergence_ms: 847

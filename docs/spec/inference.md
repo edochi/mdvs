@@ -106,7 +106,7 @@ Result: `title` allowed=`["**"]` required=`["**"]`; `tags` allowed=`["**"]` requ
 
 1. **Type check** — field must be String, Integer, Array(String), or Array(Integer)
 2. **Distinct cap** — `distinct_values.len() <= max_categories` (default 10)
-3. **Repetition** — `occurrence_count / distinct_values.len() >= min_repetition` (default 2)
+3. **Repetition** — `occurrence_count / distinct_values.len() >= min_repetition` (default 3)
 
 Distinct values and occurrence counts are collected during type inference in `collect_distinct_values()` at `discover/infer/types.rs:86`. For arrays, counting is element-level (each array element is one occurrence). Null values are excluded.
 

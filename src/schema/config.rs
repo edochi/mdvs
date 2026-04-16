@@ -125,7 +125,7 @@ fn is_default_max_categories(v: &usize) -> bool {
 }
 
 fn default_min_category_repetition() -> usize {
-    2
+    3
 }
 
 fn is_default_min_category_repetition(v: &usize) -> bool {
@@ -401,7 +401,7 @@ mod tests {
                 ignore: vec![],
                 field: fields,
                 max_categories: 10,
-                min_category_repetition: 2,
+                min_category_repetition: 3,
             },
             embedding_model: Some(EmbeddingModelConfig {
                 provider: "model2vec".into(),
@@ -476,7 +476,7 @@ mod tests {
                     },
                 ],
                 max_categories: 10,
-                min_category_repetition: 2,
+                min_category_repetition: 3,
             },
             embedding_model: Some(EmbeddingModelConfig {
                 provider: "model2vec".into(),
@@ -762,7 +762,7 @@ default_limit = 10
                 ignore: vec![],
                 field: vec![],
                 max_categories: 10,
-                min_category_repetition: 2,
+                min_category_repetition: 3,
             },
             embedding_model: None,
             chunking: None,
@@ -1354,7 +1354,7 @@ include_bare_files = false
 "#;
         let parsed: MdvsToml = toml::from_str(toml_str).unwrap();
         assert_eq!(parsed.fields.max_categories, 10);
-        assert_eq!(parsed.fields.min_category_repetition, 2);
+        assert_eq!(parsed.fields.min_category_repetition, 3);
     }
 
     #[test]

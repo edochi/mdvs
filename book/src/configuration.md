@@ -285,13 +285,13 @@ Two optional fields in `[fields]` control categorical auto-inference:
 ```toml
 [fields]
 max_categories = 10
-min_category_repetition = 2
+min_category_repetition = 3
 ```
 
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `max_categories` | Integer | `10` | Max distinct values for a field to be inferred as categorical |
-| `min_category_repetition` | Integer | `2` | Min average repetition (occurrences / distinct) for categorical inference |
+| `min_category_repetition` | Integer | `3` | Min average repetition (occurrences / distinct) for categorical inference |
 
 These are hidden from `mdvs.toml` when set to their defaults. They only affect auto-inference — manually written `categories` are unaffected.
 

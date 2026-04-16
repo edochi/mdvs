@@ -378,7 +378,7 @@ mod tests {
                 ignore: vec![],
                 field: vec![],
                 max_categories: 10,
-                min_category_repetition: 2,
+                min_category_repetition: 3,
             },
             embedding_model: Some(EmbeddingModelConfig {
                 provider: "model2vec".into(),

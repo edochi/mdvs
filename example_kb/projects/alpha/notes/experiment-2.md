@@ -6,7 +6,8 @@ tags:
   - calibration
   - SPR-B2
   - multi-wavelength
-priority: 1
+priority: high
+batch: 3
 sensor_type: SPR-B2
 wavelength_nm: 632.8
 sample_count: 16

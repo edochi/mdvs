@@ -17,7 +17,7 @@ Returns `InitOutcome` with `files_scanned`, `fields: Vec<DiscoveredField>`, `dry
 ## Key points
 
 - **Schema-only** — init never downloads a model, never creates `.mdvs/`, never embeds.
-- **Categorical inference** — `infer_constraints()` runs with defaults (max_categories=10, min_repetition=2). Qualifying fields get `[fields.field.constraints].categories`.
+- **Categorical inference** — `infer_constraints()` runs with defaults (max_categories=10, min_repetition=3). Qualifying fields get `[fields.field.constraints].categories`.
 - **`init --force` vs `update reinfer`** — init rewrites the entire config (all sections). `update reinfer` re-infers only `[fields]`, preserving all other config.
 
 See [inference.md](../inference.md) for the inference algorithm.

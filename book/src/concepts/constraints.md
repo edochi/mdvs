@@ -66,7 +66,7 @@ Null values on categorical fields follow the existing nullable logic — if `nul
 During `init` and `update reinfer`, mdvs automatically detects categorical fields using a heuristic with two conditions (both must hold):
 
 1. **Max distinct values** — the field has at most `max_categories` distinct values (default: 10)
-2. **Minimum repetition** — `total occurrences / distinct values >= min_category_repetition` (default: 2)
+2. **Minimum repetition** — `total occurrences / distinct values >= min_category_repetition` (default: 3)
 
 For array fields, distinct values and occurrences are counted at the element level.
 
@@ -83,7 +83,7 @@ The thresholds are configurable in `[fields]`:
 ```toml
 [fields]
 max_categories = 10
-min_category_repetition = 2
+min_category_repetition = 3
 ```
 
 These control automatic inference only. Manually written `categories` in the TOML are unaffected by thresholds.
