@@ -1200,6 +1200,7 @@ nullable = false
                     toml::Value::String("draft".into()),
                     toml::Value::String("published".into()),
                 ]),
+                ..Default::default()
             }),
         }]);
         let toml_str = toml::to_string(&doc).unwrap();
@@ -1271,6 +1272,7 @@ type = "String"
             nullable: false,
             constraints: Some(Constraints {
                 categories: Some(vec![toml::Value::String("yes".into())]),
+                ..Default::default()
             }),
         }]);
         let err = config.validate().unwrap_err();
@@ -1290,6 +1292,7 @@ type = "String"
                     toml::Value::String("draft".into()),
                     toml::Value::String("published".into()),
                 ]),
+                ..Default::default()
             }),
         }]);
         assert!(config.validate().is_ok());
@@ -1305,6 +1308,7 @@ type = "String"
             nullable: false,
             constraints: Some(Constraints {
                 categories: Some(vec![toml::Value::Integer(1)]),
+                ..Default::default()
             }),
         }]);
         let err = config.validate().unwrap_err();
@@ -1321,6 +1325,7 @@ type = "String"
             nullable: false,
             constraints: Some(Constraints {
                 categories: Some(vec![toml::Value::String("a".into())]),
+                ..Default::default()
             }),
         }]);
         let err = config.validate().unwrap_err();
@@ -1378,6 +1383,7 @@ include_bare_files = false
                     toml::Value::String("draft".into()),
                     toml::Value::String("published".into()),
                 ]),
+                ..Default::default()
             }),
         }]);
         let dir = tempfile::tempdir().unwrap();

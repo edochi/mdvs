@@ -346,6 +346,7 @@ fn force_categorical(
 
     Some(Constraints {
         categories: Some(categories),
+        ..Default::default()
     })
 }
 

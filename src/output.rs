@@ -181,6 +181,8 @@ pub enum ViolationKind {
     NullNotAllowed,
     /// The field's value is not in the declared categories.
     InvalidCategory,
+    /// The field's value is outside the declared min/max range.
+    OutOfRange,
 }
 
 /// A single file that failed a particular field validation rule.

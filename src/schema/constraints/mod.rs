@@ -9,8 +9,10 @@
 //! runs the full resolver (self-validation + pairwise compatibility).
 
 mod categories;
+mod range;
 
 use crate::discover::field_type::FieldType;
+use crate::output::ViolationKind;
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -25,7 +27,14 @@ pub struct Constraints {
     /// Array(String), and Array(Integer) fields.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub categories: Option<Vec<toml::Value>>,
-    // future (TODO-0008): min, max
+    /// Minimum value (inclusive). Applies to Integer, Float,
+    /// Array(Integer), and Array(Float) fields.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<toml::Value>,
+    /// Maximum value (inclusive). Applies to Integer, Float,
+    /// Array(Integer), and Array(Float) fields.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<toml::Value>,
     // future (TODO-0010): min_length, max_length
     // future (TODO-0145): pattern
 }
@@ -40,7 +49,11 @@ pub struct Constraints {
 pub(crate) enum ConstraintKind {
     /// Value must be one of the listed categories.
     Categories(Vec<toml::Value>),
-    // future (TODO-0008): Range { min: Option<toml::Value>, max: Option<toml::Value> }
+    /// Value must fall within [min, max] (inclusive).
+    Range {
+        min: Option<toml::Value>,
+        max: Option<toml::Value>,
+    },
     // future (TODO-0010): Length { min: Option<usize>, max: Option<usize> }
     // future (TODO-0145): Pattern(String)
 }
@@ -68,7 +81,13 @@ impl Constraints {
         if let Some(cats) = &self.categories {
             result.push(ConstraintKind::Categories(cats.clone()));
         }
-        // future: check min/max, min_length/max_length, pattern
+        if self.min.is_some() || self.max.is_some() {
+            result.push(ConstraintKind::Range {
+                min: self.min.clone(),
+                max: self.max.clone(),
+            });
+        }
+        // future: check min_length/max_length, pattern
         result
     }
 }
@@ -125,6 +144,9 @@ impl ConstraintKind {
             ConstraintKind::Categories(values) => {
                 categories::validate_for_type(field_name, field_type, values)
             }
+            ConstraintKind::Range { min, max } => {
+                range::validate_for_type(field_name, field_type, min, max)
+            }
         }
     }
 
@@ -136,6 +158,17 @@ impl ConstraintKind {
     ) -> Option<ConstraintViolation> {
         match self {
             ConstraintKind::Categories(cats) => categories::validate_value(value, field_type, cats),
+            ConstraintKind::Range { min, max } => {
+                range::validate_value(value, field_type, min, max)
+            }
+        }
+    }
+
+    /// Return the violation kind for this constraint type.
+    pub(crate) fn violation_kind(&self) -> ViolationKind {
+        match self {
+            ConstraintKind::Categories(_) => ViolationKind::InvalidCategory,
+            ConstraintKind::Range { .. } => ViolationKind::OutOfRange,
         }
     }
 
@@ -150,7 +183,13 @@ impl ConstraintKind {
             (ConstraintKind::Categories(_), ConstraintKind::Categories(_)) => Some(format!(
                 "field '{field_name}': duplicate categories constraint"
             )),
-            // future: (Categories, Range) | (Range, Categories) → conflict
+            (ConstraintKind::Range { .. }, ConstraintKind::Range { .. }) => {
+                Some(format!("field '{field_name}': duplicate range constraint"))
+            }
+            (ConstraintKind::Categories(_), ConstraintKind::Range { .. })
+            | (ConstraintKind::Range { .. }, ConstraintKind::Categories(_)) => Some(format!(
+                "field '{field_name}': categories and range constraints are mutually exclusive"
+            )),
         }
     }
 }
@@ -176,6 +215,7 @@ mod tests {
     fn cats_constraint(cats: Vec<toml::Value>) -> Constraints {
         Constraints {
             categories: Some(cats),
+            ..Default::default()
         }
     }
 
