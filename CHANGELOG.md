@@ -2,6 +2,18 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## v0.3.1 - 2026-04-16
+#### Features
+- add `mdvs skill` command to print SKILL.md to stdout - (f76e926) - edoch, *Claude*
+#### Bug Fixes
+- (**docs**) update Rust edition badge from 2021 to 2024 - (5c185f8) - edoch, *Claude*
+#### Documentation
+- add SKILL.md for AI agent integration (TODO-0102) - (31014b5) - edoch, *Claude*
+#### Continuous Integration
+- bump upload-pages-artifact v3→v5 and deploy-pages v4→v5 - (8f0991b) - edoch, *Claude*
+
+- - -
+
 ## v0.3.0 - 2026-04-16
 #### Features
 - refactor update reinfer into subcommand with categorical flags - (1f29ce5) - edoch, *Claude*
