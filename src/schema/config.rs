@@ -5,6 +5,7 @@ use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig, FieldTypeSerde
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
+use std::io;
 use std::path::Path;
 use tracing::instrument;
 
@@ -212,8 +213,24 @@ impl MdvsToml {
     /// Deserialize an `MdvsToml` from a file on disk.
     #[instrument(name = "read_config", skip_all, level = "debug")]
     pub fn read(path: &Path) -> anyhow::Result<Self> {
-        let content = fs::read_to_string(path)?;
-        let config: MdvsToml = toml::from_str(&content)?;
+        let content = match fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                // Distinguish "directory doesn't exist" from "mdvs.toml doesn't exist"
+                let parent = path.parent().unwrap_or(Path::new("."));
+                if !parent.exists() {
+                    anyhow::bail!("directory '{}' does not exist", parent.display());
+                }
+                anyhow::bail!(
+                    "mdvs.toml not found in '{}' — run 'mdvs init {}' to initialize",
+                    parent.display(),
+                    parent.display()
+                );
+            }
+            Err(e) => anyhow::bail!("failed to read {}: {e}", path.display()),
+        };
+        let config: MdvsToml = toml::from_str(&content)
+            .map_err(|e| anyhow::anyhow!("failed to parse {}: {e}", path.display()))?;
         Ok(config)
     }
 
@@ -1394,5 +1411,35 @@ include_bare_files = false
         assert!(content.contains("categories"));
         let loaded = MdvsToml::read(&path).unwrap();
         assert_eq!(loaded, doc);
+    }
+
+    #[test]
+    fn read_missing_directory_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("nonexistent_dir").join("mdvs.toml");
+        let err = MdvsToml::read(&path).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("does not exist"), "got: {msg}");
+        assert!(msg.contains("nonexistent_dir"), "got: {msg}");
+    }
+
+    #[test]
+    fn read_missing_toml_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("mdvs.toml");
+        let err = MdvsToml::read(&path).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("mdvs.toml not found"), "got: {msg}");
+        assert!(msg.contains("mdvs init"), "got: {msg}");
+    }
+
+    #[test]
+    fn read_invalid_toml_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("mdvs.toml");
+        fs::write(&path, "this is not valid toml = [unclosed").unwrap();
+        let err = MdvsToml::read(&path).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("failed to parse"), "got: {msg}");
     }
 }
