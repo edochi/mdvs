@@ -13,29 +13,40 @@ use std::path::Path;
 use std::time::Instant;
 use tracing::{info, instrument};
 
+/// Constraint kinds selectable via `--with`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+#[value(rename_all = "lowercase")]
+pub enum WithKind {
+    /// Force categorical inference (skip heuristic)
+    Categorical,
+    /// Infer min/max range from observed numeric values
+    Range,
+    /// Strip all constraints (no auto-inference)
+    None,
+}
+
+/// Whether two `WithKind` values conflict on the same field.
+fn with_kinds_conflict(a: WithKind, b: WithKind) -> bool {
+    use WithKind::*;
+    matches!((a, b), (Categorical, Range) | (Range, Categorical))
+}
+
 /// Arguments for the `update reinfer` subcommand.
 #[derive(Debug, Clone, clap::Args)]
 pub struct ReinferArgs {
     /// Fields to reinfer (all if none specified)
     pub fields: Vec<String>,
-    /// Force categorical on named fields (skip heuristic)
-    #[arg(long)]
-    pub categorical: bool,
-    /// Force NOT categorical on named fields (strip categories)
-    #[arg(long, conflicts_with = "categorical")]
-    pub no_categorical: bool,
+    /// Which constraint kinds to (re)infer on named fields.
+    /// Comma-separated list. Use `none` to strip all constraints.
+    /// Omit entirely to run heuristic defaults.
+    #[arg(long = "with", value_delimiter = ',', value_enum)]
+    pub with: Vec<WithKind>,
     /// Max distinct values for categorical inference
     #[arg(long)]
     pub max_categories: Option<usize>,
     /// Min average repetition for categorical inference
     #[arg(long)]
     pub min_repetition: Option<usize>,
-    /// Infer range (min/max) on named numeric fields
-    #[arg(long)]
-    pub range: bool,
-    /// Strip range constraints on named fields
-    #[arg(long, conflicts_with = "range")]
-    pub no_range: bool,
     /// Show what would change, write nothing
     #[arg(long)]
     pub dry_run: bool,
@@ -53,17 +64,39 @@ pub async fn run(
     let start = Instant::now();
     let mut steps = Vec::new();
 
-    // Pre-check: modifier flags require named fields
-    if let Some(args) = reinfer
-        && args.fields.is_empty()
-        && (args.categorical || args.no_categorical || args.range || args.no_range)
-    {
-        return CommandResult::failed(
-            steps,
-            ErrorKind::User,
-            "--categorical, --no-categorical, --range, and --no-range require named fields".into(),
-            start,
-        );
+    // Pre-check: --with requires named fields, validate the kind list
+    if let Some(args) = reinfer {
+        if !args.with.is_empty() && args.fields.is_empty() {
+            return CommandResult::failed(
+                steps,
+                ErrorKind::User,
+                "--with requires named fields".into(),
+                start,
+            );
+        }
+        if args.with.contains(&WithKind::None) && args.with.len() > 1 {
+            return CommandResult::failed(
+                steps,
+                ErrorKind::User,
+                "--with=none cannot be combined with other kinds".into(),
+                start,
+            );
+        }
+        for i in 0..args.with.len() {
+            for j in (i + 1)..args.with.len() {
+                if with_kinds_conflict(args.with[i], args.with[j]) {
+                    return CommandResult::failed(
+                        steps,
+                        ErrorKind::User,
+                        format!(
+                            "--with: {:?} and {:?} are mutually exclusive",
+                            args.with[i], args.with[j]
+                        ),
+                        start,
+                    );
+                }
+            }
+        }
     }
 
     // 1. Read config — MdvsToml::read() + validate() directly
@@ -182,42 +215,39 @@ pub async fn run(
 
         let new_type = FieldTypeSerde::from(&inf.field_type);
         let constraints = if let Some(args) = reinfer {
-            // Build constraints by merging categorical and range independently.
-            let mut c = Constraints::default();
-
-            // Categorical
-            if args.no_categorical {
-                // leave categories None
-            } else if args.categorical {
-                if let Some(forced) = force_categorical(inf) {
-                    c.categories = forced.categories;
-                }
-            } else {
+            if args.with.contains(&WithKind::None) {
+                None
+            } else if args.with.is_empty() {
+                // Bare reinfer / no --with → heuristic default
                 let max_cat = args.max_categories.unwrap_or(config.fields.max_categories);
                 let min_rep = args
                     .min_repetition
                     .unwrap_or(config.fields.min_category_repetition);
-                if let Some(inferred) = infer_constraints(inf, max_cat, min_rep) {
-                    c.categories = inferred.categories;
-                }
-            }
-
-            // Range
-            if args.no_range {
-                // leave min/max None
-            } else if args.range
-                && let Some(range) = infer_range(inf)
-            {
-                c.min = range.min;
-                c.max = range.max;
-            }
-            // else: neither --range nor --no-range → don't touch range constraints
-            // (existing range constraints will be dropped since we rebuild the field)
-
-            if c == Constraints::default() {
-                None
+                infer_constraints(inf, max_cat, min_rep)
             } else {
-                Some(c)
+                // Explicit kinds → force-infer each
+                let mut c = Constraints::default();
+                for kind in &args.with {
+                    match kind {
+                        WithKind::Categorical => {
+                            if let Some(forced) = force_categorical(inf) {
+                                c.categories = forced.categories;
+                            }
+                        }
+                        WithKind::Range => {
+                            if let Some(r) = infer_range(inf) {
+                                c.min = r.min;
+                                c.max = r.max;
+                            }
+                        }
+                        WithKind::None => unreachable!("handled above"),
+                    }
+                }
+                if c == Constraints::default() {
+                    None
+                } else {
+                    Some(c)
+                }
             }
         } else {
             None
@@ -420,12 +450,9 @@ mod tests {
     fn reinfer_args(fields: &[&str]) -> ReinferArgs {
         ReinferArgs {
             fields: fields.iter().map(|s| s.to_string()).collect(),
-            categorical: false,
-            no_categorical: false,
+            with: vec![],
             max_categories: None,
             min_repetition: None,
-            range: false,
-            no_range: false,
             dry_run: false,
         }
     }
@@ -743,19 +770,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reinfer_no_categorical_strips() {
+    async fn reinfer_with_none_strips() {
         let tmp = tempfile::tempdir().unwrap();
         create_categorical_vault(tmp.path());
         init_no_build(tmp.path());
 
         let args = ReinferArgs {
             fields: vec!["status".into()],
-            categorical: false,
-            no_categorical: true,
+            with: vec![WithKind::None],
             max_categories: None,
             min_repetition: None,
-            range: false,
-            no_range: false,
             dry_run: false,
         };
         let step = run(tmp.path(), Some(&args), false, false).await;
@@ -772,21 +796,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reinfer_categorical_forces() {
+    async fn reinfer_with_categorical_forces() {
         let tmp = tempfile::tempdir().unwrap();
         create_categorical_vault(tmp.path());
         init_no_build(tmp.path());
 
         // title has 9 distinct values across 9 files — ratio=1, below threshold
-        // But --categorical should force it
+        // But --with=categorical should force it
         let args = ReinferArgs {
             fields: vec!["title".into()],
-            categorical: true,
-            no_categorical: false,
+            with: vec![WithKind::Categorical],
             max_categories: None,
             min_repetition: None,
-            range: false,
-            no_range: false,
             dry_run: false,
         };
         let step = run(tmp.path(), Some(&args), false, false).await;
@@ -819,12 +840,9 @@ mod tests {
         // Set min_repetition=4 → should NOT be categorical
         let args = ReinferArgs {
             fields: vec!["status".into()],
-            categorical: false,
-            no_categorical: false,
+            with: vec![],
             max_categories: None,
             min_repetition: Some(4),
-            range: false,
-            no_range: false,
             dry_run: false,
         };
         let step = run(tmp.path(), Some(&args), false, false).await;
@@ -841,19 +859,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn categorical_without_fields_errors() {
+    async fn with_without_fields_errors() {
         let tmp = tempfile::tempdir().unwrap();
         create_categorical_vault(tmp.path());
         init_no_build(tmp.path());
 
         let args = ReinferArgs {
             fields: vec![],
-            categorical: true,
-            no_categorical: false,
+            with: vec![WithKind::Categorical],
             max_categories: None,
             min_repetition: None,
-            range: false,
-            no_range: false,
             dry_run: false,
         };
         let step = run(tmp.path(), Some(&args), false, false).await;
@@ -916,5 +931,39 @@ mod tests {
             .as_ref()
             .unwrap();
         assert_eq!(cats.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn reinfer_with_none_plus_other_errors() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_categorical_vault(tmp.path());
+        init_no_build(tmp.path());
+
+        let args = ReinferArgs {
+            fields: vec!["status".into()],
+            with: vec![WithKind::None, WithKind::Categorical],
+            max_categories: None,
+            min_repetition: None,
+            dry_run: false,
+        };
+        let step = run(tmp.path(), Some(&args), false, false).await;
+        assert!(crate::step::has_failed(&step));
+    }
+
+    #[tokio::test]
+    async fn reinfer_with_conflicting_kinds_errors() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_categorical_vault(tmp.path());
+        init_no_build(tmp.path());
+
+        let args = ReinferArgs {
+            fields: vec!["status".into()],
+            with: vec![WithKind::Categorical, WithKind::Range],
+            max_categories: None,
+            min_repetition: None,
+            dry_run: false,
+        };
+        let step = run(tmp.path(), Some(&args), false, false).await;
+        assert!(crate::step::has_failed(&step));
     }
 }
