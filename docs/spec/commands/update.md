@@ -7,7 +7,7 @@ Re-scan files, infer field changes, and update `mdvs.toml`. Pure inference — n
 `cmd/update.rs` → `run()`
 
 1. **Read config** — `MdvsToml::read()` + `validate()`
-2. **Pre-check** — validate reinfer field names exist in config; validate `--categorical`/`--no-categorical` require named fields
+2. **Pre-check** — validate `--with` requires named fields; validate `--with` value list (no `none` mixed with other kinds; pairwise compatibility via `with_kinds_conflict()`)
 3. **Scan** — `ScannedFiles::scan(path, &config.scan)`
 4. **Infer** — `InferredSchema::infer(&scanned)` — full inference (types, paths, distinct values)
 5. **Partition** — split config fields into `protected` (keep) and `targets` (reinfer):
@@ -19,13 +19,19 @@ Re-scan files, infer field changes, and update `mdvs.toml`. Pure inference — n
 
 Returns `UpdateOutcome` with `files_scanned`, `added`, `changed`, `removed`, `unchanged`, `dry_run`.
 
-## Categorical inference in reinfer
+## Constraint inference in reinfer
 
-When constructing `TomlField` for reinferred fields, constraints are determined by the `ReinferArgs`:
+The `ReinferArgs.with: Vec<WithKind>` field drives constraint construction. `WithKind` is a CLI-local enum with variants `Categorical`, `Range`, `None`.
+
+When constructing `TomlField` for reinferred fields:
 
 - **No reinfer** (default mode) → `constraints: None` (no constraint changes on new fields)
-- **`--no-categorical`** → `None` (strip categories)
-- **`--categorical`** → `force_categorical(&inf)` (all distinct values as categories, skip heuristic)
-- **Default heuristic** → `infer_constraints(&inf, max_cat, min_rep)` where thresholds come from `--max-categories`/`--min-repetition` flags or `config.fields` defaults
+- **`with` contains `None`** → `constraints: None` (strip all)
+- **`with` is empty** → `infer_constraints(&inf, max_cat, min_rep)` (heuristic default — currently categorical only)
+- **`with` is non-empty (no `None`)** → for each kind, force-infer:
+  - `Categorical` → `force_categorical(&inf)` (all distinct values as categories, skip heuristic threshold)
+  - `Range` → `infer_range(&inf)` (min/max from observed numeric values)
 
-`force_categorical()` at `cmd/update.rs` checks type applicability (String/Integer/Array) and collects all distinct values as sorted `toml::Value` categories. Unlike the heuristic, it has no cardinality or repetition threshold.
+`force_categorical()` and `infer_range()` are in `cmd/update.rs` and `discover/infer/constraints/range.rs` respectively. Both check type applicability before producing values.
+
+`with_kinds_conflict()` in `cmd/update.rs` defines pairwise CLI-level incompatibility (currently only `Categorical` ↔ `Range`). This is independent of the deeper `ConstraintKind::conflicts_with()` validation that runs at config load time, but the rules align.

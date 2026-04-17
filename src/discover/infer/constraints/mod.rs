@@ -12,7 +12,7 @@ use crate::schema::constraints::Constraints;
 /// Run all constraint inference heuristics on an inferred field.
 /// Returns `Some(Constraints)` if any constraints were detected, `None` otherwise.
 ///
-/// Range constraints are never auto-inferred — they require explicit `--range`.
+/// Range constraints are never auto-inferred — they require explicit `--with=range`.
 pub fn infer_constraints(
     field: &InferredField,
     max_categories: usize,

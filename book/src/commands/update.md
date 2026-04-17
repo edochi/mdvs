@@ -35,8 +35,7 @@ Re-infer field definitions from scratch. This is a subcommand of `update` with i
 | Flag | Description |
 |---|---|
 | `fields..` | Fields to reinfer (all if none specified) |
-| `--categorical` | Force categorical on named fields (skip heuristic) |
-| `--no-categorical` | Force NOT categorical on named fields (strip categories) |
+| `--with <kinds>` | Comma-separated constraint kinds to apply (`categorical`, `range`, `none`). Requires named fields. |
 | `--max-categories <N>` | Override max distinct values for categorical inference |
 | `--min-repetition <N>` | Override min average repetition for categorical inference |
 | `--dry-run` | Preview changes without writing anything |
@@ -49,14 +48,20 @@ mdvs update example_kb reinfer drift_rate priority
 
 The named fields are removed from `mdvs.toml` and re-inferred from scratch, as if they'd never been seen. All other fields stay protected. Fails if a named field isn't in `mdvs.toml`.
 
-Categorical constraints are inferred using the heuristic (see [Constraints](../concepts/constraints.md)). Use `--categorical` to force categories or `--no-categorical` to strip them:
+Without `--with`, reinfer applies the default heuristic (categorical detection — see [Constraints](../concepts/constraints.md)). Use `--with` to override:
 
 ```bash
-mdvs update example_kb reinfer status --no-categorical
-mdvs update example_kb reinfer title --categorical
+# Force categorical (skip heuristic threshold)
+mdvs update example_kb reinfer title --with=categorical
+
+# Infer min/max from observed numeric values
+mdvs update example_kb reinfer sample_count --with=range
+
+# Strip all constraints
+mdvs update example_kb reinfer status --with=none
 ```
 
-`--categorical` and `--no-categorical` require named fields.
+`--with` takes a comma-separated list. Incompatible kinds (e.g., `range,categorical` on the same field) are rejected at parse time. `--with=none` cannot be combined with other kinds. `--with` requires named fields.
 
 **Reinfer all fields:**
 
@@ -151,5 +156,7 @@ The field tables are identical in both modes — verbose only adds the step line
 |---|---|
 | `no mdvs.toml found` | Config doesn't exist — run `mdvs init` first |
 | `field '<name>' is not in mdvs.toml` | `reinfer` names a field that doesn't exist |
-| `--categorical and --no-categorical require named fields` | Override flags used without specifying fields |
+| `--with requires named fields` | `--with` flag used without specifying fields |
+| `--with: <X> and <Y> are mutually exclusive` | Incompatible constraint kinds in the same `--with` list |
+| `--with=none cannot be combined with other kinds` | `none` mixed with other kinds in `--with` |
 | `field name conflicts with internal column` | New field name collides with reserved names |

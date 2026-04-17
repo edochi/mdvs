@@ -2,7 +2,7 @@
 
 `mdvs check` validates every file's frontmatter against the schema in `mdvs.toml`. It's read-only, deterministic, and produces no side effects — it just tells you what's wrong.
 
-## The five violations
+## The six violations
 
 | Violation | Meaning |
 |---|---|
@@ -11,6 +11,7 @@
 | `MissingRequired` | A file matches a `required` glob but doesn't have the field |
 | `NullNotAllowed` | The field is present but `null`, and `nullable` is `false` |
 | `InvalidCategory` | The value is not in the field's declared `categories` |
+| `OutOfRange` | The numeric value is outside the field's declared `min`/`max` |
 
 ### WrongType
 
@@ -44,6 +45,16 @@ This check only runs on non-null values that pass the type check. If the value h
 
 See [Constraints](./constraints.md) for how categories are configured and auto-inferred.
 
+### OutOfRange
+
+Fires when a numeric field has a `min` or `max` constraint and the value falls outside the declared inclusive range. For example, if `rating` has `min = 1, max = 5` and a file has `rating: 7`, the value is above `max`.
+
+For array fields, each element is checked individually. The violation detail lists the specific elements that are out of range.
+
+This check only runs on non-null values that pass the type check, same as `InvalidCategory`.
+
+See [Constraints](./constraints.md#range) for how range bounds are configured.
+
 ## Type checking rules
 
 Two leniencies make validation practical for real-world YAML:
@@ -67,6 +78,7 @@ Null interacts with validation in specific ways:
 - **`MissingRequired`** — null counts as "present", so this never fires on null.
 - **`NullNotAllowed`** — fires when the value is null and `nullable = false`.
 - **`InvalidCategory`** — null skips the category check (same as `WrongType`), so this never fires on null.
+- **`OutOfRange`** — null skips the range check (same as `InvalidCategory`), so this never fires on null.
 
 A single null field can trigger both `Disallowed` and `NullNotAllowed` at the same time.
 

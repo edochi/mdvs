@@ -265,7 +265,9 @@ See [Schema Inference](./concepts/schema.md#path-patterns) for how these pattern
 
 ### Constraints
 
-The optional `[fields.field.constraints]` sub-table adds value constraints beyond type checking. Currently, the `categories` key restricts values to an enumerated set:
+The optional `[fields.field.constraints]` sub-table adds value constraints beyond type checking.
+
+**`categories`** — restricts values to an enumerated set (String, Integer, or arrays of either):
 
 ```toml
 [[fields.field]]
@@ -276,7 +278,19 @@ type = "String"
 categories = ["active", "archived", "completed", "draft", "published"]
 ```
 
-Categories are auto-inferred during `init` and `update reinfer`. See [Constraints](./concepts/constraints.md) for the full reference.
+**`min` / `max`** — restricts numeric values to an inclusive range (Integer, Float, or arrays of either). Both bounds are optional:
+
+```toml
+[[fields.field]]
+name = "rating"
+type = "Integer"
+
+[fields.field.constraints]
+min = 1
+max = 5
+```
+
+Categories are auto-inferred during `init` and `update reinfer`. Range constraints are not auto-inferred but can be inferred on demand with `update reinfer <field> --with=range`. See [Constraints](./concepts/constraints.md) for the full reference.
 
 ### Inference thresholds
 
