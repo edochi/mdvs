@@ -355,7 +355,7 @@ fn check_field_values(
                                 if let Some(cv) = ck.validate_value(value, &expected) {
                                     let key = ViolationKey {
                                         field: field_name.clone(),
-                                        kind: ViolationKind::InvalidCategory,
+                                        kind: ck.violation_kind(),
                                         rule: cv.rule,
                                     };
                                     violations.entry(key).or_default().push(ViolatingFile {
@@ -1165,6 +1165,7 @@ mod tests {
                         .map(|s| toml::Value::String(s.into()))
                         .collect(),
                 ),
+                ..Default::default()
             }),
         }
     }
@@ -1234,6 +1235,7 @@ mod tests {
                         toml::Value::String("python".into()),
                         toml::Value::String("go".into()),
                     ]),
+                    ..Default::default()
                 }),
             }],
             vec![],
@@ -1265,6 +1267,7 @@ mod tests {
                         toml::Value::String("draft".into()),
                         toml::Value::String("published".into()),
                     ]),
+                    ..Default::default()
                 }),
             }],
             vec![],
@@ -1297,6 +1300,7 @@ mod tests {
                         toml::Value::Integer(2),
                         toml::Value::Integer(3),
                     ]),
+                    ..Default::default()
                 }),
             }],
             vec![],

@@ -24,6 +24,7 @@ fn kind_display(kind: &ViolationKind) -> &'static str {
         ViolationKind::Disallowed => "Not allowed",
         ViolationKind::NullNotAllowed => "Null value not allowed",
         ViolationKind::InvalidCategory => "Invalid category",
+        ViolationKind::OutOfRange => "Out of range",
     }
 }
 

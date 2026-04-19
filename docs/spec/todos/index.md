@@ -150,3 +150,5 @@
 | [0146](TODO-0146.md) | Update mdBook for categorical constraints and reinfer subcommand | done | high | 2026-04-11 |
 | [0147](TODO-0147.md) | Restructure specs as developer code map | done | medium | 2026-04-12 |
 | [0148](TODO-0148.md) | Generate llms.txt and llms-full.txt from mdBook in CI | todo | medium | 2026-04-16 |
+| [0149](TODO-0149.md) | Bidirectional mdvs.toml ↔ JSON Schema and per-value validation delegation | todo | medium | 2026-04-18 |
+| [0150](TODO-0150.md) | Strict mode for inference and validation | todo | low | 2026-04-18 |

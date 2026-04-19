@@ -62,6 +62,7 @@ Validates all frontmatter against the schema in `mdvs.toml`. Reports violations:
 - **`WrongType`** — value doesn't match the declared type (e.g., string in an integer field)
 - **`Disallowed`** — field appears in a file path not covered by its `allowed` globs
 - **`InvalidCategory`** — value is not in the field's declared category list
+- **`OutOfRange`** — numeric value is outside the declared `min`/`max` range
 
 New fields (present in files but not in `mdvs.toml`) are reported separately as informational — they don't cause a non-zero exit code. Run `update` to add them to the schema.
 
@@ -70,12 +71,20 @@ New fields (present in files but not in `mdvs.toml`) are reported separately as 
 Re-scans files and adds newly discovered fields to `mdvs.toml`. Does not remove or change existing fields by default.
 
 - `mdvs update` — detect and add new fields only
-- `mdvs update reinfer <field>` — re-infer type and constraints for a specific field
+- `mdvs update reinfer <field>` — re-infer type and constraints (heuristic defaults)
 - `mdvs update reinfer <field> --dry-run` — preview what reinfer would change
-- `mdvs update reinfer <field> --no-categorical` — reinfer without detecting categories
-- `mdvs update reinfer <field> --categorical` — force categorical detection regardless of thresholds
+- `mdvs update reinfer <field> --with=<kinds>` — force specific constraint kinds
+- `mdvs update reinfer <field> --with=none` — strip all constraints
 
-Use `reinfer` when a field's type has changed (e.g., values evolved from integers to strings) or when you want to refresh its categorical constraints.
+The `--with` flag takes a comma-separated list of constraint kinds: `categorical`, `range`, or `none`. Examples:
+
+- `--with=categorical` — force categorical (skip heuristic threshold)
+- `--with=range` — infer min/max from observed numeric values
+- `--with=none` — strip all constraints from the field
+
+Incompatible kinds (like `range,categorical` on the same field) are rejected at parse time. `--with` requires named fields.
+
+Use `reinfer` when a field's type has changed (e.g., values evolved from integers to strings) or when you want to refresh its constraints.
 
 ### `mdvs build`
 
@@ -153,8 +162,11 @@ mdvs check         # validate again after update
 ### Fixing a field that was inferred wrong
 
 ```bash
-mdvs update reinfer priority --dry-run   # preview
-mdvs update reinfer priority             # apply
+mdvs update reinfer priority --dry-run            # preview heuristic re-run
+mdvs update reinfer priority                      # apply
+mdvs update reinfer priority --with=categorical   # force categorical
+mdvs update reinfer rating --with=range           # infer min/max
+mdvs update reinfer priority --with=none          # strip all constraints
 ```
 
 ### Searching with filters
@@ -179,6 +191,7 @@ mdvs check
 - `search` auto-runs `update` and `build` if needed (unless `--no-update` or `--no-build`).
 - Field types are inferred automatically: `String`, `Integer`, `Float`, `Boolean`, `Array(T)`, `Object(...)`. Mixed types widen (e.g., `Integer` + `String` becomes `String`).
 - Fields with low-cardinality repeated values are automatically detected as categorical (e.g., `status: draft/published/archived`). Out-of-category values are reported as `InvalidCategory` violations.
+- Range constraints (`min`/`max`) on numeric fields are not auto-inferred but can be added manually in `mdvs.toml` or inferred on demand with `update reinfer <field> --with=range`. Categorical and range constraints are mutually exclusive on the same field.
 - `init --force` rewrites the entire config from scratch. `update` preserves existing config and only adds new fields. `update reinfer` re-infers specific fields.
 - The model identity is tracked: if you change the model in `mdvs.toml`, `build` and `search` will require `--force` to confirm a full re-embed.
 - `mdvs.toml` is the complete source of truth. There is no lock file.
@@ -220,12 +233,14 @@ mdvs check ~/notes
 #   MissingRequired: "title" missing in blog/drafts/untitled.md
 #   WrongType: "priority" expected Integer, got String in projects/alpha.md
 #   InvalidCategory: "status" got "wip", expected one of [draft, published, archived]
+#   OutOfRange: "rating" got 11, expected min=1, max=5
 ```
 
 For each violation type:
 - **MissingRequired** — add the field to the file, or remove the path from `required` in `mdvs.toml`
 - **WrongType** — fix the value in the file, or reinfer the field if the type should change: `mdvs update reinfer priority`
-- **InvalidCategory** — fix the value in the file, or reinfer to update the category list: `mdvs update reinfer status`
+- **InvalidCategory** — fix the value in the file, or reinfer to update the category list: `mdvs update reinfer status --with=categorical`
+- **OutOfRange** — fix the value in the file, or update the bounds: `mdvs update reinfer rating --with=range`
 - **Disallowed** — the field shouldn't be in that file path. Remove it from the file, or widen the `allowed` globs in `mdvs.toml`
 
 ### Searching with different filter patterns

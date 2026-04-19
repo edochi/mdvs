@@ -94,32 +94,98 @@ CLI flags on `update reinfer` override the TOML values per-invocation:
 mdvs update example_kb reinfer --max-categories 15 --min-repetition 3
 ```
 
+## Range
+
+The **range** constraint restricts a numeric field's value to an inclusive `[min, max]` interval. It applies to:
+
+- **Integer** — value must satisfy `min <= value <= max`
+- **Float** — same, with float comparison
+- **Array(Integer)** — each element must satisfy the range
+- **Array(Float)** — same, element-wise
+
+Both `min` and `max` are optional — you can specify just one bound. Boolean, String, and Object fields don't support range.
+
+### TOML representation
+
+```toml
+[[fields.field]]
+name = "rating"
+type = "Integer"
+
+[fields.field.constraints]
+min = 1
+max = 5
+```
+
+Float bounds (with optional integer bound on a Float field — bounds widen to `f64` for comparison):
+
+```toml
+[[fields.field]]
+name = "score"
+type = "Float"
+
+[fields.field.constraints]
+min = 0
+max = 100
+```
+
+Array example — each element checked against the bounds:
+
+```toml
+[[fields.field]]
+name = "ratings"
+type = { array = "Integer" }
+
+[fields.field.constraints]
+min = 1
+max = 10
+```
+
+### Validation
+
+When a value is out of bounds, `check` reports an `OutOfRange` violation with the rule (`min = N, max = N`) and the offending value. For arrays, the violation lists the specific elements that are out of range.
+
+Null values follow the existing nullable logic — if `nullable = true`, null skips the range check.
+
+### Type rules
+
+Bound types must match the field type:
+
+- **Integer fields** require integer bounds. Float bounds (e.g., `min = 0.5`) are rejected at config load — likely a mistake; an integer can never equal `0.5`.
+- **Float fields** accept both integer and float bounds (integer bounds widen to `f64`).
+
+If both bounds are present, `min` must be `<= max` — otherwise rejected at config load.
+
 ## Manual overrides
 
-Three mechanisms let you control categories independently of the heuristic:
-
-**Force categorical** — use `--categorical` to skip the heuristic and collect all distinct values as categories:
+Use the `--with` flag on `update reinfer` to override the default heuristic for specific fields:
 
 ```bash
-mdvs update example_kb reinfer title --categorical
+# Force categorical (skip heuristic threshold)
+mdvs update example_kb reinfer title --with=categorical
+
+# Infer min/max from observed numeric values
+mdvs update example_kb reinfer sample_count --with=range
+
+# Strip all constraints
+mdvs update example_kb reinfer status --with=none
 ```
 
-**Force NOT categorical** — use `--no-categorical` to strip categories even if the heuristic would add them:
+`--with` takes a comma-separated list of constraint kinds: `categorical`, `range`, or `none`. Incompatible kinds (e.g., `range,categorical` on the same field) are rejected at parse time. `--with=none` cannot be combined with other kinds. The flag requires named fields.
 
-```bash
-mdvs update example_kb reinfer status --no-categorical
-```
+**Manual TOML edit** — you can also add or remove constraints by hand. Running `update` (without `reinfer`) preserves existing constraints as-is. Only `update reinfer` re-evaluates them.
 
-Both flags require named fields — they can't be used with `update reinfer` (all fields).
+## Conflicts between constraint kinds
 
-**Manual TOML edit** — add or remove `categories` by hand. Running `update` (without `reinfer`) preserves existing categories as-is. Only `update reinfer` re-runs the heuristic on targeted fields.
+Some combinations are mutually exclusive on the same field:
+
+- **`categories` + `range`** — redundant: enumerated values already define the range. Rejected at config load.
+
+Compatible combinations may exist for future constraint kinds (e.g., range + length would be orthogonal — range constrains value, length constrains size).
 
 ## Future constraint kinds
 
-The constraint system is designed to be extensible. Future constraint kinds planned:
-
-- **Range** (`min` / `max`) — numeric bounds on Integer and Float fields
 - **Length** (`min_length` / `max_length`) — length bounds on String and Array fields
 - **Pattern** — regex validation on String fields
 
-Each constraint kind will be an additional key in the `[fields.field.constraints]` sub-table. Compatibility between constraint kinds is checked at config load time — some combinations may conflict (e.g., categories and range on the same Integer field).
+Each constraint kind is an additional key in the `[fields.field.constraints]` sub-table. Compatibility between constraint kinds is checked at config load time.

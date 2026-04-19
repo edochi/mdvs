@@ -39,6 +39,7 @@ pub fn infer(
 
     Some(Constraints {
         categories: Some(categories),
+        ..Default::default()
     })
 }
 
