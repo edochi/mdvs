@@ -11,6 +11,8 @@ batch: "3b-rerun"
 algorithm: Adaptive Kalman Filter
 dataset: alpha-calibration-2031-q3
 convergence_ms: 847
+funding:
+  - "internal"
 ---
 # Adaptive Kalman Filter — Initial Benchmarks
 

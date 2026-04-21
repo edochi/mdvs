@@ -12,6 +12,7 @@ sensor_type: SPR-A1
 wavelength_nm: 780.0
 sample_count: 32
 drift_rate: 0.041
+funding: "internal"
 ambient_humidity: 67.2341
 observation_notes: Dr. Ferretti entered the laboratory at 14:32 and remained for approximately 47 minutes. Her presence correlated with a 0.3°C increase in ambient temperature, consistent with standard human metabolic heat output. She consumed one espresso during this period. The espresso was not logged in the chemical inventory system.
 ---

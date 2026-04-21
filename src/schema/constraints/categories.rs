@@ -72,10 +72,20 @@ pub(super) fn validate_value(
             if value.is_null() {
                 return None;
             }
-            if !json_value_in_toml_categories(value, categories) {
+            // For String fields, non-string raw values are serialized by build
+            // (storage.rs) using Value::to_string(). Normalize the same way
+            // before comparing against categories.
+            let serialized;
+            let check_value = if matches!(field_type, FieldType::String) && !value.is_string() {
+                serialized = serde_json::Value::String(value.to_string());
+                &serialized
+            } else {
+                value
+            };
+            if !json_value_in_toml_categories(check_value, categories) {
                 Some(ConstraintViolation {
                     rule,
-                    detail: format!("got {}", format_json_value(value)),
+                    detail: format!("got {}", format_json_value(check_value)),
                 })
             } else {
                 None
@@ -470,5 +480,69 @@ mod tests {
         let cats = int_cats(&[1, 2, 3]);
         let rule = format_categories_rule(&cats);
         assert_eq!(rule, "categories = [1, 2, 3]");
+    }
+
+    // -----------------------------------------------------------------------
+    // validate_value — String field with non-string raw values (serialization)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn validate_value_string_field_array_serialized() {
+        // When field type is String and the raw value is an array,
+        // it should be serialized before comparing against categories.
+        let cats = str_cats(&["internal", r#"["internal"]"#]);
+        let k = cats_kind(cats);
+        assert!(
+            k.validate_value(&json!(["internal"]), &FieldType::String)
+                .is_none()
+        );
+        assert!(
+            k.validate_value(&json!("internal"), &FieldType::String)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn validate_value_string_field_bool_serialized() {
+        let cats = str_cats(&["true", "false"]);
+        let k = cats_kind(cats);
+        assert!(k.validate_value(&json!(true), &FieldType::String).is_none());
+        assert!(
+            k.validate_value(&json!(false), &FieldType::String)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn validate_value_string_field_number_serialized() {
+        let cats = str_cats(&["42", "hello"]);
+        let k = cats_kind(cats);
+        assert!(k.validate_value(&json!(42), &FieldType::String).is_none());
+        assert!(
+            k.validate_value(&json!("hello"), &FieldType::String)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn validate_value_string_field_unmatched_serialized() {
+        // ["internal"] serializes to '["internal"]', which doesn't match
+        // the category "internal" (without the array wrapper).
+        let cats = str_cats(&["internal"]);
+        let k = cats_kind(cats);
+        let v = k
+            .validate_value(&json!(["internal"]), &FieldType::String)
+            .unwrap();
+        assert!(v.detail.contains(r#"["internal"]"#));
+    }
+
+    #[test]
+    fn validate_value_integer_field_not_serialized() {
+        // Integer field should NOT serialize — only String does.
+        let cats = int_cats(&[1, 2, 3]);
+        let k = cats_kind(cats);
+        assert!(k.validate_value(&json!(2), &FieldType::Integer).is_none());
+        // A string "2" should still fail on an Integer field.
+        assert!(k.validate_value(&json!("2"), &FieldType::Integer).is_some());
     }
 }

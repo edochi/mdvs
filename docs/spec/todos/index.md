@@ -152,3 +152,4 @@
 | [0148](TODO-0148.md) | Generate llms.txt and llms-full.txt from mdBook in CI | todo | medium | 2026-04-16 |
 | [0149](TODO-0149.md) | JSON Schema export and per-value validation delegation (two tracks) | todo | medium | 2026-04-18 |
 | [0150](TODO-0150.md) | Strict mode for inference and validation | todo | low | 2026-04-18 |
+| [0151](TODO-0151.md) | Category inference and validation broken for widened-to-String fields | todo | high | 2026-04-21 |

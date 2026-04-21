@@ -1350,6 +1350,42 @@ mod tests {
     }
 
     #[test]
+    fn init_then_check_mixed_string_array_no_violations() {
+        // Reproducer for TODO-0151: funding is "internal" in some files,
+        // ["internal"] in others. Type widens to String. init should infer
+        // categories that include both forms. check must not produce violations.
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("notes");
+        fs::create_dir_all(&dir).unwrap();
+
+        for i in 0..4 {
+            fs::write(
+                dir.join(format!("a{i}.md")),
+                format!("---\nfunding: internal\ntitle: A{i}\n---\nBody."),
+            )
+            .unwrap();
+        }
+        for i in 0..3 {
+            fs::write(
+                dir.join(format!("b{i}.md")),
+                format!("---\nfunding:\n  - internal\ntitle: B{i}\n---\nBody."),
+            )
+            .unwrap();
+        }
+
+        let init_step = crate::cmd::init::run(tmp.path(), "**", false, false, true, false, false);
+        assert!(!crate::step::has_failed(&init_step));
+
+        let check_step = run(tmp.path(), true, false);
+        let result = unwrap_check(&check_step);
+        assert!(
+            result.violations.is_empty(),
+            "expected no violations after init, got: {:?}",
+            result.violations
+        );
+    }
+
+    #[test]
     fn init_then_corrupt_then_check_catches_invalid_category() {
         let tmp = tempfile::tempdir().unwrap();
         let blog = tmp.path().join("blog");
