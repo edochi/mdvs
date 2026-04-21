@@ -9,9 +9,9 @@
 | [0005](TODO-0005.md) | Differentiate null from absent in check | done | high | 2026-03-02 |
 | [0006](TODO-0006.md) | Support categorical constraints on fields | done | medium | 2026-03-02 |
 | [0007](TODO-0007.md) | Support Date field type | todo | medium | 2026-03-02 |
-| [0008](TODO-0008.md) | Support value boundary constraints on numeric fields | todo | low | 2026-03-02 |
+| [0008](TODO-0008.md) | Support value boundary constraints on numeric fields | todo | high | 2026-03-02 |
 | [0009](TODO-0009.md) | Custom field and text processors | todo | low | 2026-03-02 |
-| [0010](TODO-0010.md) | Support length constraints on strings and arrays | todo | low | 2026-03-02 |
+| [0010](TODO-0010.md) | Support length constraints on strings and arrays | todo | high | 2026-03-02 |
 | [0011](TODO-0011.md) | Incremental build | done | medium | 2026-03-02 |
 | [0012](TODO-0012.md) | Store build metadata in parquet | done | high | 2026-03-02 |
 | [0013](TODO-0013.md) | Search verifies model against parquet metadata | done | high | 2026-03-02 |
@@ -102,7 +102,7 @@
 | [0098](TODO-0098.md) | Build --force should handle dimension mismatch without requiring clean | done | medium | 2026-03-13 |
 | [0099](TODO-0099.md) | Redesign auto-update/auto-build pipeline across commands | done | high | 2026-03-13 |
 | [0100](TODO-0100.md) | Redesign text output format for all commands | done | high | 2026-03-13 |
-| [0101](TODO-0101.md) | Add markdown output format, rename text to pretty | todo | high | 2026-03-13 |
+| [0101](TODO-0101.md) | Add markdown output format, rename text to pretty | todo | medium | 2026-03-13 |
 | [0102](TODO-0102.md) | Write and distribute SKILL.md for end-user projects | todo | medium | 2026-03-14 |
 | [0103](TODO-0103.md) | Validate config invariants on mdvs.toml load | done | high | 2026-03-14 |
 | [0104](TODO-0104.md) | Redesign internal column naming — move prefix from storage to search view | done | medium | 2026-03-14 |
@@ -146,10 +146,10 @@
 | [0142](TODO-0142.md) | Fix chunk line numbers to exclude frontmatter | done | high | 2026-03-29 |
 | [0143](TODO-0143.md) | Additional constraint kinds — design discussion | todo | low | 2026-03-30 |
 | [0144](TODO-0144.md) | Embedded Lua scripting for user-side customization | todo | medium | 2026-03-30 |
-| [0145](TODO-0145.md) | Support regex pattern constraints on string fields | todo | low | 2026-04-02 |
+| [0145](TODO-0145.md) | Support regex pattern constraints on string fields | todo | high | 2026-04-02 |
 | [0146](TODO-0146.md) | Update mdBook for categorical constraints and reinfer subcommand | done | high | 2026-04-11 |
 | [0147](TODO-0147.md) | Restructure specs as developer code map | done | medium | 2026-04-12 |
 | [0148](TODO-0148.md) | Generate llms.txt and llms-full.txt from mdBook in CI | todo | medium | 2026-04-16 |
-| [0149](TODO-0149.md) | JSON Schema export and per-value validation delegation (two tracks) | todo | medium | 2026-04-18 |
+| [0149](TODO-0149.md) | JSON Schema export and per-value validation delegation (two tracks) | todo | high | 2026-04-18 |
 | [0150](TODO-0150.md) | Strict mode for inference and validation | todo | low | 2026-04-18 |
-| [0151](TODO-0151.md) | Category inference and validation broken for widened-to-String fields | todo | high | 2026-04-21 |
+| [0151](TODO-0151.md) | Category inference and validation broken for widened-to-String fields | done | high | 2026-04-21 |
