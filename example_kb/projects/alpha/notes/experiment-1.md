@@ -12,6 +12,7 @@ sensor_type: SPR-A1
 wavelength_nm: 850
 sample_count: 24
 drift_rate: 0.023
+funding: "internal"
 calibration:
   baseline:
     wavelength: 850

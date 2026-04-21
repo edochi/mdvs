@@ -12,6 +12,7 @@ sensor_type: SPR-B2
 wavelength_nm: 632.8
 sample_count: 16
 drift_rate: null
+funding: "internal"
 author's_note: Sensor malfunction halfway through — drift data is unreliable, discarded.
 calibration:
   baseline:

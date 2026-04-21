@@ -7,6 +7,7 @@ tags:
   - lessons
 author's_note: I pushed for killing this project earlier than we did. In hindsight, the warning signs were there from the first outdoor test.
 priority: low
+funding: "internal"
 ---
 # Gamma — What We'd Do Differently
 

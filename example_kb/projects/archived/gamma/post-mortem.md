@@ -8,6 +8,7 @@ tags:
   - discontinued
 date: "2031-03-15"
 priority: medium
+funding: "internal"
 ---
 # Project Gamma — Post-Mortem
 
