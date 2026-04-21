@@ -36,9 +36,11 @@ pub struct InferredField {
     pub required: Vec<String>,
     /// Whether any file had a null value for this field.
     pub nullable: bool,
-    /// Distinct non-null values observed (element-level for arrays).
+    /// Distinct non-null values, post-processed for the widened type:
+    /// element-level for Array fields, serialized for String fields.
     pub distinct_values: Vec<Value>,
-    /// Total non-null value count (element-level for arrays).
+    /// Total non-null value count (element-level for Array fields,
+    /// value-level for all others).
     pub occurrence_count: usize,
 }
 
@@ -699,5 +701,33 @@ mod tests {
         let title = schema.field("title").unwrap();
         assert_eq!(title.distinct_values.len(), 6);
         assert!(infer_constraints(title, 10, 2).is_none());
+    }
+
+    #[test]
+    fn mixed_string_array_categorical_inference() {
+        // funding: "internal" in some files, funding: ["internal"] in others.
+        // Widens to String. Categories should include both forms.
+        let scanned = ScannedFiles {
+            files: vec![
+                sf("a.md", Some(json!({"funding": "internal"})), ""),
+                sf("b.md", Some(json!({"funding": "internal"})), ""),
+                sf("c.md", Some(json!({"funding": "internal"})), ""),
+                sf("d.md", Some(json!({"funding": ["internal"]})), ""),
+                sf("e.md", Some(json!({"funding": ["internal"]})), ""),
+                sf("f.md", Some(json!({"funding": ["internal"]})), ""),
+            ],
+        };
+        let schema = InferredSchema::infer(&scanned);
+        let funding = schema.field("funding").unwrap();
+        assert_eq!(funding.field_type, FieldType::String);
+        assert_eq!(funding.distinct_values.len(), 2);
+        assert_eq!(funding.occurrence_count, 6);
+
+        // 6 occurrences / 2 distinct = 3 >= min_repetition → categories inferred
+        let c = infer_constraints(funding, 10, 3).unwrap();
+        let cats = c.categories.unwrap();
+        assert_eq!(cats.len(), 2);
+        assert!(cats.contains(&toml::Value::String("internal".into())));
+        assert!(cats.contains(&toml::Value::String(r#"["internal"]"#.into())));
     }
 }
