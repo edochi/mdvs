@@ -2,6 +2,25 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## v0.3.2 - 2026-04-21
+#### Features
+- add --range/--no-range flags to update reinfer - (ace5899) - edoch, *Claude*
+- add range constraints (min/max) on numeric fields - (eab9424) - edoch, *Claude*
+#### Bug Fixes
+- helpful error messages when mdvs.toml is missing - (199b374) - edoch, *Claude*
+#### Documentation
+- restructure TODO-0149 into two independent tracks - (38a4e66) - edoch
+- add TODO-0149 (JSON Schema delegation) and TODO-0150 (strict mode) - (d15f7c1) - edoch, *Claude*
+- document range constraints and --with flag - (7761cc5) - edoch, *Claude*
+- update TODO-0008 design for range constraints - (5c8b735) - edoch, *Claude*
+#### Refactoring
+- replace per-kind reinfer flags with single --with flag - (64f969e) - edoch, *Claude*
+#### Miscellaneous Chores
+- (**deps**) bump datafusion 53, text-splitter 0.30, toml_edit 0.25 - (c419d3e) - edoch
+- rename CLAUDE.md to AGENTS.md with backward-compat symlink - (dafe1c2) - edoch, *Claude*
+
+- - -
+
 ## v0.3.1 - 2026-04-16
 #### Features
 - add `mdvs skill` command to print SKILL.md to stdout - (f76e926) - edoch, *Claude*
