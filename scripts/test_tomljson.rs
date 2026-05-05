@@ -5,10 +5,11 @@
 //! toml = "1"
 //! ```
 //!
-//! Prototype for TODO-0149 Wave A: validate JSON Schema ↔ TOML encoding rules
-//! before committing to them in the `tomlschema` crate.
+//! Prototype for TODO-0149 Wave A: validate the lossless JSON ↔ TOML encoding
+//! rules before committing to them in the `tomljson` crate. JSON Schema is the
+//! motivating use case but the translator itself is JSON-Schema-agnostic.
 //!
-//! Run: `rust-script scripts/test_tomlschema.rs`
+//! Run: `rust-script scripts/test_tomljson.rs`
 
 use serde_json::{json, Value as Json};
 use toml::Value as Toml;
@@ -25,14 +26,14 @@ use toml::Value as Toml;
 // Conventions chosen here:
 //   - `null` → a string placeholder (default "__null__"), occupying the slot
 //     wherever a null appears. Customizable per-document via the
-//     `$tomlschema-null` root directive. Encoder errors if any real string
+//     `$tomljson-null` root directive. Encoder errors if any real string
 //     value collides with the placeholder.
 //   - Non-object roots wrapped as `__root__ = <value>`.
 //   - All other values translate point-for-point. Number fidelity preserved
 //     (integers stay integers, floats stay floats).
 
 const DEFAULT_NULL_PLACEHOLDER: &str = "__null__";
-const NULL_DIRECTIVE: &str = "$tomlschema-null";
+const NULL_DIRECTIVE: &str = "$tomljson-null";
 const ROOT_KEY: &str = "__root__";
 
 #[derive(Debug)]
@@ -62,7 +63,7 @@ fn assert_encodable(v: &Json, placeholder: &str) -> Result<(), EncodeError> {
             if s == placeholder {
                 Err(EncodeError(format!(
                     "schema contains string {:?} which collides with the null placeholder; \
-                     pick a different placeholder via $tomlschema-null",
+                     pick a different placeholder via $tomljson-null",
                     s
                 )))
             } else {
@@ -143,7 +144,7 @@ fn encode_with(v: &Json, placeholder: &str) -> Result<String, EncodeError> {
 
     if needs_directive {
         // Directive at the top of the file (alphabetical ordering will sort
-        // `$tomlschema-null` before bare keys due to `$` < ASCII letters).
+        // `$tomljson-null` before bare keys due to `$` < ASCII letters).
         root.insert(NULL_DIRECTIVE.into(), Toml::String(placeholder.into()));
     }
 
@@ -210,7 +211,7 @@ fn run_should_fail(num: usize, name: &str, schema: Json) {
 }
 
 fn main() {
-    println!("=== tomlschema encoding prototype ===\n");
+    println!("=== tomljson encoding prototype ===\n");
 
     // 1. Trivial scalar type
     run(1, "type: string", json!({ "type": "string" }));
@@ -526,7 +527,7 @@ pattern = "^[^@]+@[^@]+$"
     assert_eq!(decoded, composite, "canonical TOML did not decode to composite");
     println!("  18b. canonical TOML decodes to same JSON  ✓\n");
 
-    // 19. Custom placeholder via $tomlschema-null directive
+    // 19. Custom placeholder via $tomljson-null directive
     run_with(
         19,
         "custom placeholder",
