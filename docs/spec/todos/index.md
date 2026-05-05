@@ -9,9 +9,9 @@
 | [0005](TODO-0005.md) | Differentiate null from absent in check | done | high | 2026-03-02 |
 | [0006](TODO-0006.md) | Support categorical constraints on fields | done | medium | 2026-03-02 |
 | [0007](TODO-0007.md) | Support Date field type | todo | medium | 2026-03-02 |
-| [0008](TODO-0008.md) | Support value boundary constraints on numeric fields | todo | high | 2026-03-02 |
+| [0008](TODO-0008.md) | Support value boundary constraints on numeric fields | done | high | 2026-03-02 |
 | [0009](TODO-0009.md) | Custom field and text processors | todo | low | 2026-03-02 |
-| [0010](TODO-0010.md) | Support length constraints on strings and arrays | todo | high | 2026-03-02 |
+| [0010](TODO-0010.md) | Support length constraints on strings and arrays | done | high | 2026-03-02 |
 | [0011](TODO-0011.md) | Incremental build | done | medium | 2026-03-02 |
 | [0012](TODO-0012.md) | Store build metadata in parquet | done | high | 2026-03-02 |
 | [0013](TODO-0013.md) | Search verifies model against parquet metadata | done | high | 2026-03-02 |
@@ -146,10 +146,10 @@
 | [0142](TODO-0142.md) | Fix chunk line numbers to exclude frontmatter | done | high | 2026-03-29 |
 | [0143](TODO-0143.md) | Additional constraint kinds — design discussion | todo | low | 2026-03-30 |
 | [0144](TODO-0144.md) | Embedded Lua scripting for user-side customization | todo | medium | 2026-03-30 |
-| [0145](TODO-0145.md) | Support regex pattern constraints on string fields | todo | high | 2026-04-02 |
+| [0145](TODO-0145.md) | Support regex pattern constraints on string fields | done | high | 2026-04-02 |
 | [0146](TODO-0146.md) | Update mdBook for categorical constraints and reinfer subcommand | done | high | 2026-04-11 |
 | [0147](TODO-0147.md) | Restructure specs as developer code map | done | medium | 2026-04-12 |
 | [0148](TODO-0148.md) | Generate llms.txt and llms-full.txt from mdBook in CI | todo | medium | 2026-04-16 |
-| [0149](TODO-0149.md) | JSON Schema export and per-value validation delegation (two tracks) | todo | high | 2026-04-18 |
+| [0149](TODO-0149.md) | JSON Schema as canonical schema + preprocessor pipeline | todo | high | 2026-04-18 |
 | [0150](TODO-0150.md) | Strict mode for inference and validation | todo | low | 2026-04-18 |
 | [0151](TODO-0151.md) | Category inference and validation broken for widened-to-String fields | done | high | 2026-04-21 |
