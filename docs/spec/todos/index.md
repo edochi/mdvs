@@ -153,3 +153,5 @@
 | [0149](TODO-0149.md) | JSON Schema as canonical schema + preprocessor pipeline | todo | high | 2026-04-18 |
 | [0150](TODO-0150.md) | Strict mode for inference and validation | todo | low | 2026-04-18 |
 | [0151](TODO-0151.md) | Category inference and validation broken for widened-to-String fields | done | high | 2026-04-21 |
+| [0152](TODO-0152.md) | Layered internal structure with strict downward dependencies | todo | medium | 2026-05-06 |
+| [0153](TODO-0153.md) | General-purpose context-aware validation engine (potential extraction) | deferred | low | 2026-05-06 |
