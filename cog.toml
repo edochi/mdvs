@@ -4,9 +4,9 @@ branch_whitelist = []
 tag_prefix = "v"
 
 pre_bump_hooks = [
-    """sed -i 's/^version = ".*"/version = "{{version}}"/' Cargo.toml""",
+    """sed -i 's/^version = ".*"/version = "{{version}}"/' crates/mdvs/Cargo.toml""",
     "cargo generate-lockfile",
-    "git add Cargo.toml Cargo.lock",
+    "git add crates/mdvs/Cargo.toml Cargo.lock",
 ]
 post_bump_hooks = [
     "git push origin",
@@ -14,7 +14,7 @@ post_bump_hooks = [
 ]
 
 [changelog]
-path = "CHANGELOG.md"
+path = "crates/mdvs/CHANGELOG.md"
 remote = "github.com"
 owner = "edochi"
 repository = "mdvs"
