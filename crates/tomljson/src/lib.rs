@@ -29,11 +29,15 @@
 //! });
 //!
 //! let toml_str = tomljson::to_string(&value).unwrap();
+//! let back = tomljson::from_str(&toml_str).unwrap();
+//! assert_eq!(back, value);
 //! ```
 
+mod de;
 mod error;
 mod ser;
 
+pub use de::from_str_with_options;
 pub use error::{Error, Result};
 pub use ser::to_string_with_options;
 
@@ -63,4 +67,11 @@ impl Default for TomlJsonOptions {
 /// Convenience wrapper over [`to_string_with_options`].
 pub fn to_string(value: &serde_json::Value) -> Result<String> {
     to_string_with_options(value, &TomlJsonOptions::default())
+}
+
+/// Decode a TOML string to a JSON value using default options.
+///
+/// Convenience wrapper over [`from_str_with_options`].
+pub fn from_str(s: &str) -> Result<serde_json::Value> {
+    from_str_with_options(s, &TomlJsonOptions::default())
 }

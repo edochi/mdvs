@@ -1,65 +1,14 @@
 //! Encode-direction integration tests.
 //!
-//! Lifted from `scripts/test_tomljson_writer.rs`. Each test encodes a JSON
-//! value and verifies round-trip equivalence by parsing the TOML output back
-//! through `toml::from_str` and substituting the placeholder string with
-//! `Json::Null`.
-//!
-//! When the deserialize side lands (TODO-0149 Wave A step 5), the inline
-//! `decode_for_test` helper here will be replaced with `tomljson::from_str`.
+//! Each test encodes a JSON value and verifies round-trip equivalence
+//! through `tomljson::from_str`.
 
 use serde_json::{Value as Json, json};
-use tomljson::{DEFAULT_NULL_PLACEHOLDER, Error};
-
-const ROOT_KEY: &str = "__root__";
-
-// ============================================================================
-// Test-only decode helper — round-trips encode output back to JSON.
-//
-// Production decode lives in step 5; this helper is intentionally minimal
-// and only handles what the encode tests produce.
-// ============================================================================
-
-fn decode_for_test(s: &str) -> Json {
-    let parsed: toml::Value = toml::from_str(s).expect("encoded TOML must parse");
-    let json = toml_to_json(&parsed, DEFAULT_NULL_PLACEHOLDER);
-
-    // Unwrap __root__ if present.
-    if let Json::Object(ref obj) = json
-        && obj.len() == 1
-        && let Some(v) = obj.get(ROOT_KEY)
-    {
-        return v.clone();
-    }
-    json
-}
-
-fn toml_to_json(v: &toml::Value, placeholder: &str) -> Json {
-    match v {
-        toml::Value::String(s) if s == placeholder => Json::Null,
-        toml::Value::String(s) => Json::String(s.clone()),
-        toml::Value::Integer(i) => Json::Number((*i).into()),
-        toml::Value::Float(f) => serde_json::Number::from_f64(*f)
-            .map(Json::Number)
-            .unwrap_or(Json::Null),
-        toml::Value::Boolean(b) => Json::Bool(*b),
-        toml::Value::Datetime(dt) => Json::String(dt.to_string()),
-        toml::Value::Array(arr) => {
-            Json::Array(arr.iter().map(|x| toml_to_json(x, placeholder)).collect())
-        }
-        toml::Value::Table(t) => {
-            let mut obj = serde_json::Map::new();
-            for (k, v) in t {
-                obj.insert(k.clone(), toml_to_json(v, placeholder));
-            }
-            Json::Object(obj)
-        }
-    }
-}
+use tomljson::Error;
 
 fn assert_roundtrips(value: Json) {
     let toml_str = tomljson::to_string(&value).expect("encode succeeded");
-    let back = decode_for_test(&toml_str);
+    let back = tomljson::from_str(&toml_str).expect("decode succeeded");
     assert_eq!(back, value, "round-trip mismatch\n--- toml ---\n{toml_str}");
 }
 

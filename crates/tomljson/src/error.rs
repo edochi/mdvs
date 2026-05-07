@@ -12,6 +12,16 @@ pub enum Error {
     /// 64-bit; the value cannot be represented losslessly.
     IntegerOutOfRange { path: String, value: u64 },
 
+    /// A TOML float (`NaN`, `+inf`, or `-inf`) cannot be represented in JSON.
+    /// `serde_json::Number::from_f64` rejects these; JSON Schema's validation
+    /// model has no notion of them either. Producers should omit
+    /// `maximum`/`minimum` to indicate "no bound" rather than encoding
+    /// infinities.
+    FloatNotRepresentable { path: String, kind: &'static str },
+
+    /// Failure to parse the input as TOML.
+    Toml(toml::de::Error),
+
     /// I/O error from the underlying writer.
     Io(std::io::Error),
 
@@ -36,6 +46,14 @@ impl fmt::Display for Error {
                      (i64::MAX = 9223372036854775807)"
                 )
             }
+            Error::FloatNotRepresentable { path, kind } => {
+                write!(
+                    f,
+                    "TOML float {kind} at {path:?} cannot be represented in JSON; \
+                     omit the value or use a sentinel string instead"
+                )
+            }
+            Error::Toml(e) => write!(f, "toml parse error: {e}"),
             Error::Io(e) => write!(f, "io error: {e}"),
             Error::Fmt(e) => write!(f, "format error: {e}"),
         }
@@ -45,10 +63,17 @@ impl fmt::Display for Error {
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Error::Toml(e) => Some(e),
             Error::Io(e) => Some(e),
             Error::Fmt(e) => Some(e),
             _ => None,
         }
+    }
+}
+
+impl From<toml::de::Error> for Error {
+    fn from(e: toml::de::Error) -> Self {
+        Error::Toml(e)
     }
 }
 
