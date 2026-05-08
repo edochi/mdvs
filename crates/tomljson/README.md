@@ -2,17 +2,13 @@
 
 Lossless TOML ↔ JSON translation in pure Rust.
 
-## Status
-
-Early-stage. `publish = false`; not on crates.io. APIs may shift before 1.0.
-
 ## What it does
 
 Encode `serde_json::Value` to TOML and back, handling the impedance gaps where TOML's data model can't natively represent something JSON can:
 
 - **Null** — TOML has no null type. JSON `null` is encoded as a string placeholder (default `"__null__"`, configurable). Decoding substitutes the placeholder back to `null`.
 - **Top-level non-table values** — TOML documents must have a table at the root. Non-table JSON values (booleans, scalars, arrays) are wrapped under a configurable root key (default `"__root__"`) on encode and unwrapped on decode.
-- **Integer range** — TOML integers are signed 64-bit. Encoding rejects values larger than `i64::MAX` (a TOML spec requirement, not a `tomljson` limitation).
+- **Integer range** — TOML integers are signed 64-bit. Encoding rejects values larger than `i64::MAX`.
 - **Float fidelity** — `f64` values round-trip via `f64::to_string` (Ryū-shortest representation). NaN and ±∞ error explicitly on decode (JSON's number model can't represent them).
 - **Datetime canonicalization** — all four TOML datetime variants (`Date`, `Time`, `LocalDateTime`, `OffsetDateTime`) decode to JSON strings in canonical RFC 3339 form.
 
@@ -48,10 +44,6 @@ Plus:
 - `TomlJsonOptions { null_placeholder: String, root_placeholder: String }` — configure both reserved strings if your data collides with the defaults.
 - `DEFAULT_NULL_PLACEHOLDER` (`"__null__"`), `DEFAULT_ROOT_PLACEHOLDER` (`"__root__"`).
 - `Error`, `Result`.
-
-The two-function pattern (`*` and `*_with_options`) is the standard Rust idiom for "default arguments don't exist": the convenience form makes the common case cheap, and the explicit form is there when you need to configure.
-
-For typed Rust structs, callers convert at the boundary via `serde_json::to_value` / `serde_json::from_value`. A generic `Serialize`/`DeserializeOwned` wrapper is a future ergonomic enhancement, not yet exposed.
 
 ## Encoding rules
 
@@ -110,20 +102,11 @@ x = "__null__"   # x is present, value is JSON null
                  # (vs. omitting the line, which means x is absent)
 ```
 
-### Why self-describing TOML is out of scope (for v0.1)
-
-An earlier design proposed a self-describing variant where the TOML document carried its own placeholder declaration — either via an in-band directive key (`"$tomljson-null" = "..."` at root) or a magic comment header. **Both rejected:**
-
-- An in-band directive key collides with arbitrary JSON data. Non–JSON-Schema documents can legitimately have a top-level key with that name; the encoder would emit duplicate keys (invalid TOML), and the decoder would silently strip user data.
-- A magic comment header invents a non-standard convention with no precedent in TOML, depends on raw-string preprocessing fragile to formatters, and offers no real upside over passing options explicitly.
-
-For v0.1, callers always supply `TomlJsonOptions::null_placeholder` (or accept the default). When sharing TOML files between tools, the placeholder convention is documented out-of-band — in the project's docs, a sibling config, or a fixed convention. If a concrete need emerges later, we'll add support informed by real consumers.
-
 ## Limitations
 
-- **No generic `Serialize`/`DeserializeOwned` wrapper yet.** Callers with typed structs use `serde_json::to_value` / `serde_json::from_value` at the boundary.
+- **No generic `Serialize`/`DeserializeOwned` wrapper.** Callers with typed structs convert at the boundary via `serde_json::to_value` / `serde_json::from_value`.
 - **No streaming.** Both encode and decode operate on whole documents. The underlying `toml` crate has no streaming parser, and TOML's key-order freedom would defeat streaming on the decode side anyway.
-- **Datetime decode is one-way.** Decoding produces JSON strings (RFC 3339); re-encoding those strings doesn't reconstruct TOML's native datetime form. (TOML datetime → JSON string → TOML string. This is intentional: JSON has no native datetime type.)
+- **Datetime decode is one-way.** Decoding produces JSON strings (RFC 3339); re-encoding those strings doesn't reconstruct TOML's native datetime form. JSON has no native datetime type.
 
 ## License
 
