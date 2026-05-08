@@ -4,5 +4,7 @@
 pub mod config;
 /// Constraint types for field value validation (categorical, range, length).
 pub mod constraints;
+/// DSL ↔ canonical JSON Schema translation and the mdvs-subset validation gate.
+pub(crate) mod json_schema;
 /// Shared types used across config and discovery (scan, embedding model, chunking, field type serde).
 pub mod shared;
