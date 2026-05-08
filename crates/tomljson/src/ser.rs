@@ -1,37 +1,37 @@
 use crate::TomlJsonOptions;
 use crate::error::{Error, Result};
 use serde_json::Value as Json;
-use std::fmt::Write as _;
 use toml_writer::TomlWrite;
-
-/// Reserved key used to wrap top-level non-table JSON values (booleans, arrays,
-/// scalars) so they survive the round-trip through TOML's table-only document
-/// model. The decoder strips this wrapper on the way back.
-pub(crate) const ROOT_KEY: &str = "__root__";
 
 /// Encode a JSON value to a TOML string.
 ///
 /// JSON `null` is encoded as `options.null_placeholder` (default `"__null__"`).
+/// Top-level non-table values are wrapped under `options.root_placeholder`
+/// (default `"__root__"`).
 ///
-/// Errors if the input contains a string equal to the placeholder (which would
-/// round-trip ambiguously to `null`), or an integer larger than `i64::MAX`
-/// (TOML integers are signed 64-bit per the TOML spec).
+/// Errors if the input contains a string equal to the null placeholder, an
+/// Object whose top-level keys include the root placeholder, or an integer
+/// larger than `i64::MAX` (TOML integers are signed 64-bit per the TOML spec).
 pub fn to_string_with_options(value: &Json, options: &TomlJsonOptions) -> Result<String> {
-    let placeholder = options.null_placeholder.as_str();
-    assert_encodable(value, placeholder, &mut Vec::new())?;
+    let null_placeholder = options.null_placeholder.as_str();
+    let root_placeholder = options.root_placeholder.as_str();
+    assert_encodable(value, null_placeholder, root_placeholder, &mut Vec::new())?;
 
     let mut out = String::new();
 
     match value {
         Json::Object(obj) => {
-            write_table(&mut out, &[], obj, placeholder)?;
+            write_table(&mut out, &[], obj, null_placeholder)?;
         }
         other => {
-            // Non-table root: wrap under __root__.
-            out.write_str(ROOT_KEY)?;
-            out.write_str(" = ")?;
-            write_inline(&mut out, other, placeholder)?;
-            out.push('\n');
+            // Non-table root: wrap under the root placeholder key.
+            // Use toml_writer's key() so non-bare-key strings get quoted.
+            out.key(root_placeholder)?;
+            out.space()?;
+            out.keyval_sep()?;
+            out.space()?;
+            write_inline(&mut out, other, null_placeholder)?;
+            out.newline()?;
         }
     }
 
@@ -46,7 +46,27 @@ pub fn to_string_with_options(value: &Json, options: &TomlJsonOptions) -> Result
 // and popped on return.
 // ============================================================================
 
-fn assert_encodable(v: &Json, placeholder: &str, path_stack: &mut Vec<String>) -> Result<()> {
+fn assert_encodable(
+    v: &Json,
+    null_placeholder: &str,
+    root_placeholder: &str,
+    path_stack: &mut Vec<String>,
+) -> Result<()> {
+    // Top-level collision check: if the root is an Object whose keys include
+    // `root_placeholder`, encode would produce a TOML document indistinguishable
+    // from a wrapped non-table root. Error before we emit anything.
+    //
+    // `path_stack.is_empty()` distinguishes the top-level call from recursive
+    // calls on nested objects (where `__root__` as a key is fine).
+    if path_stack.is_empty()
+        && let Json::Object(obj) = v
+        && obj.contains_key(root_placeholder)
+    {
+        return Err(Error::RootKeyCollision {
+            placeholder: root_placeholder.to_string(),
+        });
+    }
+
     match v {
         // Json::Null is encoded as the placeholder string by `write_inline`.
         Json::Null | Json::Bool(_) => Ok(()),
@@ -61,10 +81,10 @@ fn assert_encodable(v: &Json, placeholder: &str, path_stack: &mut Vec<String>) -
             }
         }
         Json::String(s) => {
-            if s == placeholder {
+            if s == null_placeholder {
                 Err(Error::PlaceholderCollision {
                     path: format_path(path_stack),
-                    placeholder: placeholder.to_string(),
+                    placeholder: null_placeholder.to_string(),
                 })
             } else {
                 Ok(())
@@ -73,7 +93,7 @@ fn assert_encodable(v: &Json, placeholder: &str, path_stack: &mut Vec<String>) -
         Json::Array(arr) => {
             for (i, item) in arr.iter().enumerate() {
                 path_stack.push(i.to_string());
-                let r = assert_encodable(item, placeholder, path_stack);
+                let r = assert_encodable(item, null_placeholder, root_placeholder, path_stack);
                 path_stack.pop();
                 r?;
             }
@@ -82,7 +102,7 @@ fn assert_encodable(v: &Json, placeholder: &str, path_stack: &mut Vec<String>) -
         Json::Object(obj) => {
             for (k, val) in obj {
                 path_stack.push(escape_pointer_segment(k));
-                let r = assert_encodable(val, placeholder, path_stack);
+                let r = assert_encodable(val, null_placeholder, root_placeholder, path_stack);
                 path_stack.pop();
                 r?;
             }

@@ -1,6 +1,5 @@
 use crate::TomlJsonOptions;
 use crate::error::{Error, Result};
-use crate::ser::ROOT_KEY;
 use serde_json::Value as Json;
 use toml::Value as Toml;
 
@@ -8,22 +7,23 @@ use toml::Value as Toml;
 ///
 /// Strings equal to `options.null_placeholder` (default `"__null__"`) are
 /// substituted with JSON `null`. TOML datetimes (all four variants) decode
-/// to JSON strings using their canonical RFC 3339 representation. A
-/// top-level table containing only the reserved `__root__` key is unwrapped
-/// to its inner value (the inverse of the encode-side wrapping).
+/// to JSON strings using their canonical RFC 3339 representation. A top-level
+/// table containing only `options.root_placeholder` (default `"__root__"`)
+/// is unwrapped to its inner value (the inverse of the encode-side wrapping).
 ///
 /// Errors if the input fails to parse, or if a TOML float carries `NaN`,
 /// `+inf`, or `-inf` — these cannot be represented in JSON.
 pub fn from_str_with_options(s: &str, options: &TomlJsonOptions) -> Result<Json> {
     let parsed: Toml = toml::from_str(s)?;
-    let placeholder = options.null_placeholder.as_str();
+    let null_placeholder = options.null_placeholder.as_str();
+    let root_placeholder = options.root_placeholder.as_str();
     let mut path_stack: Vec<String> = Vec::new();
-    let value = walk(&parsed, placeholder, &mut path_stack)?;
+    let value = walk(&parsed, null_placeholder, &mut path_stack)?;
 
-    // Unwrap top-level `__root__` if present.
+    // Unwrap top-level root_placeholder wrapper if present.
     if let Json::Object(ref obj) = value
         && obj.len() == 1
-        && let Some(inner) = obj.get(ROOT_KEY)
+        && let Some(inner) = obj.get(root_placeholder)
     {
         return Ok(inner.clone());
     }

@@ -209,6 +209,7 @@ fn case_26_custom_placeholder_via_options() {
     let toml_str = r#"default = "@@NULL@@""#;
     let options = TomlJsonOptions {
         null_placeholder: "@@NULL@@".to_string(),
+        ..TomlJsonOptions::default()
     };
     let actual = tomljson::from_str_with_options(toml_str, &options).expect("decode succeeded");
     assert_eq!(actual, json!({ "default": null }));

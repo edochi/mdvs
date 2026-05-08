@@ -44,6 +44,10 @@ pub use ser::to_string_with_options;
 /// Default placeholder string for JSON `null` values.
 pub const DEFAULT_NULL_PLACEHOLDER: &str = "__null__";
 
+/// Default key used to wrap top-level non-table JSON values (booleans, scalars,
+/// arrays) in TOML output, since TOML documents must have a table at the root.
+pub const DEFAULT_ROOT_PLACEHOLDER: &str = "__root__";
+
 /// Options for encode and decode operations.
 #[derive(Debug, Clone)]
 pub struct TomlJsonOptions {
@@ -52,12 +56,21 @@ pub struct TomlJsonOptions {
     /// encoder errors with [`Error::PlaceholderCollision`] — pick a different
     /// placeholder unique to your data.
     pub null_placeholder: String,
+
+    /// Key used to wrap top-level non-table JSON values (booleans, scalars,
+    /// arrays). The encoder emits `<root_placeholder> = <value>` for non-table
+    /// roots; the decoder unwraps a single-key table whose only key matches
+    /// this. Default: `"__root__"`. If the input is an Object whose top-level
+    /// keys include this name, the encoder errors with
+    /// [`Error::RootKeyCollision`] — pick a different name unique to your data.
+    pub root_placeholder: String,
 }
 
 impl Default for TomlJsonOptions {
     fn default() -> Self {
         Self {
             null_placeholder: DEFAULT_NULL_PLACEHOLDER.to_string(),
+            root_placeholder: DEFAULT_ROOT_PLACEHOLDER.to_string(),
         }
     }
 }

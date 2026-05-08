@@ -11,7 +11,7 @@ Early-stage. `publish = false`; not on crates.io. APIs may shift before 1.0.
 Encode `serde_json::Value` to TOML and back, handling the impedance gaps where TOML's data model can't natively represent something JSON can:
 
 - **Null** — TOML has no null type. JSON `null` is encoded as a string placeholder (default `"__null__"`, configurable). Decoding substitutes the placeholder back to `null`.
-- **Top-level non-table values** — TOML documents must have a table at the root. Non-table JSON values (booleans, scalars, arrays) are wrapped under a reserved `__root__` key on encode and unwrapped on decode.
+- **Top-level non-table values** — TOML documents must have a table at the root. Non-table JSON values (booleans, scalars, arrays) are wrapped under a configurable root key (default `"__root__"`) on encode and unwrapped on decode.
 - **Integer range** — TOML integers are signed 64-bit. Encoding rejects values larger than `i64::MAX` (a TOML spec requirement, not a `tomljson` limitation).
 - **Float fidelity** — `f64` values round-trip via `f64::to_string` (Ryū-shortest representation). NaN and ±∞ error explicitly on decode (JSON's number model can't represent them).
 - **Datetime canonicalization** — all four TOML datetime variants (`Date`, `Time`, `LocalDateTime`, `OffsetDateTime`) decode to JSON strings in canonical RFC 3339 form.
@@ -44,7 +44,10 @@ assert_eq!(back, value);
 | `from_str(s)` | decode with default options |
 | `from_str_with_options(s, &options)` | decode with custom placeholder |
 
-Plus `TomlJsonOptions { null_placeholder: String }`, `Error`, `Result`, and the constant `DEFAULT_NULL_PLACEHOLDER` (`"__null__"`).
+Plus:
+- `TomlJsonOptions { null_placeholder: String, root_placeholder: String }` — configure both reserved strings if your data collides with the defaults.
+- `DEFAULT_NULL_PLACEHOLDER` (`"__null__"`), `DEFAULT_ROOT_PLACEHOLDER` (`"__root__"`).
+- `Error`, `Result`.
 
 The two-function pattern (`*` and `*_with_options`) is the standard Rust idiom for "default arguments don't exist": the convenience form makes the common case cheap, and the explicit form is there when you need to configure.
 
@@ -57,9 +60,10 @@ For typed Rust structs, callers convert at the boundary via `serde_json::to_valu
 | Concern | Handling |
 |---|---|
 | `Json::Null` value (anywhere) | Substitute the placeholder string (default `"__null__"`) |
-| Top-level non-table value (`bool`, scalar, array) | Wrap under `__root__` key |
+| Top-level non-table value (`bool`, scalar, array) | Wrap under the configured `root_placeholder` key (default `"__root__"`) |
+| Top-level Object whose keys include `root_placeholder` | **Error** (`RootKeyCollision`) — encoder would emit a wrap-shaped TOML doc indistinguishable from a wrapped non-table; decoder would silently strip the user's data |
 | `serde_json::Number` representable as `u64 > i64::MAX` | **Error** (`IntegerOutOfRange`) — TOML's signed 64-bit limit; JSON spec is wider |
-| String value equal to the configured null placeholder | **Error** (`PlaceholderCollision`) — the round-trip would be ambiguous |
+| String value equal to the configured `null_placeholder` | **Error** (`PlaceholderCollision`) — the round-trip would be ambiguous |
 | Strings shaped like TOML literals (`"42"`, `"true"`, `"2026-05-04"`, `"inf"`) | Always quoted on output; never coerced |
 | Other JSON values (string, finite number, bool, array, object) | Direct emission via `toml_writer` primitives |
 
@@ -74,7 +78,7 @@ Internal structure on encode:
 | Concern | Handling |
 |---|---|
 | TOML string equal to the configured placeholder | Decode as `Json::Null` |
-| Root-level table containing exactly one key `__root__` | Unwrap and return the inner value |
+| Root-level table containing exactly one key matching `root_placeholder` | Unwrap and return the inner value |
 | TOML datetime (any of `Date`, `Time`, `LocalDateTime`, `OffsetDateTime`) | Decode as `Json::String` in canonical RFC 3339 form |
 | TOML float `+inf` / `-inf` / `NaN` | **Error** (`FloatNotRepresentable`) |
 | TOML integer (`i64`) | Decode as `Json::Number` (i64-backed) |

@@ -8,6 +8,13 @@ pub enum Error {
     /// placeholder via `TomlJsonOptions::null_placeholder`.
     PlaceholderCollision { path: String, placeholder: String },
 
+    /// The input is an Object whose top-level keys include the configured
+    /// root placeholder. Encoding would emit a TOML document indistinguishable
+    /// from the wrapper used for non-table roots, and the decoder would
+    /// silently strip the user's data. Pick a different placeholder via
+    /// `TomlJsonOptions::root_placeholder`.
+    RootKeyCollision { placeholder: String },
+
     /// A JSON unsigned integer exceeds `i64::MAX`. TOML integers are signed
     /// 64-bit; the value cannot be represented losslessly.
     IntegerOutOfRange { path: String, value: u64 },
@@ -37,6 +44,14 @@ impl fmt::Display for Error {
                     f,
                     "string at {path:?} equals the null placeholder {placeholder:?}; \
                      pick a different placeholder via TomlJsonOptions"
+                )
+            }
+            Error::RootKeyCollision { placeholder } => {
+                write!(
+                    f,
+                    "input has a top-level key {placeholder:?} which collides with \
+                     the configured root placeholder; pick a different name via \
+                     TomlJsonOptions::root_placeholder"
                 )
             }
             Error::IntegerOutOfRange { path, value } => {

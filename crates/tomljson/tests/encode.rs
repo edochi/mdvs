@@ -4,7 +4,7 @@
 //! through `tomljson::from_str`.
 
 use serde_json::{Value as Json, json};
-use tomljson::Error;
+use tomljson::{Error, TomlJsonOptions};
 
 fn assert_roundtrips(value: Json) {
     let toml_str = tomljson::to_string(&value).expect("encode succeeded");
@@ -172,4 +172,54 @@ fn case_18_string_collision_with_placeholder() {
         Err(other) => panic!("expected PlaceholderCollision, got: {other:?}"),
         Ok(s) => panic!("expected error, got TOML: {s}"),
     }
+}
+
+// ============================================================================
+// Cases 19-21 — root placeholder collision + custom root placeholder
+// ============================================================================
+
+#[test]
+fn case_19_root_key_collision_errors() {
+    // Input has a top-level key `__root__` as legitimate data. With default
+    // options, the encoder/decoder pair would silently strip it on round-trip.
+    let value = json!({ "__root__": "data" });
+    match tomljson::to_string(&value) {
+        Err(Error::RootKeyCollision { placeholder }) => {
+            assert_eq!(placeholder, "__root__");
+        }
+        Err(other) => panic!("expected RootKeyCollision, got: {other:?}"),
+        Ok(s) => panic!("expected error, got TOML: {s}"),
+    }
+}
+
+#[test]
+fn case_20_custom_root_placeholder_avoids_collision() {
+    // Same input but with a different root_placeholder configured; the round-trip
+    // works because nothing in the data collides with the new wrapper key.
+    let value = json!({ "__root__": "data" });
+    let options = TomlJsonOptions {
+        root_placeholder: "@@WRAP@@".to_string(),
+        ..TomlJsonOptions::default()
+    };
+    let toml_str = tomljson::to_string_with_options(&value, &options).expect("encode succeeded");
+    let back = tomljson::from_str_with_options(&toml_str, &options).expect("decode succeeded");
+    assert_eq!(back, value, "round-trip mismatch\n--- toml ---\n{toml_str}");
+}
+
+#[test]
+fn case_21_custom_root_placeholder_wraps_non_table() {
+    // The custom root placeholder is also used to wrap non-table roots.
+    let value = json!([1, 2, 3]);
+    let options = TomlJsonOptions {
+        root_placeholder: "@@WRAP@@".to_string(),
+        ..TomlJsonOptions::default()
+    };
+    let toml_str = tomljson::to_string_with_options(&value, &options).expect("encode succeeded");
+    // toml_writer quotes keys that aren't bare-key-valid (only [A-Za-z0-9_-]).
+    assert!(
+        toml_str.contains("@@WRAP@@"),
+        "expected custom wrapper key in output, got: {toml_str}"
+    );
+    let back = tomljson::from_str_with_options(&toml_str, &options).expect("decode succeeded");
+    assert_eq!(back, value);
 }
