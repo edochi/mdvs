@@ -284,6 +284,7 @@ mod tests {
                         required: vec!["**".into()],
                         nullable: false,
                         constraints: None,
+                        preprocess: vec![],
                     },
                     crate::schema::config::TomlField {
                         name: "tags".into(),
@@ -294,6 +295,7 @@ mod tests {
                         required: vec![],
                         nullable: false,
                         constraints: None,
+                        preprocess: vec![],
                     },
                     crate::schema::config::TomlField {
                         name: "draft".into(),
@@ -302,6 +304,7 @@ mod tests {
                         required: vec![],
                         nullable: false,
                         constraints: None,
+                        preprocess: vec![],
                     },
                 ],
                 max_categories: 10,
@@ -410,6 +413,7 @@ mod tests {
                     required: vec![],
                     nullable: false,
                     constraints: None,
+                    preprocess: vec![],
                 }],
                 max_categories: 10,
                 min_category_repetition: 3,

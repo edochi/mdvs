@@ -17,6 +17,8 @@ pub mod index;
 pub mod outcome;
 /// Output formatting types and the `CommandOutput` trait.
 pub mod output;
+/// Preprocessor pipeline run before jsonschema validation.
+pub mod preprocess;
 /// Shared formatters (`format_text`, `format_markdown`) that consume `Vec<Block>`.
 pub mod render;
 /// Configuration file types (`mdvs.toml`) and shared data structures.

@@ -6,6 +6,7 @@ use crate::outcome::{
     InferOutcome, Outcome, ReadConfigOutcome, ScanOutcome, ValidateOutcome, WriteConfigOutcome,
 };
 use crate::output::{FieldViolation, NewField, ViolatingFile, ViolationKind};
+use crate::preprocess::Pipeline;
 use crate::schema::config::{MdvsToml, TomlField};
 use crate::schema::json_schema::dsl_to_canonical;
 use crate::schema::shared::FieldTypeSerde;
@@ -147,6 +148,7 @@ pub fn run(path: &Path, no_update: bool, verbose: bool) -> CommandResult {
                 required: f.required.clone(),
                 nullable: f.nullable,
                 constraints: None,
+                preprocess: f.preprocess.clone(),
             })
             .collect();
 
@@ -260,6 +262,7 @@ pub fn validate(
         .collect();
     let ignore_set: HashSet<&str> = config.fields.ignore.iter().map(|s| s.as_str()).collect();
     let validators = FieldValidators::build(config)?;
+    let pipeline = Pipeline::for_config(config);
 
     let mut violations: HashMap<ViolationKey, Vec<ViolatingFile>> = HashMap::new();
     let mut new_field_paths: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
@@ -269,6 +272,7 @@ pub fn validate(
         &field_map,
         &ignore_set,
         &validators,
+        &pipeline,
         &mut violations,
         &mut new_field_paths,
     );
@@ -291,12 +295,14 @@ pub fn validate(
 /// Path-scoping (`allowed` glob) and new-field discovery stay Rust-side because
 /// JSON Schema doesn't model per-file location semantics. Per-value checks
 /// (type, null-vs-nullable, enum, range, length, pattern, array bounds) are
-/// delegated to a per-field `jsonschema::Validator`.
+/// delegated to a per-field `jsonschema::Validator`. Stage-2 preprocessors
+/// (configured per-field) run before validation.
 fn check_field_values(
     scanned: &ScannedFiles,
     field_map: &HashMap<&str, &crate::schema::config::TomlField>,
     ignore_set: &HashSet<&str>,
     validators: &FieldValidators,
+    pipeline: &Pipeline,
     violations: &mut HashMap<ViolationKey, Vec<ViolatingFile>>,
     new_field_paths: &mut BTreeMap<String, Vec<PathBuf>>,
 ) {
@@ -331,14 +337,10 @@ fn check_field_values(
                     // Per-value validation via jsonschema (type, null, enum,
                     // range, length, pattern, array bounds).
                     //
-                    // For String-typed fields (top type), coerce non-string
-                    // non-null values to their JSON-stringified form before
-                    // validating — matches the existing storage behavior
-                    // (Value::to_string()) and the old categorical validator.
-                    // TODO-0149 step 3 replaces this with the
-                    // `coerce_to_string` preprocessor stage.
-                    let coerced = coerce_string_field(value, toml_field);
-                    let validation_value = coerced.as_ref().unwrap_or(value);
+                    // Run the Stage-2 preprocessor pipeline first; the
+                    // resulting value is what jsonschema validates against.
+                    let preprocessed = pipeline.apply_to_value(toml_field, value);
+                    let validation_value = preprocessed.as_ref();
 
                     if let Some(validator) = validators.get(field_name) {
                         let errors: Vec<_> = validator.iter_errors(validation_value).collect();
@@ -654,35 +656,6 @@ fn map_validation_error(
     }
 }
 
-/// Coerce a non-string non-null value to its JSON-stringified form when the
-/// field type is `String` (the top type) or `Array(String)`. Returns `None`
-/// when no coercion is needed.
-///
-/// Step-4 placeholder for the `coerce_to_string` preprocessor (TODO-0149
-/// step 3) — once the proper pipeline lands, this helper is replaced.
-fn coerce_string_field(value: &Value, field: &TomlField) -> Option<Value> {
-    let ft = FieldType::try_from(&field.field_type).ok()?;
-    match (&ft, value) {
-        (FieldType::String, v) if !v.is_string() && !v.is_null() => {
-            Some(Value::String(v.to_string()))
-        }
-        (FieldType::Array(inner), Value::Array(arr)) if matches!(**inner, FieldType::String) => {
-            let coerced: Vec<Value> = arr
-                .iter()
-                .map(|elem| {
-                    if !elem.is_string() && !elem.is_null() {
-                        Value::String(elem.to_string())
-                    } else {
-                        elem.clone()
-                    }
-                })
-                .collect();
-            Some(Value::Array(coerced))
-        }
-        _ => None,
-    }
-}
-
 /// Resolve a JSON Pointer (e.g. `/0` or `/items/1`) relative to `root`.
 /// Used to find the offending sub-value when an error fires inside `items`.
 fn resolve_instance_path<'a>(root: &'a Value, path: &str) -> &'a Value {
@@ -779,6 +752,7 @@ mod tests {
             required: vec![],
             nullable: false,
             constraints: None,
+            preprocess: vec![],
         }
     }
 
@@ -790,6 +764,7 @@ mod tests {
             required: vec![],
             nullable: false,
             constraints: None,
+            preprocess: vec![],
         }
     }
 
@@ -810,6 +785,7 @@ mod tests {
                     required: vec![],
                     nullable: false,
                     constraints: None,
+                    preprocess: vec![],
                 },
                 bool_field("draft"),
             ],
@@ -842,6 +818,7 @@ mod tests {
                     required: vec!["blog/**".into()],
                     nullable: false,
                     constraints: None,
+                    preprocess: vec![],
                 },
                 bool_field("draft"),
             ],
@@ -907,6 +884,7 @@ mod tests {
                 required: vec![],
                 nullable: false,
                 constraints: None,
+                preprocess: vec![],
             }],
             vec![],
         );
@@ -937,6 +915,7 @@ mod tests {
                 required: vec![],
                 nullable: false,
                 constraints: None,
+                preprocess: vec![],
             }],
             vec![],
         );
@@ -967,37 +946,10 @@ mod tests {
         assert!(result.new_fields.iter().any(|f| f.name == "tags"));
     }
 
-    #[test]
-    fn string_top_type_accepts_any_value() {
-        let tmp = tempfile::tempdir().unwrap();
-        let blog_dir = tmp.path().join("blog");
-        fs::create_dir_all(&blog_dir).unwrap();
-
-        fs::write(
-            blog_dir.join("bool.md"),
-            "---\nfield: false\n---\n# Bool\nBody.",
-        )
-        .unwrap();
-        fs::write(blog_dir.join("int.md"), "---\nfield: 42\n---\n# Int\nBody.").unwrap();
-        fs::write(
-            blog_dir.join("array.md"),
-            "---\nfield:\n  - a\n  - b\n---\n# Array\nBody.",
-        )
-        .unwrap();
-        fs::write(
-            blog_dir.join("object.md"),
-            "---\nfield:\n  k: v\n---\n# Object\nBody.",
-        )
-        .unwrap();
-
-        write_toml(tmp.path(), vec![string_field("field")], vec![]);
-
-        let step = run(tmp.path(), true, false);
-        let result = unwrap_check(&step);
-
-        assert!(result.violations.is_empty());
-        assert_eq!(result.files_checked, 4);
-    }
+    // Note: the legacy "String is top type" test that exercised hand-written
+    // toml accepting bool/int/array/object on a String field was deleted with
+    // TODO-0149 step 3. Coercion is now an explicit `preprocess` choice
+    // recorded in the toml, not an implicit runtime hack.
 
     #[test]
     fn bare_files_trigger_required() {
@@ -1027,6 +979,7 @@ mod tests {
                     required: vec!["blog/**".into()],
                     nullable: false,
                     constraints: None,
+                    preprocess: vec![],
                 }],
                 max_categories: 10,
                 min_category_repetition: 3,
@@ -1091,6 +1044,7 @@ mod tests {
                     required: vec!["**".into()],
                     nullable: false,
                     constraints: None,
+                    preprocess: vec![],
                 },
                 TomlField {
                     name: "tags".into(),
@@ -1101,6 +1055,7 @@ mod tests {
                     required: vec!["blog/**".into()],
                     nullable: false,
                     constraints: None,
+                    preprocess: vec![],
                 },
                 TomlField {
                     name: "draft".into(),
@@ -1109,6 +1064,7 @@ mod tests {
                     required: vec![],
                     nullable: false,
                     constraints: None,
+                    preprocess: vec![],
                 },
             ],
             vec![],
@@ -1143,6 +1099,7 @@ mod tests {
                     required: vec![],
                     nullable: false,
                     constraints: None,
+                    preprocess: vec![],
                 },
             ],
             vec![],
@@ -1181,6 +1138,7 @@ mod tests {
                     required: vec![],
                     nullable: true,
                     constraints: None,
+                    preprocess: vec![],
                 },
             ],
             vec![],
@@ -1213,6 +1171,7 @@ mod tests {
                     required: vec![],
                     nullable: true,
                     constraints: None,
+                    preprocess: vec![],
                 },
             ],
             vec![],
@@ -1251,6 +1210,7 @@ mod tests {
                     required: vec![],
                     nullable: false,
                     constraints: None,
+                    preprocess: vec![],
                 },
             ],
             vec![],
@@ -1295,6 +1255,7 @@ mod tests {
                     required: vec!["**".into()],
                     nullable: false,
                     constraints: None,
+                    preprocess: vec![],
                 },
             ],
             vec![],
@@ -1357,6 +1318,7 @@ mod tests {
                 ),
                 ..Default::default()
             }),
+            preprocess: vec![],
         }
     }
 
@@ -1427,6 +1389,7 @@ mod tests {
                     ]),
                     ..Default::default()
                 }),
+                preprocess: vec![],
             }],
             vec![],
         );
@@ -1459,6 +1422,7 @@ mod tests {
                     ]),
                     ..Default::default()
                 }),
+                preprocess: vec![],
             }],
             vec![],
         );
@@ -1492,6 +1456,7 @@ mod tests {
                     ]),
                     ..Default::default()
                 }),
+                preprocess: vec![],
             }],
             vec![],
         );
@@ -1641,6 +1606,7 @@ mod tests {
             required: vec![],
             nullable: false,
             constraints: None,
+            preprocess: vec![],
         }
     }
 

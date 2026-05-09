@@ -22,6 +22,9 @@ pub struct FieldTypeInfo {
     /// Total non-null value count (element-level for Array fields,
     /// value-level for all others).
     pub occurrence_count: usize,
+    /// Distinct non-null observation types seen across files (raw types
+    /// before widening). Used to infer Stage-2 preprocessors.
+    pub observed_types: Vec<FieldType>,
 }
 
 /// Infer field types by scanning all files and widening across occurrences.
@@ -33,6 +36,7 @@ pub fn infer_field_types(scanned: &ScannedFiles) -> BTreeMap<String, FieldTypeIn
     let mut nulls: HashSet<String> = HashSet::new();
     let mut distinct: HashMap<String, Vec<Value>> = HashMap::new();
     let mut counts: HashMap<String, usize> = HashMap::new();
+    let mut observed: HashMap<String, Vec<FieldType>> = HashMap::new();
 
     for file in &scanned.files {
         if let Some(Value::Object(map)) = &file.data {
@@ -50,6 +54,13 @@ pub fn infer_field_types(scanned: &ScannedFiles) -> BTreeMap<String, FieldTypeIn
                 }
 
                 let ft = FieldType::from(val);
+
+                // Track distinct observed types for preprocessor inference.
+                let obs = observed.entry(key.clone()).or_default();
+                if !obs.contains(&ft) {
+                    obs.push(ft.clone());
+                }
+
                 types
                     .entry(key.clone())
                     .and_modify(|existing| {
@@ -131,6 +142,7 @@ pub fn infer_field_types(scanned: &ScannedFiles) -> BTreeMap<String, FieldTypeIn
                 nullable: nulls.contains(&name),
                 distinct_values: distinct.remove(&name).unwrap_or_default(),
                 occurrence_count: counts.remove(&name).unwrap_or(0),
+                observed_types: observed.remove(&name).unwrap_or_default(),
             };
             (name, info)
         })

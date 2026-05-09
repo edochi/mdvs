@@ -335,6 +335,7 @@ pub(crate) async fn build_core(
                 required: f.required.clone(),
                 nullable: f.nullable,
                 constraints: None,
+                preprocess: f.preprocess.clone(),
             })
             .collect();
 
@@ -1331,6 +1332,7 @@ mod tests {
                         required: vec![],
                         nullable: false,
                         constraints: None,
+                        preprocess: vec![],
                     },
                     crate::schema::config::TomlField {
                         name: "draft".into(),
@@ -1340,6 +1342,7 @@ mod tests {
                         required: vec![],
                         nullable: false,
                         constraints: None,
+                        preprocess: vec![],
                     },
                 ],
                 max_categories: 10,
@@ -1407,6 +1410,7 @@ mod tests {
                         required: vec![],
                         nullable: false,
                         constraints: None,
+                        preprocess: vec![],
                     },
                     crate::schema::config::TomlField {
                         name: "tags".into(),
@@ -1419,6 +1423,7 @@ mod tests {
                         required: vec!["blog/**".into()],
                         nullable: false,
                         constraints: None,
+                        preprocess: vec![],
                     },
                 ],
                 max_categories: 10,
@@ -1481,6 +1486,7 @@ mod tests {
                     required: vec![],
                     nullable: false,
                     constraints: None,
+                    preprocess: vec![],
                 }],
                 max_categories: 10,
                 min_category_repetition: 3,

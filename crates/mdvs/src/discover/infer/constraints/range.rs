@@ -62,6 +62,7 @@ mod tests {
             nullable: false,
             distinct_values: distinct,
             occurrence_count: count,
+            preprocess: vec![],
         }
     }
 

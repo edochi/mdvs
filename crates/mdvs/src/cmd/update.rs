@@ -259,6 +259,7 @@ pub async fn run(
             required: inf.required.clone(),
             nullable: inf.nullable,
             constraints,
+            preprocess: inf.preprocess.clone(),
         };
 
         if let Some(old_field) = old_fields.get(inf.name.as_str()) {

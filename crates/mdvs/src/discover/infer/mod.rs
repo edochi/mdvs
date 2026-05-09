@@ -16,6 +16,7 @@ pub use types::{FieldTypeInfo, infer_field_types};
 use crate::discover::field_type::FieldType;
 use crate::discover::scan::ScannedFiles;
 use crate::output::DiscoveredField;
+use crate::preprocess::{ValueStage, infer_value_stages};
 use crate::schema::shared::FieldTypeSerde;
 use serde_json::Value;
 use std::path::PathBuf;
@@ -42,6 +43,9 @@ pub struct InferredField {
     /// Total non-null value count (element-level for Array fields,
     /// value-level for all others).
     pub occurrence_count: usize,
+    /// Stage-2 preprocessors implied by observed type-widening events.
+    /// Auto-derived from the observation set + final widened type.
+    pub preprocess: Vec<ValueStage>,
 }
 
 impl InferredField {
@@ -91,6 +95,7 @@ impl InferredSchema {
             .map(|name| {
                 let ti = type_info.remove(&name).unwrap();
                 let pi = path_info.get(&name);
+                let preprocess = infer_value_stages(&ti.observed_types, &ti.field_type);
                 InferredField {
                     field_type: ti.field_type,
                     files: ti.files,
@@ -99,6 +104,7 @@ impl InferredSchema {
                     nullable: ti.nullable,
                     distinct_values: ti.distinct_values,
                     occurrence_count: ti.occurrence_count,
+                    preprocess,
                     name,
                 }
             })
@@ -701,6 +707,110 @@ mod tests {
         let title = schema.field("title").unwrap();
         assert_eq!(title.distinct_values.len(), 6);
         assert!(infer_constraints(title, 10, 2).is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Preprocessor inference (TODO-0149 step 3)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn infer_preprocess_uniform_string_no_stages() {
+        let scanned = ScannedFiles {
+            files: vec![
+                sf("a.md", Some(json!({"title": "A"})), ""),
+                sf("b.md", Some(json!({"title": "B"})), ""),
+            ],
+        };
+        let schema = InferredSchema::infer(&scanned);
+        assert!(schema.field("title").unwrap().preprocess.is_empty());
+    }
+
+    #[test]
+    fn infer_preprocess_int_string_widens_to_coerce() {
+        let scanned = ScannedFiles {
+            files: vec![
+                sf("a.md", Some(json!({"val": 42})), ""),
+                sf("b.md", Some(json!({"val": "hello"})), ""),
+            ],
+        };
+        let schema = InferredSchema::infer(&scanned);
+        let val = schema.field("val").unwrap();
+        assert_eq!(val.field_type, FieldType::String);
+        assert_eq!(val.preprocess, vec![ValueStage::CoerceToString]);
+    }
+
+    #[test]
+    fn infer_preprocess_int_float_widens_to_widen_int_to_float() {
+        let scanned = ScannedFiles {
+            files: vec![
+                sf("a.md", Some(json!({"score": 42})), ""),
+                sf("b.md", Some(json!({"score": 2.5})), ""),
+            ],
+        };
+        let schema = InferredSchema::infer(&scanned);
+        let score = schema.field("score").unwrap();
+        assert_eq!(score.field_type, FieldType::Float);
+        assert_eq!(score.preprocess, vec![ValueStage::WidenIntToFloat]);
+    }
+
+    #[test]
+    fn infer_preprocess_string_scalar_plus_array_to_coerce() {
+        let scanned = ScannedFiles {
+            files: vec![
+                sf("a.md", Some(json!({"funding": "internal"})), ""),
+                sf("b.md", Some(json!({"funding": ["internal"]})), ""),
+            ],
+        };
+        let schema = InferredSchema::infer(&scanned);
+        let funding = schema.field("funding").unwrap();
+        assert_eq!(funding.field_type, FieldType::String);
+        assert_eq!(funding.preprocess, vec![ValueStage::CoerceToString]);
+    }
+
+    #[test]
+    fn infer_preprocess_uniform_array_string_no_stages() {
+        let scanned = ScannedFiles {
+            files: vec![
+                sf("a.md", Some(json!({"tags": ["rust"]})), ""),
+                sf("b.md", Some(json!({"tags": ["go", "python"]})), ""),
+            ],
+        };
+        let schema = InferredSchema::infer(&scanned);
+        assert!(schema.field("tags").unwrap().preprocess.is_empty());
+    }
+
+    #[test]
+    fn infer_preprocess_array_int_array_float_to_widen() {
+        let scanned = ScannedFiles {
+            files: vec![
+                sf("a.md", Some(json!({"scores": [1, 2, 3]})), ""),
+                sf("b.md", Some(json!({"scores": [4.5, 5.5]})), ""),
+            ],
+        };
+        let schema = InferredSchema::infer(&scanned);
+        let scores = schema.field("scores").unwrap();
+        assert_eq!(
+            scores.field_type,
+            FieldType::Array(Box::new(FieldType::Float))
+        );
+        assert_eq!(scores.preprocess, vec![ValueStage::WidenIntToFloat]);
+    }
+
+    #[test]
+    fn infer_preprocess_null_plus_string_no_stages() {
+        // Nulls are excluded from observed types — they don't trigger coerce.
+        let scanned = ScannedFiles {
+            files: vec![
+                sf("a.md", Some(json!({"label": "A"})), ""),
+                sf("b.md", Some(json!({"label": null})), ""),
+                sf("c.md", Some(json!({"label": "C"})), ""),
+            ],
+        };
+        let schema = InferredSchema::infer(&scanned);
+        let label = schema.field("label").unwrap();
+        assert_eq!(label.field_type, FieldType::String);
+        assert!(label.nullable);
+        assert!(label.preprocess.is_empty());
     }
 
     #[test]

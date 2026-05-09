@@ -1,5 +1,6 @@
 use crate::discover::field_type::FieldType;
 use crate::discover::infer::{InferredSchema, infer_constraints};
+use crate::preprocess::ValueStage;
 use crate::schema::constraints::Constraints;
 use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig, FieldTypeSerde, ScanConfig};
 use serde::{Deserialize, Serialize};
@@ -79,6 +80,11 @@ pub struct TomlField {
     /// Optional value constraints (categories, range, length, etc.).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub constraints: Option<Constraints>,
+    /// Stage-2 preprocessors to apply before validation. Auto-populated by
+    /// inference when type-widening events are observed; can also be set
+    /// manually. Empty means strict validation (no coercion).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub preprocess: Vec<ValueStage>,
 }
 
 fn default_field_type() -> FieldTypeSerde {
@@ -191,6 +197,7 @@ impl MdvsToml {
                             required: f.required.clone(),
                             nullable: f.nullable,
                             constraints: infer_constraints(f, max_cat, min_rep),
+                            preprocess: f.preprocess.clone(),
                         }
                     })
                     .collect(),
@@ -243,6 +250,8 @@ impl MdvsToml {
     /// 3. Every required glob must be covered by some allowed glob.
     /// 4. Constraints are valid for the field's type (type applicability,
     ///    well-formed values, pairwise compatibility).
+    /// 5. Each preprocess entry must be applicable to the field type, and the
+    ///    list must contain no duplicates.
     pub fn validate(&self) -> anyhow::Result<()> {
         // Invariant 1: ignore and [[fields.field]] are mutually exclusive
         for ignored in &self.fields.ignore {
@@ -288,6 +297,29 @@ impl MdvsToml {
                     }
                     Err(e) => {
                         anyhow::bail!("field '{}': invalid type — {e}", field.name);
+                    }
+                }
+            }
+
+            // Invariant 5: preprocess entries must be applicable to the field
+            //              type and must not duplicate.
+            if !field.preprocess.is_empty() {
+                let ft = FieldType::try_from(&field.field_type)
+                    .map_err(|e| anyhow::anyhow!("field '{}': invalid type — {e}", field.name))?;
+                let mut seen: std::collections::HashSet<ValueStage> =
+                    std::collections::HashSet::new();
+                for stage in &field.preprocess {
+                    if !seen.insert(*stage) {
+                        anyhow::bail!("field '{}': duplicate preprocess '{}'", field.name, stage);
+                    }
+                    if !stage.applies_to(&ft) {
+                        anyhow::bail!(
+                            "field '{}': preprocess '{}' is not applicable to type {} (applies only to {})",
+                            field.name,
+                            stage,
+                            field.field_type,
+                            stage.applicable_types(),
+                        );
                     }
                 }
             }
@@ -459,6 +491,7 @@ mod tests {
                         required: vec!["**".into()],
                         nullable: false,
                         constraints: None,
+                        preprocess: vec![],
                     },
                     TomlField {
                         name: "tags".into(),
@@ -469,6 +502,7 @@ mod tests {
                         required: vec!["blog/drafts/**".into(), "notes/**".into()],
                         nullable: false,
                         constraints: None,
+                        preprocess: vec![],
                     },
                     TomlField {
                         name: "draft".into(),
@@ -477,6 +511,7 @@ mod tests {
                         required: vec![],
                         nullable: false,
                         constraints: None,
+                        preprocess: vec![],
                     },
                     TomlField {
                         name: "meta".into(),
@@ -490,6 +525,7 @@ mod tests {
                         required: vec!["**".into()],
                         nullable: false,
                         constraints: None,
+                        preprocess: vec![],
                     },
                 ],
                 max_categories: 10,
@@ -599,6 +635,7 @@ default_limit = 10
                     nullable: false,
                     distinct_values: vec![],
                     occurrence_count: 0,
+                    preprocess: vec![],
                 },
                 InferredField {
                     name: "tags".into(),
@@ -609,6 +646,7 @@ default_limit = 10
                     nullable: false,
                     distinct_values: vec![],
                     occurrence_count: 0,
+                    preprocess: vec![],
                 },
                 InferredField {
                     name: "title".into(),
@@ -619,6 +657,7 @@ default_limit = 10
                     nullable: false,
                     distinct_values: vec![],
                     occurrence_count: 0,
+                    preprocess: vec![],
                 },
             ],
         };
@@ -696,6 +735,7 @@ default_limit = 10
                 nullable: false,
                 distinct_values: vec![],
                 occurrence_count: 0,
+                preprocess: vec![],
             }],
         };
         let scan = ScanConfig {
@@ -725,6 +765,7 @@ default_limit = 10
                 required: vec![],
                 nullable: false,
                 constraints: None,
+                preprocess: vec![],
             },
             TomlField {
                 name: "meta".into(),
@@ -738,6 +779,7 @@ default_limit = 10
                 required: vec![],
                 nullable: false,
                 constraints: None,
+                preprocess: vec![],
             },
         ]);
 
@@ -907,6 +949,7 @@ nullable = false
             required: vec![],
             nullable: true,
             constraints: None,
+            preprocess: vec![],
         }]);
         config.fields.ignore = vec!["tags".into()];
         let err = config.validate().unwrap_err();
@@ -927,6 +970,7 @@ nullable = false
             required: vec![],
             nullable: true,
             constraints: None,
+            preprocess: vec![],
         }]);
         config.fields.ignore = vec!["other_field".into()];
         assert!(config.validate().is_ok());
@@ -943,6 +987,7 @@ nullable = false
             required: vec![],
             nullable: false,
             constraints: None,
+            preprocess: vec![],
         }]);
         let err = config.validate().unwrap_err();
         assert!(
@@ -961,6 +1006,7 @@ nullable = false
             required: vec!["blog/post.md".into()],
             nullable: false,
             constraints: None,
+            preprocess: vec![],
         }]);
         let err = config.validate().unwrap_err();
         assert!(
@@ -981,6 +1027,7 @@ nullable = false
                 required: vec!["*".into()],
                 nullable: false,
                 constraints: None,
+                preprocess: vec![],
             },
             TomlField {
                 name: "b".into(),
@@ -989,6 +1036,7 @@ nullable = false
                 required: vec!["blog/**".into()],
                 nullable: false,
                 constraints: None,
+                preprocess: vec![],
             },
             TomlField {
                 name: "c".into(),
@@ -997,6 +1045,7 @@ nullable = false
                 required: vec![],
                 nullable: false,
                 constraints: None,
+                preprocess: vec![],
             },
         ]);
         assert!(config.validate().is_ok());
@@ -1013,6 +1062,7 @@ nullable = false
             required: vec!["blog/**".into()],
             nullable: false,
             constraints: None,
+            preprocess: vec![],
         }]);
         let err = config.validate().unwrap_err();
         assert!(
@@ -1032,6 +1082,7 @@ nullable = false
             required: vec!["blog/**".into()],
             nullable: false,
             constraints: None,
+            preprocess: vec![],
         }]);
         assert!(config.validate().is_ok());
     }
@@ -1045,6 +1096,7 @@ nullable = false
             required: vec!["meetings/all-hands/**".into()],
             nullable: false,
             constraints: None,
+            preprocess: vec![],
         }]);
         assert!(config.validate().is_ok());
     }
@@ -1058,6 +1110,7 @@ nullable = false
             required: vec!["blog/**".into()],
             nullable: false,
             constraints: None,
+            preprocess: vec![],
         }]);
         assert!(config.validate().is_ok());
     }
@@ -1071,6 +1124,7 @@ nullable = false
             required: vec![],
             nullable: false,
             constraints: None,
+            preprocess: vec![],
         }]);
         assert!(config.validate().is_ok());
     }
@@ -1084,6 +1138,100 @@ nullable = false
             required: vec!["blog/**".into()],
             nullable: false,
             constraints: None,
+            preprocess: vec![],
+        }]);
+        assert!(config.validate().is_ok());
+    }
+
+    // --- Invariant 5: preprocess applicability + duplicates ---
+
+    #[test]
+    fn validate_rejects_widen_int_to_float_on_string_field() {
+        let config = full_toml(vec![TomlField {
+            name: "title".into(),
+            field_type: FieldTypeSerde::Scalar("String".into()),
+            allowed: vec!["**".into()],
+            required: vec![],
+            nullable: false,
+            constraints: None,
+            preprocess: vec![ValueStage::WidenIntToFloat],
+        }]);
+        let err = config.validate().unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("widen_int_to_float"), "got: {msg}");
+        assert!(msg.contains("not applicable"), "got: {msg}");
+        assert!(msg.contains("Float, Array(Float)"), "got: {msg}");
+    }
+
+    #[test]
+    fn validate_rejects_coerce_to_string_on_integer_field() {
+        let config = full_toml(vec![TomlField {
+            name: "count".into(),
+            field_type: FieldTypeSerde::Scalar("Integer".into()),
+            allowed: vec!["**".into()],
+            required: vec![],
+            nullable: false,
+            constraints: None,
+            preprocess: vec![ValueStage::CoerceToString],
+        }]);
+        let err = config.validate().unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("coerce_to_string"), "got: {msg}");
+        assert!(msg.contains("not applicable"), "got: {msg}");
+    }
+
+    #[test]
+    fn validate_rejects_duplicate_preprocess() {
+        let config = full_toml(vec![TomlField {
+            name: "title".into(),
+            field_type: FieldTypeSerde::Scalar("String".into()),
+            allowed: vec!["**".into()],
+            required: vec![],
+            nullable: false,
+            constraints: None,
+            preprocess: vec![ValueStage::CoerceToString, ValueStage::CoerceToString],
+        }]);
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("duplicate preprocess"));
+    }
+
+    #[test]
+    fn validate_accepts_applicable_preprocess() {
+        let config = full_toml(vec![
+            TomlField {
+                name: "title".into(),
+                field_type: FieldTypeSerde::Scalar("String".into()),
+                allowed: vec!["**".into()],
+                required: vec![],
+                nullable: false,
+                constraints: None,
+                preprocess: vec![ValueStage::CoerceToString],
+            },
+            TomlField {
+                name: "score".into(),
+                field_type: FieldTypeSerde::Scalar("Float".into()),
+                allowed: vec!["**".into()],
+                required: vec![],
+                nullable: false,
+                constraints: None,
+                preprocess: vec![ValueStage::WidenIntToFloat],
+            },
+        ]);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_accepts_array_string_with_coerce_to_string() {
+        let config = full_toml(vec![TomlField {
+            name: "tags".into(),
+            field_type: FieldTypeSerde::Array {
+                array: Box::new(FieldTypeSerde::Scalar("String".into())),
+            },
+            allowed: vec!["**".into()],
+            required: vec![],
+            nullable: false,
+            constraints: None,
+            preprocess: vec![ValueStage::CoerceToString],
         }]);
         assert!(config.validate().is_ok());
     }
@@ -1219,6 +1367,7 @@ nullable = false
                 ]),
                 ..Default::default()
             }),
+            preprocess: vec![],
         }]);
         let toml_str = toml::to_string(&doc).unwrap();
         let parsed: MdvsToml = toml::from_str(&toml_str).unwrap();
@@ -1274,6 +1423,7 @@ type = "String"
             required: vec![],
             nullable: false,
             constraints: None,
+            preprocess: vec![],
         }]);
         let toml_str = toml::to_string(&doc).unwrap();
         assert!(!toml_str.contains("constraints"));
@@ -1291,6 +1441,7 @@ type = "String"
                 categories: Some(vec![toml::Value::String("yes".into())]),
                 ..Default::default()
             }),
+            preprocess: vec![],
         }]);
         let err = config.validate().unwrap_err();
         assert!(err.to_string().contains("does not apply"));
@@ -1311,6 +1462,7 @@ type = "String"
                 ]),
                 ..Default::default()
             }),
+            preprocess: vec![],
         }]);
         assert!(config.validate().is_ok());
     }
@@ -1327,6 +1479,7 @@ type = "String"
                 categories: Some(vec![toml::Value::Integer(1)]),
                 ..Default::default()
             }),
+            preprocess: vec![],
         }]);
         let err = config.validate().unwrap_err();
         assert!(err.to_string().contains("does not match field type"));
@@ -1344,6 +1497,7 @@ type = "String"
                 categories: Some(vec![toml::Value::String("a".into())]),
                 ..Default::default()
             }),
+            preprocess: vec![],
         }]);
         let err = config.validate().unwrap_err();
         assert!(err.to_string().contains("invalid type"));
@@ -1402,6 +1556,7 @@ include_bare_files = false
                 ]),
                 ..Default::default()
             }),
+            preprocess: vec![],
         }]);
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("mdvs.toml");
