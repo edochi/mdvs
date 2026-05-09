@@ -144,44 +144,94 @@ fn field_to_subschema(field: &crate::schema::config::TomlField) -> Value {
 /// Produce the JSON Schema for a field type, applying `nullable` and any
 /// `Constraints` at the appropriate level (scalar fields apply constraints to
 /// the scalar; array fields apply constraints to `items`).
+///
+/// **String is the top type.** For `FieldType::String` we emit either
+/// "any non-null type" (nullable=false) or no `type` constraint at all
+/// (nullable=true). This preserves the existing behavior where storing
+/// non-string values in a String-typed field is allowed (they get
+/// JSON-stringified at storage time).
 fn type_subschema(ft: &FieldType, nullable: bool, constraints: Option<&Constraints>) -> Value {
     match ft {
         FieldType::Boolean => scalar_subschema("boolean", nullable, None),
         FieldType::Integer => scalar_subschema("integer", nullable, constraints),
         FieldType::Float => scalar_subschema("number", nullable, constraints),
-        FieldType::String => scalar_subschema("string", nullable, constraints),
+        FieldType::String => permissive_string_subschema(nullable, constraints),
         FieldType::Array(inner) => {
             // Array constraints apply to items (per Constraints docstring:
             // categories applies to Array(String)/Array(Integer); range applies
             // to Array(Integer)/Array(Float)).
+            //
+            // Inner element nullability follows the field nullability: if the
+            // outer field is non-nullable, items are also non-nullable. (The
+            // existing type_matches semantic accepts null elements regardless,
+            // but only inside String arrays — which the permissive-string path
+            // handles.)
             let items = type_subschema(inner, false, constraints);
             let mut obj = Map::new();
             insert_type(&mut obj, "array", nullable);
             obj.insert("items".into(), items);
             Value::Object(obj)
         }
-        FieldType::Object(map) => {
-            let mut props = Map::new();
-            for (k, v) in map {
-                // Object children carry no constraints in v0 (Constraints
-                // doesn't model nested objects).
-                props.insert(k.clone(), type_subschema(v, false, None));
-            }
+        FieldType::Object(_) => {
+            // Object validation is intentionally loose: the existing
+            // type_matches accepts any object regardless of children. We
+            // emit `{"type": "object", "additionalProperties": true}` and
+            // do not project children — preserving that behavior. If/when
+            // we tighten object validation, this is the place.
             let mut obj = Map::new();
             insert_type(&mut obj, "object", nullable);
-            obj.insert("properties".into(), Value::Object(props));
             obj.insert("additionalProperties".into(), Value::Bool(true));
             Value::Object(obj)
         }
     }
 }
 
+/// Subschema for a `FieldType::String` field. String is the top type — any
+/// non-null value is accepted at the type level. Constraints (`enum`, length,
+/// pattern) still apply.
+///
+/// nullable=false → `type: ["string","boolean","integer","number","array","object"]`
+/// (six types, null excluded).
+/// nullable=true  → no `type` keyword (any value passes type check).
+fn permissive_string_subschema(nullable: bool, constraints: Option<&Constraints>) -> Value {
+    let mut obj = Map::new();
+    if !nullable {
+        obj.insert(
+            "type".into(),
+            Value::Array(
+                ["string", "boolean", "integer", "number", "array", "object"]
+                    .iter()
+                    .map(|s| Value::String((*s).into()))
+                    .collect(),
+            ),
+        );
+    }
+    apply_constraints(&mut obj, nullable, constraints);
+    Value::Object(obj)
+}
+
 fn scalar_subschema(ty: &str, nullable: bool, constraints: Option<&Constraints>) -> Value {
     let mut obj = Map::new();
     insert_type(&mut obj, ty, nullable);
+    apply_constraints(&mut obj, nullable, constraints);
+    Value::Object(obj)
+}
+
+fn apply_constraints(
+    obj: &mut Map<String, Value>,
+    nullable: bool,
+    constraints: Option<&Constraints>,
+) {
     if let Some(c) = constraints {
         if let Some(cats) = &c.categories {
-            obj.insert("enum".into(), categories_to_json(cats));
+            // For nullable fields, append null to the enum list so null
+            // passes the categorical check (matching the existing semantic
+            // where null on nullable+categorical skips the enum violation).
+            let mut enum_values: Vec<Value> = cats.iter().filter_map(toml_to_json).collect();
+            if nullable {
+                enum_values.push(Value::Null);
+            }
+            obj.insert("enum".into(), Value::Array(enum_values));
         }
         if let Some(min) = &c.min
             && let Some(v) = toml_to_json(min)
@@ -194,7 +244,6 @@ fn scalar_subschema(ty: &str, nullable: bool, constraints: Option<&Constraints>)
             obj.insert("maximum".into(), v);
         }
     }
-    Value::Object(obj)
 }
 
 fn insert_type(obj: &mut Map<String, Value>, ty: &str, nullable: bool) {
@@ -206,10 +255,6 @@ fn insert_type(obj: &mut Map<String, Value>, ty: &str, nullable: bool) {
     } else {
         obj.insert("type".into(), Value::String(ty.into()));
     }
-}
-
-fn categories_to_json(cats: &[toml::Value]) -> Value {
-    Value::Array(cats.iter().filter_map(toml_to_json).collect())
 }
 
 /// Convert a `toml::Value` to a `serde_json::Value` for JSON Schema literals
@@ -401,13 +446,17 @@ mod tests {
     }
 
     #[test]
-    fn string_field_simple() {
+    fn string_field_simple_emits_permissive_type_set() {
+        // String is the top type — accepts any non-null value when nullable=false.
         let toml = with_fields(vec![field(
             "title",
             FieldTypeSerde::Scalar("String".into()),
         )]);
         let out = dsl_to_canonical(&toml);
-        assert_eq!(out["properties"]["title"], json!({"type": "string"}));
+        assert_eq!(
+            out["properties"]["title"],
+            json!({"type": ["string", "boolean", "integer", "number", "array", "object"]})
+        );
     }
 
     #[test]
@@ -438,18 +487,29 @@ mod tests {
     }
 
     #[test]
-    fn nullable_field_emits_union_type() {
+    fn nullable_string_field_drops_type_keyword() {
+        // String + nullable=true accepts any value including null — no `type` constraint.
         let mut f = field("title", FieldTypeSerde::Scalar("String".into()));
         f.nullable = true;
         let out = dsl_to_canonical(&with_fields(vec![f]));
+        assert_eq!(out["properties"]["title"], json!({}));
+    }
+
+    #[test]
+    fn nullable_integer_field_emits_union_type() {
+        // Non-String types follow the standard union-with-null pattern.
+        let mut f = field("count", FieldTypeSerde::Scalar("Integer".into()));
+        f.nullable = true;
+        let out = dsl_to_canonical(&with_fields(vec![f]));
         assert_eq!(
-            out["properties"]["title"],
-            json!({"type": ["string", "null"]})
+            out["properties"]["count"],
+            json!({"type": ["integer", "null"]})
         );
     }
 
     #[test]
     fn array_of_strings_field() {
+        // Array(String) — items are permissive (String is top type).
         let toml = with_fields(vec![field(
             "tags",
             FieldTypeSerde::Array {
@@ -459,12 +519,18 @@ mod tests {
         let out = dsl_to_canonical(&toml);
         assert_eq!(
             out["properties"]["tags"],
-            json!({"type": "array", "items": {"type": "string"}})
+            json!({
+                "type": "array",
+                "items": {"type": ["string", "boolean", "integer", "number", "array", "object"]}
+            })
         );
     }
 
     #[test]
-    fn object_field_recurses() {
+    fn object_field_loose_validation() {
+        // Object validation is intentionally loose — any object passes type
+        // check, children types are not projected (preserves existing
+        // type_matches semantics).
         use std::collections::BTreeMap;
         let toml = with_fields(vec![field(
             "meta",
@@ -478,14 +544,7 @@ mod tests {
         let out = dsl_to_canonical(&toml);
         assert_eq!(
             out["properties"]["meta"],
-            json!({
-                "type": "object",
-                "properties": {
-                    "author": {"type": "string"},
-                    "version": {"type": "integer"}
-                },
-                "additionalProperties": true
-            })
+            json!({"type": "object", "additionalProperties": true})
         );
     }
 
@@ -502,7 +561,30 @@ mod tests {
         let out = dsl_to_canonical(&with_fields(vec![f]));
         assert_eq!(
             out["properties"]["status"],
-            json!({"type": "string", "enum": ["draft", "published"]})
+            json!({
+                "type": ["string", "boolean", "integer", "number", "array", "object"],
+                "enum": ["draft", "published"]
+            })
+        );
+    }
+
+    #[test]
+    fn nullable_categorical_appends_null_to_enum() {
+        // nullable=true + categories appends null to enum so null passes the
+        // categorical check (matches the existing semantic).
+        let mut f = field("status", FieldTypeSerde::Scalar("String".into()));
+        f.nullable = true;
+        f.constraints = Some(Constraints {
+            categories: Some(vec![
+                toml::Value::String("draft".into()),
+                toml::Value::String("published".into()),
+            ]),
+            ..Default::default()
+        });
+        let out = dsl_to_canonical(&with_fields(vec![f]));
+        assert_eq!(
+            out["properties"]["status"],
+            json!({"enum": ["draft", "published", null]})
         );
     }
 
@@ -553,7 +635,7 @@ mod tests {
         assert_eq!(
             out["properties"]["title"],
             json!({
-                "type": "string",
+                "type": ["string", "boolean", "integer", "number", "array", "object"],
                 "x-mdvs": {
                     "allowed": ["blog/**", "notes/**"],
                     "required": ["blog/**"]

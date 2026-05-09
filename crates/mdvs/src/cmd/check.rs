@@ -7,9 +7,12 @@ use crate::outcome::{
 };
 use crate::output::{FieldViolation, NewField, ViolatingFile, ViolationKind};
 use crate::schema::config::{MdvsToml, TomlField};
+use crate::schema::json_schema::dsl_to_canonical;
 use crate::schema::shared::FieldTypeSerde;
 use crate::step::{CommandResult, ErrorKind, StepEntry};
 use globset::Glob;
+use jsonschema::error::ValidationErrorKind;
+use jsonschema::{ValidationError, Validator};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -256,6 +259,7 @@ pub fn validate(
         .map(|f| (f.name.as_str(), f))
         .collect();
     let ignore_set: HashSet<&str> = config.fields.ignore.iter().map(|s| s.as_str()).collect();
+    let validators = FieldValidators::build(config)?;
 
     let mut violations: HashMap<ViolationKey, Vec<ViolatingFile>> = HashMap::new();
     let mut new_field_paths: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
@@ -264,9 +268,10 @@ pub fn validate(
         scanned,
         &field_map,
         &ignore_set,
+        &validators,
         &mut violations,
         &mut new_field_paths,
-    )?;
+    );
     check_required_fields(scanned, config, &mut violations);
 
     let field_violations = collect_violations(violations);
@@ -282,13 +287,19 @@ pub fn validate(
 }
 
 /// Check each file's frontmatter fields for type mismatches, disallowed locations, and new fields.
+///
+/// Path-scoping (`allowed` glob) and new-field discovery stay Rust-side because
+/// JSON Schema doesn't model per-file location semantics. Per-value checks
+/// (type, null-vs-nullable, enum, range, length, pattern, array bounds) are
+/// delegated to a per-field `jsonschema::Validator`.
 fn check_field_values(
     scanned: &ScannedFiles,
     field_map: &HashMap<&str, &crate::schema::config::TomlField>,
     ignore_set: &HashSet<&str>,
+    validators: &FieldValidators,
     violations: &mut HashMap<ViolationKey, Vec<ViolatingFile>>,
     new_field_paths: &mut BTreeMap<String, Vec<PathBuf>>,
-) -> anyhow::Result<()> {
+) {
     for file in &scanned.files {
         let file_path_str = file.path.display().to_string();
 
@@ -317,53 +328,39 @@ fn check_field_values(
                         });
                     }
 
-                    if value.is_null() {
-                        // NullNotAllowed: null value on a non-nullable field
-                        if !toml_field.nullable {
-                            let key = ViolationKey {
-                                field: field_name.clone(),
-                                kind: ViolationKind::NullNotAllowed,
-                                rule: "not nullable".to_string(),
-                            };
-                            violations.entry(key).or_default().push(ViolatingFile {
-                                path: file.path.clone(),
-                                detail: None,
-                            });
-                        }
-                    } else {
-                        // WrongType: value doesn't match declared type
-                        let expected =
-                            FieldType::try_from(&toml_field.field_type).map_err(|e| {
-                                anyhow::anyhow!("invalid type for '{}': {}", field_name, e)
-                            })?;
-                        let matches = type_matches(&expected, value);
-                        if !matches {
-                            let key = ViolationKey {
-                                field: field_name.clone(),
-                                kind: ViolationKind::WrongType,
-                                rule: format!("type {}", toml_field.field_type),
-                            };
-                            violations.entry(key).or_default().push(ViolatingFile {
-                                path: file.path.clone(),
-                                detail: Some(format!("got {}", actual_type_name(value))),
-                            });
-                        }
+                    // Per-value validation via jsonschema (type, null, enum,
+                    // range, length, pattern, array bounds).
+                    //
+                    // For String-typed fields (top type), coerce non-string
+                    // non-null values to their JSON-stringified form before
+                    // validating — matches the existing storage behavior
+                    // (Value::to_string()) and the old categorical validator.
+                    // TODO-0149 step 3 replaces this with the
+                    // `coerce_to_string` preprocessor stage.
+                    let coerced = coerce_string_field(value, toml_field);
+                    let validation_value = coerced.as_ref().unwrap_or(value);
 
-                        // Constraint validation (only if type matches)
-                        if matches && let Some(ref constraints) = toml_field.constraints {
-                            for ck in constraints.active() {
-                                if let Some(cv) = ck.validate_value(value, &expected) {
-                                    let key = ViolationKey {
-                                        field: field_name.clone(),
-                                        kind: ck.violation_kind(),
-                                        rule: cv.rule,
-                                    };
-                                    violations.entry(key).or_default().push(ViolatingFile {
-                                        path: file.path.clone(),
-                                        detail: Some(cv.detail),
-                                    });
-                                }
+                    if let Some(validator) = validators.get(field_name) {
+                        let errors: Vec<_> = validator.iter_errors(validation_value).collect();
+                        let has_type_error = errors
+                            .iter()
+                            .any(|e| matches!(e.kind(), ValidationErrorKind::Type { .. }));
+                        for err in &errors {
+                            if has_type_error
+                                && !matches!(err.kind(), ValidationErrorKind::Type { .. })
+                            {
+                                continue;
                             }
+                            let mapped = map_validation_error(err, validation_value, toml_field);
+                            let key = ViolationKey {
+                                field: field_name.clone(),
+                                kind: mapped.kind,
+                                rule: mapped.rule,
+                            };
+                            violations.entry(key).or_default().push(ViolatingFile {
+                                path: file.path.clone(),
+                                detail: mapped.detail,
+                            });
                         }
                     }
                 } else {
@@ -375,7 +372,6 @@ fn check_field_values(
             }
         }
     }
-    Ok(())
 }
 
 /// Check that required fields are present in files matching their required glob patterns.
@@ -453,16 +449,258 @@ fn collect_new_fields(
         .collect()
 }
 
-fn type_matches(expected: &FieldType, value: &Value) -> bool {
-    match (expected, value) {
-        (FieldType::String, _) => true,
-        (FieldType::Boolean, Value::Bool(_)) => true,
-        (FieldType::Integer, Value::Number(n)) => n.is_i64() || n.is_u64(),
-        (FieldType::Float, Value::Number(_)) => true,
-        (FieldType::Array(inner), Value::Array(arr)) => arr.iter().all(|v| type_matches(inner, v)),
-        (FieldType::Object(_), Value::Object(_)) => true,
-        _ => false,
+// ============================================================================
+// Per-field jsonschema validators
+// ============================================================================
+
+/// Compiled per-field `jsonschema::Validator`s, built once per `validate()`
+/// call from `dsl_to_canonical(config)`.
+///
+/// Per-field is preferred over a single global validator because:
+/// - Path-scoping (`allowed`/`required`) stays Rust-side; the global root has
+///   `additionalProperties: true` and no `required`, so jsonschema would
+///   never produce `Required` or `AdditionalProperties` errors anyway.
+/// - The field name is known a priori from the dispatch loop, no need to
+///   parse `instance_path`.
+struct FieldValidators {
+    per_field: HashMap<String, Validator>,
+}
+
+impl FieldValidators {
+    fn build(config: &MdvsToml) -> anyhow::Result<Self> {
+        let canonical = dsl_to_canonical(config);
+        let properties = canonical
+            .get("properties")
+            .and_then(Value::as_object)
+            .ok_or_else(|| anyhow::anyhow!("dsl_to_canonical produced no properties"))?;
+
+        let mut per_field = HashMap::new();
+        for field in &config.fields.field {
+            // Skip fields whose subschema is `{}` (always-passes); compiling
+            // is wasted work and produces no errors anyway.
+            let Some(subschema) = properties.get(&field.name) else {
+                continue;
+            };
+            if subschema.as_object().is_some_and(|o| o.is_empty()) {
+                continue;
+            }
+            // Strip `x-mdvs` before compiling — it's an extension, not a
+            // validation keyword. Carrying it would be harmless (jsonschema
+            // ignores unknown keywords by default) but keeps schemas tidy
+            // for any future debug printing.
+            let stripped = strip_x_mdvs(subschema.clone());
+            let validator = jsonschema::validator_for(&stripped).map_err(|e| {
+                anyhow::anyhow!("failed to compile schema for '{}': {e}", field.name)
+            })?;
+            per_field.insert(field.name.clone(), validator);
+        }
+        Ok(Self { per_field })
     }
+
+    fn get(&self, field_name: &str) -> Option<&Validator> {
+        self.per_field.get(field_name)
+    }
+}
+
+fn strip_x_mdvs(mut value: Value) -> Value {
+    if let Value::Object(map) = &mut value {
+        map.remove("x-mdvs");
+        if let Some(Value::Object(props)) = map.get_mut("properties") {
+            for v in props.values_mut() {
+                let taken = std::mem::take(v);
+                *v = strip_x_mdvs(taken);
+            }
+        }
+        if let Some(items) = map.get_mut("items") {
+            let taken = std::mem::take(items);
+            *items = strip_x_mdvs(taken);
+        }
+    }
+    value
+}
+
+// ============================================================================
+// ValidationError → ViolationKind mapping
+// ============================================================================
+
+struct MappedViolation {
+    kind: ViolationKind,
+    rule: String,
+    detail: Option<String>,
+}
+
+/// Translate a `jsonschema::ValidationError` into the mdvs `ViolationKind`
+/// shape, using the field's TOML config for rule strings.
+///
+/// The two non-mechanical cases:
+/// - `Type` against a `null` instance → `NullNotAllowed` (not `WrongType`).
+/// - `Pattern` mismatch → `WrongType` (no dedicated `PatternMismatch` variant
+///   in v0; the rule string carries the pattern).
+fn map_validation_error(
+    err: &ValidationError,
+    value: &Value,
+    field: &TomlField,
+) -> MappedViolation {
+    use ValidationErrorKind as E;
+
+    // Resolve the actual offending instance — for top-level errors it's the
+    // value we passed; for `items` errors it's at `instance_path` index N.
+    let instance = resolve_instance_path(value, &err.instance_path().to_string());
+
+    match err.kind() {
+        E::Type { .. } => {
+            if instance.is_null() {
+                MappedViolation {
+                    kind: ViolationKind::NullNotAllowed,
+                    rule: "not nullable".to_string(),
+                    detail: None,
+                }
+            } else {
+                MappedViolation {
+                    kind: ViolationKind::WrongType,
+                    rule: format!("type {}", field.field_type),
+                    detail: Some(format!("got {}", actual_type_name(instance))),
+                }
+            }
+        }
+        E::Required { property } => MappedViolation {
+            kind: ViolationKind::MissingRequired,
+            rule: format!("required '{}'", property.as_str().unwrap_or("?")),
+            detail: None,
+        },
+        E::AdditionalProperties { unexpected } => MappedViolation {
+            kind: ViolationKind::Disallowed,
+            rule: "additionalProperties = false".to_string(),
+            detail: Some(format!("unexpected: {unexpected:?}")),
+        },
+        // For value-comparing errors (enum, const, range, length, pattern,
+        // array bounds), the rule string carries the constraint and the
+        // detail carries just the offending value as `got <json>`. Avoids
+        // duplicating the rule in every detail line.
+        E::Enum { options } => MappedViolation {
+            kind: ViolationKind::InvalidCategory,
+            rule: format!("enum {options}"),
+            detail: Some(format!("got {instance}")),
+        },
+        E::Constant { expected_value } => MappedViolation {
+            kind: ViolationKind::InvalidCategory,
+            rule: format!("const {expected_value}"),
+            detail: Some(format!("got {instance}")),
+        },
+        E::Minimum { limit } => MappedViolation {
+            kind: ViolationKind::OutOfRange,
+            rule: format!("minimum {limit}"),
+            detail: Some(format!("got {instance}")),
+        },
+        E::Maximum { limit } => MappedViolation {
+            kind: ViolationKind::OutOfRange,
+            rule: format!("maximum {limit}"),
+            detail: Some(format!("got {instance}")),
+        },
+        E::ExclusiveMinimum { limit } => MappedViolation {
+            kind: ViolationKind::OutOfRange,
+            rule: format!("exclusiveMinimum {limit}"),
+            detail: Some(format!("got {instance}")),
+        },
+        E::ExclusiveMaximum { limit } => MappedViolation {
+            kind: ViolationKind::OutOfRange,
+            rule: format!("exclusiveMaximum {limit}"),
+            detail: Some(format!("got {instance}")),
+        },
+        E::MultipleOf { multiple_of } => MappedViolation {
+            kind: ViolationKind::OutOfRange,
+            rule: format!("multipleOf {multiple_of}"),
+            detail: Some(format!("got {instance}")),
+        },
+        E::MinLength { limit } => MappedViolation {
+            kind: ViolationKind::OutOfRange,
+            rule: format!("minLength {limit}"),
+            detail: Some(format!("got {instance}")),
+        },
+        E::MaxLength { limit } => MappedViolation {
+            kind: ViolationKind::OutOfRange,
+            rule: format!("maxLength {limit}"),
+            detail: Some(format!("got {instance}")),
+        },
+        E::Pattern { pattern } => MappedViolation {
+            kind: ViolationKind::WrongType,
+            rule: format!("pattern {pattern}"),
+            detail: Some(format!("got {instance}")),
+        },
+        E::MinItems { limit } => MappedViolation {
+            kind: ViolationKind::OutOfRange,
+            rule: format!("minItems {limit}"),
+            detail: Some(format!("got {instance}")),
+        },
+        E::MaxItems { limit } => MappedViolation {
+            kind: ViolationKind::OutOfRange,
+            rule: format!("maxItems {limit}"),
+            detail: Some(format!("got {instance}")),
+        },
+        E::UniqueItems => MappedViolation {
+            kind: ViolationKind::OutOfRange,
+            rule: "uniqueItems".to_string(),
+            detail: Some(format!("got {instance}")),
+        },
+        // Catch-all for anything not on the curated list — should not fire
+        // because validate_mdvs_schema rejects schemas using unsupported
+        // keywords. If it does fire, surface the keyword in the rule so we
+        // can extend the map.
+        other => MappedViolation {
+            kind: ViolationKind::WrongType,
+            rule: format!("validation error ({})", other.keyword()),
+            detail: Some(err.to_string()),
+        },
+    }
+}
+
+/// Coerce a non-string non-null value to its JSON-stringified form when the
+/// field type is `String` (the top type) or `Array(String)`. Returns `None`
+/// when no coercion is needed.
+///
+/// Step-4 placeholder for the `coerce_to_string` preprocessor (TODO-0149
+/// step 3) — once the proper pipeline lands, this helper is replaced.
+fn coerce_string_field(value: &Value, field: &TomlField) -> Option<Value> {
+    let ft = FieldType::try_from(&field.field_type).ok()?;
+    match (&ft, value) {
+        (FieldType::String, v) if !v.is_string() && !v.is_null() => {
+            Some(Value::String(v.to_string()))
+        }
+        (FieldType::Array(inner), Value::Array(arr)) if matches!(**inner, FieldType::String) => {
+            let coerced: Vec<Value> = arr
+                .iter()
+                .map(|elem| {
+                    if !elem.is_string() && !elem.is_null() {
+                        Value::String(elem.to_string())
+                    } else {
+                        elem.clone()
+                    }
+                })
+                .collect();
+            Some(Value::Array(coerced))
+        }
+        _ => None,
+    }
+}
+
+/// Resolve a JSON Pointer (e.g. `/0` or `/items/1`) relative to `root`.
+/// Used to find the offending sub-value when an error fires inside `items`.
+fn resolve_instance_path<'a>(root: &'a Value, path: &str) -> &'a Value {
+    let mut cur = root;
+    for seg in path
+        .trim_start_matches('/')
+        .split('/')
+        .filter(|s| !s.is_empty())
+    {
+        cur = match cur {
+            Value::Object(m) => m.get(seg).unwrap_or(&Value::Null),
+            Value::Array(a) => a
+                .get(seg.parse::<usize>().unwrap_or(0))
+                .unwrap_or(&Value::Null),
+            _ => &Value::Null,
+        };
+    }
+    cur
 }
 
 fn matches_any_glob(patterns: &[String], path: &str) -> bool {
@@ -1079,54 +1317,6 @@ mod tests {
         );
     }
 
-    // --- Unit tests for type_matches ---
-
-    #[test]
-    fn string_matches_anything() {
-        use serde_json::json;
-        assert!(type_matches(&FieldType::String, &json!(true)));
-        assert!(type_matches(&FieldType::String, &json!(42)));
-        assert!(type_matches(&FieldType::String, &json!("hello")));
-        assert!(type_matches(&FieldType::String, &json!([1, 2])));
-        assert!(type_matches(&FieldType::String, &json!({"a": 1})));
-    }
-
-    #[test]
-    fn bool_matches_bool() {
-        use serde_json::json;
-        assert!(type_matches(&FieldType::Boolean, &json!(true)));
-        assert!(type_matches(&FieldType::Boolean, &json!(false)));
-        assert!(!type_matches(&FieldType::Boolean, &json!("yes")));
-    }
-
-    #[test]
-    fn int_matches_int() {
-        use serde_json::json;
-        assert!(type_matches(&FieldType::Integer, &json!(42)));
-        assert!(!type_matches(&FieldType::Integer, &json!(1.5)));
-        assert!(!type_matches(&FieldType::Integer, &json!("42")));
-    }
-
-    #[test]
-    fn float_matches_any_number() {
-        use serde_json::json;
-        assert!(type_matches(&FieldType::Float, &json!(1.5)));
-        assert!(type_matches(&FieldType::Float, &json!(42))); // int-in-float lenient
-        assert!(!type_matches(&FieldType::Float, &json!("1.5")));
-    }
-
-    #[test]
-    fn array_checks_elements() {
-        use serde_json::json;
-        let arr_str = FieldType::Array(Box::new(FieldType::String));
-        assert!(type_matches(&arr_str, &json!(["a", "b"])));
-        assert!(type_matches(&arr_str, &json!([1, 2]))); // String matches anything
-
-        let arr_int = FieldType::Array(Box::new(FieldType::Integer));
-        assert!(type_matches(&arr_int, &json!([1, 2])));
-        assert!(!type_matches(&arr_int, &json!([1.5, 2.5])));
-    }
-
     // --- Unit tests for matches_any_glob ---
 
     #[test]
@@ -1434,5 +1624,238 @@ mod tests {
                 .unwrap()
                 .contains("\"pending\"")
         );
+    }
+
+    // ========================================================================
+    // ValidationError → ViolationKind mapping tests (22 cases lifted from
+    // scripts/test_violation_mapping.rs). Each case compiles a minimal schema,
+    // runs the validator against the offending instance, and asserts the
+    // mapped ViolationKind via map_validation_error.
+    // ========================================================================
+
+    fn dummy_field(field_type: FieldTypeSerde) -> TomlField {
+        TomlField {
+            name: "f".into(),
+            field_type,
+            allowed: vec!["**".into()],
+            required: vec![],
+            nullable: false,
+            constraints: None,
+        }
+    }
+
+    /// Run schema against instance, map all errors, return the resulting kinds.
+    fn mapped_kinds(schema: serde_json::Value, instance: serde_json::Value) -> Vec<ViolationKind> {
+        let validator = jsonschema::validator_for(&schema).expect("schema compiles");
+        let f = dummy_field(FieldTypeSerde::Scalar("String".into()));
+        validator
+            .iter_errors(&instance)
+            .map(|err| map_validation_error(&err, &instance, &f).kind)
+            .collect()
+    }
+
+    #[test]
+    fn map_required_to_missing_required() {
+        let kinds = mapped_kinds(
+            serde_json::json!({"type": "object", "required": ["x"], "properties": {"x": {"type": "string"}}}),
+            serde_json::json!({}),
+        );
+        assert_eq!(kinds, vec![ViolationKind::MissingRequired]);
+    }
+
+    #[test]
+    fn map_additional_properties_to_disallowed() {
+        let kinds = mapped_kinds(
+            serde_json::json!({"type": "object", "properties": {}, "additionalProperties": false}),
+            serde_json::json!({"rogue": 1}),
+        );
+        assert_eq!(kinds, vec![ViolationKind::Disallowed]);
+    }
+
+    #[test]
+    fn map_type_string_got_integer_to_wrong_type() {
+        let kinds = mapped_kinds(serde_json::json!({"type": "string"}), serde_json::json!(42));
+        assert_eq!(kinds, vec![ViolationKind::WrongType]);
+    }
+
+    #[test]
+    fn map_type_object_got_array_to_wrong_type() {
+        let kinds = mapped_kinds(
+            serde_json::json!({"type": "object"}),
+            serde_json::json!([1, 2]),
+        );
+        assert_eq!(kinds, vec![ViolationKind::WrongType]);
+    }
+
+    #[test]
+    fn map_type_string_got_null_to_null_not_allowed() {
+        let kinds = mapped_kinds(
+            serde_json::json!({"type": "string"}),
+            serde_json::json!(null),
+        );
+        assert_eq!(kinds, vec![ViolationKind::NullNotAllowed]);
+    }
+
+    #[test]
+    fn map_type_union_no_violation_for_null_when_listed() {
+        let kinds = mapped_kinds(
+            serde_json::json!({"type": ["string", "null"]}),
+            serde_json::json!(null),
+        );
+        assert!(kinds.is_empty());
+    }
+
+    #[test]
+    fn map_enum_to_invalid_category() {
+        let kinds = mapped_kinds(
+            serde_json::json!({"enum": ["draft", "published", "archived"]}),
+            serde_json::json!("scheduled"),
+        );
+        assert_eq!(kinds, vec![ViolationKind::InvalidCategory]);
+    }
+
+    #[test]
+    fn map_const_to_invalid_category() {
+        let kinds = mapped_kinds(
+            serde_json::json!({"const": "fixed"}),
+            serde_json::json!("other"),
+        );
+        assert_eq!(kinds, vec![ViolationKind::InvalidCategory]);
+    }
+
+    #[test]
+    fn map_minimum_to_out_of_range() {
+        let kinds = mapped_kinds(
+            serde_json::json!({"type": "integer", "minimum": 0}),
+            serde_json::json!(-1),
+        );
+        assert_eq!(kinds, vec![ViolationKind::OutOfRange]);
+    }
+
+    #[test]
+    fn map_maximum_to_out_of_range() {
+        let kinds = mapped_kinds(
+            serde_json::json!({"type": "integer", "maximum": 100}),
+            serde_json::json!(150),
+        );
+        assert_eq!(kinds, vec![ViolationKind::OutOfRange]);
+    }
+
+    #[test]
+    fn map_exclusive_minimum_to_out_of_range() {
+        let kinds = mapped_kinds(
+            serde_json::json!({"type": "number", "exclusiveMinimum": 0}),
+            serde_json::json!(0),
+        );
+        assert_eq!(kinds, vec![ViolationKind::OutOfRange]);
+    }
+
+    #[test]
+    fn map_exclusive_maximum_to_out_of_range() {
+        let kinds = mapped_kinds(
+            serde_json::json!({"type": "number", "exclusiveMaximum": 1}),
+            serde_json::json!(1),
+        );
+        assert_eq!(kinds, vec![ViolationKind::OutOfRange]);
+    }
+
+    #[test]
+    fn map_multiple_of_to_out_of_range() {
+        let kinds = mapped_kinds(
+            serde_json::json!({"type": "integer", "multipleOf": 5}),
+            serde_json::json!(7),
+        );
+        assert_eq!(kinds, vec![ViolationKind::OutOfRange]);
+    }
+
+    #[test]
+    fn map_min_length_to_out_of_range() {
+        let kinds = mapped_kinds(
+            serde_json::json!({"type": "string", "minLength": 3}),
+            serde_json::json!("ab"),
+        );
+        assert_eq!(kinds, vec![ViolationKind::OutOfRange]);
+    }
+
+    #[test]
+    fn map_max_length_to_out_of_range() {
+        let kinds = mapped_kinds(
+            serde_json::json!({"type": "string", "maxLength": 5}),
+            serde_json::json!("too long"),
+        );
+        assert_eq!(kinds, vec![ViolationKind::OutOfRange]);
+    }
+
+    #[test]
+    fn map_pattern_to_wrong_type() {
+        // Pattern mismatch ≈ value isn't shaped right for the field's purpose.
+        let kinds = mapped_kinds(
+            serde_json::json!({"type": "string", "pattern": "^[A-Z]+$"}),
+            serde_json::json!("lowercase"),
+        );
+        assert_eq!(kinds, vec![ViolationKind::WrongType]);
+    }
+
+    #[test]
+    fn map_min_items_to_out_of_range() {
+        let kinds = mapped_kinds(
+            serde_json::json!({"type": "array", "minItems": 2}),
+            serde_json::json!([1]),
+        );
+        assert_eq!(kinds, vec![ViolationKind::OutOfRange]);
+    }
+
+    #[test]
+    fn map_max_items_to_out_of_range() {
+        let kinds = mapped_kinds(
+            serde_json::json!({"type": "array", "maxItems": 2}),
+            serde_json::json!([1, 2, 3]),
+        );
+        assert_eq!(kinds, vec![ViolationKind::OutOfRange]);
+    }
+
+    #[test]
+    fn map_unique_items_to_out_of_range() {
+        let kinds = mapped_kinds(
+            serde_json::json!({"type": "array", "uniqueItems": true}),
+            serde_json::json!([1, 2, 2]),
+        );
+        assert_eq!(kinds, vec![ViolationKind::OutOfRange]);
+    }
+
+    #[test]
+    fn map_array_item_type_error_to_wrong_type() {
+        let kinds = mapped_kinds(
+            serde_json::json!({"type": "array", "items": {"type": "string"}}),
+            serde_json::json!(["ok", 42, "also ok"]),
+        );
+        assert_eq!(kinds, vec![ViolationKind::WrongType]);
+    }
+
+    #[test]
+    fn map_nested_property_type_error() {
+        let kinds = mapped_kinds(
+            serde_json::json!({"type": "object", "properties": {"draft": {"type": "boolean"}}}),
+            serde_json::json!({"draft": "yes please"}),
+        );
+        assert_eq!(kinds, vec![ViolationKind::WrongType]);
+    }
+
+    #[test]
+    fn map_multiple_violations_in_one_document() {
+        let kinds = mapped_kinds(
+            serde_json::json!({
+                "type": "object",
+                "required": ["title"],
+                "properties": {
+                    "title": {"type": "string"},
+                    "draft": {"type": "boolean"}
+                }
+            }),
+            serde_json::json!({"draft": "yes please"}),
+        );
+        // Both Required (missing title) and Type (draft) should be mapped.
+        assert!(kinds.contains(&ViolationKind::MissingRequired));
+        assert!(kinds.contains(&ViolationKind::WrongType));
     }
 }

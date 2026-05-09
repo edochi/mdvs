@@ -7,6 +7,10 @@
 //! Each constraint kind has its own submodule with validation and inference logic.
 //! [`Constraints::active()`] bridges the two layers, and [`Constraints::validate_config()`]
 //! runs the full resolver (self-validation + pairwise compatibility).
+//!
+//! Per-value validation (`validate_value`) is unreachable from `cmd/check.rs`
+//! after TODO-0149 step 4 — kept until step 6 deletes the hand-rolled paths.
+#![allow(dead_code)] // step 6 deletes the unreachable per-value validation code
 
 mod categories;
 mod range;
