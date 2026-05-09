@@ -1,6 +1,9 @@
-//! Categories constraint — validation logic for `categories = [...]` in TOML.
+//! Categories constraint — config-time validation for `categories = [...]` in TOML.
+//!
+//! Per-value validation is delegated to `jsonschema` via the `dsl_to_canonical`
+//! translator in `schema/json_schema.rs`. This module only checks that the
+//! constraint is well-formed at config load time.
 
-use super::ConstraintViolation;
 use crate::discover::field_type::FieldType;
 
 /// Check that `categories` is applicable to `field_type` and that all
@@ -59,63 +62,6 @@ pub(super) fn validate_for_type(
     None
 }
 
-/// Check a single frontmatter value against a categories constraint.
-pub(super) fn validate_value(
-    value: &serde_json::Value,
-    field_type: &FieldType,
-    categories: &[toml::Value],
-) -> Option<ConstraintViolation> {
-    let rule = format_categories_rule(categories);
-
-    match field_type {
-        FieldType::String | FieldType::Integer => {
-            if value.is_null() {
-                return None;
-            }
-            // For String fields, non-string raw values are serialized by build
-            // (storage.rs) using Value::to_string(). Normalize the same way
-            // before comparing against categories.
-            let serialized;
-            let check_value = if matches!(field_type, FieldType::String) && !value.is_string() {
-                serialized = serde_json::Value::String(value.to_string());
-                &serialized
-            } else {
-                value
-            };
-            if !json_value_in_toml_categories(check_value, categories) {
-                Some(ConstraintViolation {
-                    rule,
-                    detail: format!("got {}", format_json_value(check_value)),
-                })
-            } else {
-                None
-            }
-        }
-        FieldType::Array(_) => {
-            if let serde_json::Value::Array(arr) = value {
-                let bad: Vec<String> = arr
-                    .iter()
-                    .filter(|elem| !json_value_in_toml_categories(elem, categories))
-                    .map(format_json_value)
-                    .collect();
-                if bad.is_empty() {
-                    None
-                } else {
-                    Some(ConstraintViolation {
-                        rule,
-                        detail: format!("got {}", bad.join(", ")),
-                    })
-                }
-            } else {
-                // Type mismatch — handled by the type checker, not constraints.
-                None
-            }
-        }
-        // Other types: constraint doesn't apply (caught at config time).
-        _ => None,
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Private helpers
 // ---------------------------------------------------------------------------
@@ -132,37 +78,6 @@ fn field_type_name(ft: &FieldType) -> &'static str {
     }
 }
 
-/// Check whether a single JSON value matches any of the TOML category values.
-fn json_value_in_toml_categories(value: &serde_json::Value, categories: &[toml::Value]) -> bool {
-    categories.iter().any(|cat| toml_json_eq(cat, value))
-}
-
-/// Compare a TOML category value with a JSON frontmatter value for equality.
-fn toml_json_eq(toml_val: &toml::Value, json_val: &serde_json::Value) -> bool {
-    match (toml_val, json_val) {
-        (toml::Value::String(t), serde_json::Value::String(j)) => t == j,
-        (toml::Value::Integer(t), serde_json::Value::Number(j)) => {
-            j.as_i64().is_some_and(|n| n == *t)
-        }
-        _ => false,
-    }
-}
-
-/// Format the categories list as a rule string for violation messages.
-fn format_categories_rule(categories: &[toml::Value]) -> String {
-    let items: Vec<String> = categories.iter().map(|v| v.to_string()).collect();
-    format!("categories = [{}]", items.join(", "))
-}
-
-/// Format a JSON value for violation detail messages.
-fn format_json_value(value: &serde_json::Value) -> String {
-    match value {
-        serde_json::Value::String(s) => format!("\"{s}\""),
-        serde_json::Value::Number(n) => n.to_string(),
-        other => other.to_string(),
-    }
-}
-
 // ===========================================================================
 // Tests
 // ===========================================================================
@@ -171,7 +86,6 @@ fn format_json_value(value: &serde_json::Value) -> String {
 mod tests {
     use super::*;
     use crate::schema::constraints::ConstraintKind;
-    use serde_json::json;
     use std::collections::BTreeMap;
 
     // -- helpers --
@@ -303,246 +217,5 @@ mod tests {
         let k = cats_kind(vec![]);
         let err = k.validate_for_type("f", &FieldType::String).unwrap();
         assert!(err.contains("must not be empty"));
-    }
-
-    // -----------------------------------------------------------------------
-    // validate_value — string categories
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn validate_value_string_match() {
-        let k = cats_kind(str_cats(&["draft", "published"]));
-        assert!(
-            k.validate_value(&json!("draft"), &FieldType::String)
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn validate_value_string_no_match() {
-        let k = cats_kind(str_cats(&["draft", "published"]));
-        let v = k
-            .validate_value(&json!("pending"), &FieldType::String)
-            .unwrap();
-        assert!(v.detail.contains("\"pending\""));
-        assert!(v.rule.contains("draft"));
-    }
-
-    #[test]
-    fn validate_value_string_case_sensitive() {
-        let k = cats_kind(str_cats(&["draft", "published"]));
-        assert!(
-            k.validate_value(&json!("Draft"), &FieldType::String)
-                .is_some()
-        );
-    }
-
-    // -----------------------------------------------------------------------
-    // validate_value — integer categories
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn validate_value_integer_match() {
-        let k = cats_kind(int_cats(&[1, 2, 3]));
-        assert!(k.validate_value(&json!(2), &FieldType::Integer).is_none());
-    }
-
-    #[test]
-    fn validate_value_integer_no_match() {
-        let k = cats_kind(int_cats(&[1, 2, 3]));
-        let v = k.validate_value(&json!(5), &FieldType::Integer).unwrap();
-        assert!(v.detail.contains("5"));
-    }
-
-    #[test]
-    fn validate_value_negative_integer() {
-        let k = cats_kind(int_cats(&[-1, 0, 1]));
-        assert!(k.validate_value(&json!(-1), &FieldType::Integer).is_none());
-    }
-
-    // -----------------------------------------------------------------------
-    // validate_value — array categories
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn validate_value_array_string_all_match() {
-        let k = cats_kind(str_cats(&["rust", "python", "go"]));
-        let ft = FieldType::Array(Box::new(FieldType::String));
-        assert!(k.validate_value(&json!(["rust", "go"]), &ft).is_none());
-    }
-
-    #[test]
-    fn validate_value_array_string_some_no_match() {
-        let k = cats_kind(str_cats(&["rust", "python", "go"]));
-        let ft = FieldType::Array(Box::new(FieldType::String));
-        let v = k.validate_value(&json!(["rust", "java"]), &ft).unwrap();
-        assert!(v.detail.contains("\"java\""));
-        assert!(!v.detail.contains("\"rust\""));
-    }
-
-    #[test]
-    fn validate_value_array_string_multiple_no_match() {
-        let k = cats_kind(str_cats(&["rust", "python", "go"]));
-        let ft = FieldType::Array(Box::new(FieldType::String));
-        let v = k.validate_value(&json!(["java", "c++"]), &ft).unwrap();
-        assert!(v.detail.contains("\"java\""));
-        assert!(v.detail.contains("\"c++\""));
-    }
-
-    #[test]
-    fn validate_value_array_integer_all_match() {
-        let k = cats_kind(int_cats(&[1, 2, 3]));
-        let ft = FieldType::Array(Box::new(FieldType::Integer));
-        assert!(k.validate_value(&json!([1, 3]), &ft).is_none());
-    }
-
-    #[test]
-    fn validate_value_array_integer_some_no_match() {
-        let k = cats_kind(int_cats(&[1, 2, 3]));
-        let ft = FieldType::Array(Box::new(FieldType::Integer));
-        let v = k.validate_value(&json!([1, 5]), &ft).unwrap();
-        assert!(v.detail.contains("5"));
-    }
-
-    #[test]
-    fn validate_value_empty_array_passes() {
-        let k = cats_kind(str_cats(&["rust", "python"]));
-        let ft = FieldType::Array(Box::new(FieldType::String));
-        assert!(k.validate_value(&json!([]), &ft).is_none());
-    }
-
-    // -----------------------------------------------------------------------
-    // validate_value — edge cases
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn validate_value_null_passthrough() {
-        let k = cats_kind(str_cats(&["draft", "published"]));
-        assert!(k.validate_value(&json!(null), &FieldType::String).is_none());
-    }
-
-    #[test]
-    fn validate_value_non_array_on_array_field_passthrough() {
-        let k = cats_kind(str_cats(&["rust", "python"]));
-        let ft = FieldType::Array(Box::new(FieldType::String));
-        assert!(k.validate_value(&json!("rust"), &ft).is_none());
-    }
-
-    // -----------------------------------------------------------------------
-    // toml_json_eq helper
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn toml_json_eq_string_match() {
-        assert!(toml_json_eq(
-            &toml::Value::String("hello".into()),
-            &json!("hello"),
-        ));
-    }
-
-    #[test]
-    fn toml_json_eq_string_no_match() {
-        assert!(!toml_json_eq(
-            &toml::Value::String("hello".into()),
-            &json!("world"),
-        ));
-    }
-
-    #[test]
-    fn toml_json_eq_integer_match() {
-        assert!(toml_json_eq(&toml::Value::Integer(42), &json!(42)));
-    }
-
-    #[test]
-    fn toml_json_eq_integer_no_match() {
-        assert!(!toml_json_eq(&toml::Value::Integer(42), &json!(99)));
-    }
-
-    #[test]
-    fn toml_json_eq_cross_type_no_match() {
-        assert!(!toml_json_eq(&toml::Value::String("42".into()), &json!(42),));
-        assert!(!toml_json_eq(&toml::Value::Integer(42), &json!("42"),));
-    }
-
-    // -----------------------------------------------------------------------
-    // format helpers
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn format_rule_strings() {
-        let cats = str_cats(&["draft", "published"]);
-        let rule = format_categories_rule(&cats);
-        assert_eq!(rule, r#"categories = ["draft", "published"]"#);
-    }
-
-    #[test]
-    fn format_rule_integers() {
-        let cats = int_cats(&[1, 2, 3]);
-        let rule = format_categories_rule(&cats);
-        assert_eq!(rule, "categories = [1, 2, 3]");
-    }
-
-    // -----------------------------------------------------------------------
-    // validate_value — String field with non-string raw values (serialization)
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn validate_value_string_field_array_serialized() {
-        // When field type is String and the raw value is an array,
-        // it should be serialized before comparing against categories.
-        let cats = str_cats(&["internal", r#"["internal"]"#]);
-        let k = cats_kind(cats);
-        assert!(
-            k.validate_value(&json!(["internal"]), &FieldType::String)
-                .is_none()
-        );
-        assert!(
-            k.validate_value(&json!("internal"), &FieldType::String)
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn validate_value_string_field_bool_serialized() {
-        let cats = str_cats(&["true", "false"]);
-        let k = cats_kind(cats);
-        assert!(k.validate_value(&json!(true), &FieldType::String).is_none());
-        assert!(
-            k.validate_value(&json!(false), &FieldType::String)
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn validate_value_string_field_number_serialized() {
-        let cats = str_cats(&["42", "hello"]);
-        let k = cats_kind(cats);
-        assert!(k.validate_value(&json!(42), &FieldType::String).is_none());
-        assert!(
-            k.validate_value(&json!("hello"), &FieldType::String)
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn validate_value_string_field_unmatched_serialized() {
-        // ["internal"] serializes to '["internal"]', which doesn't match
-        // the category "internal" (without the array wrapper).
-        let cats = str_cats(&["internal"]);
-        let k = cats_kind(cats);
-        let v = k
-            .validate_value(&json!(["internal"]), &FieldType::String)
-            .unwrap();
-        assert!(v.detail.contains(r#"["internal"]"#));
-    }
-
-    #[test]
-    fn validate_value_integer_field_not_serialized() {
-        // Integer field should NOT serialize — only String does.
-        let cats = int_cats(&[1, 2, 3]);
-        let k = cats_kind(cats);
-        assert!(k.validate_value(&json!(2), &FieldType::Integer).is_none());
-        // A string "2" should still fail on an Integer field.
-        assert!(k.validate_value(&json!("2"), &FieldType::Integer).is_some());
     }
 }

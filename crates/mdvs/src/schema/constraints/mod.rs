@@ -1,22 +1,18 @@
 //! Two-layer constraint architecture for field value validation.
 //!
 //! **Serde layer**: [`Constraints`] — flat struct mapping to `[fields.field.constraints]` in TOML.
-//! **Behavior layer**: [`ConstraintKind`] — enum for structured dispatch of type applicability,
-//! value validation, and pairwise compatibility checks.
+//! **Behavior layer**: [`ConstraintKind`] — enum for config-time dispatch of type applicability
+//! and pairwise compatibility checks.
 //!
-//! Each constraint kind has its own submodule with validation and inference logic.
-//! [`Constraints::active()`] bridges the two layers, and [`Constraints::validate_config()`]
-//! runs the full resolver (self-validation + pairwise compatibility).
-//!
-//! Per-value validation (`validate_value`) is unreachable from `cmd/check.rs`
-//! after TODO-0149 step 4 — kept until step 6 deletes the hand-rolled paths.
-#![allow(dead_code)] // step 6 deletes the unreachable per-value validation code
+//! Per-value validation is delegated to `jsonschema` via the translator in
+//! `schema/json_schema.rs`; the constraint module is only responsible for
+//! config-time validation (whether a constraint is well-formed and applicable
+//! to a field type) and inference.
 
 mod categories;
 mod range;
 
 use crate::discover::field_type::FieldType;
-use crate::output::ViolationKind;
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -60,17 +56,6 @@ pub(crate) enum ConstraintKind {
     },
     // future (TODO-0010): Length { min: Option<usize>, max: Option<usize> }
     // future (TODO-0145): Pattern(String)
-}
-
-/// A constraint violation for a single value check.
-/// Maps to `FieldViolation::rule` and `ViolatingFile::detail` when integrated
-/// with the check pipeline.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct ConstraintViolation {
-    /// Human-readable rule description, e.g. `categories = ["draft", "published"]`.
-    pub rule: String,
-    /// Detail about the specific violation, e.g. `got "pending"`.
-    pub detail: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -151,28 +136,6 @@ impl ConstraintKind {
             ConstraintKind::Range { min, max } => {
                 range::validate_for_type(field_name, field_type, min, max)
             }
-        }
-    }
-
-    /// Check a frontmatter value against this constraint.
-    pub(crate) fn validate_value(
-        &self,
-        value: &serde_json::Value,
-        field_type: &FieldType,
-    ) -> Option<ConstraintViolation> {
-        match self {
-            ConstraintKind::Categories(cats) => categories::validate_value(value, field_type, cats),
-            ConstraintKind::Range { min, max } => {
-                range::validate_value(value, field_type, min, max)
-            }
-        }
-    }
-
-    /// Return the violation kind for this constraint type.
-    pub(crate) fn violation_kind(&self) -> ViolationKind {
-        match self {
-            ConstraintKind::Categories(_) => ViolationKind::InvalidCategory,
-            ConstraintKind::Range { .. } => ViolationKind::OutOfRange,
         }
     }
 
