@@ -50,9 +50,9 @@ enum Command {
         /// Do not read .gitignore patterns during scan
         #[arg(long)]
         skip_gitignore: bool,
-        /// Import schema from a JSON Schema file (.json or .toml).
+        /// Import fields from a JSON Schema file (.json or .toml).
         /// Skips scan/inference; the file becomes the source of fields.
-        #[arg(long, value_name = "PATH")]
+        #[arg(long = "from-jsonschema", value_name = "PATH")]
         schema: Option<PathBuf>,
     },
     /// Build or rebuild the search index
@@ -107,10 +107,10 @@ enum Command {
         /// Skip auto-update before validating
         #[arg(long)]
         no_update: bool,
-        /// Override the schema source for this invocation.
+        /// Override the field definitions with a JSON Schema file.
         /// Replaces the toml's `[fields]` block; if no mdvs.toml exists,
         /// a default config is synthesized. Auto-update is disabled.
-        #[arg(long, value_name = "PATH")]
+        #[arg(long = "jsonschema", value_name = "PATH")]
         schema: Option<PathBuf>,
     },
     /// Re-scan and update field definitions
