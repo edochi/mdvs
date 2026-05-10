@@ -1592,6 +1592,163 @@ mod tests {
     }
 
     // ========================================================================
+    // Length / pattern constraints (TODO-0149 step 7) — end-to-end
+    // ========================================================================
+
+    #[test]
+    fn check_min_length_violation() {
+        use crate::schema::constraints::Constraints;
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("post.md"), "---\ntitle: ab\n---\nBody.").unwrap();
+        write_toml(
+            tmp.path(),
+            vec![TomlField {
+                name: "title".into(),
+                field_type: FieldTypeSerde::Scalar("String".into()),
+                allowed: vec!["**".into()],
+                required: vec![],
+                nullable: false,
+                constraints: Some(Constraints {
+                    min_length: Some(3),
+                    ..Default::default()
+                }),
+                preprocess: vec![],
+            }],
+            vec![],
+        );
+        let step = run(tmp.path(), true, false);
+        let result = unwrap_check(&step);
+        assert_eq!(result.violations.len(), 1);
+        assert_eq!(result.violations[0].kind, ViolationKind::OutOfRange);
+        assert!(result.violations[0].rule.contains("minLength"));
+    }
+
+    #[test]
+    fn check_max_length_violation() {
+        use crate::schema::constraints::Constraints;
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(
+            tmp.path().join("post.md"),
+            "---\ntitle: This title is way too long\n---\nBody.",
+        )
+        .unwrap();
+        write_toml(
+            tmp.path(),
+            vec![TomlField {
+                name: "title".into(),
+                field_type: FieldTypeSerde::Scalar("String".into()),
+                allowed: vec!["**".into()],
+                required: vec![],
+                nullable: false,
+                constraints: Some(Constraints {
+                    max_length: Some(10),
+                    ..Default::default()
+                }),
+                preprocess: vec![],
+            }],
+            vec![],
+        );
+        let step = run(tmp.path(), true, false);
+        let result = unwrap_check(&step);
+        assert_eq!(result.violations.len(), 1);
+        assert_eq!(result.violations[0].kind, ViolationKind::OutOfRange);
+        assert!(result.violations[0].rule.contains("maxLength"));
+    }
+
+    #[test]
+    fn check_pattern_violation() {
+        use crate::schema::constraints::Constraints;
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(
+            tmp.path().join("post.md"),
+            "---\nslug: HasUppercase\n---\nBody.",
+        )
+        .unwrap();
+        write_toml(
+            tmp.path(),
+            vec![TomlField {
+                name: "slug".into(),
+                field_type: FieldTypeSerde::Scalar("String".into()),
+                allowed: vec!["**".into()],
+                required: vec![],
+                nullable: false,
+                constraints: Some(Constraints {
+                    pattern: Some("^[a-z0-9-]+$".into()),
+                    ..Default::default()
+                }),
+                preprocess: vec![],
+            }],
+            vec![],
+        );
+        let step = run(tmp.path(), true, false);
+        let result = unwrap_check(&step);
+        assert_eq!(result.violations.len(), 1);
+        // Pattern mismatches map to WrongType (per the spike).
+        assert_eq!(result.violations[0].kind, ViolationKind::WrongType);
+        assert!(result.violations[0].rule.contains("pattern"));
+    }
+
+    #[test]
+    fn check_length_passes_within_bounds() {
+        use crate::schema::constraints::Constraints;
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("post.md"), "---\ntitle: hello\n---\nBody.").unwrap();
+        write_toml(
+            tmp.path(),
+            vec![TomlField {
+                name: "title".into(),
+                field_type: FieldTypeSerde::Scalar("String".into()),
+                allowed: vec!["**".into()],
+                required: vec![],
+                nullable: false,
+                constraints: Some(Constraints {
+                    min_length: Some(3),
+                    max_length: Some(10),
+                    ..Default::default()
+                }),
+                preprocess: vec![],
+            }],
+            vec![],
+        );
+        let step = run(tmp.path(), true, false);
+        let result = unwrap_check(&step);
+        assert!(result.violations.is_empty());
+    }
+
+    #[test]
+    fn check_pattern_array_element_violation() {
+        use crate::schema::constraints::Constraints;
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(
+            tmp.path().join("post.md"),
+            "---\ntags:\n  - rust\n  - BAD\n---\nBody.",
+        )
+        .unwrap();
+        write_toml(
+            tmp.path(),
+            vec![TomlField {
+                name: "tags".into(),
+                field_type: FieldTypeSerde::Array {
+                    array: Box::new(FieldTypeSerde::Scalar("String".into())),
+                },
+                allowed: vec!["**".into()],
+                required: vec![],
+                nullable: false,
+                constraints: Some(Constraints {
+                    pattern: Some("^[a-z]+$".into()),
+                    ..Default::default()
+                }),
+                preprocess: vec![],
+            }],
+            vec![],
+        );
+        let step = run(tmp.path(), true, false);
+        let result = unwrap_check(&step);
+        assert_eq!(result.violations.len(), 1);
+        assert_eq!(result.violations[0].kind, ViolationKind::WrongType);
+    }
+
+    // ========================================================================
     // ValidationError → ViolationKind mapping tests (22 cases lifted from
     // scripts/test_violation_mapping.rs). Each case compiles a minimal schema,
     // runs the validator against the offending instance, and asserts the

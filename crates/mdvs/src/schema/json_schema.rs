@@ -213,6 +213,15 @@ fn apply_constraints(
         {
             obj.insert("maximum".into(), v);
         }
+        if let Some(min) = c.min_length {
+            obj.insert("minLength".into(), json!(min));
+        }
+        if let Some(max) = c.max_length {
+            obj.insert("maxLength".into(), json!(max));
+        }
+        if let Some(pat) = &c.pattern {
+            obj.insert("pattern".into(), Value::String(pat.clone()));
+        }
     }
 }
 
@@ -565,6 +574,79 @@ mod tests {
         assert_eq!(
             out["properties"]["rating"],
             json!({"type": "integer", "minimum": 0, "maximum": 5})
+        );
+    }
+
+    #[test]
+    fn length_constraint_emits_min_max_length() {
+        let mut f = field("title", FieldTypeSerde::Scalar("String".into()));
+        f.constraints = Some(Constraints {
+            min_length: Some(3),
+            max_length: Some(64),
+            ..Default::default()
+        });
+        let out = dsl_to_canonical(&with_fields(vec![f]));
+        assert_eq!(
+            out["properties"]["title"],
+            json!({"type": "string", "minLength": 3, "maxLength": 64})
+        );
+    }
+
+    #[test]
+    fn pattern_constraint_emits_pattern_keyword() {
+        let mut f = field("slug", FieldTypeSerde::Scalar("String".into()));
+        f.constraints = Some(Constraints {
+            pattern: Some("^[a-z0-9-]+$".into()),
+            ..Default::default()
+        });
+        let out = dsl_to_canonical(&with_fields(vec![f]));
+        assert_eq!(
+            out["properties"]["slug"],
+            json!({"type": "string", "pattern": "^[a-z0-9-]+$"})
+        );
+    }
+
+    #[test]
+    fn length_and_pattern_combined() {
+        let mut f = field("token", FieldTypeSerde::Scalar("String".into()));
+        f.constraints = Some(Constraints {
+            min_length: Some(8),
+            max_length: Some(8),
+            pattern: Some("^[A-Z]{8}$".into()),
+            ..Default::default()
+        });
+        let out = dsl_to_canonical(&with_fields(vec![f]));
+        assert_eq!(
+            out["properties"]["token"],
+            json!({
+                "type": "string",
+                "minLength": 8,
+                "maxLength": 8,
+                "pattern": "^[A-Z]{8}$"
+            })
+        );
+    }
+
+    #[test]
+    fn array_string_length_applies_to_items() {
+        let mut f = field(
+            "tags",
+            FieldTypeSerde::Array {
+                array: Box::new(FieldTypeSerde::Scalar("String".into())),
+            },
+        );
+        f.constraints = Some(Constraints {
+            min_length: Some(2),
+            max_length: Some(20),
+            ..Default::default()
+        });
+        let out = dsl_to_canonical(&with_fields(vec![f]));
+        assert_eq!(
+            out["properties"]["tags"],
+            json!({
+                "type": "array",
+                "items": {"type": "string", "minLength": 2, "maxLength": 20}
+            })
         );
     }
 
