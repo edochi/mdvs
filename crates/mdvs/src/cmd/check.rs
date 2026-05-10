@@ -8,7 +8,8 @@ use crate::outcome::{
 use crate::output::{FieldViolation, NewField, ViolatingFile, ViolationKind};
 use crate::preprocess::Pipeline;
 use crate::schema::config::{MdvsToml, TomlField};
-use crate::schema::json_schema::dsl_to_canonical;
+use crate::schema::json_schema::{canonical_to_dsl, dsl_to_canonical, validate_mdvs_schema};
+use crate::schema::load::load_schema;
 use crate::schema::shared::FieldTypeSerde;
 use crate::step::{CommandResult, ErrorKind, StepEntry};
 use globset::Glob;
@@ -49,50 +50,56 @@ impl CheckResult {
 // ============================================================================
 
 /// Read config, optionally auto-update, scan files, and validate frontmatter.
+///
+/// When `schema_override` is `Some(path)`, the schema file replaces the
+/// `mdvs.toml`'s `[fields]` block for this invocation. If no `mdvs.toml`
+/// exists, a default config is synthesized around the schema.
+/// Auto-update is disabled in either schema-override case (the schema is
+/// ephemeral and the toml shouldn't be touched).
 #[instrument(name = "check", skip_all)]
-pub fn run(path: &Path, no_update: bool, verbose: bool) -> CommandResult {
+pub fn run(
+    path: &Path,
+    no_update: bool,
+    verbose: bool,
+    schema_override: Option<&Path>,
+) -> CommandResult {
     let start = Instant::now();
     let mut steps = Vec::new();
 
-    // 1. Read config — calls MdvsToml::read() + validate() directly
+    // 1. Resolve config. Precedence:
+    //    - `--schema PATH` provided + mdvs.toml exists → replace fields, keep
+    //      other sections from the toml.
+    //    - `--schema PATH` provided + no mdvs.toml → synthesize defaults.
+    //    - no `--schema` → read mdvs.toml as usual (error if missing).
     let config_start = std::time::Instant::now();
     let config_path_buf = path.join("mdvs.toml");
-    let config = match MdvsToml::read(&config_path_buf) {
-        Ok(cfg) => match cfg.validate() {
-            Ok(()) => {
-                steps.push(StepEntry::ok(
-                    Outcome::ReadConfig(ReadConfigOutcome {
-                        config_path: config_path_buf.display().to_string(),
-                    }),
-                    config_start.elapsed().as_millis() as u64,
-                ));
-                Some(cfg)
-            }
-            Err(e) => {
-                steps.push(StepEntry::err(
-                    ErrorKind::User,
-                    format!("mdvs.toml is invalid: {e} — fix the file or run 'mdvs init --force'"),
-                    config_start.elapsed().as_millis() as u64,
-                ));
-                None
-            }
-        },
+    let reported_path = match schema_override {
+        Some(p) => p.display().to_string(),
+        None => config_path_buf.display().to_string(),
+    };
+    let config = match resolve_check_config(&config_path_buf, schema_override) {
+        Ok(cfg) => {
+            steps.push(StepEntry::ok(
+                Outcome::ReadConfig(ReadConfigOutcome {
+                    config_path: reported_path,
+                }),
+                config_start.elapsed().as_millis() as u64,
+            ));
+            cfg
+        }
         Err(e) => {
             steps.push(StepEntry::err(
                 ErrorKind::User,
                 e.to_string(),
                 config_start.elapsed().as_millis() as u64,
             ));
-            None
-        }
-    };
-
-    let config = match config {
-        Some(c) => c,
-        None => {
             return CommandResult::failed_from_steps(steps, start);
         }
     };
+
+    // Force-disable auto-update when --schema is given: the toml shouldn't
+    // be edited as a side effect of a schema-driven invocation.
+    let no_update = no_update || schema_override.is_some();
 
     // 2. Scan (once — shared between auto-update and validate)
     let scan_start = Instant::now();
@@ -243,6 +250,52 @@ struct ViolationKey {
     field: String,
     kind: ViolationKind,
     rule: String,
+}
+
+/// Resolve the `MdvsToml` for a check invocation, honoring an optional
+/// `--schema` override.
+///
+/// Three cases:
+/// - `--schema` given + `mdvs.toml` exists: load and gate the schema, then
+///   replace the toml's `[fields]` block (fields + ignore) with the schema's.
+///   Other sections (`[scan]`, `[check]`, `[update]`, ...) come from the toml.
+/// - `--schema` given + no `mdvs.toml`: synthesize a default config around
+///   the schema's fields via `MdvsToml::default_with_fields`.
+/// - No `--schema`: read `mdvs.toml` as usual; missing toml is a hard error.
+fn resolve_check_config(
+    config_path: &Path,
+    schema_override: Option<&Path>,
+) -> anyhow::Result<MdvsToml> {
+    let toml_result = MdvsToml::read(config_path);
+
+    if let Some(schema_path) = schema_override {
+        let canonical = load_schema(schema_path)?;
+        validate_mdvs_schema(&canonical).map_err(|e| {
+            anyhow::anyhow!(
+                "schema '{}' is not in the mdvs subset: {e}",
+                schema_path.display()
+            )
+        })?;
+        let import = canonical_to_dsl(&canonical).map_err(|e| {
+            anyhow::anyhow!("cannot import schema '{}': {e}", schema_path.display())
+        })?;
+        let cfg = match toml_result {
+            Ok(mut existing) => {
+                existing.fields.field = import.fields;
+                existing.fields.ignore = import.ignore;
+                existing
+            }
+            Err(_) => MdvsToml::default_with_fields(import.fields, import.ignore),
+        };
+        cfg.validate()?;
+        Ok(cfg)
+    } else {
+        let cfg = toml_result?;
+        cfg.validate().map_err(|e| {
+            anyhow::anyhow!("mdvs.toml is invalid: {e} — fix the file or run 'mdvs init --force'")
+        })?;
+        Ok(cfg)
+    }
 }
 
 /// Validate scanned files against the schema in `mdvs.toml`. Reusable core called by both `check` and `build`.
@@ -672,13 +725,35 @@ fn map_validation_error(
             rule: "uniqueItems".to_string(),
             detail: Some(format!("got {instance}")),
         },
-        // Catch-all for anything not on the curated list — should not fire
-        // because validate_mdvs_schema rejects schemas using unsupported
-        // keywords. If it does fire, surface the keyword in the rule so we
-        // can extend the map.
-        other => MappedViolation {
+        // Variants below should be unreachable in practice: validate_mdvs_schema
+        // (the gate) rejects every schema that could trigger them upstream.
+        // We bucket them defensively so the binary doesn't panic — bug reports
+        // with these messages indicate a gate hole.
+        E::AdditionalItems { .. }
+        | E::AnyOf { .. }
+        | E::BacktrackLimitExceeded { .. }
+        | E::RegexEngineFailure { .. }
+        | E::Contains
+        | E::ContentEncoding { .. }
+        | E::ContentMediaType { .. }
+        | E::Custom { .. }
+        | E::FalseSchema
+        | E::Format { .. }
+        | E::FromUtf8 { .. }
+        | E::MaxProperties { .. }
+        | E::MinProperties { .. }
+        | E::Not { .. }
+        | E::OneOfMultipleValid { .. }
+        | E::OneOfNotValid { .. }
+        | E::PropertyNames { .. }
+        | E::UnevaluatedItems { .. }
+        | E::UnevaluatedProperties { .. }
+        | E::Referencing(_) => MappedViolation {
             kind: ViolationKind::WrongType,
-            rule: format!("validation error ({})", other.keyword()),
+            rule: format!(
+                "unexpected validator error ({}) — schema gate should reject this; please report",
+                err.kind().keyword()
+            ),
             detail: Some(err.to_string()),
         },
     }
@@ -820,7 +895,7 @@ mod tests {
             vec![],
         );
 
-        let step = run(tmp.path(), true, false);
+        let step = run(tmp.path(), true, false, None);
         let result = unwrap_check(&step);
 
         assert!(result.violations.is_empty());
@@ -853,7 +928,7 @@ mod tests {
             vec![],
         );
 
-        let step = run(tmp.path(), true, false);
+        let step = run(tmp.path(), true, false, None);
         let result = unwrap_check(&step);
 
         assert!(!result.violations.is_empty());
@@ -882,7 +957,7 @@ mod tests {
             vec![],
         );
 
-        let step = run(tmp.path(), true, false);
+        let step = run(tmp.path(), true, false, None);
         let result = unwrap_check(&step);
 
         assert!(!result.violations.is_empty());
@@ -917,7 +992,7 @@ mod tests {
             vec![],
         );
 
-        let step = run(tmp.path(), true, false);
+        let step = run(tmp.path(), true, false, None);
         let result = unwrap_check(&step);
         assert!(result.violations.is_empty());
     }
@@ -948,7 +1023,7 @@ mod tests {
             vec![],
         );
 
-        let step = run(tmp.path(), true, false);
+        let step = run(tmp.path(), true, false, None);
         let result = unwrap_check(&step);
 
         assert!(!result.violations.is_empty());
@@ -965,7 +1040,7 @@ mod tests {
 
         write_toml(tmp.path(), vec![string_field("title")], vec![]);
 
-        let step = run(tmp.path(), true, false);
+        let step = run(tmp.path(), true, false, None);
         let result = unwrap_check(&step);
 
         assert!(result.violations.is_empty());
@@ -1019,7 +1094,7 @@ mod tests {
         };
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
 
-        let step = run(tmp.path(), true, false);
+        let step = run(tmp.path(), true, false, None);
         let result = unwrap_check(&step);
         assert!(!result.violations.is_empty());
     }
@@ -1035,7 +1110,7 @@ mod tests {
             vec!["draft".into(), "tags".into()],
         );
 
-        let step = run(tmp.path(), true, false);
+        let step = run(tmp.path(), true, false, None);
         let result = unwrap_check(&step);
 
         assert!(result.violations.is_empty());
@@ -1098,7 +1173,7 @@ mod tests {
             vec![],
         );
 
-        let step = run(tmp.path(), true, false);
+        let step = run(tmp.path(), true, false, None);
         let result = unwrap_check(&step);
 
         assert!(!result.violations.is_empty());
@@ -1133,7 +1208,7 @@ mod tests {
             vec![],
         );
 
-        let step = run(tmp.path(), true, false);
+        let step = run(tmp.path(), true, false, None);
         let result = unwrap_check(&step);
         assert!(!result.violations.is_empty());
         let v = result
@@ -1172,7 +1247,7 @@ mod tests {
             vec![],
         );
 
-        let step = run(tmp.path(), true, false);
+        let step = run(tmp.path(), true, false, None);
         let result = unwrap_check(&step);
         assert!(result.violations.is_empty());
     }
@@ -1205,7 +1280,7 @@ mod tests {
             vec![],
         );
 
-        let step = run(tmp.path(), true, false);
+        let step = run(tmp.path(), true, false, None);
         let result = unwrap_check(&step);
         assert!(!result.violations.is_empty());
         let v = result
@@ -1244,7 +1319,7 @@ mod tests {
             vec![],
         );
 
-        let step = run(tmp.path(), true, false);
+        let step = run(tmp.path(), true, false, None);
         let result = unwrap_check(&step);
         assert!(!result.violations.is_empty());
 
@@ -1289,7 +1364,7 @@ mod tests {
             vec![],
         );
 
-        let step = run(tmp.path(), true, false);
+        let step = run(tmp.path(), true, false, None);
         let result = unwrap_check(&step);
 
         // Should produce exactly 1 NullNotAllowed — not duplicated by check_required_fields
@@ -1363,7 +1438,7 @@ mod tests {
             vec![categorical_field("status", vec!["draft", "published"])],
             vec![],
         );
-        let step = run(tmp.path(), true, false);
+        let step = run(tmp.path(), true, false, None);
         let result = unwrap_check(&step);
         assert_eq!(result.violations.len(), 1);
         assert_eq!(result.violations[0].kind, ViolationKind::InvalidCategory);
@@ -1385,7 +1460,7 @@ mod tests {
             vec![categorical_field("status", vec!["draft", "published"])],
             vec![],
         );
-        let step = run(tmp.path(), true, false);
+        let step = run(tmp.path(), true, false, None);
         let result = unwrap_check(&step);
         assert!(result.violations.is_empty());
     }
@@ -1421,7 +1496,7 @@ mod tests {
             }],
             vec![],
         );
-        let step = run(tmp.path(), true, false);
+        let step = run(tmp.path(), true, false, None);
         let result = unwrap_check(&step);
         assert_eq!(result.violations.len(), 1);
         assert_eq!(result.violations[0].kind, ViolationKind::InvalidCategory);
@@ -1454,7 +1529,7 @@ mod tests {
             }],
             vec![],
         );
-        let step = run(tmp.path(), true, false);
+        let step = run(tmp.path(), true, false, None);
         let result = unwrap_check(&step);
         assert!(result.violations.is_empty());
     }
@@ -1488,7 +1563,7 @@ mod tests {
             }],
             vec![],
         );
-        let step = run(tmp.path(), true, false);
+        let step = run(tmp.path(), true, false, None);
         let result = unwrap_check(&step);
         // Only WrongType, not InvalidCategory (constraints skipped when type fails)
         assert_eq!(result.violations.len(), 1);
@@ -1523,11 +1598,12 @@ mod tests {
         }
 
         // Init infers categories on status
-        let init_step = crate::cmd::init::run(tmp.path(), "**", false, false, true, false, false);
+        let init_step =
+            crate::cmd::init::run(tmp.path(), "**", false, false, true, false, false, None);
         assert!(!crate::step::has_failed(&init_step));
 
         // Check should pass — inferred categories match actual data
-        let check_step = run(tmp.path(), true, false);
+        let check_step = run(tmp.path(), true, false, None);
         let result = unwrap_check(&check_step);
         assert!(result.violations.is_empty());
     }
@@ -1556,10 +1632,11 @@ mod tests {
             .unwrap();
         }
 
-        let init_step = crate::cmd::init::run(tmp.path(), "**", false, false, true, false, false);
+        let init_step =
+            crate::cmd::init::run(tmp.path(), "**", false, false, true, false, false, None);
         assert!(!crate::step::has_failed(&init_step));
 
-        let check_step = run(tmp.path(), true, false);
+        let check_step = run(tmp.path(), true, false, None);
         let result = unwrap_check(&check_step);
         assert!(
             result.violations.is_empty(),
@@ -1595,7 +1672,8 @@ mod tests {
         }
 
         // Init infers categories
-        let init_step = crate::cmd::init::run(tmp.path(), "**", false, false, true, false, false);
+        let init_step =
+            crate::cmd::init::run(tmp.path(), "**", false, false, true, false, false, None);
         assert!(!crate::step::has_failed(&init_step));
 
         // Corrupt a file with an out-of-category value
@@ -1606,7 +1684,7 @@ mod tests {
         .unwrap();
 
         // Check should catch InvalidCategory
-        let check_step = run(tmp.path(), true, false);
+        let check_step = run(tmp.path(), true, false, None);
         let result = unwrap_check(&check_step);
         assert_eq!(result.violations.len(), 1);
         assert_eq!(result.violations[0].kind, ViolationKind::InvalidCategory);
@@ -1628,7 +1706,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         fs::write(tmp.path().join("bad.md"), "---\n- a\n- b\n---\nBody.").unwrap();
         write_toml(tmp.path(), vec![string_field("title")], vec![]);
-        let step = run(tmp.path(), true, false);
+        let step = run(tmp.path(), true, false, None);
         let result = unwrap_check(&step);
         let v = result
             .violations
@@ -1645,7 +1723,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         fs::write(tmp.path().join("scalar.md"), "---\nhello\n---\nBody.").unwrap();
         write_toml(tmp.path(), vec![string_field("title")], vec![]);
-        let step = run(tmp.path(), true, false);
+        let step = run(tmp.path(), true, false, None);
         let result = unwrap_check(&step);
         assert!(
             result
@@ -1660,7 +1738,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         fs::write(tmp.path().join("ok.md"), "---\ntitle: Hi\n---\nBody.").unwrap();
         write_toml(tmp.path(), vec![string_field("title")], vec![]);
-        let step = run(tmp.path(), true, false);
+        let step = run(tmp.path(), true, false, None);
         let result = unwrap_check(&step);
         assert!(
             !result
@@ -1668,6 +1746,80 @@ mod tests {
                 .iter()
                 .any(|v| matches!(v.kind, ViolationKind::FrontmatterUnrepresentable))
         );
+    }
+
+    // ========================================================================
+    // --schema override (TODO-0149 step 10) — end-to-end
+    // ========================================================================
+
+    fn write_schema(dir: &Path, content: &str) -> std::path::PathBuf {
+        let path = dir.join("schema.json");
+        fs::write(&path, content).unwrap();
+        path
+    }
+
+    #[test]
+    fn check_with_schema_uses_schema_fields() {
+        // mdvs.toml exists but the schema replaces its [fields] block.
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("post.md"), "---\ntitle: hi\n---\nBody.").unwrap();
+        write_toml(tmp.path(), vec![string_field("unrelated")], vec![]);
+        let schema_path = write_schema(
+            tmp.path(),
+            r#"{
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "minLength": 10}
+                },
+                "additionalProperties": true
+            }"#,
+        );
+        let step = run(tmp.path(), true, false, Some(&schema_path));
+        let result = unwrap_check(&step);
+        // The schema's minLength=10 catches "hi" (len 2) — and the toml's
+        // "unrelated" field is gone, so no spurious "missing required" etc.
+        assert_eq!(result.violations.len(), 1);
+        assert_eq!(result.violations[0].kind, ViolationKind::OutOfRange);
+    }
+
+    #[test]
+    fn check_with_schema_works_without_mdvs_toml() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("post.md"), "---\ntitle: Hello\n---\nBody.").unwrap();
+        let schema_path = write_schema(
+            tmp.path(),
+            r#"{
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "minLength": 3}
+                },
+                "additionalProperties": true
+            }"#,
+        );
+        let step = run(tmp.path(), true, false, Some(&schema_path));
+        let result = unwrap_check(&step);
+        assert!(result.violations.is_empty());
+    }
+
+    #[test]
+    fn check_with_invalid_schema_errors() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("post.md"), "---\ntitle: Hi\n---\nBody.").unwrap();
+        let schema_path = write_schema(
+            tmp.path(),
+            r#"{"oneOf": [{"type": "string"}, {"type": "integer"}]}"#,
+        );
+        let step = run(tmp.path(), true, false, Some(&schema_path));
+        // gate rejects oneOf → command fails before validating
+        assert!(crate::step::has_failed(&step));
+    }
+
+    #[test]
+    fn check_no_toml_no_schema_errors() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("post.md"), "---\ntitle: Hi\n---\nBody.").unwrap();
+        let step = run(tmp.path(), true, false, None);
+        assert!(crate::step::has_failed(&step));
     }
 
     // ========================================================================
@@ -1695,7 +1847,7 @@ mod tests {
             }],
             vec![],
         );
-        let step = run(tmp.path(), true, false);
+        let step = run(tmp.path(), true, false, None);
         let result = unwrap_check(&step);
         assert_eq!(result.violations.len(), 1);
         assert_eq!(result.violations[0].kind, ViolationKind::OutOfRange);
@@ -1727,7 +1879,7 @@ mod tests {
             }],
             vec![],
         );
-        let step = run(tmp.path(), true, false);
+        let step = run(tmp.path(), true, false, None);
         let result = unwrap_check(&step);
         assert_eq!(result.violations.len(), 1);
         assert_eq!(result.violations[0].kind, ViolationKind::OutOfRange);
@@ -1759,7 +1911,7 @@ mod tests {
             }],
             vec![],
         );
-        let step = run(tmp.path(), true, false);
+        let step = run(tmp.path(), true, false, None);
         let result = unwrap_check(&step);
         assert_eq!(result.violations.len(), 1);
         // Pattern mismatches map to WrongType (per the spike).
@@ -1789,7 +1941,7 @@ mod tests {
             }],
             vec![],
         );
-        let step = run(tmp.path(), true, false);
+        let step = run(tmp.path(), true, false, None);
         let result = unwrap_check(&step);
         assert!(result.violations.is_empty());
     }
@@ -1821,7 +1973,7 @@ mod tests {
             }],
             vec![],
         );
-        let step = run(tmp.path(), true, false);
+        let step = run(tmp.path(), true, false, None);
         let result = unwrap_check(&step);
         assert_eq!(result.violations.len(), 1);
         assert_eq!(result.violations[0].kind, ViolationKind::WrongType);

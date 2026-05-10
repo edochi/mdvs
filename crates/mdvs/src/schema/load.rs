@@ -11,7 +11,6 @@
 //! The validation gate ([`validate_mdvs_schema`]) is **not** called here.
 //! Callers run it after loading — typically `init --schema` and `check --schema`
 //! gate the resolved value against the mdvs subset before using it.
-#![allow(dead_code)] // callers wire in at TODO-0149 step 10
 
 use crate::schema::config::MdvsToml;
 use crate::schema::json_schema::dsl_to_canonical;
@@ -54,6 +53,10 @@ pub(crate) fn load_schema(path: &Path) -> anyhow::Result<Value> {
 /// The result is **not** validated against the mdvs subset — callers run
 /// [`validate_mdvs_schema`](crate::schema::json_schema::validate_mdvs_schema)
 /// after resolution.
+///
+/// Currently unused; step 9 (export-schema) and step 13 (overlay synthesis)
+/// are the planned consumers.
+#[allow(dead_code)]
 pub(crate) fn resolve_schema(
     cli_override: Option<&Path>,
     toml: Option<&MdvsToml>,

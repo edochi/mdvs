@@ -444,7 +444,7 @@ mod tests {
     }
 
     fn init_no_build(dir: &Path) {
-        let step = crate::cmd::init::run(dir, "**", false, false, true, false, false);
+        let step = crate::cmd::init::run(dir, "**", false, false, true, false, false, None);
         assert!(!crate::step::has_failed(&step));
     }
 
@@ -650,7 +650,7 @@ mod tests {
         .unwrap();
         fs::write(blog_dir.join("bare.md"), "# No frontmatter\nJust content.").unwrap();
 
-        let step = crate::cmd::init::run(tmp.path(), "**", false, false, true, false, false);
+        let step = crate::cmd::init::run(tmp.path(), "**", false, false, true, false, false, None);
         assert!(!crate::step::has_failed(&step));
 
         let toml_before = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
@@ -887,7 +887,7 @@ mod tests {
         assert!(!crate::step::has_failed(&step));
 
         // Check should still pass after reinfer
-        let check_step = crate::cmd::check::run(tmp.path(), true, false);
+        let check_step = crate::cmd::check::run(tmp.path(), true, false, None);
         let check_result = match &check_step.result {
             Ok(crate::outcome::Outcome::Check(o)) => o,
             other => panic!("expected Ok(Check), got: {other:?}"),

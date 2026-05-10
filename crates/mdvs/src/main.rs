@@ -50,6 +50,10 @@ enum Command {
         /// Do not read .gitignore patterns during scan
         #[arg(long)]
         skip_gitignore: bool,
+        /// Import schema from a JSON Schema file (.json or .toml).
+        /// Skips scan/inference; the file becomes the source of fields.
+        #[arg(long, value_name = "PATH")]
+        schema: Option<PathBuf>,
     },
     /// Build or rebuild the search index
     Build {
@@ -103,6 +107,11 @@ enum Command {
         /// Skip auto-update before validating
         #[arg(long)]
         no_update: bool,
+        /// Override the schema source for this invocation.
+        /// Replaces the toml's `[fields]` block; if no mdvs.toml exists,
+        /// a default config is synthesized. Auto-update is disabled.
+        #[arg(long, value_name = "PATH")]
+        schema: Option<PathBuf>,
     },
     /// Re-scan and update field definitions
     Update {
@@ -169,6 +178,7 @@ async fn main() -> anyhow::Result<()> {
             dry_run,
             ignore_bare_files,
             skip_gitignore,
+            schema,
         } => {
             let result = mdvs::cmd::init::run(
                 &path,
@@ -178,6 +188,7 @@ async fn main() -> anyhow::Result<()> {
                 ignore_bare_files,
                 skip_gitignore,
                 cli.verbose,
+                schema.as_deref(),
             );
             let failed = mdvs::step::has_failed(&result);
             let verbose = cli.verbose || failed;
@@ -288,8 +299,12 @@ async fn main() -> anyhow::Result<()> {
             }
             Ok(())
         }
-        Command::Check { path, no_update } => {
-            let result = mdvs::cmd::check::run(&path, no_update, cli.verbose);
+        Command::Check {
+            path,
+            no_update,
+            schema,
+        } => {
+            let result = mdvs::cmd::check::run(&path, no_update, cli.verbose, schema.as_deref());
             let failed = mdvs::step::has_failed(&result);
             let violations = mdvs::step::has_violations(&result);
             let verbose = cli.verbose || failed;

@@ -401,7 +401,7 @@ mod tests {
     }
 
     async fn init_and_build(dir: &Path) {
-        let step = crate::cmd::init::run(dir, "**", false, false, true, false, false);
+        let step = crate::cmd::init::run(dir, "**", false, false, true, false, false, None);
         assert!(!crate::step::has_failed(&step));
         let output = crate::cmd::build::run(dir, None, None, None, false, true, false).await;
         assert!(!crate::step::has_failed(&output));

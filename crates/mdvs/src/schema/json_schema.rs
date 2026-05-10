@@ -9,7 +9,6 @@
 //! `x-mdvs.allowed` / `x-mdvs.required` on each property; the per-file overlay
 //! synthesizer (TODO-0149 step 13) turns those into actual JSON Schema `required`
 //! arrays at validation time.
-#![allow(dead_code)] // callers wire in at TODO-0149 steps 4, 9, 10
 
 use crate::discover::field_type::FieldType;
 use crate::schema::config::MdvsToml;
@@ -268,6 +267,257 @@ fn build_x_mdvs(field: &crate::schema::config::TomlField) -> Map<String, Value> 
 
 fn is_default_allowed(allowed: &[String]) -> bool {
     allowed.len() == 1 && allowed[0] == "**"
+}
+
+// ============================================================================
+// canonical_to_dsl — reverse translator
+// ============================================================================
+
+/// Output of [`canonical_to_dsl`]: the per-property fields plus any
+/// empty-schema entries that map to the `[fields].ignore` list.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct CanonicalImport {
+    pub fields: Vec<crate::schema::config::TomlField>,
+    pub ignore: Vec<String>,
+}
+
+/// Translate a canonical JSON Schema (presumed to have passed
+/// [`validate_mdvs_schema`]) back into mdvs DSL fields.
+///
+/// Strict pattern matching: only the exact shapes [`dsl_to_canonical`]
+/// produces are accepted. Anything else errors with a clear message
+/// pointing at the property name.
+pub(crate) fn canonical_to_dsl(schema: &Value) -> Result<CanonicalImport, String> {
+    let properties = schema
+        .get("properties")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "schema is missing 'properties' block".to_string())?;
+
+    let mut fields: Vec<crate::schema::config::TomlField> = Vec::new();
+    let mut ignore: Vec<String> = Vec::new();
+
+    for (name, sub) in properties {
+        let subobj = sub
+            .as_object()
+            .ok_or_else(|| format!("property '{name}': schema must be an object"))?;
+        if subobj.is_empty() {
+            ignore.push(name.clone());
+            continue;
+        }
+        fields.push(field_from_subschema(name, subobj)?);
+    }
+
+    Ok(CanonicalImport { fields, ignore })
+}
+
+fn field_from_subschema(
+    name: &str,
+    sub: &Map<String, Value>,
+) -> Result<crate::schema::config::TomlField, String> {
+    let (field_type, nullable) = extract_type(name, sub)?;
+
+    // Locate the constraint-bearing subschema: for arrays, constraints live
+    // inside `items` (per dsl_to_canonical); otherwise at the property level.
+    let constraint_source = if matches!(field_type, FieldType::Array(_)) {
+        sub.get("items")
+            .and_then(Value::as_object)
+            .ok_or_else(|| format!("property '{name}': array type missing 'items' object"))?
+    } else {
+        sub
+    };
+    let constraints = extract_constraints(name, constraint_source, nullable)?;
+
+    let (allowed, required) = extract_x_mdvs(name, sub)?;
+
+    Ok(crate::schema::config::TomlField {
+        name: name.into(),
+        field_type: crate::schema::shared::FieldTypeSerde::from(&field_type),
+        allowed,
+        required,
+        nullable,
+        constraints,
+        preprocess: vec![],
+    })
+}
+
+/// Extract the FieldType and nullability from a subschema's `type` keyword
+/// (and `items` recursion for arrays).
+fn extract_type(name: &str, sub: &Map<String, Value>) -> Result<(FieldType, bool), String> {
+    let type_val = sub
+        .get("type")
+        .ok_or_else(|| format!("property '{name}': missing 'type' keyword"))?;
+
+    let (type_str, nullable) = match type_val {
+        Value::String(s) => (s.as_str().to_string(), false),
+        Value::Array(arr) => {
+            let mut non_null: Vec<String> = Vec::new();
+            let mut has_null = false;
+            for v in arr {
+                match v.as_str() {
+                    Some("null") => has_null = true,
+                    Some(s) => non_null.push(s.into()),
+                    None => {
+                        return Err(format!(
+                            "property '{name}': type array contains a non-string entry"
+                        ));
+                    }
+                }
+            }
+            if non_null.len() != 1 {
+                return Err(format!(
+                    "property '{name}': type union must be exactly one non-null type plus optional null"
+                ));
+            }
+            (non_null.into_iter().next().unwrap(), has_null)
+        }
+        _ => {
+            return Err(format!(
+                "property '{name}': 'type' must be a string or array of strings"
+            ));
+        }
+    };
+
+    let field_type = match type_str.as_str() {
+        "string" => FieldType::String,
+        "integer" => FieldType::Integer,
+        "number" => FieldType::Float,
+        "boolean" => FieldType::Boolean,
+        "array" => {
+            let items = sub.get("items").and_then(Value::as_object).ok_or_else(|| {
+                format!("property '{name}': type 'array' requires 'items' object")
+            })?;
+            let (inner, _) = extract_type(name, items)?;
+            FieldType::Array(Box::new(inner))
+        }
+        "object" => FieldType::Object(std::collections::BTreeMap::new()),
+        other => {
+            return Err(format!("property '{name}': unsupported type '{other}'"));
+        }
+    };
+
+    Ok((field_type, nullable))
+}
+
+/// Extract `Constraints` from the property-level (or items-level) subschema.
+/// Strips a trailing null from enum lists when the field is nullable
+/// (inverting the addition done by `apply_constraints`).
+fn extract_constraints(
+    name: &str,
+    src: &Map<String, Value>,
+    nullable: bool,
+) -> Result<Option<Constraints>, String> {
+    let has_any = [
+        "enum",
+        "minimum",
+        "maximum",
+        "minLength",
+        "maxLength",
+        "pattern",
+    ]
+    .iter()
+    .any(|k| src.contains_key(*k));
+    if !has_any {
+        return Ok(None);
+    }
+
+    let mut c = Constraints::default();
+
+    if let Some(en) = src.get("enum") {
+        let arr = en
+            .as_array()
+            .ok_or_else(|| format!("property '{name}': 'enum' must be an array"))?;
+        let mut values: Vec<toml::Value> = Vec::new();
+        for v in arr {
+            if v.is_null() {
+                if !nullable {
+                    return Err(format!(
+                        "property '{name}': 'enum' contains null but type is not nullable"
+                    ));
+                }
+                // Strip — added by dsl_to_canonical for nullable+enum fields.
+                continue;
+            }
+            values.push(
+                json_to_toml_value(v)
+                    .ok_or_else(|| format!("property '{name}': unsupported enum value {v}"))?,
+            );
+        }
+        c.categories = Some(values);
+    }
+
+    if let Some(min) = src.get("minimum") {
+        c.min = Some(
+            json_to_toml_value(min)
+                .ok_or_else(|| format!("property '{name}': unsupported 'minimum' value"))?,
+        );
+    }
+    if let Some(max) = src.get("maximum") {
+        c.max = Some(
+            json_to_toml_value(max)
+                .ok_or_else(|| format!("property '{name}': unsupported 'maximum' value"))?,
+        );
+    }
+    if let Some(v) = src.get("minLength").and_then(Value::as_u64) {
+        c.min_length = Some(v);
+    }
+    if let Some(v) = src.get("maxLength").and_then(Value::as_u64) {
+        c.max_length = Some(v);
+    }
+    if let Some(v) = src.get("pattern").and_then(Value::as_str) {
+        c.pattern = Some(v.into());
+    }
+
+    Ok(Some(c))
+}
+
+/// Inverse of [`build_x_mdvs`]: extract `allowed` / `required` from the
+/// property's `x-mdvs` block. Defaults: `allowed = ["**"]`, `required = []`.
+fn extract_x_mdvs(
+    name: &str,
+    sub: &Map<String, Value>,
+) -> Result<(Vec<String>, Vec<String>), String> {
+    let xm = match sub.get("x-mdvs") {
+        None => return Ok((vec!["**".into()], vec![])),
+        Some(v) => v
+            .as_object()
+            .ok_or_else(|| format!("property '{name}': 'x-mdvs' must be an object"))?,
+    };
+
+    let allowed = match xm.get("allowed") {
+        None => vec!["**".into()],
+        Some(v) => string_array(v).ok_or_else(|| {
+            format!("property '{name}': 'x-mdvs.allowed' must be an array of strings")
+        })?,
+    };
+    let required = match xm.get("required") {
+        None => vec![],
+        Some(v) => string_array(v).ok_or_else(|| {
+            format!("property '{name}': 'x-mdvs.required' must be an array of strings")
+        })?,
+    };
+    Ok((allowed, required))
+}
+
+fn string_array(v: &Value) -> Option<Vec<String>> {
+    let arr = v.as_array()?;
+    arr.iter().map(|s| s.as_str().map(String::from)).collect()
+}
+
+/// Convert a `serde_json::Value` to a `toml::Value` for round-tripping
+/// constraint literals (enum values, min/max bounds).
+fn json_to_toml_value(v: &Value) -> Option<toml::Value> {
+    match v {
+        Value::String(s) => Some(toml::Value::String(s.clone())),
+        Value::Bool(b) => Some(toml::Value::Boolean(*b)),
+        Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Some(toml::Value::Integer(i))
+            } else {
+                n.as_f64().map(toml::Value::Float)
+            }
+        }
+        Value::Null | Value::Array(_) | Value::Object(_) => None,
+    }
 }
 
 // ============================================================================
@@ -897,5 +1147,191 @@ mod tests {
             "type": "object"
         });
         assert!(validate_mdvs_schema(&schema).is_ok());
+    }
+
+    // ------------------------------------------------------------------------
+    // canonical_to_dsl — reverse translator (TODO-0149 step 10)
+    // ------------------------------------------------------------------------
+
+    fn roundtrip(toml: MdvsToml) {
+        let canonical = dsl_to_canonical(&toml);
+        let import = canonical_to_dsl(&canonical).expect("reverse translation");
+        // serde_json::Map preserves insertion order on round-trip but
+        // dsl_to_canonical merges fields + ignore into a single `properties`
+        // map; reading it back loses the original ordering distinction.
+        // Compare as sorted sets.
+        let mut got_fields = import.fields;
+        got_fields.sort_by(|a, b| a.name.cmp(&b.name));
+        let mut exp_fields = toml.fields.field.clone();
+        exp_fields.sort_by(|a, b| a.name.cmp(&b.name));
+        assert_eq!(got_fields, exp_fields, "fields mismatch");
+        let mut got_ignore = import.ignore;
+        got_ignore.sort();
+        let mut exp_ignore = toml.fields.ignore.clone();
+        exp_ignore.sort();
+        assert_eq!(got_ignore, exp_ignore, "ignore mismatch");
+    }
+
+    #[test]
+    fn roundtrip_string_field() {
+        roundtrip(with_fields(vec![field(
+            "title",
+            FieldTypeSerde::Scalar("String".into()),
+        )]));
+    }
+
+    #[test]
+    fn roundtrip_integer_field() {
+        roundtrip(with_fields(vec![field(
+            "count",
+            FieldTypeSerde::Scalar("Integer".into()),
+        )]));
+    }
+
+    #[test]
+    fn roundtrip_float_field() {
+        roundtrip(with_fields(vec![field(
+            "score",
+            FieldTypeSerde::Scalar("Float".into()),
+        )]));
+    }
+
+    #[test]
+    fn roundtrip_boolean_field() {
+        roundtrip(with_fields(vec![field(
+            "draft",
+            FieldTypeSerde::Scalar("Boolean".into()),
+        )]));
+    }
+
+    #[test]
+    fn roundtrip_nullable_string() {
+        let mut f = field("note", FieldTypeSerde::Scalar("String".into()));
+        f.nullable = true;
+        roundtrip(with_fields(vec![f]));
+    }
+
+    #[test]
+    fn roundtrip_nullable_integer() {
+        let mut f = field("count", FieldTypeSerde::Scalar("Integer".into()));
+        f.nullable = true;
+        roundtrip(with_fields(vec![f]));
+    }
+
+    #[test]
+    fn roundtrip_array_of_strings() {
+        roundtrip(with_fields(vec![field(
+            "tags",
+            FieldTypeSerde::Array {
+                array: Box::new(FieldTypeSerde::Scalar("String".into())),
+            },
+        )]));
+    }
+
+    #[test]
+    fn roundtrip_categories_constraint() {
+        let mut f = field("status", FieldTypeSerde::Scalar("String".into()));
+        f.constraints = Some(Constraints {
+            categories: Some(vec![
+                toml::Value::String("draft".into()),
+                toml::Value::String("published".into()),
+            ]),
+            ..Default::default()
+        });
+        roundtrip(with_fields(vec![f]));
+    }
+
+    #[test]
+    fn roundtrip_nullable_plus_enum_strips_appended_null() {
+        // dsl_to_canonical appends null to the enum when nullable=true;
+        // canonical_to_dsl must strip it back.
+        let mut f = field("status", FieldTypeSerde::Scalar("String".into()));
+        f.nullable = true;
+        f.constraints = Some(Constraints {
+            categories: Some(vec![
+                toml::Value::String("draft".into()),
+                toml::Value::String("published".into()),
+            ]),
+            ..Default::default()
+        });
+        roundtrip(with_fields(vec![f]));
+    }
+
+    #[test]
+    fn roundtrip_range_constraint() {
+        let mut f = field("rating", FieldTypeSerde::Scalar("Integer".into()));
+        f.constraints = Some(Constraints {
+            min: Some(toml::Value::Integer(0)),
+            max: Some(toml::Value::Integer(5)),
+            ..Default::default()
+        });
+        roundtrip(with_fields(vec![f]));
+    }
+
+    #[test]
+    fn roundtrip_length_and_pattern() {
+        let mut f = field("slug", FieldTypeSerde::Scalar("String".into()));
+        f.constraints = Some(Constraints {
+            min_length: Some(3),
+            max_length: Some(64),
+            pattern: Some("^[a-z0-9-]+$".into()),
+            ..Default::default()
+        });
+        roundtrip(with_fields(vec![f]));
+    }
+
+    #[test]
+    fn roundtrip_path_scoping() {
+        let mut f = field("title", FieldTypeSerde::Scalar("String".into()));
+        f.allowed = vec!["blog/**".into(), "notes/**".into()];
+        f.required = vec!["blog/**".into()];
+        roundtrip(with_fields(vec![f]));
+    }
+
+    #[test]
+    fn roundtrip_ignore_list() {
+        let mut t = empty_toml();
+        t.fields.ignore = vec!["internal_id".into(), "draft_meta".into()];
+        roundtrip(t);
+    }
+
+    #[test]
+    fn canonical_to_dsl_rejects_missing_type() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "title": {"enum": ["a", "b"]}
+            },
+            "additionalProperties": true
+        });
+        let err = canonical_to_dsl(&schema).unwrap_err();
+        assert!(err.contains("missing 'type'"), "got: {err}");
+    }
+
+    #[test]
+    fn canonical_to_dsl_rejects_invalid_type() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "x": {"type": "integer"},
+                "y": {"type": "foobar"}
+            },
+            "additionalProperties": true
+        });
+        let err = canonical_to_dsl(&schema).unwrap_err();
+        assert!(err.contains("unsupported type"), "got: {err}");
+    }
+
+    #[test]
+    fn canonical_to_dsl_rejects_null_in_non_nullable_enum() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "status": {"type": "string", "enum": ["draft", null]}
+            },
+            "additionalProperties": true
+        });
+        let err = canonical_to_dsl(&schema).unwrap_err();
+        assert!(err.contains("not nullable"), "got: {err}");
     }
 }

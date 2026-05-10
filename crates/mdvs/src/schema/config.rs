@@ -175,6 +175,32 @@ fn is_default_update_config(c: &UpdateConfig) -> bool {
 }
 
 impl MdvsToml {
+    /// Build a default `MdvsToml` around a field list. Used by `check --schema`
+    /// when no `mdvs.toml` exists at the target path — the schema provides the
+    /// fields; everything else takes its default value. Matches the shape
+    /// produced by a fresh `init --suppress-auto-build`.
+    pub fn default_with_fields(fields: Vec<TomlField>, ignore: Vec<String>) -> Self {
+        MdvsToml {
+            scan: ScanConfig {
+                glob: "**".into(),
+                include_bare_files: false,
+                skip_gitignore: false,
+            },
+            update: UpdateConfig::default(),
+            check: None,
+            embedding_model: None,
+            chunking: None,
+            build: None,
+            search: None,
+            fields: FieldsConfig {
+                ignore,
+                field: fields,
+                max_categories: default_max_categories(),
+                min_category_repetition: default_min_category_repetition(),
+            },
+        }
+    }
+
     /// Build an `MdvsToml` from an inferred schema. Schema-only — no build sections.
     /// Build sections are added by the first `build` run.
     pub fn from_inferred(schema: &InferredSchema, scan: ScanConfig) -> Self {
