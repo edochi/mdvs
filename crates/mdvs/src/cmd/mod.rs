@@ -6,6 +6,8 @@ pub mod build;
 pub mod check;
 /// Delete the `.mdvs/` index directory.
 pub mod clean;
+/// Emit the canonical JSON Schema of the local `mdvs.toml`.
+pub mod export_jsonschema;
 /// Display project configuration and index status.
 pub mod info;
 /// Initialize a new mdvs project.

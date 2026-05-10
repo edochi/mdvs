@@ -262,6 +262,14 @@ fn build_x_mdvs(field: &crate::schema::config::TomlField) -> Map<String, Value> 
             Value::Array(field.required.iter().cloned().map(Value::String).collect()),
         );
     }
+    if !field.preprocess.is_empty() {
+        let stages: Vec<Value> = field
+            .preprocess
+            .iter()
+            .map(|s| Value::String(s.to_string()))
+            .collect();
+        out.insert("preprocess".into(), Value::Array(stages));
+    }
     out
 }
 
@@ -327,7 +335,7 @@ fn field_from_subschema(
     };
     let constraints = extract_constraints(name, constraint_source, nullable)?;
 
-    let (allowed, required) = extract_x_mdvs(name, sub)?;
+    let (allowed, required, preprocess) = extract_x_mdvs(name, sub)?;
 
     Ok(crate::schema::config::TomlField {
         name: name.into(),
@@ -336,7 +344,7 @@ fn field_from_subschema(
         required,
         nullable,
         constraints,
-        preprocess: vec![],
+        preprocess,
     })
 }
 
@@ -470,14 +478,16 @@ fn extract_constraints(
     Ok(Some(c))
 }
 
-/// Inverse of [`build_x_mdvs`]: extract `allowed` / `required` from the
-/// property's `x-mdvs` block. Defaults: `allowed = ["**"]`, `required = []`.
+/// Inverse of [`build_x_mdvs`]: extract `allowed` / `required` / `preprocess`
+/// from the property's `x-mdvs` block.
+/// Defaults: `allowed = ["**"]`, `required = []`, `preprocess = []`.
+#[allow(clippy::type_complexity)] // 3-tuple is the natural shape; one struct just for this would obscure usage
 fn extract_x_mdvs(
     name: &str,
     sub: &Map<String, Value>,
-) -> Result<(Vec<String>, Vec<String>), String> {
+) -> Result<(Vec<String>, Vec<String>, Vec<crate::preprocess::ValueStage>), String> {
     let xm = match sub.get("x-mdvs") {
-        None => return Ok((vec!["**".into()], vec![])),
+        None => return Ok((vec!["**".into()], vec![], vec![])),
         Some(v) => v
             .as_object()
             .ok_or_else(|| format!("property '{name}': 'x-mdvs' must be an object"))?,
@@ -495,7 +505,12 @@ fn extract_x_mdvs(
             format!("property '{name}': 'x-mdvs.required' must be an array of strings")
         })?,
     };
-    Ok((allowed, required))
+    let preprocess = match xm.get("preprocess") {
+        None => vec![],
+        Some(v) => serde_json::from_value::<Vec<crate::preprocess::ValueStage>>(v.clone())
+            .map_err(|e| format!("property '{name}': invalid 'x-mdvs.preprocess' entry: {e}"))?,
+    };
+    Ok((allowed, required, preprocess))
 }
 
 fn string_array(v: &Value) -> Option<Vec<String>> {
@@ -1278,6 +1293,26 @@ mod tests {
             ..Default::default()
         });
         roundtrip(with_fields(vec![f]));
+    }
+
+    #[test]
+    fn roundtrip_preserves_preprocess() {
+        use crate::preprocess::ValueStage;
+        let mut f = field("funding", FieldTypeSerde::Scalar("String".into()));
+        f.preprocess = vec![ValueStage::CoerceToString];
+        roundtrip(with_fields(vec![f]));
+    }
+
+    #[test]
+    fn dsl_to_canonical_emits_preprocess_in_x_mdvs() {
+        use crate::preprocess::ValueStage;
+        let mut f = field("score", FieldTypeSerde::Scalar("Float".into()));
+        f.preprocess = vec![ValueStage::WidenIntToFloat];
+        let out = dsl_to_canonical(&with_fields(vec![f]));
+        assert_eq!(
+            out["properties"]["score"]["x-mdvs"]["preprocess"],
+            json!(["widen_int_to_float"])
+        );
     }
 
     #[test]

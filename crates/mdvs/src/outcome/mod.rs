@@ -19,8 +19,8 @@ use crate::block::{Block, Render};
 
 pub use classify::ClassifyOutcome;
 pub use commands::{
-    BuildOutcome, CheckOutcome, CleanOutcome, InfoOutcome, InitOutcome, SearchOutcome,
-    UpdateOutcome,
+    BuildOutcome, CheckOutcome, CleanOutcome, ExportJsonschemaOutcome, InfoOutcome, InitOutcome,
+    SearchOutcome, UpdateOutcome,
 };
 pub use config::{ReadConfigOutcome, WriteConfigOutcome};
 pub use embed::{EmbedFilesOutcome, EmbedQueryOutcome};
@@ -79,6 +79,8 @@ pub enum Outcome {
     Build(Box<BuildOutcome>),
     /// Search command — embed query, search index.
     Search(Box<SearchOutcome>),
+    /// Export-jsonschema command — emit canonical JSON Schema for `mdvs.toml`.
+    ExportJsonschema(Box<ExportJsonschemaOutcome>),
 }
 
 impl Render for Outcome {
@@ -104,6 +106,7 @@ impl Render for Outcome {
             Self::ExecuteSearch(o) => o.render(),
             Self::Build(o) => o.render(),
             Self::Search(o) => o.render(),
+            Self::ExportJsonschema(o) => o.render(),
         }
     }
 }

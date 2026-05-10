@@ -136,6 +136,18 @@ enum Command {
         #[arg(default_value = ".")]
         path: PathBuf,
     },
+    /// Emit the canonical JSON Schema of mdvs.toml
+    ExportJsonschema {
+        /// Directory containing mdvs.toml
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Output format
+        #[arg(long, value_enum, default_value = "json")]
+        format: mdvs::outcome::commands::export_jsonschema::ExportFormat,
+        /// Write to this file instead of stdout
+        #[arg(long, value_name = "PATH")]
+        output_file: Option<PathBuf>,
+    },
     /// Print the agent skill file to stdout
     Skill,
 }
@@ -418,6 +430,41 @@ async fn main() -> anyhow::Result<()> {
                 },
             };
             print!("{output_str}");
+            if failed {
+                std::process::exit(2);
+            }
+            Ok(())
+        }
+        Command::ExportJsonschema {
+            path,
+            format,
+            output_file,
+        } => {
+            let result = mdvs::cmd::export_jsonschema::run(&path, format, output_file.as_deref());
+            let failed = mdvs::step::has_failed(&result);
+            // When writing to stdout the command already emitted the schema;
+            // suppress the summary line so the captured output is parseable.
+            // When writing to a file (or on failure), print the human/JSON
+            // summary normally.
+            if output_file.is_some() || failed {
+                let verbose = cli.verbose || failed;
+                let output_str = match (&cli.output, verbose) {
+                    (mdvs::output::OutputFormat::Text, true) => {
+                        mdvs::render::format_text(&result.render_verbose())
+                    }
+                    (mdvs::output::OutputFormat::Text, false) => {
+                        mdvs::render::format_text(&result.render_compact())
+                    }
+                    (mdvs::output::OutputFormat::Json, true) => {
+                        serde_json::to_string_pretty(&result).unwrap()
+                    }
+                    (mdvs::output::OutputFormat::Json, false) => match result.result_value() {
+                        Some(outcome) => serde_json::to_string_pretty(outcome).unwrap(),
+                        None => serde_json::to_string_pretty(&result).unwrap(),
+                    },
+                };
+                print!("{output_str}");
+            }
             if failed {
                 std::process::exit(2);
             }
