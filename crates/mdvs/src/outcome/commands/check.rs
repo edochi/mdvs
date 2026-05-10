@@ -25,6 +25,7 @@ fn kind_display(kind: &ViolationKind) -> &'static str {
         ViolationKind::NullNotAllowed => "Null value not allowed",
         ViolationKind::InvalidCategory => "Invalid category",
         ViolationKind::OutOfRange => "Out of range",
+        ViolationKind::FrontmatterUnrepresentable => "Frontmatter unrepresentable",
     }
 }
 

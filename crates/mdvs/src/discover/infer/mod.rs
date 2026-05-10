@@ -134,6 +134,7 @@ mod tests {
         ScannedFile {
             path: PathBuf::from(path),
             data,
+            frontmatter_error: None,
             content: content.to_string(),
             body_line_offset: 0,
         }

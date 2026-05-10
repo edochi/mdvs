@@ -183,6 +183,10 @@ pub enum ViolationKind {
     InvalidCategory,
     /// The field's value is outside the declared min/max range.
     OutOfRange,
+    /// The file's frontmatter could not be represented as JSON (NaN/inf,
+    /// non-string keys, top-level non-object value). Document-level error;
+    /// uses the sentinel field name `<frontmatter>`.
+    FrontmatterUnrepresentable,
 }
 
 /// A single file that failed a particular field validation rule.

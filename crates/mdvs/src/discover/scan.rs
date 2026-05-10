@@ -12,6 +12,19 @@ use tracing::{info, instrument, warn};
 const MAX_NESTING_DEPTH: usize = 50;
 const MAX_FIELD_COUNT: usize = 1000;
 
+/// Human-readable name for a JSON value kind, used in `FrontmatterUnrepresentable`
+/// error messages when the top-level value isn't an object.
+fn json_kind_name(v: &Value) -> &'static str {
+    match v {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
 /// Check that a JSON value doesn't exceed the maximum nesting depth.
 fn check_depth(val: &Value, max: usize) -> bool {
     fn recurse(val: &Value, depth: usize, max: usize) -> bool {
@@ -32,8 +45,13 @@ fn check_depth(val: &Value, max: usize) -> bool {
 pub struct ScannedFile {
     /// Path relative to the project root.
     pub path: PathBuf,
-    /// Parsed YAML frontmatter as JSON, or `None` for bare files.
+    /// Parsed YAML frontmatter as JSON, or `None` for bare files and for
+    /// files whose frontmatter could not be represented (see `frontmatter_error`).
     pub data: Option<Value>,
+    /// `Some(reason)` if the file had frontmatter that could not be
+    /// converted to JSON (NaN/inf, non-string keys, top-level non-object).
+    /// `None` for valid frontmatter and for genuinely bare files.
+    pub frontmatter_error: Option<String>,
     /// Markdown body (after frontmatter extraction), trimmed.
     pub content: String,
     /// Number of lines before the body in the original file (frontmatter + delimiters).
@@ -110,23 +128,50 @@ impl ScannedFiles {
                     continue;
                 }
             };
-            let Ok(parsed) = matter.parse(&raw) else {
+            let Ok(parsed) = matter.parse::<Pod>(&raw) else {
                 if !config.include_bare_files {
                     continue;
                 }
                 files.push(ScannedFile {
                     path: rel_path,
                     data: None,
+                    frontmatter_error: None,
                     content: raw.trim().to_string(),
                     body_line_offset: 0,
                 });
                 continue;
             };
 
-            let data = parsed.data.and_then(|d: Pod| {
-                let json: Value = d.deserialize().ok()?;
-                if json.is_object() { Some(json) } else { None }
-            });
+            // Convert YAML→JSON, capturing both shape errors (top-level
+            // non-object) and conversion errors (NaN/inf, non-string keys).
+            // Files with errors are *kept* in the scan so check can surface
+            // them as `FrontmatterUnrepresentable` violations — never silently
+            // dropped.
+            let (data, frontmatter_error): (Option<Value>, Option<String>) = match parsed.data {
+                None => (None, None),
+                Some(d) => {
+                    let result: Result<Value, _> = d.deserialize();
+                    match result {
+                        Err(e) => (
+                            None,
+                            Some(format!("frontmatter not representable as JSON: {e}")),
+                        ),
+                        Ok(json) => {
+                            if json.is_object() {
+                                (Some(json), None)
+                            } else {
+                                let kind = json_kind_name(&json);
+                                (
+                                    None,
+                                    Some(format!(
+                                        "frontmatter must be a key-value map, got {kind}"
+                                    )),
+                                )
+                            }
+                        }
+                    }
+                }
+            };
 
             // Safety limits on frontmatter complexity
             if let Some(ref val) = data {
@@ -149,7 +194,10 @@ impl ScannedFiles {
                 }
             }
 
-            if data.is_none() && !config.include_bare_files {
+            // Bare files (no frontmatter and no error) are filtered when
+            // include_bare_files=false. Error files always surface — the
+            // user needs to know their YAML is broken.
+            if data.is_none() && frontmatter_error.is_none() && !config.include_bare_files {
                 continue;
             }
 
@@ -159,6 +207,7 @@ impl ScannedFiles {
             files.push(ScannedFile {
                 path: rel_path,
                 data,
+                frontmatter_error,
                 content,
                 body_line_offset,
             });
@@ -413,5 +462,80 @@ mod tests {
         let scanned = ScannedFiles::scan(tmp.path(), &scan_config("**", false)).unwrap();
         assert_eq!(scanned.files.len(), 1);
         assert_eq!(scanned.files[0].path.to_str().unwrap(), "blog/post1.md");
+    }
+
+    // ------------------------------------------------------------------------
+    // Frontmatter conversion errors (TODO-0149 step 8)
+    // ------------------------------------------------------------------------
+
+    fn find<'a>(scanned: &'a ScannedFiles, path: &str) -> &'a ScannedFile {
+        scanned
+            .files
+            .iter()
+            .find(|f| f.path.to_str().unwrap() == path)
+            .unwrap_or_else(|| panic!("file '{path}' missing from scan"))
+    }
+
+    #[test]
+    fn scan_captures_top_level_array_as_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_file(tmp.path(), "bad.md", "---\n- a\n- b\n---\nBody.");
+        let scanned = ScannedFiles::scan(tmp.path(), &scan_config("**", false)).unwrap();
+        let f = find(&scanned, "bad.md");
+        assert!(f.data.is_none());
+        let err = f.frontmatter_error.as_ref().unwrap();
+        assert!(err.contains("array"), "got: {err}");
+    }
+
+    #[test]
+    fn scan_captures_top_level_scalar_as_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_file(tmp.path(), "scalar.md", "---\nhello\n---\nBody.");
+        let scanned = ScannedFiles::scan(tmp.path(), &scan_config("**", false)).unwrap();
+        let f = find(&scanned, "scalar.md");
+        assert!(f.data.is_none());
+        let err = f.frontmatter_error.as_ref().unwrap();
+        assert!(err.contains("string"), "got: {err}");
+    }
+
+    #[test]
+    fn scan_captures_top_level_boolean_as_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_file(tmp.path(), "bool.md", "---\ntrue\n---\nBody.");
+        let scanned = ScannedFiles::scan(tmp.path(), &scan_config("**", false)).unwrap();
+        let f = find(&scanned, "bool.md");
+        assert!(f.data.is_none());
+        let err = f.frontmatter_error.as_ref().unwrap();
+        assert!(err.contains("boolean"), "got: {err}");
+    }
+
+    #[test]
+    fn scan_bare_file_has_no_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_file(tmp.path(), "bare.md", "Just markdown.");
+        let scanned = ScannedFiles::scan(tmp.path(), &scan_config("**", true)).unwrap();
+        let f = find(&scanned, "bare.md");
+        assert!(f.data.is_none());
+        assert!(f.frontmatter_error.is_none());
+    }
+
+    #[test]
+    fn scan_valid_frontmatter_has_no_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_file(tmp.path(), "ok.md", "---\ntitle: Hi\n---\nBody.");
+        let scanned = ScannedFiles::scan(tmp.path(), &scan_config("**", false)).unwrap();
+        let f = find(&scanned, "ok.md");
+        assert!(f.data.is_some());
+        assert!(f.frontmatter_error.is_none());
+    }
+
+    #[test]
+    fn scan_error_file_kept_when_include_bare_files_false() {
+        // Error files should always surface, regardless of bare-file filter.
+        let tmp = tempfile::tempdir().unwrap();
+        write_file(tmp.path(), "bad.md", "---\n- a\n- b\n---\nBody.");
+        let scanned = ScannedFiles::scan(tmp.path(), &scan_config("**", false)).unwrap();
+        assert_eq!(scanned.files.len(), 1);
+        assert!(scanned.files[0].frontmatter_error.is_some());
     }
 }

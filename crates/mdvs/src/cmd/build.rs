@@ -1865,6 +1865,7 @@ mod tests {
                     data: None,
                     content: body.to_string(),
                     body_line_offset: 0,
+                    frontmatter_error: None,
                 })
                 .collect(),
         }

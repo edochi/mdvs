@@ -267,6 +267,7 @@ pub fn validate(
     let mut violations: HashMap<ViolationKey, Vec<ViolatingFile>> = HashMap::new();
     let mut new_field_paths: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
 
+    check_frontmatter_errors(scanned, &mut violations);
     check_field_values(
         scanned,
         &field_map,
@@ -288,6 +289,33 @@ pub fn validate(
         field_violations,
         new_fields,
     })
+}
+
+/// Sentinel field name for document-level violations (e.g.
+/// `FrontmatterUnrepresentable`). Sorts before alphabetic field names so
+/// these errors appear at the top of the output.
+const FRONTMATTER_FIELD_SENTINEL: &str = "<frontmatter>";
+
+/// Surface scan-time YAML→JSON conversion failures as violations. Files
+/// with `frontmatter_error: Some(_)` had broken or unrepresentable
+/// frontmatter (NaN/inf, non-string keys, top-level non-object).
+fn check_frontmatter_errors(
+    scanned: &ScannedFiles,
+    violations: &mut HashMap<ViolationKey, Vec<ViolatingFile>>,
+) {
+    for file in &scanned.files {
+        if let Some(reason) = &file.frontmatter_error {
+            let key = ViolationKey {
+                field: FRONTMATTER_FIELD_SENTINEL.to_string(),
+                kind: ViolationKind::FrontmatterUnrepresentable,
+                rule: "frontmatter must be a JSON-representable key-value map".to_string(),
+            };
+            violations.entry(key).or_default().push(ViolatingFile {
+                path: file.path.clone(),
+                detail: Some(reason.clone()),
+            });
+        }
+    }
 }
 
 /// Check each file's frontmatter fields for type mismatches, disallowed locations, and new fields.
@@ -1588,6 +1616,57 @@ mod tests {
                 .as_ref()
                 .unwrap()
                 .contains("\"pending\"")
+        );
+    }
+
+    // ========================================================================
+    // Frontmatter unrepresentable (TODO-0149 step 8)
+    // ========================================================================
+
+    #[test]
+    fn check_reports_frontmatter_unrepresentable_for_top_level_array() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("bad.md"), "---\n- a\n- b\n---\nBody.").unwrap();
+        write_toml(tmp.path(), vec![string_field("title")], vec![]);
+        let step = run(tmp.path(), true, false);
+        let result = unwrap_check(&step);
+        let v = result
+            .violations
+            .iter()
+            .find(|v| matches!(v.kind, ViolationKind::FrontmatterUnrepresentable))
+            .expect("expected FrontmatterUnrepresentable violation");
+        assert_eq!(v.field, "<frontmatter>");
+        let detail = v.files[0].detail.as_ref().unwrap();
+        assert!(detail.contains("array"), "got: {detail}");
+    }
+
+    #[test]
+    fn check_reports_frontmatter_unrepresentable_for_top_level_scalar() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("scalar.md"), "---\nhello\n---\nBody.").unwrap();
+        write_toml(tmp.path(), vec![string_field("title")], vec![]);
+        let step = run(tmp.path(), true, false);
+        let result = unwrap_check(&step);
+        assert!(
+            result
+                .violations
+                .iter()
+                .any(|v| matches!(v.kind, ViolationKind::FrontmatterUnrepresentable))
+        );
+    }
+
+    #[test]
+    fn check_passes_for_valid_frontmatter() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("ok.md"), "---\ntitle: Hi\n---\nBody.").unwrap();
+        write_toml(tmp.path(), vec![string_field("title")], vec![]);
+        let step = run(tmp.path(), true, false);
+        let result = unwrap_check(&step);
+        assert!(
+            !result
+                .violations
+                .iter()
+                .any(|v| matches!(v.kind, ViolationKind::FrontmatterUnrepresentable))
         );
     }
 
