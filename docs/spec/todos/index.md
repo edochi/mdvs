@@ -150,7 +150,7 @@
 | [0146](TODO-0146.md) | Update mdBook for categorical constraints and reinfer subcommand | done | high | 2026-04-11 |
 | [0147](TODO-0147.md) | Restructure specs as developer code map | done | medium | 2026-04-12 |
 | [0148](TODO-0148.md) | Generate llms.txt and llms-full.txt from mdBook in CI | todo | medium | 2026-04-16 |
-| [0149](TODO-0149.md) | JSON Schema as canonical schema + preprocessor pipeline | done | high | 2026-04-18 |
+| [0149](TODO-0149.md) | JSON Schema as canonical schema + preprocessor pipeline | in_progress | high | 2026-04-18 |
 | [0150](TODO-0150.md) | Strict mode for inference and validation | todo | low | 2026-04-18 |
 | [0151](TODO-0151.md) | Category inference and validation broken for widened-to-String fields | done | high | 2026-04-21 |
 | [0152](TODO-0152.md) | Layered internal structure with strict downward dependencies | todo | medium | 2026-05-06 |
