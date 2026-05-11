@@ -269,7 +269,7 @@ impl MdvsToml {
 
     /// Validate config invariants that can be broken by manual edits.
     ///
-    /// Five invariants are checked:
+    /// Seven invariants are checked:
     /// 1. A field cannot appear in both `[fields].ignore` and `[[fields.field]]`.
     /// 2. All globs in `allowed` and `required` must end with `/*` or `/**`, or be
     ///    exactly `*` or `**`.
@@ -278,6 +278,11 @@ impl MdvsToml {
     ///    well-formed values, pairwise compatibility).
     /// 5. Each preprocess entry must be applicable to the field type, and the
     ///    list must contain no duplicates.
+    /// 6. A `[[fields.field]]` cannot use top-level `Object` as its type — use
+    ///    dotted-name leaf fields instead (per TODO-0097). Object remains
+    ///    valid as `Array`'s inner type.
+    /// 7. Field names must not start or end with `.`, nor contain empty
+    ///    segments (`..`). Names without dots are unaffected.
     pub fn validate(&self) -> anyhow::Result<()> {
         // Invariant 1: ignore and [[fields.field]] are mutually exclusive
         for ignored in &self.fields.ignore {
@@ -290,6 +295,22 @@ impl MdvsToml {
         }
 
         for field in &self.fields.field {
+            // Invariant 7: dotted field name well-formedness
+            if let Err(msg) = validate_field_name(&field.name) {
+                anyhow::bail!("{msg}");
+            }
+
+            // Invariant 6: top-level Object is not a valid field type.
+            // Array(Object{...}) is fine — we only reject Object at the
+            // top of the field's type tree.
+            if let Ok(FieldType::Object(_)) = FieldType::try_from(&field.field_type) {
+                anyhow::bail!(
+                    "field '{}': top-level Object type is not supported — flatten into dotted-name leaf fields (e.g. '{}.<child>'). Object remains valid as Array's inner type.",
+                    field.name,
+                    field.name
+                );
+            }
+
             // Invariant 2: valid glob format
             for glob in field.allowed.iter().chain(field.required.iter()) {
                 if !is_valid_glob_format(glob) {
@@ -364,6 +385,33 @@ impl MdvsToml {
         fs::write(path, content)?;
         Ok(())
     }
+}
+
+/// Check a field name for dot-separator well-formedness.
+///
+/// Field names may contain `.` to indicate nested-leaf membership
+/// (`calibration.baseline.wavelength` — see TODO-0097). The dot is purely a
+/// separator: each segment between dots must be non-empty, and the name
+/// itself must not start or end with `.`.
+///
+/// Segments themselves may contain spaces or punctuation (existing behavior:
+/// `lab section` is a valid name today and must stay valid).
+fn validate_field_name(name: &str) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("field name cannot be empty".into());
+    }
+    if name.starts_with('.') {
+        return Err(format!("field name '{name}' cannot start with '.'"));
+    }
+    if name.ends_with('.') {
+        return Err(format!("field name '{name}' cannot end with '.'"));
+    }
+    if name.contains("..") {
+        return Err(format!(
+            "field name '{name}' contains an empty segment between dots ('..')"
+        ));
+    }
+    Ok(())
 }
 
 /// Check if a glob pattern has a valid format for allowed/required lists.
@@ -1260,6 +1308,157 @@ nullable = false
             preprocess: vec![ValueStage::CoerceToString],
         }]);
         assert!(config.validate().is_ok());
+    }
+
+    // --- Invariant 6: top-level Object rejected; Array(Object) allowed ---
+
+    #[test]
+    fn validate_rejects_top_level_object_field() {
+        let config = full_toml(vec![TomlField {
+            name: "meta".into(),
+            field_type: FieldTypeSerde::Object {
+                object: BTreeMap::from([(
+                    "author".into(),
+                    FieldTypeSerde::Scalar("String".into()),
+                )]),
+            },
+            allowed: vec!["**".into()],
+            required: vec![],
+            nullable: false,
+            constraints: None,
+            preprocess: vec![],
+        }]);
+        let err = config.validate().unwrap_err().to_string();
+        assert!(err.contains("top-level Object"), "got: {err}");
+        assert!(err.contains("flatten"), "got: {err}");
+        assert!(err.contains("meta.<child>"), "got: {err}");
+    }
+
+    #[test]
+    fn validate_accepts_array_of_object() {
+        // Array(Object{...}) is fine — only top-level Object is rejected.
+        let config = full_toml(vec![TomlField {
+            name: "readings".into(),
+            field_type: FieldTypeSerde::Array {
+                array: Box::new(FieldTypeSerde::Object {
+                    object: BTreeMap::from([
+                        ("time".into(), FieldTypeSerde::Scalar("String".into())),
+                        ("value".into(), FieldTypeSerde::Scalar("Float".into())),
+                    ]),
+                }),
+            },
+            allowed: vec!["**".into()],
+            required: vec![],
+            nullable: false,
+            constraints: None,
+            preprocess: vec![],
+        }]);
+        assert!(config.validate().is_ok());
+    }
+
+    // --- Invariant 7: dotted field name well-formedness ---
+
+    #[test]
+    fn validate_accepts_plain_name() {
+        let config = full_toml(vec![TomlField {
+            name: "title".into(),
+            field_type: FieldTypeSerde::Scalar("String".into()),
+            allowed: vec!["**".into()],
+            required: vec![],
+            nullable: false,
+            constraints: None,
+            preprocess: vec![],
+        }]);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_accepts_dotted_name() {
+        let config = full_toml(vec![TomlField {
+            name: "calibration.baseline.wavelength".into(),
+            field_type: FieldTypeSerde::Scalar("Float".into()),
+            allowed: vec!["**".into()],
+            required: vec![],
+            nullable: false,
+            constraints: None,
+            preprocess: vec![],
+        }]);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_accepts_name_with_whitespace() {
+        // Existing example_kb behavior: `lab section` is a valid field name.
+        let config = full_toml(vec![TomlField {
+            name: "lab section".into(),
+            field_type: FieldTypeSerde::Scalar("String".into()),
+            allowed: vec!["**".into()],
+            required: vec![],
+            nullable: false,
+            constraints: None,
+            preprocess: vec![],
+        }]);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_leading_dot() {
+        let config = full_toml(vec![TomlField {
+            name: ".foo".into(),
+            field_type: FieldTypeSerde::Scalar("String".into()),
+            allowed: vec!["**".into()],
+            required: vec![],
+            nullable: false,
+            constraints: None,
+            preprocess: vec![],
+        }]);
+        let err = config.validate().unwrap_err().to_string();
+        assert!(err.contains("cannot start with '.'"), "got: {err}");
+    }
+
+    #[test]
+    fn validate_rejects_trailing_dot() {
+        let config = full_toml(vec![TomlField {
+            name: "foo.".into(),
+            field_type: FieldTypeSerde::Scalar("String".into()),
+            allowed: vec!["**".into()],
+            required: vec![],
+            nullable: false,
+            constraints: None,
+            preprocess: vec![],
+        }]);
+        let err = config.validate().unwrap_err().to_string();
+        assert!(err.contains("cannot end with '.'"), "got: {err}");
+    }
+
+    #[test]
+    fn validate_rejects_empty_segment() {
+        let config = full_toml(vec![TomlField {
+            name: "foo..bar".into(),
+            field_type: FieldTypeSerde::Scalar("String".into()),
+            allowed: vec!["**".into()],
+            required: vec![],
+            nullable: false,
+            constraints: None,
+            preprocess: vec![],
+        }]);
+        let err = config.validate().unwrap_err().to_string();
+        assert!(err.contains("empty segment"), "got: {err}");
+    }
+
+    #[test]
+    fn validate_rejects_empty_name() {
+        let config = full_toml(vec![TomlField {
+            name: "".into(),
+            field_type: FieldTypeSerde::Scalar("String".into()),
+            allowed: vec!["**".into()],
+            required: vec![],
+            nullable: false,
+            constraints: None,
+            preprocess: vec![],
+        }]);
+        let err = config.validate().unwrap_err().to_string();
+        assert!(err.contains("empty"), "got: {err}");
     }
 
     // --- deny_unknown_fields tests ---
