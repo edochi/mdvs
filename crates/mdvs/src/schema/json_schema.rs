@@ -97,17 +97,32 @@ const HARD_REJECT: &[(&str, &str)] = &[
 /// The output has:
 /// - `type: "object"`, `additionalProperties: true` at the root (per-file
 ///   overlay synthesis tightens this — see TODO-0149 step 13).
-/// - One entry under `properties` per `[[fields.field]]` and per `ignore` name.
-/// - Path-scoping carried as `x-mdvs.allowed` / `x-mdvs.required` on each property.
+/// - One entry under `properties` per `[[fields.field]]` (recursively nested
+///   for dotted names — see below) and per `ignore` name (flat).
+/// - Path-scoping carried as `x-mdvs.allowed` / `x-mdvs.required` on each
+///   leaf property; intermediate Object nodes carry no `x-mdvs`.
 /// - No root-level `required` array — requirement is path-scoped.
+///
+/// **Dotted-name flattening** (TODO-0097 step 3): a `[[fields.field]]` whose
+/// `name` contains `.` is placed at the corresponding nested path. For
+/// example `calibration.baseline.wavelength` lands at
+/// `root.properties.calibration.properties.baseline.properties.wavelength`.
+/// Intermediate Object nodes (`calibration`, `calibration.baseline` in the
+/// example) are auto-created as `{type: "object", additionalProperties:
+/// true, properties: {...}}`. Shape conflicts among field names
+/// (declaring `foo` as a leaf and `foo.bar` as a different leaf) are caught
+/// by [`MdvsToml::validate`]'s invariant 8 before this function runs.
 pub(crate) fn dsl_to_canonical(toml: &MdvsToml) -> Value {
     let mut properties: Map<String, Value> = Map::new();
 
     for field in &toml.fields.field {
-        properties.insert(field.name.clone(), field_to_subschema(field));
+        let segments: Vec<&str> = field.name.split('.').collect();
+        let leaf = field_to_subschema(field);
+        insert_at_path(&mut properties, &segments, leaf);
     }
     for ignored in &toml.fields.ignore {
         // Empty schema = always-passes. Step 13's overlay may further constrain.
+        // Ignored names are treated as flat (no nested-leaf semantics).
         properties.insert(ignored.clone(), json!({}));
     }
 
@@ -117,6 +132,64 @@ pub(crate) fn dsl_to_canonical(toml: &MdvsToml) -> Value {
         "properties": Value::Object(properties),
         "additionalProperties": true,
     })
+}
+
+/// Place `leaf` at the dotted path described by `segments`. Creates
+/// intermediate `{type: "object", additionalProperties: true, properties: {}}`
+/// nodes as needed.
+///
+/// Shape conflicts (a leaf already exists where an intermediate is needed,
+/// or vice versa) are caught upstream by `MdvsToml::validate`'s invariant 8.
+/// If they reach this function, the later insertion silently replaces the
+/// earlier — but in well-validated input this never happens.
+fn insert_at_path(properties: &mut Map<String, Value>, segments: &[&str], leaf: Value) {
+    let Some((first, rest)) = segments.split_first() else {
+        return;
+    };
+
+    if rest.is_empty() {
+        properties.insert(first.to_string(), leaf);
+        return;
+    }
+
+    let entry = properties
+        .entry(first.to_string())
+        .or_insert_with(intermediate_object_schema);
+
+    // Defensive: if validation skipped, an entry might not be an
+    // intermediate. Replace rather than panic — we trust validate to
+    // surface the conflict to the user before they reach this path.
+    if !is_intermediate_object(entry) {
+        *entry = intermediate_object_schema();
+    }
+
+    let inner_props = entry
+        .get_mut("properties")
+        .and_then(Value::as_object_mut)
+        .expect("intermediate_object_schema always has a `properties` map");
+    insert_at_path(inner_props, rest, leaf);
+}
+
+fn intermediate_object_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {},
+    })
+}
+
+/// True if the value is the exact shape produced by [`intermediate_object_schema`]
+/// (or its post-population state): an object schema with a `properties` map and
+/// no `x-mdvs` metadata. Used by [`insert_at_path`] for the can-I-recurse check
+/// and by [`canonical_to_dsl`] to distinguish structural Objects from leaf
+/// Object schemas (Array-of-Object inner types and similar).
+fn is_intermediate_object(v: &Value) -> bool {
+    let Some(obj) = v.as_object() else {
+        return false;
+    };
+    obj.get("type") == Some(&Value::String("object".into()))
+        && obj.get("properties").map(Value::is_object).unwrap_or(false)
+        && !obj.contains_key("x-mdvs")
 }
 
 fn field_to_subschema(field: &crate::schema::config::TomlField) -> Value {
@@ -164,16 +237,26 @@ fn type_subschema(ft: &FieldType, nullable: bool, constraints: Option<&Constrain
             obj.insert("items".into(), items);
             Value::Object(obj)
         }
-        FieldType::Object(_) => {
-            // Object validation is intentionally loose: the existing
-            // type_matches accepts any object regardless of children. We
-            // emit `{"type": "object", "additionalProperties": true}` and
-            // do not project children — preserving that behavior.
-            // Wave C (object flattening per TODO-0097) replaces this branch
-            // entirely once nested objects become dotted-name scalar fields.
+        FieldType::Object(fields) => {
+            // After TODO-0097 step 3, top-level Object fields are rejected
+            // by `MdvsToml::validate`'s invariant 6. This arm is reached
+            // only as a recursive call for `Array(Object{...})` inner types
+            // (and any future `Object` inside `Array`-style composites).
+            //
+            // Per the scope decision, structured array elements stay inline:
+            // we emit proper `properties` for the children rather than the
+            // permissive `additionalProperties: true` placeholder used pre-Wave-C.
+            let mut props = Map::new();
+            for (name, inner_ft) in fields {
+                // Inner Object children carry no nullability or constraints
+                // of their own (those live on the outer `[[fields.field]]`'s
+                // type subschema, not on its grandchildren).
+                props.insert(name.clone(), type_subschema(inner_ft, false, None));
+            }
             let mut obj = Map::new();
             insert_type(&mut obj, "object", nullable);
             obj.insert("additionalProperties".into(), Value::Bool(true));
+            obj.insert("properties".into(), Value::Object(props));
             Value::Object(obj)
         }
     }
@@ -295,6 +378,17 @@ pub(crate) struct CanonicalImport {
 /// Strict pattern matching: only the exact shapes [`dsl_to_canonical`]
 /// produces are accepted. Anything else errors with a clear message
 /// pointing at the property name.
+///
+/// **Dotted-name reconstruction** (TODO-0097 step 3): the nested
+/// `properties` tree is walked with a path prefix. Intermediate Object
+/// nodes (those produced by [`intermediate_object_schema`] — `{type:
+/// "object", properties: {...}, additionalProperties: true}` with no
+/// `x-mdvs`) are recursed into, extending the dotted prefix. Leaf
+/// schemas become one `TomlField` each with the full dotted path as
+/// its name.
+///
+/// Ignored names are emitted only at the top level (they were flat in
+/// `dsl_to_canonical`'s output).
 pub(crate) fn canonical_to_dsl(schema: &Value) -> Result<CanonicalImport, String> {
     let properties = schema
         .get("properties")
@@ -304,18 +398,59 @@ pub(crate) fn canonical_to_dsl(schema: &Value) -> Result<CanonicalImport, String
     let mut fields: Vec<crate::schema::config::TomlField> = Vec::new();
     let mut ignore: Vec<String> = Vec::new();
 
-    for (name, sub) in properties {
-        let subobj = sub
-            .as_object()
-            .ok_or_else(|| format!("property '{name}': schema must be an object"))?;
-        if subobj.is_empty() {
-            ignore.push(name.clone());
-            continue;
-        }
-        fields.push(field_from_subschema(name, subobj)?);
-    }
+    walk_properties_into_fields(properties, "", &mut fields, &mut ignore, true)?;
 
     Ok(CanonicalImport { fields, ignore })
+}
+
+/// Recursive walk used by [`canonical_to_dsl`]. `prefix` is the dotted-path
+/// accumulator. `top_level` is true only for the outermost call — ignored
+/// (empty) schemas are recognised only there, since `dsl_to_canonical`
+/// emits them flat at the root.
+fn walk_properties_into_fields(
+    properties: &Map<String, Value>,
+    prefix: &str,
+    fields: &mut Vec<crate::schema::config::TomlField>,
+    ignore: &mut Vec<String>,
+    top_level: bool,
+) -> Result<(), String> {
+    for (name, sub) in properties {
+        let full_name = if prefix.is_empty() {
+            name.clone()
+        } else {
+            format!("{prefix}.{name}")
+        };
+
+        let subobj = sub
+            .as_object()
+            .ok_or_else(|| format!("property '{full_name}': schema must be an object"))?;
+
+        // Top-level empty schemas are ignored names; nested ones would be a
+        // malformed schema (intermediates always have `type: "object"` and
+        // children, leaves always have type info or x-mdvs).
+        if subobj.is_empty() {
+            if top_level {
+                ignore.push(name.clone());
+                continue;
+            }
+            return Err(format!(
+                "property '{full_name}': empty schema is not allowed at nested depth"
+            ));
+        }
+
+        if is_intermediate_object(sub) {
+            // Intermediate Object — recurse into children, extending prefix.
+            let inner = sub
+                .get("properties")
+                .and_then(Value::as_object)
+                .expect("is_intermediate_object guarantees properties exists");
+            walk_properties_into_fields(inner, &full_name, fields, ignore, false)?;
+        } else {
+            // Leaf — emit a TomlField with the dotted full path.
+            fields.push(field_from_subschema(&full_name, subobj)?);
+        }
+    }
+    Ok(())
 }
 
 fn field_from_subschema(
@@ -397,7 +532,27 @@ fn extract_type(name: &str, sub: &Map<String, Value>) -> Result<(FieldType, bool
             let (inner, _) = extract_type(name, items)?;
             FieldType::Array(Box::new(inner))
         }
-        "object" => FieldType::Object(std::collections::BTreeMap::new()),
+        "object" => {
+            // After TODO-0097 step 3, an "object" type at this layer is
+            // either an intermediate (which canonical_to_dsl recurses into
+            // before reaching extract_type) or an Array's inner Object
+            // (carrying real `properties` children we must reconstruct).
+            //
+            // Read children if present; otherwise produce an empty Object.
+            let mut children = std::collections::BTreeMap::new();
+            if let Some(inner_props) = sub.get("properties").and_then(Value::as_object) {
+                for (child_name, child_sub) in inner_props {
+                    let child_obj = child_sub.as_object().ok_or_else(|| {
+                        format!(
+                            "property '{name}': inner Object child '{child_name}' schema must be an object"
+                        )
+                    })?;
+                    let (child_ft, _) = extract_type(child_name, child_obj)?;
+                    children.insert(child_name.clone(), child_ft);
+                }
+            }
+            FieldType::Object(children)
+        }
         other => {
             return Err(format!("property '{name}': unsupported type '{other}'"));
         }
@@ -552,10 +707,12 @@ pub(crate) fn validate_mdvs_schema(schema: &Value) -> Result<(), String> {
 enum Location {
     /// Top-level schema document.
     Root,
-    /// A property directly under the root `properties` object.
-    RootProperty,
-    /// Anywhere else (nested objects, items, etc.).
-    Nested,
+    /// A property at any depth under `properties` / `items` /
+    /// `additionalProperties`. After TODO-0097 step 3, mdvs has structural
+    /// objects at arbitrary depth (dotted-name leaves create intermediates),
+    /// so a single `Property` location replaces the earlier root-only
+    /// distinction.
+    Property,
 }
 
 fn walk(node: &Value, location: Location) -> Result<(), String> {
@@ -582,20 +739,16 @@ fn walk(node: &Value, location: Location) -> Result<(), String> {
                     .as_object()
                     .ok_or_else(|| "'properties' must be an object".to_string())?;
                 for (_, prop_schema) in props {
-                    let child_loc = match location {
-                        Location::Root => Location::RootProperty,
-                        _ => Location::Nested,
-                    };
-                    walk(prop_schema, child_loc)?;
+                    walk(prop_schema, Location::Property)?;
                 }
             }
             "items" => {
-                walk(value, Location::Nested)?;
+                walk(value, Location::Property)?;
             }
             "additionalProperties" => {
                 // Allowed values: bool or schema. If schema, walk it.
                 if value.is_object() {
-                    walk(value, Location::Nested)?;
+                    walk(value, Location::Property)?;
                 }
             }
             "x-mdvs" => {
@@ -604,13 +757,7 @@ fn walk(node: &Value, location: Location) -> Result<(), String> {
                     .ok_or_else(|| "'x-mdvs' must be an object".to_string())?;
                 let allowed_subkeys = match location {
                     Location::Root => MDVS_KEYS_SCHEMA,
-                    Location::RootProperty => MDVS_KEYS_PROPERTY,
-                    Location::Nested => {
-                        return Err(
-                            "'x-mdvs' is only valid at the schema root or on a root-level property"
-                                .to_string(),
-                        );
-                    }
+                    Location::Property => MDVS_KEYS_PROPERTY,
                 };
                 for k in xm.keys() {
                     if !allowed_subkeys.contains(&k.as_str()) {
@@ -769,24 +916,39 @@ mod tests {
     }
 
     #[test]
-    fn object_field_loose_validation() {
-        // Object validation is intentionally loose — any object passes type
-        // check, children types are not projected (preserves existing
-        // type_matches semantics).
+    fn array_of_object_emits_items_properties() {
+        // After TODO-0097 step 3, Object as a top-level type is rejected by
+        // MdvsToml::validate invariant 6 (top-level structure is expressed
+        // via dotted-name leaves). Object survives only as an Array inner
+        // type — and now the translator emits proper `items.properties`
+        // children rather than the pre-Wave-C `additionalProperties: true`
+        // placeholder.
         use std::collections::BTreeMap;
         let toml = with_fields(vec![field(
-            "meta",
-            FieldTypeSerde::Object {
-                object: BTreeMap::from([
-                    ("author".into(), FieldTypeSerde::Scalar("String".into())),
-                    ("version".into(), FieldTypeSerde::Scalar("Integer".into())),
-                ]),
+            "readings",
+            FieldTypeSerde::Array {
+                array: Box::new(FieldTypeSerde::Object {
+                    object: BTreeMap::from([
+                        ("author".into(), FieldTypeSerde::Scalar("String".into())),
+                        ("version".into(), FieldTypeSerde::Scalar("Integer".into())),
+                    ]),
+                }),
             },
         )]);
         let out = dsl_to_canonical(&toml);
         assert_eq!(
-            out["properties"]["meta"],
-            json!({"type": "object", "additionalProperties": true})
+            out["properties"]["readings"],
+            json!({
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": true,
+                    "properties": {
+                        "author": {"type": "string"},
+                        "version": {"type": "integer"},
+                    },
+                }
+            })
         );
     }
 
@@ -1100,17 +1262,47 @@ mod tests {
     }
 
     #[test]
-    fn gate_rejects_x_mdvs_at_nested_location() {
-        // x-mdvs allowed only at root or root-level property; not inside `items`.
-        assert_rejects(
-            json!({
-                "type": "array",
-                "items": {
-                    "type": "string",
-                    "x-mdvs": {"allowed": ["**"]}
+    fn gate_accepts_x_mdvs_at_any_property_depth() {
+        // After TODO-0097 step 3, dotted-name leaves can live at any depth.
+        // The gate accepts property-level x-mdvs everywhere; only the root
+        // location is gated to schema-level subkeys.
+        assert!(
+            validate_mdvs_schema(&json!({
+                "type": "object",
+                "additionalProperties": true,
+                "properties": {
+                    "cal": {
+                        "type": "object",
+                        "additionalProperties": true,
+                        "properties": {
+                            "wavelength": {
+                                "type": "number",
+                                "x-mdvs": {"allowed": ["**"]}
+                            }
+                        }
+                    }
                 }
-            }),
-            "only valid at the schema root",
+            }))
+            .is_ok()
+        );
+
+        // Same allowance applies inside `items` (Array element schemas
+        // are now valid property locations).
+        assert!(
+            validate_mdvs_schema(&json!({
+                "type": "object",
+                "additionalProperties": true,
+                "properties": {
+                    "tags": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "x-mdvs": {"allowed": ["**"]}
+                        }
+                    }
+                }
+            }))
+            .is_ok()
         );
     }
 
@@ -1368,5 +1560,191 @@ mod tests {
         });
         let err = canonical_to_dsl(&schema).unwrap_err();
         assert!(err.contains("not nullable"), "got: {err}");
+    }
+
+    // ========================================================================
+    // TODO-0097 step 3: dotted-name flattening
+    // ========================================================================
+
+    #[test]
+    fn dsl_to_canonical_single_dotted_creates_intermediate() {
+        let toml = with_fields(vec![field(
+            "calibration.baseline.wavelength",
+            FieldTypeSerde::Scalar("Float".into()),
+        )]);
+        let out = dsl_to_canonical(&toml);
+        // Outer intermediate
+        assert_eq!(out["properties"]["calibration"]["type"], "object");
+        assert_eq!(
+            out["properties"]["calibration"]["additionalProperties"],
+            true
+        );
+        assert!(out["properties"]["calibration"].get("x-mdvs").is_none());
+        // Inner intermediate
+        assert_eq!(
+            out["properties"]["calibration"]["properties"]["baseline"]["type"],
+            "object"
+        );
+        // Leaf
+        assert_eq!(
+            out["properties"]["calibration"]["properties"]["baseline"]["properties"]["wavelength"]
+                ["type"],
+            "number"
+        );
+    }
+
+    #[test]
+    fn dsl_to_canonical_siblings_share_intermediate() {
+        let toml = with_fields(vec![
+            field("cal.x", FieldTypeSerde::Scalar("Float".into())),
+            field("cal.y", FieldTypeSerde::Scalar("Float".into())),
+        ]);
+        let out = dsl_to_canonical(&toml);
+        let cal_props = out["properties"]["cal"]["properties"].as_object().unwrap();
+        assert!(cal_props.contains_key("x"));
+        assert!(cal_props.contains_key("y"));
+        assert_eq!(cal_props.len(), 2);
+    }
+
+    #[test]
+    fn dsl_to_canonical_mixed_flat_and_dotted() {
+        let toml = with_fields(vec![
+            field("title", FieldTypeSerde::Scalar("String".into())),
+            field("cal.wave", FieldTypeSerde::Scalar("Float".into())),
+        ]);
+        let out = dsl_to_canonical(&toml);
+        assert_eq!(out["properties"]["title"]["type"], "string");
+        assert_eq!(
+            out["properties"]["cal"]["properties"]["wave"]["type"],
+            "number"
+        );
+    }
+
+    #[test]
+    fn dsl_to_canonical_leaf_x_mdvs_lives_at_leaf_not_intermediate() {
+        let mut f = field("cal.baseline.wave", FieldTypeSerde::Scalar("Float".into()));
+        f.allowed = vec!["projects/alpha/**".into()];
+        f.required = vec!["projects/alpha/**".into()];
+        let toml = with_fields(vec![f]);
+        let out = dsl_to_canonical(&toml);
+
+        // Intermediates have no x-mdvs
+        assert!(out["properties"]["cal"].get("x-mdvs").is_none());
+        assert!(
+            out["properties"]["cal"]["properties"]["baseline"]
+                .get("x-mdvs")
+                .is_none()
+        );
+
+        // Leaf carries x-mdvs
+        let leaf_x =
+            &out["properties"]["cal"]["properties"]["baseline"]["properties"]["wave"]["x-mdvs"];
+        assert_eq!(leaf_x["allowed"], json!(["projects/alpha/**"]));
+        assert_eq!(leaf_x["required"], json!(["projects/alpha/**"]));
+    }
+
+    #[test]
+    fn canonical_to_dsl_walks_nested_into_dotted_names() {
+        let schema = json!({
+            "$schema": JSON_SCHEMA_DRAFT,
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+                "title": {"type": "string"},
+                "cal": {
+                    "type": "object",
+                    "additionalProperties": true,
+                    "properties": {
+                        "baseline": {
+                            "type": "object",
+                            "additionalProperties": true,
+                            "properties": {
+                                "wavelength": {"type": "number"},
+                                "intensity": {"type": "number"}
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        let imported = canonical_to_dsl(&schema).unwrap();
+        let names: Vec<&str> = imported.fields.iter().map(|f| f.name.as_str()).collect();
+        assert!(names.contains(&"title"));
+        assert!(names.contains(&"cal.baseline.wavelength"));
+        assert!(names.contains(&"cal.baseline.intensity"));
+        // Intermediates do NOT become TomlFields.
+        assert!(!names.contains(&"cal"));
+        assert!(!names.contains(&"cal.baseline"));
+    }
+
+    #[test]
+    fn roundtrip_dotted_leaf() {
+        let f = field(
+            "calibration.baseline.wavelength",
+            FieldTypeSerde::Scalar("Float".into()),
+        );
+        roundtrip(with_fields(vec![f]));
+    }
+
+    #[test]
+    fn roundtrip_dotted_with_x_mdvs() {
+        use crate::preprocess::ValueStage;
+        let mut f = field("cal.wave", FieldTypeSerde::Scalar("Float".into()));
+        f.allowed = vec!["projects/alpha/**".into()];
+        f.required = vec!["projects/alpha/**".into()];
+        f.preprocess = vec![ValueStage::WidenIntToFloat];
+        roundtrip(with_fields(vec![f]));
+    }
+
+    #[test]
+    fn roundtrip_mixed_flat_and_dotted() {
+        let toml = with_fields(vec![
+            field("title", FieldTypeSerde::Scalar("String".into())),
+            field("cal.x", FieldTypeSerde::Scalar("Float".into())),
+            field("cal.y", FieldTypeSerde::Scalar("Float".into())),
+            field("meta.author", FieldTypeSerde::Scalar("String".into())),
+        ]);
+        roundtrip(toml);
+    }
+
+    #[test]
+    fn roundtrip_array_of_object_inner_shape_preserved() {
+        use std::collections::BTreeMap;
+        let toml = with_fields(vec![field(
+            "readings",
+            FieldTypeSerde::Array {
+                array: Box::new(FieldTypeSerde::Object {
+                    object: BTreeMap::from([
+                        ("time".into(), FieldTypeSerde::Scalar("String".into())),
+                        ("value".into(), FieldTypeSerde::Scalar("Float".into())),
+                    ]),
+                }),
+            },
+        )]);
+        roundtrip(toml);
+    }
+
+    #[test]
+    fn canonical_to_dsl_rejects_empty_schema_at_nested_depth() {
+        // An empty schema is only valid at the top level (signals an
+        // ignored name). Nested empty schemas indicate a malformed input.
+        let schema = json!({
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+                "cal": {
+                    "type": "object",
+                    "additionalProperties": true,
+                    "properties": {
+                        "broken": {}
+                    }
+                }
+            }
+        });
+        let err = canonical_to_dsl(&schema).unwrap_err();
+        assert!(
+            err.contains("empty schema is not allowed at nested depth"),
+            "got: {err}"
+        );
     }
 }

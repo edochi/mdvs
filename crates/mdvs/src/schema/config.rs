@@ -269,7 +269,7 @@ impl MdvsToml {
 
     /// Validate config invariants that can be broken by manual edits.
     ///
-    /// Seven invariants are checked:
+    /// Eight invariants are checked:
     /// 1. A field cannot appear in both `[fields].ignore` and `[[fields.field]]`.
     /// 2. All globs in `allowed` and `required` must end with `/*` or `/**`, or be
     ///    exactly `*` or `**`.
@@ -283,6 +283,8 @@ impl MdvsToml {
     ///    valid as `Array`'s inner type.
     /// 7. Field names must not start or end with `.`, nor contain empty
     ///    segments (`..`). Names without dots are unaffected.
+    /// 8. No shape conflicts: a name cannot be declared both as a leaf and
+    ///    as a parent of nested leaves (e.g., `foo` *and* `foo.bar`).
     pub fn validate(&self) -> anyhow::Result<()> {
         // Invariant 1: ignore and [[fields.field]] are mutually exclusive
         for ignored in &self.fields.ignore {
@@ -368,6 +370,29 @@ impl MdvsToml {
                             stage.applicable_types(),
                         );
                     }
+                }
+            }
+        }
+
+        // Invariant 8: no shape conflicts — a name cannot be declared both
+        // as a leaf and as a parent of nested leaves.
+        //
+        // For each field, every strict prefix of its dotted name is a
+        // "parent path" (in the tree sense). The same name must not also
+        // appear as a leaf in some other entry's `name`.
+        let leaves: std::collections::HashSet<&str> =
+            self.fields.field.iter().map(|f| f.name.as_str()).collect();
+        for field in &self.fields.field {
+            let segments: Vec<&str> = field.name.split('.').collect();
+            for i in 1..segments.len() {
+                let prefix = segments[..i].join(".");
+                if leaves.contains(prefix.as_str()) {
+                    anyhow::bail!(
+                        "shape conflict: '{}' is declared both as a leaf and as a parent of nested leaves (e.g., '{}'). Pick one — keep '{}' as a leaf, or remove it and keep only the nested fields.",
+                        prefix,
+                        field.name,
+                        prefix
+                    );
                 }
             }
         }
@@ -1459,6 +1484,91 @@ nullable = false
         }]);
         let err = config.validate().unwrap_err().to_string();
         assert!(err.contains("empty"), "got: {err}");
+    }
+
+    // --- Invariant 8: shape-conflict among field names ---
+
+    #[test]
+    fn validate_rejects_leaf_and_parent_same_name() {
+        // `meta` declared both as a leaf AND as a parent (`meta.author`).
+        let config = full_toml(vec![
+            TomlField {
+                name: "meta".into(),
+                field_type: FieldTypeSerde::Scalar("String".into()),
+                allowed: vec!["**".into()],
+                required: vec![],
+                nullable: false,
+                constraints: None,
+                preprocess: vec![],
+            },
+            TomlField {
+                name: "meta.author".into(),
+                field_type: FieldTypeSerde::Scalar("String".into()),
+                allowed: vec!["**".into()],
+                required: vec![],
+                nullable: false,
+                constraints: None,
+                preprocess: vec![],
+            },
+        ]);
+        let err = config.validate().unwrap_err().to_string();
+        assert!(err.contains("shape conflict"), "got: {err}");
+        assert!(err.contains("'meta'"), "got: {err}");
+    }
+
+    #[test]
+    fn validate_rejects_deep_shape_conflict() {
+        // `cal.baseline` declared as a leaf AND as a parent (`cal.baseline.wave`).
+        let config = full_toml(vec![
+            TomlField {
+                name: "cal.baseline".into(),
+                field_type: FieldTypeSerde::Scalar("String".into()),
+                allowed: vec!["**".into()],
+                required: vec![],
+                nullable: false,
+                constraints: None,
+                preprocess: vec![],
+            },
+            TomlField {
+                name: "cal.baseline.wave".into(),
+                field_type: FieldTypeSerde::Scalar("Float".into()),
+                allowed: vec!["**".into()],
+                required: vec![],
+                nullable: false,
+                constraints: None,
+                preprocess: vec![],
+            },
+        ]);
+        let err = config.validate().unwrap_err().to_string();
+        assert!(err.contains("shape conflict"), "got: {err}");
+        assert!(err.contains("'cal.baseline'"), "got: {err}");
+    }
+
+    #[test]
+    fn validate_accepts_siblings_under_shared_prefix() {
+        // `cal.x` and `cal.y` share the `cal` intermediate but neither
+        // declares `cal` as a leaf — no conflict.
+        let config = full_toml(vec![
+            TomlField {
+                name: "cal.x".into(),
+                field_type: FieldTypeSerde::Scalar("Float".into()),
+                allowed: vec!["**".into()],
+                required: vec![],
+                nullable: false,
+                constraints: None,
+                preprocess: vec![],
+            },
+            TomlField {
+                name: "cal.y".into(),
+                field_type: FieldTypeSerde::Scalar("Float".into()),
+                allowed: vec!["**".into()],
+                required: vec![],
+                nullable: false,
+                constraints: None,
+                preprocess: vec![],
+            },
+        ]);
+        assert!(config.validate().is_ok());
     }
 
     // --- deny_unknown_fields tests ---
