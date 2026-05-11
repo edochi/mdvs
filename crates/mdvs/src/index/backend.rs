@@ -398,6 +398,7 @@ mod tests {
             },
             glob: "**".into(),
             built_at: "2026-03-02T12:00:00+00:00".into(),
+            schema_hash: "test".into(),
         }
     }
 

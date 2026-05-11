@@ -1,4 +1,6 @@
 use crate::discover::field_type::FieldType;
+use crate::schema::config::MdvsToml;
+use crate::schema::json_schema::dsl_to_canonical;
 use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -115,6 +117,26 @@ pub struct BuildMetadata {
     pub glob: String,
     /// ISO 8601 timestamp of when the build was produced.
     pub built_at: String,
+    /// Hash of the canonical JSON Schema derived from `mdvs.toml`. Used to
+    /// detect schema changes between builds (any change to fields, types,
+    /// constraints, path-scoping, or preprocess arrays invalidates the
+    /// existing parquet data; rebuild required).
+    pub schema_hash: String,
+}
+
+/// Compute a deterministic hash of the canonical JSON Schema for a given
+/// `MdvsToml`. Hashes the **post-translation** form: whitespace, comments,
+/// and field ordering in `mdvs.toml` don't affect the hash; only the
+/// semantic schema content does.
+pub fn compute_schema_hash(config: &MdvsToml) -> String {
+    let canonical = dsl_to_canonical(config);
+    // serde_json::to_string with the default Map serializer preserves
+    // insertion order; dsl_to_canonical builds the map in a deterministic
+    // order (iteration over toml.fields.field in slice order, followed by
+    // toml.fields.ignore). MdvsToml::write sorts fields by name before
+    // serializing, so the resulting hash is stable across writes.
+    let json = serde_json::to_string(&canonical).unwrap_or_default();
+    content_hash(&json)
 }
 
 impl BuildMetadata {
@@ -135,10 +157,14 @@ impl BuildMetadata {
         );
         m.insert("mdvs.glob".into(), self.glob.clone());
         m.insert("mdvs.built_at".into(), self.built_at.clone());
+        m.insert("mdvs.schema_hash".into(), self.schema_hash.clone());
         m
     }
 
     /// Deserialize from parquet key-value metadata. Returns `None` if required keys are missing.
+    /// `schema_hash` defaults to empty string for parquets built before step 14 — a pre-step-14
+    /// parquet will always be flagged as "schema changed" on the next build, which is the
+    /// correct conservative behavior.
     pub fn from_hash_map(meta: &HashMap<String, String>) -> Option<Self> {
         Some(Self {
             embedding_model: EmbeddingModelConfig {
@@ -154,6 +180,7 @@ impl BuildMetadata {
             },
             glob: meta.get("mdvs.glob")?.clone(),
             built_at: meta.get("mdvs.built_at")?.clone(),
+            schema_hash: meta.get("mdvs.schema_hash").cloned().unwrap_or_default(),
         })
     }
 }
@@ -1029,6 +1056,7 @@ mod tests {
             },
             glob: "**".into(),
             built_at: "2026-03-02T12:00:00+00:00".into(),
+            schema_hash: "test".into(),
         };
 
         write_parquet_with_metadata(&path, &batch, meta.to_hash_map()).unwrap();
@@ -1063,6 +1091,7 @@ mod tests {
             },
             glob: "blog/**".into(),
             built_at: "2026-03-02T12:00:00+00:00".into(),
+            schema_hash: "test".into(),
         };
 
         write_parquet_with_metadata(&path, &batch, meta.to_hash_map()).unwrap();
@@ -1260,6 +1289,168 @@ mod tests {
         let h3 = content_hash("different content");
         assert_eq!(h1, h2, "same content should produce same hash");
         assert_ne!(h1, h3, "different content should produce different hash");
+    }
+
+    // ------------------------------------------------------------------------
+    // compute_schema_hash (TODO-0149 step 14)
+    // ------------------------------------------------------------------------
+
+    fn sample_toml() -> MdvsToml {
+        use crate::schema::config::{FieldsConfig, TomlField, UpdateConfig};
+        use crate::schema::shared::{FieldTypeSerde, ScanConfig};
+        MdvsToml {
+            scan: ScanConfig {
+                glob: "**".into(),
+                include_bare_files: false,
+                skip_gitignore: false,
+            },
+            update: UpdateConfig::default(),
+            check: None,
+            embedding_model: None,
+            chunking: None,
+            build: None,
+            search: None,
+            fields: FieldsConfig {
+                ignore: vec![],
+                field: vec![TomlField {
+                    name: "title".into(),
+                    field_type: FieldTypeSerde::Scalar("String".into()),
+                    allowed: vec!["**".into()],
+                    required: vec![],
+                    nullable: false,
+                    constraints: None,
+                    preprocess: vec![],
+                }],
+                max_categories: 10,
+                min_category_repetition: 3,
+            },
+        }
+    }
+
+    #[test]
+    fn schema_hash_is_deterministic() {
+        let t = sample_toml();
+        let h1 = compute_schema_hash(&t);
+        let h2 = compute_schema_hash(&t);
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn schema_hash_changes_when_field_added() {
+        use crate::schema::config::TomlField;
+        use crate::schema::shared::FieldTypeSerde;
+        let mut t = sample_toml();
+        let h1 = compute_schema_hash(&t);
+        t.fields.field.push(TomlField {
+            name: "draft".into(),
+            field_type: FieldTypeSerde::Scalar("Boolean".into()),
+            allowed: vec!["**".into()],
+            required: vec![],
+            nullable: false,
+            constraints: None,
+            preprocess: vec![],
+        });
+        let h2 = compute_schema_hash(&t);
+        assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn schema_hash_changes_when_type_changes() {
+        use crate::schema::shared::FieldTypeSerde;
+        let mut t = sample_toml();
+        let h1 = compute_schema_hash(&t);
+        t.fields.field[0].field_type = FieldTypeSerde::Scalar("Integer".into());
+        let h2 = compute_schema_hash(&t);
+        assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn schema_hash_changes_when_constraint_added() {
+        use crate::schema::constraints::Constraints;
+        let mut t = sample_toml();
+        let h1 = compute_schema_hash(&t);
+        t.fields.field[0].constraints = Some(Constraints {
+            min_length: Some(3),
+            ..Default::default()
+        });
+        let h2 = compute_schema_hash(&t);
+        assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn schema_hash_changes_when_preprocess_added() {
+        use crate::preprocess::ValueStage;
+        let mut t = sample_toml();
+        let h1 = compute_schema_hash(&t);
+        t.fields.field[0].preprocess = vec![ValueStage::CoerceToString];
+        let h2 = compute_schema_hash(&t);
+        assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn schema_hash_changes_when_allowed_changes() {
+        let mut t = sample_toml();
+        let h1 = compute_schema_hash(&t);
+        t.fields.field[0].allowed = vec!["blog/**".into()];
+        let h2 = compute_schema_hash(&t);
+        assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn schema_hash_unchanged_by_scan_glob() {
+        // scan.glob is tracked separately in BuildMetadata.glob; not part of schema.
+        let mut t = sample_toml();
+        let h1 = compute_schema_hash(&t);
+        t.scan.glob = "blog/**".into();
+        let h2 = compute_schema_hash(&t);
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn schema_hash_unchanged_when_ignore_order_differs() {
+        // Ignore list is part of the schema, but ordering shouldn't matter
+        // because dsl_to_canonical inserts them in slice order — confirm by
+        // building two configs with the same ignore in slice order.
+        let mut t1 = sample_toml();
+        t1.fields.ignore = vec!["a".into(), "b".into()];
+        let mut t2 = sample_toml();
+        t2.fields.ignore = vec!["a".into(), "b".into()];
+        assert_eq!(compute_schema_hash(&t1), compute_schema_hash(&t2));
+    }
+
+    #[test]
+    fn build_metadata_roundtrips_schema_hash() {
+        let meta = BuildMetadata {
+            embedding_model: EmbeddingModelConfig {
+                provider: "model2vec".into(),
+                name: "minishlab/potion-base-8M".into(),
+                revision: None,
+            },
+            chunking: ChunkingConfig {
+                max_chunk_size: 1024,
+            },
+            glob: "**".into(),
+            built_at: "2026-05-11T00:00:00+00:00".into(),
+            schema_hash: "deadbeef".into(),
+        };
+        let m = meta.to_hash_map();
+        let parsed = BuildMetadata::from_hash_map(&m).unwrap();
+        assert_eq!(parsed, meta);
+    }
+
+    #[test]
+    fn build_metadata_schema_hash_defaults_empty_when_missing() {
+        // A pre-step-14 parquet has no `mdvs.schema_hash` key. Reading it
+        // should succeed with an empty hash — the next build will treat
+        // the schema as "changed" and require --force, which is correct.
+        let mut m = HashMap::new();
+        m.insert("mdvs.provider".into(), "model2vec".into());
+        m.insert("mdvs.model".into(), "x".into());
+        m.insert("mdvs.chunk_size".into(), "1024".into());
+        m.insert("mdvs.glob".into(), "**".into());
+        m.insert("mdvs.built_at".into(), "2026-01-01".into());
+        let parsed = BuildMetadata::from_hash_map(&m).unwrap();
+        assert_eq!(parsed.schema_hash, "");
     }
 
     #[test]

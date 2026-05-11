@@ -4,7 +4,9 @@ use crate::discover::scan::{ScannedFile, ScannedFiles};
 use crate::index::backend::Backend;
 use crate::index::chunk::{Chunks, extract_plain_text};
 use crate::index::embed::{Embedder, ModelConfig};
-use crate::index::storage::{BuildMetadata, ChunkRow, FileIndexEntry, FileRow, content_hash};
+use crate::index::storage::{
+    BuildMetadata, ChunkRow, FileIndexEntry, FileRow, compute_schema_hash, content_hash,
+};
 use crate::outcome::commands::BuildOutcome;
 use crate::outcome::{
     ClassifyOutcome, EmbedFilesOutcome, InferOutcome, LoadModelOutcome, Outcome, ReadConfigOutcome,
@@ -717,6 +719,7 @@ pub(crate) async fn build_core(
         chunking: chunking.clone(),
         glob: config.scan.glob.clone(),
         built_at: chrono::Utc::now().to_rfc3339(),
+        schema_hash: compute_schema_hash(config),
     };
 
     let write_start = Instant::now();
@@ -866,7 +869,7 @@ pub(crate) fn detect_config_changes(
     backend: &Backend,
     embedding: &EmbeddingModelConfig,
     chunking: &ChunkingConfig,
-    _config: &MdvsToml,
+    config: &MdvsToml,
     force: bool,
 ) -> Option<String> {
     if force {
@@ -893,6 +896,15 @@ pub(crate) fn detect_config_changes(
             "chunk_size: {} -> {}",
             meta.chunking.max_chunk_size, chunking.max_chunk_size,
         ));
+    }
+    let current_schema_hash = compute_schema_hash(config);
+    if meta.schema_hash != current_schema_hash {
+        // Don't show raw hashes — they're noise. Show the fact that the
+        // schema content changed, the user knows what they edited.
+        mismatches.push(
+            "schema: fields, types, constraints, path-scoping, or preprocessors have changed"
+                .into(),
+        );
     }
 
     if mismatches.is_empty() {
