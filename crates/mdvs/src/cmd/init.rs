@@ -60,7 +60,9 @@ pub fn run(
         );
     }
 
-    if force {
+    // `--force` deletes existing config + index, but only for a real write.
+    // Under `--dry-run`, leave the filesystem untouched.
+    if force && !dry_run {
         if config_path.exists() {
             let _ = std::fs::remove_file(&config_path);
         }
