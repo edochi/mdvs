@@ -183,7 +183,7 @@ fn intermediate_object_schema() -> Value {
 /// no `x-mdvs` metadata. Used by [`insert_at_path`] for the can-I-recurse check
 /// and by [`canonical_to_dsl`] to distinguish structural Objects from leaf
 /// Object schemas (Array-of-Object inner types and similar).
-fn is_intermediate_object(v: &Value) -> bool {
+pub(crate) fn is_intermediate_object(v: &Value) -> bool {
     let Some(obj) = v.as_object() else {
         return false;
     };

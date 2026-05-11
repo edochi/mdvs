@@ -16,7 +16,7 @@ use globset::Glob;
 use jsonschema::error::ValidationErrorKind;
 use jsonschema::{ValidationError, Validator};
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -390,96 +390,118 @@ fn check_field_values(
     for file in &scanned.files {
         let file_path_str = file.path.display().to_string();
 
-        let frontmatter = match &file.data {
-            Some(Value::Object(map)) => Some(map),
-            _ => None,
+        let Some(frontmatter) = file.data.as_ref() else {
+            continue;
         };
+        if !frontmatter.is_object() {
+            continue;
+        }
 
-        if let Some(map) = frontmatter {
-            for (field_name, value) in map {
-                if ignore_set.contains(field_name.as_str()) {
-                    continue;
-                }
+        // ---- Per-declared-field pass: navigate by dotted path, validate ----
+        //
+        // We iterate `[[fields.field]]` entries (not frontmatter keys) because
+        // field names may be dotted (TODO-0097 step 1+) and refer to nested
+        // leaves. `navigate_dotted` walks the YAML's nested Object structure
+        // to retrieve the leaf value.
+        for (field_name, toml_field) in field_map {
+            let Some(value) = navigate_dotted(frontmatter, field_name) else {
+                // Absent — handled by `check_required_fields`.
+                continue;
+            };
 
-                if let Some(toml_field) = field_map.get(field_name.as_str()) {
-                    // Disallowed: field present at a path not in allowed
-                    if !matches_any_glob(&toml_field.allowed, &file_path_str) {
-                        let key = ViolationKey {
-                            field: field_name.clone(),
-                            kind: ViolationKind::Disallowed,
-                            rule: format!("allowed in {:?}", toml_field.allowed),
-                        };
-                        violations.entry(key).or_default().push(ViolatingFile {
-                            path: file.path.clone(),
-                            detail: None,
-                        });
-                    }
+            // Disallowed: field present at a path not in allowed
+            if !matches_any_glob(&toml_field.allowed, &file_path_str) {
+                let key = ViolationKey {
+                    field: (*field_name).to_string(),
+                    kind: ViolationKind::Disallowed,
+                    rule: format!("allowed in {:?}", toml_field.allowed),
+                };
+                violations.entry(key).or_default().push(ViolatingFile {
+                    path: file.path.clone(),
+                    detail: None,
+                });
+            }
 
-                    // Strict subtype precheck — jsonschema can't see the
-                    // serde i64/f64 distinction, so we enforce strict-Float
-                    // (reject integers unless widen_int_to_float is opted in)
-                    // here in Rust, before the preprocessor + jsonschema.
-                    // See preprocess::strict_subtype_check for the full rule.
-                    if let Ok(ft) =
-                        crate::discover::field_type::FieldType::try_from(&toml_field.field_type)
-                        && let Some(detail) =
-                            crate::preprocess::strict_subtype_check(toml_field, &ft, value)
-                    {
-                        let key = ViolationKey {
-                            field: field_name.clone(),
-                            kind: ViolationKind::WrongType,
-                            rule: format!("type {}", toml_field.field_type),
-                        };
-                        violations.entry(key).or_default().push(ViolatingFile {
-                            path: file.path.clone(),
-                            detail: Some(detail),
-                        });
+            // Strict subtype precheck — jsonschema can't see the
+            // serde i64/f64 distinction, so we enforce strict-Float
+            // (reject integers unless widen_int_to_float is opted in)
+            // here in Rust, before the preprocessor + jsonschema.
+            // See preprocess::strict_subtype_check for the full rule.
+            if let Ok(ft) = crate::discover::field_type::FieldType::try_from(&toml_field.field_type)
+                && let Some(detail) =
+                    crate::preprocess::strict_subtype_check(toml_field, &ft, value)
+            {
+                let key = ViolationKey {
+                    field: (*field_name).to_string(),
+                    kind: ViolationKind::WrongType,
+                    rule: format!("type {}", toml_field.field_type),
+                };
+                violations.entry(key).or_default().push(ViolatingFile {
+                    path: file.path.clone(),
+                    detail: Some(detail),
+                });
+                continue;
+            }
+
+            // Per-value validation via jsonschema (type, null, enum,
+            // range, length, pattern, array bounds).
+            //
+            // Run the Stage-2 preprocessor pipeline first; the
+            // resulting value is what jsonschema validates against.
+            let preprocessed = pipeline.apply_to_value(toml_field, value);
+            let validation_value = preprocessed.as_ref();
+
+            if let Some(validator) = validators.get(field_name) {
+                let errors: Vec<_> = validator.iter_errors(validation_value).collect();
+                let has_type_error = errors
+                    .iter()
+                    .any(|e| matches!(e.kind(), ValidationErrorKind::Type { .. }));
+                for err in &errors {
+                    if has_type_error && !matches!(err.kind(), ValidationErrorKind::Type { .. }) {
                         continue;
                     }
-
-                    // Per-value validation via jsonschema (type, null, enum,
-                    // range, length, pattern, array bounds).
-                    //
-                    // Run the Stage-2 preprocessor pipeline first; the
-                    // resulting value is what jsonschema validates against.
-                    let preprocessed = pipeline.apply_to_value(toml_field, value);
-                    let validation_value = preprocessed.as_ref();
-
-                    if let Some(validator) = validators.get(field_name) {
-                        let errors: Vec<_> = validator.iter_errors(validation_value).collect();
-                        let has_type_error = errors
-                            .iter()
-                            .any(|e| matches!(e.kind(), ValidationErrorKind::Type { .. }));
-                        for err in &errors {
-                            if has_type_error
-                                && !matches!(err.kind(), ValidationErrorKind::Type { .. })
-                            {
-                                continue;
-                            }
-                            let mapped = map_validation_error(err, validation_value, toml_field);
-                            let key = ViolationKey {
-                                field: field_name.clone(),
-                                kind: mapped.kind,
-                                rule: mapped.rule,
-                            };
-                            violations.entry(key).or_default().push(ViolatingFile {
-                                path: file.path.clone(),
-                                detail: mapped.detail,
-                            });
-                        }
-                    }
-                } else {
-                    new_field_paths
-                        .entry(field_name.clone())
-                        .or_default()
-                        .push(file.path.clone());
+                    let mapped = map_validation_error(err, validation_value, toml_field);
+                    let key = ViolationKey {
+                        field: (*field_name).to_string(),
+                        kind: mapped.kind,
+                        rule: mapped.rule,
+                    };
+                    violations.entry(key).or_default().push(ViolatingFile {
+                        path: file.path.clone(),
+                        detail: mapped.detail,
+                    });
                 }
             }
+        }
+
+        // ---- New-field detection pass: walk frontmatter leaves ----
+        //
+        // After TODO-0097 step 1, undeclared fields can be at any depth.
+        // Walk the frontmatter's leaf paths (via collect_leaves), reporting
+        // any not in `field_map` or `ignore_set` as new fields.
+        let mut leaves: Vec<(String, &Value)> = Vec::new();
+        crate::discover::infer::collect_leaves(frontmatter, &mut leaves);
+        for (leaf_path, _) in leaves {
+            if ignore_set.contains(leaf_path.as_str()) {
+                continue;
+            }
+            if field_map.contains_key(leaf_path.as_str()) {
+                continue;
+            }
+            new_field_paths
+                .entry(leaf_path)
+                .or_default()
+                .push(file.path.clone());
         }
     }
 }
 
 /// Check that required fields are present in files matching their required glob patterns.
+///
+/// Leaf presence is determined by [`navigate_dotted`]: a dotted-name field
+/// is "present" only if every intermediate object exists. So a file whose
+/// frontmatter has `meta: null` (or no `meta` at all) reports `meta.author`
+/// as missing — the leaf can't exist when its parent doesn't.
 fn check_required_fields(
     scanned: &ScannedFiles,
     config: &MdvsToml,
@@ -497,14 +519,14 @@ fn check_required_fields(
                 continue;
             }
 
-            let value = file
+            let present = file
                 .data
                 .as_ref()
-                .and_then(|v| v.as_object())
-                .and_then(|map| map.get(&toml_field.name));
+                .and_then(|root| navigate_dotted(root, &toml_field.name))
+                .is_some();
 
             // Null on non-nullable is caught by check_field_values — only check absence here
-            if value.is_none() {
+            if !present {
                 let key = ViolationKey {
                     field: toml_field.name.clone(),
                     kind: ViolationKind::MissingRequired,
@@ -574,16 +596,13 @@ struct FieldValidators {
 impl FieldValidators {
     fn build(config: &MdvsToml) -> anyhow::Result<Self> {
         let canonical = dsl_to_canonical(config);
-        let properties = canonical
-            .get("properties")
-            .and_then(Value::as_object)
-            .ok_or_else(|| anyhow::anyhow!("dsl_to_canonical produced no properties"))?;
+        let leaf_schemas = extract_leaf_schemas(&canonical);
 
         let mut per_field = HashMap::new();
         for field in &config.fields.field {
             // Skip fields whose subschema is `{}` (always-passes); compiling
             // is wasted work and produces no errors anyway.
-            let Some(subschema) = properties.get(&field.name) else {
+            let Some(subschema) = leaf_schemas.get(field.name.as_str()) else {
                 continue;
             };
             if subschema.as_object().is_some_and(|o| o.is_empty()) {
@@ -605,6 +624,50 @@ impl FieldValidators {
     fn get(&self, field_name: &str) -> Option<&Validator> {
         self.per_field.get(field_name)
     }
+}
+
+/// Walk the canonical JSON Schema's nested `properties` tree, returning one
+/// entry per **leaf** schema keyed by dotted name.
+///
+/// Intermediate Objects (created by `dsl_to_canonical` for dotted-name
+/// flattening — see TODO-0097 step 3) are recursed into, not emitted. The
+/// detection uses [`crate::schema::json_schema::is_intermediate_object`]:
+/// `{type: "object", properties: {...}}` with no `x-mdvs` is an intermediate;
+/// anything else (scalars, arrays, leaf objects with x-mdvs) is a leaf.
+fn extract_leaf_schemas(canonical: &Value) -> HashMap<String, Value> {
+    let mut out = HashMap::new();
+    if let Some(root) = canonical.get("properties").and_then(Value::as_object) {
+        walk_schema_leaves(root, "", &mut out);
+    }
+    out
+}
+
+fn walk_schema_leaves(props: &Map<String, Value>, prefix: &str, out: &mut HashMap<String, Value>) {
+    for (name, sub) in props {
+        let full = if prefix.is_empty() {
+            name.clone()
+        } else {
+            format!("{prefix}.{name}")
+        };
+        if crate::schema::json_schema::is_intermediate_object(sub) {
+            if let Some(inner) = sub.get("properties").and_then(Value::as_object) {
+                walk_schema_leaves(inner, &full, out);
+            }
+        } else {
+            out.insert(full, sub.clone());
+        }
+    }
+}
+
+/// Navigate a nested frontmatter `Value` by a dotted path. Returns `None` if
+/// any intermediate is missing or is not an Object — so a leaf nested inside
+/// an absent parent reads as absent (handled by [`check_required_fields`]).
+fn navigate_dotted<'a>(root: &'a Value, path: &str) -> Option<&'a Value> {
+    let mut current = root;
+    for segment in path.split('.') {
+        current = current.as_object()?.get(segment)?;
+    }
+    Some(current)
 }
 
 fn strip_x_mdvs(mut value: Value) -> Value {
@@ -2369,5 +2432,227 @@ mod tests {
         // Both Required (missing title) and Type (draft) should be mapped.
         assert!(kinds.contains(&ViolationKind::MissingRequired));
         assert!(kinds.contains(&ViolationKind::WrongType));
+    }
+
+    // ========================================================================
+    // TODO-0097 step 4: dotted-name leaf validation
+    // ========================================================================
+
+    fn dotted_leaf_field(name: &str, ty: &str) -> TomlField {
+        TomlField {
+            name: name.into(),
+            field_type: FieldTypeSerde::Scalar(ty.into()),
+            allowed: vec!["**".into()],
+            required: vec![],
+            nullable: false,
+            constraints: None,
+            preprocess: vec![],
+        }
+    }
+
+    #[test]
+    fn wrong_type_on_dotted_leaf() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("blog")).unwrap();
+        fs::write(
+            tmp.path().join("blog/post.md"),
+            "---\ncalibration:\n  baseline:\n    wavelength: \"not a number\"\n---\n# Body",
+        )
+        .unwrap();
+
+        write_toml(
+            tmp.path(),
+            vec![dotted_leaf_field(
+                "calibration.baseline.wavelength",
+                "Float",
+            )],
+            vec![],
+        );
+
+        let step = run(tmp.path(), true, false, None);
+        let result = unwrap_check(&step);
+        assert_eq!(result.violations.len(), 1);
+        let v = &result.violations[0];
+        assert_eq!(v.field, "calibration.baseline.wavelength");
+        assert!(matches!(v.kind, ViolationKind::WrongType));
+        assert_eq!(v.files[0].detail.as_deref(), Some("got String"));
+    }
+
+    #[test]
+    fn missing_required_on_dotted_leaf() {
+        let tmp = tempfile::tempdir().unwrap();
+        let notes_dir = tmp.path().join("projects/alpha/notes");
+        fs::create_dir_all(&notes_dir).unwrap();
+        // No `calibration` key at all in this file.
+        fs::write(notes_dir.join("exp.md"), "---\ntitle: \"x\"\n---\n# Body").unwrap();
+
+        let mut field = dotted_leaf_field("calibration.baseline.wavelength", "Float");
+        field.required = vec!["projects/alpha/notes/**".into()];
+        write_toml(tmp.path(), vec![field], vec![]);
+
+        let step = run(tmp.path(), true, false, None);
+        let result = unwrap_check(&step);
+        let missing: Vec<_> = result
+            .violations
+            .iter()
+            .filter(|v| {
+                v.field == "calibration.baseline.wavelength"
+                    && matches!(v.kind, ViolationKind::MissingRequired)
+            })
+            .collect();
+        assert_eq!(missing.len(), 1);
+    }
+
+    #[test]
+    fn missing_required_on_dotted_leaf_when_parent_is_present_without_child() {
+        // The intermediate `calibration.baseline` exists but lacks `wavelength`.
+        let tmp = tempfile::tempdir().unwrap();
+        let notes_dir = tmp.path().join("projects/alpha/notes");
+        fs::create_dir_all(&notes_dir).unwrap();
+        fs::write(
+            notes_dir.join("exp.md"),
+            "---\ncalibration:\n  baseline:\n    intensity: 0.95\n---\n# Body",
+        )
+        .unwrap();
+
+        let mut wave = dotted_leaf_field("calibration.baseline.wavelength", "Float");
+        wave.required = vec!["projects/alpha/notes/**".into()];
+        let intensity = dotted_leaf_field("calibration.baseline.intensity", "Float");
+        write_toml(tmp.path(), vec![wave, intensity], vec![]);
+
+        let step = run(tmp.path(), true, false, None);
+        let result = unwrap_check(&step);
+        let kinds: Vec<_> = result
+            .violations
+            .iter()
+            .map(|v| (&v.field, &v.kind))
+            .collect();
+        assert!(kinds.iter().any(|(f, k)| {
+            f.as_str() == "calibration.baseline.wavelength"
+                && matches!(k, ViolationKind::MissingRequired)
+        }));
+    }
+
+    #[test]
+    fn null_not_allowed_on_dotted_leaf() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("blog")).unwrap();
+        fs::write(
+            tmp.path().join("blog/post.md"),
+            "---\ncalibration:\n  baseline:\n    wavelength: null\n---\n# Body",
+        )
+        .unwrap();
+
+        write_toml(
+            tmp.path(),
+            vec![dotted_leaf_field(
+                "calibration.baseline.wavelength",
+                "Float",
+            )],
+            vec![],
+        );
+
+        let step = run(tmp.path(), true, false, None);
+        let result = unwrap_check(&step);
+        let v = &result.violations[0];
+        assert_eq!(v.field, "calibration.baseline.wavelength");
+        assert!(matches!(v.kind, ViolationKind::NullNotAllowed));
+    }
+
+    #[test]
+    fn disallowed_on_dotted_leaf() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("notes")).unwrap();
+        fs::write(
+            tmp.path().join("notes/idea.md"),
+            "---\ncalibration:\n  baseline:\n    wavelength: 850.0\n---\n# Body",
+        )
+        .unwrap();
+
+        let mut field = dotted_leaf_field("calibration.baseline.wavelength", "Float");
+        field.allowed = vec!["projects/alpha/**".into()];
+        write_toml(tmp.path(), vec![field], vec![]);
+
+        let step = run(tmp.path(), true, false, None);
+        let result = unwrap_check(&step);
+        let v = result
+            .violations
+            .iter()
+            .find(|v| {
+                v.field == "calibration.baseline.wavelength"
+                    && matches!(v.kind, ViolationKind::Disallowed)
+            })
+            .expect("expected Disallowed for calibration.baseline.wavelength");
+        assert!(v.rule.contains("projects/alpha"));
+    }
+
+    #[test]
+    fn new_dotted_field_reported() {
+        // Declared: cal.baseline.wavelength. File has cal.baseline.wavelength
+        // AND cal.baseline.extra. The undeclared leaf surfaces as a new field.
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("blog")).unwrap();
+        fs::write(
+            tmp.path().join("blog/post.md"),
+            "---\ncal:\n  baseline:\n    wavelength: 850.0\n    extra: 5\n---\n# Body",
+        )
+        .unwrap();
+
+        write_toml(
+            tmp.path(),
+            vec![dotted_leaf_field("cal.baseline.wavelength", "Float")],
+            vec![],
+        );
+
+        let step = run(tmp.path(), true, false, None);
+        let result = unwrap_check(&step);
+        let names: Vec<&str> = result.new_fields.iter().map(|f| f.name.as_str()).collect();
+        assert!(names.contains(&"cal.baseline.extra"), "names: {names:?}");
+        assert!(!names.contains(&"cal.baseline.wavelength"));
+    }
+
+    #[test]
+    fn array_of_object_validates_inner_shape() {
+        use std::collections::BTreeMap;
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("blog")).unwrap();
+        fs::write(
+            tmp.path().join("blog/post.md"),
+            "---\nreadings:\n  - time: \"10:00\"\n    value: 0.5\n  - time: \"10:05\"\n    value: \"oops\"\n---\n# Body",
+        )
+        .unwrap();
+
+        write_toml(
+            tmp.path(),
+            vec![TomlField {
+                name: "readings".into(),
+                field_type: FieldTypeSerde::Array {
+                    array: Box::new(FieldTypeSerde::Object {
+                        object: BTreeMap::from([
+                            ("time".into(), FieldTypeSerde::Scalar("String".into())),
+                            ("value".into(), FieldTypeSerde::Scalar("Float".into())),
+                        ]),
+                    }),
+                },
+                allowed: vec!["**".into()],
+                required: vec![],
+                nullable: false,
+                constraints: None,
+                preprocess: vec![],
+            }],
+            vec![],
+        );
+
+        let step = run(tmp.path(), true, false, None);
+        let result = unwrap_check(&step);
+        // The second element's `value` is a String, not a Float — should fire WrongType.
+        let v = result
+            .violations
+            .iter()
+            .find(|v| v.field == "readings" && matches!(v.kind, ViolationKind::WrongType))
+            .expect("expected WrongType on readings (inner Object's value field)");
+        // jsonschema's instance_path points into the array; the violation
+        // surfaces under the array field's name.
+        let _ = v;
     }
 }
