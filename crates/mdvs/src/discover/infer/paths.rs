@@ -1,5 +1,11 @@
 //! Structure inference — directory tree construction and glob pattern collapsing.
+//!
+//! Per TODO-0097 step 1, each file contributes its set of **dotted leaf
+//! names** (via [`super::collect_leaves`]) to the directory tree, not just
+//! top-level `map.keys()`. The tree's `all` / `any` sets become per-leaf
+//! presence sets; glob inference runs per-leaf-path.
 
+use crate::discover::infer::collect_leaves;
 use crate::discover::scan::ScannedFiles;
 use indextree::{Arena, NodeEdge, NodeId};
 use serde_json::Value;
@@ -50,7 +56,11 @@ impl From<&ScannedFiles> for DirectoryTree {
 
         for file in &scanned.files {
             let fields: HashSet<String> = match &file.data {
-                Some(Value::Object(map)) => map.keys().cloned().collect(),
+                Some(data @ Value::Object(_)) => {
+                    let mut leaves: Vec<(String, &Value)> = Vec::new();
+                    collect_leaves(data, &mut leaves);
+                    leaves.into_iter().map(|(path, _)| path).collect()
+                }
                 _ => HashSet::new(),
             };
 

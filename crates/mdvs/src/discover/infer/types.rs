@@ -1,6 +1,12 @@
 //! Type inference — flat pass over all files, widening field types across occurrences.
+//!
+//! Frontmatter is walked via [`super::collect_leaves`]: nested `Value::Object`
+//! values are recursed and each leaf becomes a distinct dotted-name field in
+//! the inferred schema. Arrays (including arrays of objects) stay inline per
+//! TODO-0097 scope decisions.
 
 use crate::discover::field_type::FieldType;
+use crate::discover::infer::collect_leaves;
 use crate::discover::scan::ScannedFiles;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -39,38 +45,41 @@ pub fn infer_field_types(scanned: &ScannedFiles) -> BTreeMap<String, FieldTypeIn
     let mut observed: HashMap<String, Vec<FieldType>> = HashMap::new();
 
     for file in &scanned.files {
-        if let Some(Value::Object(map)) = &file.data {
-            for (key, val) in map {
-                // Always track file presence
-                files
-                    .entry(key.clone())
-                    .or_default()
-                    .push(file.path.clone());
+        let Some(data) = &file.data else { continue };
 
-                // Skip null — transparent in type inference
-                if val.is_null() {
-                    nulls.insert(key.clone());
-                    continue;
-                }
+        let mut leaves: Vec<(String, &Value)> = Vec::new();
+        collect_leaves(data, &mut leaves);
 
-                let ft = FieldType::from(val);
+        for (path, val) in leaves {
+            // Always track file presence (by dotted leaf path)
+            files
+                .entry(path.clone())
+                .or_default()
+                .push(file.path.clone());
 
-                // Track distinct observed types for preprocessor inference.
-                let obs = observed.entry(key.clone()).or_default();
-                if !obs.contains(&ft) {
-                    obs.push(ft.clone());
-                }
-
-                types
-                    .entry(key.clone())
-                    .and_modify(|existing| {
-                        *existing = FieldType::from_widen(existing.clone(), ft.clone())
-                    })
-                    .or_insert(ft);
-
-                // Collect distinct values for categorical inference
-                collect_distinct_values(key, val, &mut distinct, &mut counts);
+            // Skip null — transparent in type inference
+            if val.is_null() {
+                nulls.insert(path.clone());
+                continue;
             }
+
+            let ft = FieldType::from(val);
+
+            // Track distinct observed types for preprocessor inference.
+            let obs = observed.entry(path.clone()).or_default();
+            if !obs.contains(&ft) {
+                obs.push(ft.clone());
+            }
+
+            types
+                .entry(path.clone())
+                .and_modify(|existing| {
+                    *existing = FieldType::from_widen(existing.clone(), ft.clone())
+                })
+                .or_insert(ft);
+
+            // Collect distinct values for categorical inference
+            collect_distinct_values(&path, val, &mut distinct, &mut counts);
         }
     }
 
@@ -381,5 +390,135 @@ mod tests {
         assert_eq!(t.field_type, FieldType::Array(Box::new(FieldType::String)));
         assert_eq!(t.distinct_values.len(), 2); // "a", "b"
         assert_eq!(t.occurrence_count, 2); // null excluded
+    }
+
+    // -----------------------------------------------------------------------
+    // Nested-object flattening (TODO-0097 step 1)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn nested_object_produces_dotted_leaves() {
+        let scanned = ScannedFiles {
+            files: vec![sf(
+                "a.md",
+                Some(json!({"calibration": {"baseline": {"wavelength": 850.0}}})),
+            )],
+        };
+        let info = infer_field_types(&scanned);
+        // Only one leaf entry — at the dotted path. No `calibration` or
+        // `calibration.baseline` entries (those are interior nodes).
+        assert_eq!(info.len(), 1);
+        let leaf = &info["calibration.baseline.wavelength"];
+        assert_eq!(leaf.field_type, FieldType::Float);
+        assert_eq!(leaf.files.len(), 1);
+        assert!(!leaf.nullable);
+    }
+
+    #[test]
+    fn nested_leaves_widen_independently() {
+        // Two leaves under the same parent observed across files —
+        // each widens on its own.
+        let scanned = ScannedFiles {
+            files: vec![
+                sf(
+                    "a.md",
+                    Some(json!({"cal": {"baseline": {"wavelength": 850}}})),
+                ), // Integer
+                sf(
+                    "b.md",
+                    Some(json!({"cal": {"baseline": {"wavelength": 632.8}}})),
+                ), // Float
+                sf(
+                    "c.md",
+                    Some(json!({"cal": {"baseline": {"intensity": 0.95}}})),
+                ), // separate leaf
+            ],
+        };
+        let info = infer_field_types(&scanned);
+        let wave = &info["cal.baseline.wavelength"];
+        assert_eq!(wave.field_type, FieldType::Float);
+        // observed_types saw both Integer and Float → preprocessor inference
+        // will add widen_int_to_float at the InferredSchema layer.
+        assert!(wave.observed_types.contains(&FieldType::Integer));
+        assert!(wave.observed_types.contains(&FieldType::Float));
+        let intensity = &info["cal.baseline.intensity"];
+        assert_eq!(intensity.field_type, FieldType::Float);
+        // Per-leaf file tracking: intensity appeared in only one file.
+        assert_eq!(intensity.files.len(), 1);
+    }
+
+    #[test]
+    fn array_of_object_stays_inline_not_exploded() {
+        // Per TODO-0097 scope: arrays (including arrays of objects) are
+        // leaves. The whole array is one field with FieldType::Array(Object).
+        let scanned = ScannedFiles {
+            files: vec![sf(
+                "a.md",
+                Some(json!({"readings": [{"time": "10:00", "value": 0.5}]})),
+            )],
+        };
+        let info = infer_field_types(&scanned);
+        assert_eq!(info.len(), 1);
+        let r = &info["readings"];
+        // The inner Object is preserved inside FieldType::Array.
+        match &r.field_type {
+            FieldType::Array(inner) => match inner.as_ref() {
+                FieldType::Object(fields) => {
+                    assert!(fields.contains_key("time"));
+                    assert!(fields.contains_key("value"));
+                }
+                other => panic!("expected Array(Object), got Array({other:?})"),
+            },
+            other => panic!("expected Array(Object), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn nested_null_leaf_is_nullable() {
+        let scanned = ScannedFiles {
+            files: vec![
+                sf("a.md", Some(json!({"cal": {"baseline": {"wave": 850.0}}}))),
+                sf("b.md", Some(json!({"cal": {"baseline": {"wave": null}}}))),
+            ],
+        };
+        let info = infer_field_types(&scanned);
+        let leaf = &info["cal.baseline.wave"];
+        assert!(leaf.nullable);
+        assert_eq!(leaf.field_type, FieldType::Float);
+        assert_eq!(leaf.files.len(), 2);
+    }
+
+    #[test]
+    fn empty_nested_object_contributes_no_leaves() {
+        let scanned = ScannedFiles {
+            files: vec![
+                sf("a.md", Some(json!({"title": "ok", "cal": {}}))),
+                sf("b.md", Some(json!({"title": "also ok"}))),
+            ],
+        };
+        let info = infer_field_types(&scanned);
+        // Only `title` is inferred. `cal` and any `cal.*` leaves are absent.
+        assert_eq!(info.len(), 1);
+        assert!(info.contains_key("title"));
+        assert!(!info.contains_key("cal"));
+    }
+
+    #[test]
+    fn shape_conflict_scalar_vs_object_yields_overlapping_entries() {
+        // File A: meta is a scalar string. File B: meta is an object with
+        // a child. Both contribute their respective leaves; the schema
+        // ends up with two entries that structurally overlap. Step 1
+        // produces them as-is — downstream layers may flag the conflict.
+        let scanned = ScannedFiles {
+            files: vec![
+                sf("a.md", Some(json!({"meta": "alice"}))),
+                sf("b.md", Some(json!({"meta": {"author": "bob"}}))),
+            ],
+        };
+        let info = infer_field_types(&scanned);
+        assert!(info.contains_key("meta"));
+        assert!(info.contains_key("meta.author"));
+        assert_eq!(info["meta"].field_type, FieldType::String);
+        assert_eq!(info["meta.author"].field_type, FieldType::String);
     }
 }

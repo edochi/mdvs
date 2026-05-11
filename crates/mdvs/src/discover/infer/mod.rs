@@ -4,6 +4,12 @@
 //! - [`types`] — type widening and distinct value collection
 //! - [`paths`] — directory tree construction and glob pattern collapsing
 //! - [`constraints`] — categorical heuristic detection
+//!
+//! Field names containing `.` represent nested leaves: a frontmatter value
+//! at `calibration.baseline.wavelength` lives at `data["calibration"]
+//! ["baseline"]["wavelength"]` in the YAML. The [`collect_leaves`] helper
+//! walks a frontmatter object and yields one `(dotted_path, value)` per
+//! leaf — used by both type inference and path inference.
 
 pub mod constraints;
 mod paths;
@@ -21,6 +27,47 @@ use crate::schema::shared::FieldTypeSerde;
 use serde_json::Value;
 use std::path::PathBuf;
 use tracing::{info, instrument};
+
+/// Walk a frontmatter Object, yielding `(dotted_path, &Value)` for each leaf.
+///
+/// A **leaf** is anything that's not a non-empty nested `Value::Object`:
+/// scalars, arrays (including arrays of objects — those stay inline per
+/// TODO-0097 scope), nulls, and empty `{}` Objects all terminate the walk.
+///
+/// Empty objects produce **no leaves**. A file with `calibration: {}` and
+/// a file with no `calibration` at all are indistinguishable post-flattening
+/// — neither contributes to any `calibration.*` leaf. This is intentional:
+/// there's no data to validate at an empty object's path.
+///
+/// Top-level scalars and arrays are leaves at depth 1: `{title: "..."}` yields
+/// `("title", &"...")`.
+///
+/// Called with the frontmatter root (`&Value::Object(_)`); recursion enters
+/// only nested `Value::Object` values.
+pub(crate) fn collect_leaves<'a>(value: &'a Value, out: &mut Vec<(String, &'a Value)>) {
+    if let Value::Object(map) = value
+        && !map.is_empty()
+    {
+        for (key, child) in map {
+            collect_leaves_inner(key, child, out);
+        }
+    }
+}
+
+fn collect_leaves_inner<'a>(prefix: &str, value: &'a Value, out: &mut Vec<(String, &'a Value)>) {
+    match value {
+        Value::Object(map) if map.is_empty() => {
+            // Empty {} contributes nothing — no path to record.
+        }
+        Value::Object(map) => {
+            for (key, child) in map {
+                let new_prefix = format!("{prefix}.{key}");
+                collect_leaves_inner(&new_prefix, child, out);
+            }
+        }
+        _ => out.push((prefix.to_string(), value)),
+    }
+}
 
 /// A single field inferred from scanning: type, file list, and glob patterns.
 #[derive(Debug)]
@@ -128,7 +175,6 @@ mod tests {
     use super::*;
     use crate::discover::scan::{ScannedFile, ScannedFiles};
     use serde_json::json;
-    use std::collections::BTreeMap;
 
     fn sf(path: &str, data: Option<Value>, content: &str) -> ScannedFile {
         ScannedFile {
@@ -139,6 +185,127 @@ mod tests {
             body_line_offset: 0,
         }
     }
+
+    // ------------------------------------------------------------------------
+    // collect_leaves
+    // ------------------------------------------------------------------------
+
+    fn leaves(v: &Value) -> Vec<(String, Value)> {
+        let mut out = Vec::new();
+        collect_leaves(v, &mut out);
+        out.into_iter().map(|(k, v)| (k, v.clone())).collect()
+    }
+
+    #[test]
+    fn leaves_flat_scalars() {
+        let v = json!({"title": "Hi", "draft": true, "n": 5});
+        let mut got = leaves(&v);
+        got.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(
+            got,
+            vec![
+                ("draft".into(), json!(true)),
+                ("n".into(), json!(5)),
+                ("title".into(), json!("Hi")),
+            ]
+        );
+    }
+
+    #[test]
+    fn leaves_nested_object_dotted() {
+        let v = json!({"calibration": {"baseline": {"wavelength": 850.0, "intensity": 0.95}}});
+        let mut got = leaves(&v);
+        got.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(
+            got,
+            vec![
+                ("calibration.baseline.intensity".into(), json!(0.95)),
+                ("calibration.baseline.wavelength".into(), json!(850.0)),
+            ]
+        );
+    }
+
+    #[test]
+    fn leaves_array_is_a_leaf() {
+        // Arrays (including arrays of objects) stay inline — never exploded.
+        let v = json!({"tags": ["a", "b"], "readings": [{"t": 1, "v": 0.5}]});
+        let mut got = leaves(&v);
+        got.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(
+            got,
+            vec![
+                ("readings".into(), json!([{"t": 1, "v": 0.5}])),
+                ("tags".into(), json!(["a", "b"])),
+            ]
+        );
+    }
+
+    #[test]
+    fn leaves_null_is_a_leaf() {
+        let v = json!({"drift_rate": null, "cal": {"x": null}});
+        let mut got = leaves(&v);
+        got.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(
+            got,
+            vec![
+                ("cal.x".into(), Value::Null),
+                ("drift_rate".into(), Value::Null),
+            ]
+        );
+    }
+
+    #[test]
+    fn leaves_empty_object_no_leaves() {
+        // An empty {} contributes nothing — neither parent path nor children.
+        let v = json!({"cal": {}, "title": "ok"});
+        let mut got = leaves(&v);
+        got.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(got, vec![("title".into(), json!("ok"))]);
+    }
+
+    #[test]
+    fn leaves_top_level_empty_returns_nothing() {
+        let v = json!({});
+        let got = leaves(&v);
+        assert!(got.is_empty());
+    }
+
+    #[test]
+    fn leaves_mixed_depth() {
+        let v = json!({
+            "title": "Hi",
+            "calibration": {
+                "baseline": {"wavelength": 850.0},
+                "adjusted": {"wavelength": 632.8, "intensity": 0.9}
+            },
+            "tags": ["a"]
+        });
+        let mut got = leaves(&v);
+        got.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(
+            got,
+            vec![
+                ("calibration.adjusted.intensity".into(), json!(0.9)),
+                ("calibration.adjusted.wavelength".into(), json!(632.8)),
+                ("calibration.baseline.wavelength".into(), json!(850.0)),
+                ("tags".into(), json!(["a"])),
+                ("title".into(), json!("Hi")),
+            ]
+        );
+    }
+
+    #[test]
+    fn leaves_non_object_input_yields_nothing() {
+        // The helper is called on a frontmatter root, which must be an
+        // object. A non-object input (defensive guard) yields no leaves.
+        assert!(leaves(&Value::Null).is_empty());
+        assert!(leaves(&json!("scalar")).is_empty());
+        assert!(leaves(&json!([1, 2])).is_empty());
+    }
+
+    // ------------------------------------------------------------------------
+    // InferredSchema::infer
+    // ------------------------------------------------------------------------
 
     #[test]
     fn empty_input() {
@@ -286,6 +453,9 @@ mod tests {
 
     #[test]
     fn object_widening_across_files() {
+        // Post TODO-0097 step 1: nested Objects flatten into dotted leaves,
+        // each leaf inferred independently. There's no `meta` field anymore —
+        // only `meta.author`, `meta.version`, and `meta.license`.
         let scanned = ScannedFiles {
             files: vec![
                 sf(
@@ -306,16 +476,23 @@ mod tests {
             ],
         };
         let schema = InferredSchema::infer(&scanned);
-        let meta = schema.field("meta").unwrap();
-        assert_eq!(
-            meta.field_type,
-            FieldType::Object(BTreeMap::from([
-                ("author".into(), FieldType::String),
-                ("license".into(), FieldType::String),
-                ("version".into(), FieldType::Float),
-            ]))
-        );
-        assert_eq!(meta.files.len(), 3);
+
+        let author = schema.field("meta.author").unwrap();
+        assert_eq!(author.field_type, FieldType::String);
+        assert_eq!(author.files.len(), 3); // in all three files
+
+        let license = schema.field("meta.license").unwrap();
+        assert_eq!(license.field_type, FieldType::String);
+        assert_eq!(license.files.len(), 1); // only b.md
+
+        let version = schema.field("meta.version").unwrap();
+        assert_eq!(version.field_type, FieldType::Float); // widened from Integer + Float
+        assert_eq!(version.files.len(), 2);
+        // Preprocessor inference adds widen_int_to_float per leaf.
+        assert!(version.preprocess.contains(&ValueStage::WidenIntToFloat));
+
+        // No standalone `meta` entry — flattening removed it.
+        assert!(schema.field("meta").is_none());
     }
 
     #[test]
