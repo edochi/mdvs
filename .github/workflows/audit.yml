@@ -1,0 +1,29 @@
+name: Audit
+
+# Runs `cargo audit` (RustSec advisories) and `cargo deny check` (licenses,
+# bans, sources) on a schedule. Catches advisories that appear in already-
+# pinned dependencies between commits. Also runnable on demand via the
+# GitHub UI.
+#
+# PR-time auditing happens in ci.yml; this workflow is the "no code change
+# but the world moved" complement.
+
+on:
+  schedule:
+    # Mondays at 06:00 UTC.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install --locked cargo-audit cargo-deny
+      - run: cargo audit
+      - run: cargo deny check

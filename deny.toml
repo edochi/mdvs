@@ -19,6 +19,7 @@ ignore = [
 [licenses]
 allow = [
     "MIT",
+    "MIT-0",
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
     "BSD-2-Clause",
@@ -41,6 +42,10 @@ exceptions = [
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# Allow path-based deps inside the workspace to "look like" wildcards
+# (path deps have no version requirement). Without this, our internal
+# `tomljson = { path = "../tomljson" }` trips the wildcards rule.
+allow-wildcard-paths = true
 
 # -- Sources -----------------------------------------------------------
 [sources]
