@@ -2,16 +2,17 @@
 
 `mdvs check` validates every file's frontmatter against the schema in `mdvs.toml`. It's read-only, deterministic, and produces no side effects — it just tells you what's wrong.
 
-## The six violations
+## The seven violations
 
 | Violation | Meaning |
 |---|---|
-| `WrongType` | The value doesn't match the declared `type` |
+| `WrongType` | The value doesn't match the declared `type` (or fails a `pattern` regex) |
 | `Disallowed` | The field appears in a file outside its `allowed` paths |
 | `MissingRequired` | A file matches a `required` glob but doesn't have the field |
 | `NullNotAllowed` | The field is present but `null`, and `nullable` is `false` |
 | `InvalidCategory` | The value is not in the field's declared `categories` |
-| `OutOfRange` | The numeric value is outside the field's declared `min`/`max` |
+| `OutOfRange` | A numeric value violates `min`/`max`, or a length violates `min_length`/`max_length` |
+| `FrontmatterUnrepresentable` | The file's frontmatter can't be represented as JSON (NaN/inf, non-string keys, non-object top-level) |
 
 ### WrongType
 
@@ -47,31 +48,50 @@ See [Constraints](./constraints.md) for how categories are configured and auto-i
 
 ### OutOfRange
 
-Fires when a numeric field has a `min` or `max` constraint and the value falls outside the declared inclusive range. For example, if `rating` has `min = 1, max = 5` and a file has `rating: 7`, the value is above `max`.
+Fires when a value violates a numeric or length bound:
 
-For array fields, each element is checked individually. The violation detail lists the specific elements that are out of range.
+- `min` / `max` on numeric fields — `rating: 7` with `min = 1, max = 5` is above `max`.
+- `min_length` / `max_length` on string fields — `slug: "a"` with `min_length = 3` is too short.
+- `min_items` / `max_items` on array fields (when emitted by inference) — applies to the array's length.
+
+For array fields, numeric-element bounds are checked individually. The violation detail lists the specific offending elements or, for length checks, the actual length.
 
 This check only runs on non-null values that pass the type check, same as `InvalidCategory`.
 
-See [Constraints](./constraints.md#range) for how range bounds are configured.
+See [Constraints](./constraints.md) for how bounds are configured.
+
+### FrontmatterUnrepresentable
+
+Fires when a file's YAML frontmatter parses successfully but can't be represented as JSON. Causes include `NaN` / `inf` floats, non-string mapping keys, or a top-level value that isn't a mapping. The violation is reported at the document level with the sentinel field name `<frontmatter>`.
+
+Pre-Wave-B mdvs silently dropped these files; they're now surfaced explicitly so the schema can't lie about what's actually in your vault.
 
 ## Type checking rules
 
-Two leniencies make validation practical for real-world YAML:
+Type checking is strict — a `String` field rejects integers, a `Boolean` field rejects strings, and so on. Two opt-in adjustments cover the common YAML pain points:
 
-**String accepts any value.** Since String is the top type (see [Types & Widening](./types.md#string-is-the-top-type)), a String-typed field never triggers a `WrongType` violation. Booleans, integers, arrays — everything is accepted. This is by design: when types are widened to String during inference, the field should accept whatever values caused the widening.
+**Preprocessors normalize before validation.** A field's `preprocess` array runs before jsonschema sees the value. Two built-ins:
 
-**Float accepts integers.** An integer value like `5` passes validation for a Float field. YAML doesn't distinguish `5` from `5.0`, and many editors strip trailing `.0`. Rejecting integers from Float fields would cause constant false positives.
+- `coerce_to_string` — non-string values (booleans, integers, arrays) are serialized to their JSON string representation, then validated as strings. Auto-inferred when the inferred type widened to `String` because of mixed-type observations.
+- `widen_int_to_float` — integers are widened to equivalent floats. Auto-inferred when the inferred type widened to `Float` because some files used `5` and others `5.0`. Without it, a Float field rejects integer values.
 
-Arrays check element types recursively — an `Integer[]` field rejects `["a", "b"]` because the string elements fail the Integer check.
+Fields with empty `preprocess` arrays are validated strictly — there are no implicit leniencies. See [Types & Widening](./types.md) for how inference picks the preprocessors.
 
-Objects just check that the value is an object — individual keys are not validated against the inferred structure.
+**Recursion.** Arrays check element types recursively — an `Integer[]` field rejects `["a", "b"]` because the string elements fail the Integer check. Object fields check that the value is an object; per-property structure is not validated against the inferred shape.
+
+**Pattern.** A `pattern` constraint on a String field is enforced as a regex; pattern failures surface as `WrongType` (with detail naming the offending value).
+
+## Engine
+
+Per-value validation runs through the `jsonschema` crate. mdvs translates `mdvs.toml`'s `[fields]` block into a JSON Schema 2020-12 document, compiles one validator per field, runs Stage 2 preprocessors, then validates each value. Errors from `jsonschema` are mapped exhaustively into the seven `ViolationKind`s above.
+
+One subtype check runs in Rust ahead of jsonschema: a `Float` field without `widen_int_to_float` rejects integer-backed values (`5` is rejected, `5.0` is accepted). JSON Schema's `"number"` accepts both — but YAML and TOML preserve the int/float distinction at parse time, and so does mdvs.
 
 ## Null handling
 
 Null interacts with validation in specific ways:
 
-**All five checks are independent.** A null value is checked like any other value — each violation type is evaluated separately:
+**The checks are independent.** A null value is checked like any other value — each violation type is evaluated separately:
 
 - **`WrongType`** — null is accepted by any type, so this never fires on null.
 - **`Disallowed`** — the field is present (the key exists), so `Disallowed` fires if the path isn't in `allowed`.

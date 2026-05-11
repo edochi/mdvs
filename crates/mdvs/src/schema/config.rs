@@ -269,7 +269,7 @@ impl MdvsToml {
 
     /// Validate config invariants that can be broken by manual edits.
     ///
-    /// Four invariants are checked:
+    /// Five invariants are checked:
     /// 1. A field cannot appear in both `[fields].ignore` and `[[fields.field]]`.
     /// 2. All globs in `allowed` and `required` must end with `/*` or `/**`, or be
     ///    exactly `*` or `**`.

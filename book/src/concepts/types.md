@@ -212,15 +212,35 @@ Result: `review_score` is inferred as **String?**.
 - `nullable` is a separate boolean, not part of the type itself
 - In validation: null values skip type checks, but a non-nullable required field with a null value triggers a `NullNotAllowed` violation (see [Validation](./validation.md))
 
-## String is the top type
+## Widening and preprocessors
 
-This has two important consequences:
+Widening picks the type. **Preprocessors** are how the schema declares what coercions were needed to get there. Inference auto-populates them — you rarely write them by hand.
 
-**In validation** — a field typed as String **never** triggers a `WrongType` violation. If `priority` is String, then `priority: 1`, `priority: true`, and `priority: [a, b]` all pass. The value is stored as-is.
+When inference observes a field as a mix of types (some files have `priority: 1`, others `priority: high`), it widens to `String` and writes:
 
-**In storage** — when building the search index, non-string values in String-typed fields are serialized to JSON. So `priority: 1` in a String field is stored as `"1"`, not silently dropped as NULL. No data is ever lost.
+```toml
+[[fields.field]]
+name = "priority"
+type = "String"
+preprocess = ["coerce_to_string"]
+```
 
-There's also a leniency for Float fields: integer values like `5` pass as Float (since every integer is a valid float). This handles the common case where YAML doesn't distinguish `5` from `5.0`.
+The `coerce_to_string` entry tells validation: "before checking this value is a string, serialize whatever you find to its JSON representation." Without it, the field is strict — integers and booleans fail validation.
+
+Same for Float: a mix of `5` and `5.0` widens to `Float` with `preprocess = ["widen_int_to_float"]`. Without it, integers fail the float check.
+
+The two built-in Stage 2 preprocessors:
+
+| Preprocessor | Applies to | Effect |
+|---|---|---|
+| `coerce_to_string` | `String`, `Array(String)` | Serialize non-strings to their JSON string representation before validation |
+| `widen_int_to_float` | `Float`, `Array(Float)` | Treat integer values as their float equivalent |
+
+**`preprocess = []` means strict.** If you delete a preprocessor from `mdvs.toml`, the field rejects values that would have been coerced. Conversely, you can hand-add a preprocessor to a strict-inferred field if you want to accept type variation.
+
+**In storage** — when validation accepts a coerced value, the coerced form is what gets stored. A `priority: 1` value with `coerce_to_string` becomes `"1"` in the search index. No data is silently dropped.
+
+Re-run `mdvs update reinfer <field>` to refresh both the inferred type and the inferred preprocessors after editing source files.
 
 ## Edge cases
 

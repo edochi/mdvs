@@ -77,6 +77,8 @@ pub enum ViolationKind {               // output.rs:173
     Disallowed,
     NullNotAllowed,
     InvalidCategory,
+    OutOfRange,                        // numeric range, length, items count
+    FrontmatterUnrepresentable,        // document-level; sentinel field `<frontmatter>`
 }
 
 pub struct ViolatingFile {             // output.rs:188
@@ -105,16 +107,23 @@ pub struct NewField {                  // output.rs:210
 
 Informational — fields in frontmatter but not in `mdvs.toml`. Does not affect exit code.
 
-## Constraint Violation
+## Constraint Violations (post-Wave-B)
 
-```rust
-pub(crate) struct ConstraintViolation { // schema/constraints/mod.rs:52
-    pub rule: String,                   // "categories = [\"draft\", \"published\"]"
-    pub detail: String,                 // "got \"pending\""
-}
-```
+Constraint violations are no longer carried as a separate internal type. The `jsonschema` crate emits `ValidationError` instances at validation time; `cmd/check.rs::map_validation_error` translates each into a `ViolationKind` + rule string + per-file detail.
 
-Internal type — mapped to `ViolationKind::InvalidCategory` + `ViolatingFile::detail` in the check pipeline.
+Mapping summary (exhaustive in code):
+
+| jsonschema error | mdvs `ViolationKind` |
+|---|---|
+| `Type` (non-null mismatch) / `Pattern` | `WrongType` |
+| `Type` (null on non-nullable) | `NullNotAllowed` |
+| `Enum`, `Constant` | `InvalidCategory` |
+| `Minimum`, `Maximum`, `ExclusiveMinimum`, `ExclusiveMaximum`, `MultipleOf` | `OutOfRange` |
+| `MinLength`, `MaxLength`, `MinItems`, `MaxItems`, `UniqueItems` | `OutOfRange` |
+| `Required` | `MissingRequired` |
+| `AdditionalProperties` | `Disallowed` |
+
+See [architecture.md](./architecture.md#validation-pipeline) for the full pipeline.
 
 ## Build File Detail
 

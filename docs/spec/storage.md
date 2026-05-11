@@ -58,7 +58,7 @@ For each `(name, FieldType)` pair in `schema_fields`:
 | Array(inner) | ListArray | variable-length, child built recursively via `build_array` |
 | Object(fields) | StructArray | nested Struct, children built recursively |
 
-**String is special**: the "top type" guarantee means a String-typed field can hold any JSON value. Non-string values (`true`, `42`, `["a"]`) are serialized to their JSON string representation, never dropped as NULL. This is the "never silently drop data" contract.
+**String preprocessing**: a `String` field is strict by default — non-string JSON values violate validation and never reach the storage layer. Fields declaring `preprocess = ["coerce_to_string"]` (often auto-inferred when mixed types were observed) accept any JSON value; non-strings are serialized to their JSON string representation before validation, then stored as strings. This preserves the "never silently drop data" contract for fields that opt in.
 
 ## Content Hash
 
@@ -88,10 +88,13 @@ Frontmatter-only changes (editing a `status` field) do NOT trigger re-embedding.
 | `mdvs.chunk_size` | `ChunkingConfig.max_chunk_size` |
 | `mdvs.glob` | `ScanConfig.glob` |
 | `mdvs.built_at` | ISO 8601 timestamp |
+| `mdvs.schema_hash` | xxh3-64 hex of `dsl_to_canonical(config)` serialized as canonical JSON |
 
 Stored in Parquet native key-value metadata on `files.parquet` only (not `chunks.parquet`). Written via `write_parquet_with_metadata()`, read via `read_build_metadata()`.
 
-**Config change detection**: build compares current config against stored `BuildMetadata` using `PartialEq`. Mismatch → requires `--force` for full rebuild. Search compares model identity → hard error on mismatch.
+**Schema hash** detects field-level changes (types, constraints, path-scoping, preprocessors) that don't show up in any of the other keys. Computed via `compute_schema_hash(config)` in `index/storage.rs`. Hashing the post-translation canonical JSON makes it whitespace-insensitive and key-order-insensitive. Pre-Wave-B parquets without this key read as `""` → treated as changed (conservative, requires `--force`).
+
+**Config change detection**: build compares current config against stored `BuildMetadata` using `PartialEq`. Mismatch → requires `--force` for full rebuild. The schema-hash mismatch error reads: `"schema: fields, types, constraints, path-scoping, or preprocessors have changed"`. Search compares model identity → hard error on mismatch.
 
 ## Incremental Build
 

@@ -18,6 +18,7 @@ mdvs init [path] [flags]
 | `--dry-run` | | Preview the inferred schema without writing anything |
 | `--ignore-bare-files` | | Exclude files without YAML frontmatter |
 | `--skip-gitignore` | | Don't read `.gitignore` patterns during scan |
+| `--from-jsonschema PATH` | | Import a JSON Schema file (`.json` or `.toml`) as the source of fields instead of scanning |
 
 Global flags (`-o`, `-v`, `--logs`) are described in [Configuration](../configuration.md).
 
@@ -152,6 +153,18 @@ mdvs init example_kb --dry-run --force --ignore-bare-files
 ```
 
 With `--ignore-bare-files`, only 37 files are scanned. The `files` row for `title` becomes `37 out of 37`. This also affects the inferred `required` patterns — without bare files diluting the counts, more fields can be required in broader paths.
+
+### Import a JSON Schema (no scan)
+
+`--from-jsonschema PATH` skips scanning and infers nothing. The file at `PATH` (`.json` or `.toml`) is the source of fields:
+
+```bash
+mdvs init example_kb --from-jsonschema fields.json
+```
+
+The schema is gated against mdvs's supported keyword set before translation — unsupported features (`oneOf`, `$ref`, `format`, etc.) error out with an explanation. Path-scoping (`allowed` / `required`) and preprocessor stages are read from `x-mdvs.*` extension keys, so files exported via [export-jsonschema](./export-jsonschema.md) round-trip losslessly.
+
+The `[scan]`, `[embedding_model]`, `[chunking]`, and `[search]` sections are not populated by this flow — the imported file only describes fields. Add build sections by hand or via a subsequent `build`.
 
 ## Errors
 

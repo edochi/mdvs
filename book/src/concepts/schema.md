@@ -153,10 +153,11 @@ Only `name` is required — properties you omit use permissive defaults:
 
 | Property | Default | Meaning |
 |---|---|---|
-| `type` | `String` | Accepts any value (String is the top type) |
+| `type` | `String` | Strict string check (add `preprocess = ["coerce_to_string"]` to accept any JSON value) |
 | `allowed` | `["**"]` | Allowed in every file |
 | `required` | `[]` | Not required anywhere |
 | `nullable` | `true` | Null values accepted |
+| `preprocess` | `[]` | No value coercion before validation |
 
 A `[[fields.field]]` with just a name is effectively unconstrained, but still known — useful when you want to acknowledge a field without committing to specific constraints yet.
 

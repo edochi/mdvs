@@ -79,7 +79,7 @@ This book uses a fictional research lab knowledge base ([example_kb](https://git
 
 - **[Getting Started](./getting-started.md)** — Install mdvs and run it on the example vault
 - **[Concepts](./concepts.md)** — How schema inference, types, and validation work
-- **[Commands](./commands/init.md)** — Full reference for all 7 commands
+- **[Commands](./commands/init.md)** — Full reference for all 8 commands
 - **[Configuration](./configuration.md)** — The `mdvs.toml` file explained
 - **[Search Guide](./search-guide.md)** — SQL filtering, array queries, and ranking
 - **[Recipes](./recipes/obsidian.md)** — Obsidian setup, CI integration
