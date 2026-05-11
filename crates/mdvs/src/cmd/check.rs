@@ -415,6 +415,28 @@ fn check_field_values(
                         });
                     }
 
+                    // Strict subtype precheck — jsonschema can't see the
+                    // serde i64/f64 distinction, so we enforce strict-Float
+                    // (reject integers unless widen_int_to_float is opted in)
+                    // here in Rust, before the preprocessor + jsonschema.
+                    // See preprocess::strict_subtype_check for the full rule.
+                    if let Ok(ft) =
+                        crate::discover::field_type::FieldType::try_from(&toml_field.field_type)
+                        && let Some(detail) =
+                            crate::preprocess::strict_subtype_check(toml_field, &ft, value)
+                    {
+                        let key = ViolationKey {
+                            field: field_name.clone(),
+                            kind: ViolationKind::WrongType,
+                            rule: format!("type {}", toml_field.field_type),
+                        };
+                        violations.entry(key).or_default().push(ViolatingFile {
+                            path: file.path.clone(),
+                            detail: Some(detail),
+                        });
+                        continue;
+                    }
+
                     // Per-value validation via jsonschema (type, null, enum,
                     // range, length, pattern, array bounds).
                     //
@@ -968,7 +990,9 @@ mod tests {
     }
 
     #[test]
-    fn wrong_type_int_in_float_lenient() {
+    fn wrong_type_int_in_float_strict() {
+        // Strict-Float: integer values are rejected unless widen_int_to_float
+        // is in preprocess. See preprocess::strict_subtype_check.
         let tmp = tempfile::tempdir().unwrap();
         fs::create_dir_all(tmp.path().join("blog")).unwrap();
 
@@ -988,6 +1012,140 @@ mod tests {
                 nullable: false,
                 constraints: None,
                 preprocess: vec![],
+            }],
+            vec![],
+        );
+
+        let step = run(tmp.path(), true, false, None);
+        let result = unwrap_check(&step);
+        assert_eq!(result.violations.len(), 1);
+        let v = &result.violations[0];
+        assert_eq!(v.field, "rating");
+        assert!(matches!(v.kind, ViolationKind::WrongType));
+        assert_eq!(v.files[0].detail.as_deref(), Some("got Integer"));
+    }
+
+    #[test]
+    fn int_in_float_with_widen_int_to_float_passes() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("blog")).unwrap();
+
+        fs::write(
+            tmp.path().join("blog/post1.md"),
+            "---\nrating: 5\n---\n# Post\nBody.",
+        )
+        .unwrap();
+
+        write_toml(
+            tmp.path(),
+            vec![TomlField {
+                name: "rating".into(),
+                field_type: FieldTypeSerde::Scalar("Float".into()),
+                allowed: vec!["**".into()],
+                required: vec![],
+                nullable: false,
+                constraints: None,
+                preprocess: vec![crate::preprocess::ValueStage::WidenIntToFloat],
+            }],
+            vec![],
+        );
+
+        let step = run(tmp.path(), true, false, None);
+        let result = unwrap_check(&step);
+        assert!(result.violations.is_empty());
+    }
+
+    #[test]
+    fn float_value_in_strict_float_passes() {
+        // Regression guard: pure float `5.0` must not be flagged by the
+        // strict precheck (it targets i64-backed numbers only).
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("blog")).unwrap();
+
+        fs::write(
+            tmp.path().join("blog/post1.md"),
+            "---\nrating: 5.0\n---\n# Post\nBody.",
+        )
+        .unwrap();
+
+        write_toml(
+            tmp.path(),
+            vec![TomlField {
+                name: "rating".into(),
+                field_type: FieldTypeSerde::Scalar("Float".into()),
+                allowed: vec!["**".into()],
+                required: vec![],
+                nullable: false,
+                constraints: None,
+                preprocess: vec![],
+            }],
+            vec![],
+        );
+
+        let step = run(tmp.path(), true, false, None);
+        let result = unwrap_check(&step);
+        assert!(result.violations.is_empty());
+    }
+
+    #[test]
+    fn int_in_array_float_strict() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("blog")).unwrap();
+
+        fs::write(
+            tmp.path().join("blog/post1.md"),
+            "---\nscores: [1.0, 2, 3.0]\n---\n# Post\nBody.",
+        )
+        .unwrap();
+
+        write_toml(
+            tmp.path(),
+            vec![TomlField {
+                name: "scores".into(),
+                field_type: FieldTypeSerde::Array {
+                    array: Box::new(FieldTypeSerde::Scalar("Float".into())),
+                },
+                allowed: vec!["**".into()],
+                required: vec![],
+                nullable: false,
+                constraints: None,
+                preprocess: vec![],
+            }],
+            vec![],
+        );
+
+        let step = run(tmp.path(), true, false, None);
+        let result = unwrap_check(&step);
+        assert_eq!(result.violations.len(), 1);
+        let v = &result.violations[0];
+        assert_eq!(v.field, "scores");
+        assert!(matches!(v.kind, ViolationKind::WrongType));
+        assert_eq!(v.files[0].detail.as_deref(), Some("got Integer at index 1"));
+    }
+
+    #[test]
+    fn int_in_array_float_with_widen_passes() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("blog")).unwrap();
+
+        fs::write(
+            tmp.path().join("blog/post1.md"),
+            "---\nscores: [1.0, 2, 3.0]\n---\n# Post\nBody.",
+        )
+        .unwrap();
+
+        write_toml(
+            tmp.path(),
+            vec![TomlField {
+                name: "scores".into(),
+                field_type: FieldTypeSerde::Array {
+                    array: Box::new(FieldTypeSerde::Scalar("Float".into())),
+                },
+                allowed: vec!["**".into()],
+                required: vec![],
+                nullable: false,
+                constraints: None,
+                preprocess: vec![crate::preprocess::ValueStage::WidenIntToFloat],
             }],
             vec![],
         );

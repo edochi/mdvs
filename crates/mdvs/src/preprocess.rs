@@ -192,6 +192,56 @@ fn widen_int_to_float(value: &Value, field_type: &FieldType) -> Option<Value> {
 }
 
 // ============================================================================
+// Strict subtype prechecks (dual of Stage-2 preprocessors)
+// ============================================================================
+
+/// Strict-subtype precheck: reject values whose JSON subtype is wrong for the
+/// field type when the relevant opt-in preprocessor is absent.
+///
+/// JSON Schema can't see the difference between `Value::Number(5)` (i64-backed)
+/// and `Value::Number(5.0)` (f64-backed) — both match `"number"`. So enforcing
+/// strict Float (reject integers) has to live in Rust, before jsonschema.
+///
+/// Returns `Some(detail)` when the value must be rejected. The caller emits a
+/// `ViolationKind::WrongType` violation and skips both the preprocessor pipeline
+/// and the jsonschema validator for this value.
+///
+/// `CoerceToString` is not handled here — `{"type": "string"}` rejects non-strings
+/// natively, so jsonschema covers that side of strictness.
+pub(crate) fn strict_subtype_check(
+    field: &TomlField,
+    field_type: &FieldType,
+    value: &Value,
+) -> Option<String> {
+    // Float strict: reject integer-backed numbers unless widen_int_to_float
+    // is opted in.
+    if matches!(field_type, FieldType::Float)
+        && !field.preprocess.contains(&ValueStage::WidenIntToFloat)
+        && matches!(value, Value::Number(n) if n.is_i64() || n.is_u64())
+    {
+        return Some("got Integer".to_string());
+    }
+
+    // Array(Float) strict: reject if any element is integer-backed unless
+    // widen_int_to_float is opted in.
+    if let FieldType::Array(inner) = field_type
+        && matches!(**inner, FieldType::Float)
+        && !field.preprocess.contains(&ValueStage::WidenIntToFloat)
+        && let Value::Array(arr) = value
+    {
+        let bad = arr.iter().enumerate().find_map(|(i, elem)| match elem {
+            Value::Number(n) if n.is_i64() || n.is_u64() => Some(i),
+            _ => None,
+        });
+        if let Some(i) = bad {
+            return Some(format!("got Integer at index {i}"));
+        }
+    }
+
+    None
+}
+
+// ============================================================================
 // Inference: derive Stage-2 preprocessors from observed widening events
 // ============================================================================
 
@@ -631,5 +681,95 @@ mod tests {
         let final_type = FieldType::Array(Box::new(FieldType::String));
         let stages = infer_value_stages(&observed, &final_type);
         assert_eq!(stages, vec![ValueStage::CoerceToString]);
+    }
+
+    // -----------------------------------------------------------------------
+    // strict_subtype_check
+    // -----------------------------------------------------------------------
+
+    fn array_float_field(name: &str, preprocess: Vec<ValueStage>) -> TomlField {
+        TomlField {
+            name: name.into(),
+            field_type: FieldTypeSerde::Array {
+                array: Box::new(FieldTypeSerde::Scalar("Float".into())),
+            },
+            allowed: vec!["**".into()],
+            required: vec![],
+            nullable: false,
+            constraints: None,
+            preprocess,
+        }
+    }
+
+    #[test]
+    fn strict_check_rejects_integer_on_strict_float() {
+        let field = float_field("score", vec![]);
+        let result = strict_subtype_check(&field, &FieldType::Float, &json!(5));
+        assert_eq!(result.as_deref(), Some("got Integer"));
+    }
+
+    #[test]
+    fn strict_check_accepts_integer_when_widen_int_to_float_set() {
+        let field = float_field("score", vec![ValueStage::WidenIntToFloat]);
+        let result = strict_subtype_check(&field, &FieldType::Float, &json!(5));
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn strict_check_accepts_float_on_strict_float() {
+        let field = float_field("score", vec![]);
+        let result = strict_subtype_check(&field, &FieldType::Float, &json!(5.0));
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn strict_check_ignores_null_on_strict_float() {
+        // Null handling is jsonschema's job (NullNotAllowed). Precheck stays out.
+        let field = float_field("score", vec![]);
+        let result = strict_subtype_check(&field, &FieldType::Float, &Value::Null);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn strict_check_ignores_string_on_strict_float() {
+        // Wrong primitive type is jsonschema's job (WrongType from "number").
+        let field = float_field("score", vec![]);
+        let result = strict_subtype_check(&field, &FieldType::Float, &json!("hi"));
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn strict_check_rejects_integer_element_in_strict_array_float() {
+        let field = array_float_field("scores", vec![]);
+        let arr_type = FieldType::Array(Box::new(FieldType::Float));
+        let result = strict_subtype_check(&field, &arr_type, &json!([1.0, 2, 3.0]));
+        assert_eq!(result.as_deref(), Some("got Integer at index 1"));
+    }
+
+    #[test]
+    fn strict_check_accepts_integer_element_in_array_float_with_widen() {
+        let field = array_float_field("scores", vec![ValueStage::WidenIntToFloat]);
+        let arr_type = FieldType::Array(Box::new(FieldType::Float));
+        let result = strict_subtype_check(&field, &arr_type, &json!([1.0, 2, 3.0]));
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn strict_check_accepts_uniform_float_array() {
+        let field = array_float_field("scores", vec![]);
+        let arr_type = FieldType::Array(Box::new(FieldType::Float));
+        let result = strict_subtype_check(&field, &arr_type, &json!([1.0, 2.5, 3.0]));
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn strict_check_does_not_apply_to_non_float_fields() {
+        // String, Integer, Boolean, Array(String) — no strict subtype check.
+        let s = string_field("title", vec![]);
+        assert!(strict_subtype_check(&s, &FieldType::String, &json!(5)).is_none());
+
+        let arr_s = array_string_field("tags", vec![]);
+        let arr_string_type = FieldType::Array(Box::new(FieldType::String));
+        assert!(strict_subtype_check(&arr_s, &arr_string_type, &json!([1, 2])).is_none());
     }
 }
