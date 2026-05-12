@@ -17,7 +17,7 @@ use tracing::instrument;
 pub struct InfoField {
     /// Field name.
     pub name: String,
-    /// Inferred or configured type (e.g. `"String"`, `"Boolean"`, `"String[]"`).
+    /// Inferred or configured type (e.g. `"String"`, `"Boolean"`, `"Array(String)"`).
     pub field_type: String,
     /// Glob patterns where this field may appear.
     pub allowed: Vec<String>,

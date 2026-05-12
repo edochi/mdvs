@@ -111,12 +111,24 @@ pub struct ChunkingConfig {
 }
 
 impl fmt::Display for FieldTypeSerde {
+    /// Function-style rendering (TODO-0096, landed as part of TODO-0097 step 7):
+    /// `Array(String)` rather than `String[]`, `Object{k: v, ...}` rather than
+    /// the bare `{k: v, ...}`. The "Array(...)"/"Object{...}" prefixes make
+    /// nested compositions read uniformly:
+    ///
+    /// - `Array(String)`
+    /// - `Array(Array(Integer))`
+    /// - `Array(Object{time: String, value: Float})`
+    ///
+    /// Top-level `Object` doesn't appear in output for valid configs after
+    /// [`crate::schema::config::MdvsToml::validate`]'s invariant 6, but the
+    /// `Object` arm here remains in use for `Array(Object{...})` rendering.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             FieldTypeSerde::Scalar(name) => write!(f, "{name}"),
-            FieldTypeSerde::Array { array } => write!(f, "{array}[]"),
+            FieldTypeSerde::Array { array } => write!(f, "Array({array})"),
             FieldTypeSerde::Object { object } => {
-                write!(f, "{{")?;
+                write!(f, "Object{{")?;
                 for (i, (k, v)) in object.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
@@ -231,7 +243,17 @@ mod tests {
         let ft = FieldTypeSerde::Array {
             array: Box::new(FieldTypeSerde::Scalar("String".into())),
         };
-        assert_eq!(ft.to_string(), "String[]");
+        assert_eq!(ft.to_string(), "Array(String)");
+    }
+
+    #[test]
+    fn display_nested_array() {
+        let ft = FieldTypeSerde::Array {
+            array: Box::new(FieldTypeSerde::Array {
+                array: Box::new(FieldTypeSerde::Scalar("Integer".into())),
+            }),
+        };
+        assert_eq!(ft.to_string(), "Array(Array(Integer))");
     }
 
     #[test]
@@ -242,7 +264,20 @@ mod tests {
                 ("count".into(), FieldTypeSerde::Scalar("Integer".into())),
             ]),
         };
-        assert_eq!(ft.to_string(), "{author: String, count: Integer}");
+        assert_eq!(ft.to_string(), "Object{author: String, count: Integer}");
+    }
+
+    #[test]
+    fn display_array_of_object() {
+        let ft = FieldTypeSerde::Array {
+            array: Box::new(FieldTypeSerde::Object {
+                object: BTreeMap::from([
+                    ("time".into(), FieldTypeSerde::Scalar("String".into())),
+                    ("value".into(), FieldTypeSerde::Scalar("Float".into())),
+                ]),
+            }),
+        };
+        assert_eq!(ft.to_string(), "Array(Object{time: String, value: Float})");
     }
 
     #[test]
