@@ -77,7 +77,7 @@ Type checking is strict — a `String` field rejects integers, a `Boolean` field
 
 Fields with empty `preprocess` arrays are validated strictly — there are no implicit leniencies. See [Types & Widening](./types.md) for how inference picks the preprocessors.
 
-**Recursion.** Arrays check element types recursively — an `Integer[]` field rejects `["a", "b"]` because the string elements fail the Integer check. Object fields check that the value is an object; per-property structure is not validated against the inferred shape.
+**Recursion.** Arrays check element types recursively — an `Array(Integer)` field rejects `["a", "b"]` because the string elements fail the Integer check. Nested frontmatter structure is validated per leaf: a config entry named `calibration.baseline.wavelength` is checked against the value at the corresponding nested path in the YAML. Missing intermediate Objects mean the leaf is absent — handled by the `MissingRequired` check.
 
 **Pattern.** A `pattern` constraint on a String field is enforced as a regex; pattern failures surface as `WrongType` (with detail naming the offending value).
 

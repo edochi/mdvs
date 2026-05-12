@@ -22,7 +22,7 @@ author: Giulia Ferretti                                   # String
 draft: false                                              # Boolean
 priority: 2                                               # Integer
 drift_rate: 0.023                                         # Float
-tags:                                                     # String[]
+tags:                                                     # Array(String)
   - calibration
   - SPR-A1
   - baseline

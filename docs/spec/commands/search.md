@@ -23,6 +23,6 @@ Returns `SearchOutcome` with `query`, `hits: Vec<SearchHit>`, `model_name`, `lim
 
 - **Model mismatch → hard error** — search refuses to run if the model in config differs from what built the index.
 - **Note-level ranking** — results are per-file, scored by the best chunk's cosine similarity (max, not average).
-- **`--where` injection** — raw SQL appended to the query. Operates on `files_v` view columns (bare frontmatter names work).
+- **`--where` injection** — raw SQL appended to the query. Operates on `files_v` view columns (bare frontmatter names work). After TODO-0097, nested-leaf fields are stored as nested Arrow Structs and accessed via dot notation (`WHERE calibration.baseline.wavelength > 800`) — DataFusion handles this as native struct field access. Bracket notation (`f.data['calibration']['baseline']['wavelength']`) stays available as a fallback.
 
 See [search.md](../search.md) for SearchContext, cosine UDF, and SQL structure details.

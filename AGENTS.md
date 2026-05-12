@@ -77,7 +77,8 @@ mdvs modules, grouped by pipeline stage:
 - `--output` global flag (`text`/`json`) via `CommandOutput` trait
 - All text processing and vector math in Rust; DataFusion handles SQL query execution
 - **Enum-based dispatch everywhere** (no `dyn Trait`): `FieldType`, `Backend`, `Embedder`, `ConstraintKind`, `ValueStage`, `Outcome`. Exhaustive matches.
-- Config validation on load: **five invariants** (ignore/field mutual exclusion, valid glob format, required ⊆ allowed, constraints valid for type, preprocess applicability + no duplicates)
+- Config validation on load: **eight invariants** (ignore/field mutual exclusion, valid glob format, required ⊆ allowed, constraints valid for type, preprocess applicability + no duplicates, no top-level Object, dotted-name well-formedness, no leaf-vs-parent shape conflicts)
+- **Dotted-name leaf flattening (Wave C, TODO-0097)**: `[[fields.field]]` names may contain `.` to express nested YAML structure (`calibration.baseline.wavelength`). Top-level Object is rejected at config load; `Array(Object{...})` stays inline. Translator (`dsl_to_canonical`) reconstructs the canonical JSON Schema's nested `properties` tree; `canonical_to_dsl` reverses. Storage transposes the flat toml into a synthetic FieldType::Object before building Arrow Structs, so the `data` column matches the YAML's natural nesting and SQL dot-notation `--where` works natively.
 
 ### Storage
 

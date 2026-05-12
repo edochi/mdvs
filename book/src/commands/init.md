@@ -47,13 +47,13 @@ Both re-infer the schema from scratch, but they differ in scope:
 mdvs init example_kb
 ```
 
-Each discovered field is shown as its own key-value table with the field name on the top border. Only a few fields are shown here — the full output includes all 37:
+Each discovered field is shown as its own key-value table with the field name on the top border. Only a few fields are shown here — the full output includes all 43:
 
 ```
-Initialized 43 files — 37 field(s)
+Initialized 43 files — 43 field(s)
 
 ┌ action_items ────────────┬───────────────────────────────────────────────────┐
-│ type                     │ String[]                                          │
+│ type                     │ Array(String)                                          │
 ├──────────────────────────┼───────────────────────────────────────────────────┤
 │ files                    │ 9 out of 43                                       │
 ├──────────────────────────┼───────────────────────────────────────────────────┤
@@ -119,12 +119,12 @@ mdvs init example_kb -v
 
 ```
 Scan: 43 files (5ms)
-Infer: 37 field(s) (0ms)
+Infer: 43 field(s) (0ms)
 Write config: example_kb/mdvs.toml (0ms)
-Initialized 43 files — 37 field(s)
+Initialized 43 files — 43 field(s)
 
 ┌ action_items ────────────┬───────────────────────────────────────────────────┐
-│ type                     │ String[]                                          │
+│ type                     │ Array(String)                                          │
 ├──────────────────────────┼───────────────────────────────────────────────────┤
 │ files                    │ 9 out of 43                                       │
 ...

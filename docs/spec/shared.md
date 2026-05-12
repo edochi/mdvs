@@ -27,7 +27,7 @@ pub enum FieldHint {                   // output.rs:16
 ```rust
 pub struct DiscoveredField {           // output.rs:64
     pub name: String,
-    pub field_type: String,            // display form: "String", "Integer[]", etc.
+    pub field_type: String,            // display form: "String", "Array(Integer)", "Object{k: v, ...}", etc.
     pub files_found: usize,
     pub total_files: usize,
     pub allowed: Option<Vec<String>>,  // verbose only

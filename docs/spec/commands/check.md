@@ -22,7 +22,8 @@ Returns `CheckOutcome` with `files_checked`, `violations: Vec<FieldViolation>`, 
 
 Validation runs through the `jsonschema` crate (v0.46). Hand-rolled per-value validators have been removed.
 
-- **Translation** — `dsl_to_canonical(config)` translates `[fields]` into a JSON Schema 2020-12 document, then per-field validators are compiled once per `validate()` call.
+- **Translation** — `dsl_to_canonical(config)` translates `[fields]` into a JSON Schema 2020-12 document. Per-field validators are compiled once per `validate()` call, keyed by the field's full dotted name (e.g. `calibration.baseline.wavelength`). Extracted from the canonical schema's nested `properties` tree via `extract_leaf_schemas` (TODO-0097 step 4).
+- **Dotted-path navigation** — `navigate_dotted(frontmatter, "cal.baseline.wave")` walks the YAML's nested Object structure to retrieve the leaf value. An absent intermediate counts as the leaf being absent (handled by `check_required_fields`).
 - **Strict subtype precheck** — `preprocess::strict_subtype_check` runs in Rust before the preprocessor pipeline. Currently enforces strict-Float (rejects integer-backed values on Float / Array(Float) fields unless `widen_int_to_float` is in `preprocess`). See [architecture.md](../architecture.md#strict-subtype-prechecks) for the rationale.
 - **Preprocessing** — each field's `preprocess` array (e.g. `["coerce_to_string"]`) runs before jsonschema, transforming the value via `Pipeline::apply_to_value`.
 - **Error mapping** — `map_validation_error` is an exhaustive match over `ValidationErrorKind`; new variants in future jsonschema versions cause a compile error rather than a silent fallback.

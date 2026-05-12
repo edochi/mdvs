@@ -59,7 +59,7 @@ mdvs infers types automatically:
 | Field | Inferred type | Notes |
 |---|---|---|
 | `title` | String | |
-| `tags` | String[] | Array of strings |
+| `tags` | Array(String) | Array of strings |
 | `status` | String | |
 | `date` | String | No Date type yet — dates are stored as strings |
 | `draft` | Boolean | |

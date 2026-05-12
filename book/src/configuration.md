@@ -201,11 +201,11 @@ nullable = false
 |---|---|---|---|
 | `name` | String | (required) | Frontmatter key |
 | `type` | FieldType | `"String"` | Expected value type |
-| `allowed` | String[] | `["**"]` | Glob patterns where the field may appear |
-| `required` | String[] | `[]` | Glob patterns where the field must be present |
+| `allowed` | Array(String) | `["**"]` | Glob patterns where the field may appear |
+| `required` | Array(String) | `[]` | Glob patterns where the field must be present |
 | `nullable` | Boolean | `true` | Whether null values are accepted |
 | `constraints` | Table | (absent) | Optional value constraints (see [Constraints](#constraints)) |
-| `preprocess` | String[] | `[]` | Stage 2 value preprocessors — see [Preprocessors](#preprocessors) |
+| `preprocess` | Array(String) | `[]` | Stage 2 value preprocessors — see [Preprocessors](#preprocessors) |
 
 All fields except `name` have permissive defaults. A minimal entry with just a name:
 
@@ -241,10 +241,14 @@ Arrays use an inline table:
 type = { array = "String" }
 ```
 
-Objects use a nested inline table:
+**Top-level Object types are not supported**. Nested frontmatter structure is expressed via dotted-name leaf fields — see [Types](./concepts/types.md) for the flattening rule. The inline `{ object = {...} }` form remains valid **inside `Array`** for arrays of structured items:
 
 ```toml
-type = { object = { author = "String", count = "Integer" } }
+# Valid: Array of Objects (each element is structured)
+type = { array = { object = { time = "String", value = "Float" } } }
+
+# Invalid: top-level Object — rejected at config load.
+# type = { object = { author = "String", count = "Integer" } }
 ```
 
 See [Types](./concepts/types.md) for the full type system, including widening rules.

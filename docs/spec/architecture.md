@@ -293,6 +293,52 @@ For some preprocessor stages, **the absence of the stage** must enforce a check 
 
 Current scope: `Float` and `Array(Float)` fields without `WidenIntToFloat` in `preprocess` reject integer-backed values. Future ValueStages with a similar "absence-must-be-enforced-in-Rust" requirement extend the same function.
 
+## Dotted-name leaf flattening (Wave C / TODO-0097)
+
+mdvs.toml is **flat**: every `[[fields.field]]` declares one leaf, named by a dotted path. A YAML frontmatter shape like:
+
+```yaml
+calibration:
+  baseline:
+    wavelength: 850.0
+    intensity: 0.95
+```
+
+is expressed in mdvs.toml as a flat list of scalar-typed entries:
+
+```toml
+[[fields.field]]
+name = "calibration.baseline.wavelength"
+type = "Float"
+
+[[fields.field]]
+name = "calibration.baseline.intensity"
+type = "Float"
+```
+
+**Three layers, three shapes, one truth:**
+
+| Layer | Shape | Why |
+|---|---|---|
+| `mdvs.toml` | Flat list of dotted-name leaves | Per-leaf nullability, per-leaf path-scoping, readable in plain TOML |
+| Canonical JSON Schema (`dsl_to_canonical`) | Nested `properties` tree | Standard JSON Schema; what `jsonschema::Validator` consumes |
+| Arrow `data` Struct column (`storage.rs::build_files_batch`) | Nested Struct mirroring the YAML | DataFusion's SQL dot-access (`WHERE cal.baseline.wave > 800`) works natively |
+| Source YAML frontmatter | Naturally nested | Unchanged |
+
+The translator (`dsl_to_canonical`) reconstructs the nested shape from dotted names; `canonical_to_dsl` reverses it. Storage transposes the flat list back into a synthetic `FieldType::Object` tree before building Arrow arrays. Validation navigates frontmatter via dotted paths (`navigate_dotted` in `cmd/check.rs`).
+
+### Array-of-Object retention
+
+Top-level Object is rejected (invariant 6). But `Array(Object{...})` is kept as a valid inline shape — per-array-element semantics (no per-leaf nullability, no per-leaf path-scoping inside an element) make flattening inappropriate for array elements. `FieldType::Object` remains in the Rust enum as a valid inner type for `Array` and is reached only via that path.
+
+### Shape conflicts
+
+Invariant 8 rejects configs that declare a name as both a leaf and a parent of nested leaves (e.g., `meta` *and* `meta.author`). This catches structural ambiguity at config-load time, before the translator runs.
+
+### Literal-dot YAML keys
+
+A YAML key like `"foo.bar": "..."` (with a literal dot) conflicts with mdvs's dotted-name convention and is rejected at scan time via `FrontmatterUnrepresentable`. Users with such keys must restructure their frontmatter (or wait for a future Stage 1 field-name preprocessor that could remap them).
+
 ## Output Pipeline
 
 Three-stage rendering:
@@ -347,13 +393,16 @@ Search uses DataFusion for SQL query execution (`search.rs`):
 
 ## Config Validation
 
-`MdvsToml::validate()` at `schema/config.rs` checks five invariants:
+`MdvsToml::validate()` at `schema/config.rs` checks eight invariants:
 
 1. **Mutual exclusion** — a field cannot appear in both `[fields].ignore` and `[[fields.field]]`
 2. **Valid glob format** — all globs in `allowed`/`required` must end with `/*` or `/**` (or be `*` / `**`)
 3. **Required covered by allowed** — every `required` glob must be covered by some `allowed` glob
 4. **Constraint validity** — if a field has `[fields.field.constraints]`, the constraint must be valid for the field's type (type applicability + well-formed values + pairwise compatibility)
 5. **Preprocess applicability** — each `preprocess` entry must be applicable to the field's type, and the list must contain no duplicates
+6. **No top-level Object** — `[[fields.field]]` cannot use `Object` as its top-level type (per TODO-0097 / Wave C); nested data is expressed via dotted-name leaf fields. Object remains valid as `Array`'s inner type.
+7. **Dotted name well-formedness** — field names must not start or end with `.`, nor contain empty segments (`..`). Names without dots are unaffected.
+8. **No shape conflicts** — a name cannot be declared both as a leaf and as a parent of nested leaves (e.g., `meta` *and* `meta.author`).
 
 All invariants bail on first error via `anyhow::bail!()`.
 
