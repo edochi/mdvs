@@ -3,7 +3,7 @@ use crate::schema::config::MdvsToml;
 use crate::schema::json_schema::dsl_to_canonical;
 use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use xxhash_rust::xxh3::xxh3_64;
 
 use datafusion::arrow::array::{
@@ -11,7 +11,7 @@ use datafusion::arrow::array::{
     ListArray, StringArray, StructArray, TimestampMicrosecondArray,
 };
 use datafusion::arrow::buffer::{NullBuffer, OffsetBuffer};
-use datafusion::arrow::datatypes::{DataType, Field, Fields, Schema, TimeUnit};
+use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::ArrowWriter;
 use datafusion::parquet::arrow::ProjectionMask;
@@ -293,34 +293,17 @@ pub fn build_files_batch(schema_fields: &[(String, FieldType)], files: &[FileRow
         .collect();
     let built_at_arr: TimestampMicrosecondArray = files.iter().map(|f| Some(f.built_at)).collect();
 
-    let mut data_child_fields: Vec<Arc<Field>> = Vec::new();
-    let mut data_child_arrays: Vec<ArrayRef> = Vec::new();
-    for (name, ft) in schema_fields {
-        let values: Vec<Option<&Value>> = files
-            .iter()
-            .map(|f| {
-                f.frontmatter
-                    .as_ref()
-                    .and_then(|obj| obj.get(name.as_str()))
-            })
-            .collect();
-        let dt: DataType = ft.into();
-        data_child_fields.push(Arc::new(Field::new(name, dt, true)));
-        data_child_arrays.push(build_array(&values, ft));
-    }
-
-    let data_nulls: Vec<bool> = files.iter().map(|f| f.frontmatter.is_some()).collect();
-    let data_struct_type = DataType::Struct(Fields::from(
-        data_child_fields
-            .iter()
-            .map(|f| f.as_ref().clone())
-            .collect::<Vec<_>>(),
-    ));
-    let data_arr = StructArray::new(
-        data_child_fields.into(),
-        data_child_arrays,
-        Some(NullBuffer::from(data_nulls)),
-    );
+    // Transpose the flat dotted-name fields into a nested `FieldType::Object`
+    // tree (TODO-0097 step 5). The `data` Struct's children mirror this tree:
+    // `calibration.baseline.wavelength` lands inside a `calibration` Struct
+    // child that contains a `baseline` Struct child that contains a
+    // `wavelength` Float leaf. The existing `build_array`'s `Object` arm
+    // does the heavy lifting — we just hand it the synthesized FieldType and
+    // each file's whole frontmatter Value as the per-row value.
+    let storage_ft = transpose_to_storage_type(schema_fields);
+    let values: Vec<Option<&Value>> = files.iter().map(|f| f.frontmatter.as_ref()).collect();
+    let data_arr = build_array(&values, &storage_ft);
+    let data_struct_type: DataType = (&storage_ft).into();
 
     let schema = Schema::new(vec![
         Field::new(COL_FILE_ID, DataType::Utf8, false),
@@ -339,12 +322,57 @@ pub fn build_files_batch(schema_fields: &[(String, FieldType)], files: &[FileRow
         vec![
             Arc::new(file_id_arr),
             Arc::new(filename_arr),
-            Arc::new(data_arr),
+            data_arr,
             Arc::new(content_hash_arr),
             Arc::new(built_at_arr),
         ],
     )
     .unwrap()
+}
+
+/// Transpose a flat list of `(dotted_name, FieldType)` entries into a
+/// single `FieldType::Object` whose nested structure mirrors the YAML's
+/// natural shape.
+///
+/// Example: `[("title", String), ("cal.x", Float), ("cal.y", Float)]`
+/// becomes `Object({"title": String, "cal": Object({"x": Float, "y": Float})})`.
+///
+/// Assumes the input passed `MdvsToml::validate()` (invariant 8 rejects
+/// leaf-vs-parent collisions). If a conflict slips through, the later
+/// insertion silently wins at the leaf position.
+fn transpose_to_storage_type(schema_fields: &[(String, FieldType)]) -> FieldType {
+    let mut root: BTreeMap<String, FieldType> = BTreeMap::new();
+    for (name, ft) in schema_fields {
+        insert_at_dotted_path(&mut root, name, ft.clone());
+    }
+    FieldType::Object(root)
+}
+
+fn insert_at_dotted_path(map: &mut BTreeMap<String, FieldType>, path: &str, ft: FieldType) {
+    let segments: Vec<&str> = path.split('.').collect();
+    insert_at_segments(map, &segments, ft);
+}
+
+fn insert_at_segments(map: &mut BTreeMap<String, FieldType>, segments: &[&str], ft: FieldType) {
+    let Some((first, rest)) = segments.split_first() else {
+        return;
+    };
+    if rest.is_empty() {
+        map.insert((*first).to_string(), ft);
+        return;
+    }
+    let entry = map
+        .entry((*first).to_string())
+        .or_insert_with(|| FieldType::Object(BTreeMap::new()));
+    // If the existing entry isn't Object (validate invariant 8 should have
+    // caught this), replace it. Silent overwrite matches dsl_to_canonical's
+    // defensive policy.
+    if !matches!(entry, FieldType::Object(_)) {
+        *entry = FieldType::Object(BTreeMap::new());
+    }
+    if let FieldType::Object(inner) = entry {
+        insert_at_segments(inner, rest, ft);
+    }
 }
 
 /// Build an Arrow `RecordBatch` for `chunks.parquet` from chunk rows.
@@ -563,6 +591,158 @@ pub fn read_chunk_rows(path: &Path) -> anyhow::Result<Vec<ChunkRow>> {
 mod tests {
     use super::*;
     use datafusion::arrow::array::Array;
+
+    // ------------------------------------------------------------------------
+    // TODO-0097 step 5: dotted-name leaves → nested Arrow Struct columns
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn dotted_leaves_produce_nested_struct_columns() {
+        // Three leaves: one flat, two under a shared `cal.baseline` parent.
+        // The resulting `data` Struct should have a top-level `title` Utf8
+        // child AND a top-level `cal` Struct child whose `baseline` Struct
+        // child has `intensity` and `wavelength` Float children.
+        let schema_fields = vec![
+            ("title".into(), FieldType::String),
+            ("cal.baseline.wavelength".into(), FieldType::Float),
+            ("cal.baseline.intensity".into(), FieldType::Float),
+        ];
+
+        let files = vec![FileRow {
+            file_id: "id-1".into(),
+            filename: "projects/alpha/notes/exp.md".into(),
+            frontmatter: Some(serde_json::json!({
+                "title": "Hello",
+                "cal": {
+                    "baseline": {"wavelength": 850.0, "intensity": 0.95}
+                }
+            })),
+            content_hash: "h".into(),
+            built_at: 1_700_000_000_000_000,
+        }];
+
+        let batch = build_files_batch(&schema_fields, &files);
+        let data = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+
+        // Top-level data Struct: has `cal` and `title` children.
+        let cal_col = data
+            .column_by_name("cal")
+            .expect("data.cal must be a top-level Struct child");
+        let cal_struct = cal_col.as_any().downcast_ref::<StructArray>().unwrap();
+
+        // cal.baseline Struct child
+        let baseline_col = cal_struct
+            .column_by_name("baseline")
+            .expect("data.cal.baseline must be a Struct child");
+        let baseline_struct = baseline_col.as_any().downcast_ref::<StructArray>().unwrap();
+
+        // Leaves: cal.baseline.wavelength and cal.baseline.intensity
+        let wavelength = baseline_struct
+            .column_by_name("wavelength")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+        assert_eq!(wavelength.value(0), 850.0);
+        let intensity = baseline_struct
+            .column_by_name("intensity")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+        assert_eq!(intensity.value(0), 0.95);
+    }
+
+    #[test]
+    fn dotted_leaves_handle_absent_parent() {
+        // File has no `cal` key at all. The `cal` Struct column for this
+        // row should have null validity; each grand-child is also null.
+        let schema_fields = vec![
+            ("cal.baseline.wavelength".into(), FieldType::Float),
+            ("cal.baseline.intensity".into(), FieldType::Float),
+        ];
+
+        let files = vec![FileRow {
+            file_id: "id-1".into(),
+            filename: "blog/post.md".into(),
+            frontmatter: Some(serde_json::json!({"unrelated": 1})),
+            content_hash: "h".into(),
+            built_at: 1_700_000_000_000_000,
+        }];
+
+        let batch = build_files_batch(&schema_fields, &files);
+        let data = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+        let cal = data
+            .column_by_name("cal")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+        // `cal` Struct itself is null for this row (no `cal` key in frontmatter).
+        assert!(cal.is_null(0));
+    }
+
+    #[test]
+    fn dotted_leaves_handle_partial_intermediate() {
+        // File has `cal.baseline` but only `intensity`, not `wavelength`.
+        // Both leaves are declared. The Struct exists; wavelength is null.
+        let schema_fields = vec![
+            ("cal.baseline.wavelength".into(), FieldType::Float),
+            ("cal.baseline.intensity".into(), FieldType::Float),
+        ];
+
+        let files = vec![FileRow {
+            file_id: "id-1".into(),
+            filename: "blog/post.md".into(),
+            frontmatter: Some(serde_json::json!({
+                "cal": {"baseline": {"intensity": 0.5}}
+            })),
+            content_hash: "h".into(),
+            built_at: 1_700_000_000_000_000,
+        }];
+
+        let batch = build_files_batch(&schema_fields, &files);
+        let data = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+        let baseline = data
+            .column_by_name("cal")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap()
+            .column_by_name("baseline")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+
+        let intensity = baseline
+            .column_by_name("intensity")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+        assert_eq!(intensity.value(0), 0.5);
+
+        let wavelength = baseline
+            .column_by_name("wavelength")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+        assert!(wavelength.is_null(0));
+    }
 
     #[test]
     fn files_parquet_roundtrip() {
