@@ -496,9 +496,16 @@ fn strip_glob_suffix(glob: &str) -> &str {
     }
 }
 
-/// Post-process serialized TOML to render `type` fields as inline tables.
-/// The `toml` crate expands them into `[fields.field.type]` sections;
-/// we convert those back to `type = { array = "String" }` form.
+/// Post-process serialized TOML to render `type` fields as inline tables
+/// and place them right after `name` in each `[[fields.field]]` block.
+///
+/// The `toml` crate expands `Array` / `Object` `type` values into
+/// `[fields.field.type]` sub-tables, which land **after** all bare-key
+/// entries (TOML convention). We convert those back to
+/// `type = { array = "String" }` form and reorder so the field block
+/// reads `name, type, allowed, required, nullable, ...` — matching the
+/// `TomlField` struct declaration order and what users get for scalar
+/// `type` values (which serde already inlines correctly).
 fn inline_field_types(toml_str: &str) -> anyhow::Result<String> {
     let mut doc = toml_str.parse::<toml_edit::DocumentMut>()?;
 
@@ -507,20 +514,53 @@ fn inline_field_types(toml_str: &str) -> anyhow::Result<String> {
         && let Some(array_of_tables) = field_array.as_array_of_tables_mut()
     {
         for table in array_of_tables.iter_mut() {
+            // 1. Convert any Array/Object `type` sub-table into an inline table.
             if let Some(type_item) = table.get_mut("type")
                 && let Some(t) = type_item.as_table_mut()
             {
                 let inline = t.clone().into_inline_table();
                 *type_item = toml_edit::Item::Value(inline.into());
             }
-            // Normalize key formatting (fix missing space before `=`)
+            // 2. Normalize key formatting (fix missing space before `=`).
             if let Some(mut key) = table.key_mut("type") {
                 key.fmt();
             }
+            // 3. Reorder keys: `name` first, `type` second, others follow
+            //    in their existing relative order. Uses toml_edit's
+            //    key-position API. Keys without explicit position fall
+            //    into their insertion order.
+            reorder_field_keys(table);
         }
     }
 
     Ok(doc.to_string())
+}
+
+/// Reorder a `[[fields.field]]` table's keys so they render in the
+/// `TomlField` struct declaration order: `name`, `type`, `allowed`,
+/// `required`, `nullable`, `constraints`, `preprocess`. Any key not in
+/// the canonical order is sorted after the known ones (alphabetically).
+fn reorder_field_keys(table: &mut toml_edit::Table) {
+    const ORDER: &[&str] = &[
+        "name",
+        "type",
+        "allowed",
+        "required",
+        "nullable",
+        "constraints",
+        "preprocess",
+    ];
+    table.sort_values_by(|k1, _, k2, _| {
+        let p1 = ORDER
+            .iter()
+            .position(|x| *x == k1.get())
+            .unwrap_or(ORDER.len());
+        let p2 = ORDER
+            .iter()
+            .position(|x| *x == k2.get())
+            .unwrap_or(ORDER.len());
+        p1.cmp(&p2).then_with(|| k1.get().cmp(k2.get()))
+    });
 }
 
 #[cfg(test)]
