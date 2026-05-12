@@ -791,6 +791,164 @@ mod tests {
         assert_eq!(filenames.value(0), "alpha/experiment-1.md");
     }
 
+    /// TODO-0097 step 6: dotted-leaf `--where` works natively through
+    /// DataFusion's SQL struct-field-access semantics, no new alias
+    /// machinery needed. This test exercises the full path: build a
+    /// parquet from dotted-name schema fields (which produces nested
+    /// Struct columns via storage's `transpose_to_storage_type`), then
+    /// query with `WHERE cal.baseline.wavelength > N`.
+    #[tokio::test]
+    async fn dotted_leaf_where_clause() {
+        use crate::index::storage::{build_chunks_batch, build_files_batch, write_parquet};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let files_path = tmp.path().join("files.parquet");
+        let chunks_path = tmp.path().join("chunks.parquet");
+
+        let schema_fields = vec![
+            ("title".into(), FieldType::String),
+            ("cal.baseline.wavelength".into(), FieldType::Float),
+            ("cal.baseline.intensity".into(), FieldType::Float),
+        ];
+
+        let files = vec![
+            FileRow {
+                file_id: "f1".into(),
+                filename: "experiments/exp-1.md".into(),
+                frontmatter: Some(serde_json::json!({
+                    "title": "850 nm baseline",
+                    "cal": {"baseline": {"wavelength": 850.0, "intensity": 0.95}}
+                })),
+                content_hash: "h1".into(),
+                built_at: 1_700_000_000_000_000,
+            },
+            FileRow {
+                file_id: "f2".into(),
+                filename: "experiments/exp-2.md".into(),
+                frontmatter: Some(serde_json::json!({
+                    "title": "632 nm baseline",
+                    "cal": {"baseline": {"wavelength": 632.8, "intensity": 0.87}}
+                })),
+                content_hash: "h2".into(),
+                built_at: 1_700_000_000_000_000,
+            },
+        ];
+
+        let files_batch = build_files_batch(&schema_fields, &files);
+        write_parquet(&files_path, &files_batch).unwrap();
+
+        let chunks = vec![
+            ChunkRow {
+                chunk_id: "c1".into(),
+                file_id: "f1".into(),
+                chunk_index: 0,
+                start_line: 1,
+                end_line: 4,
+                embedding: vec![0.9, 0.1, 0.0, 0.0],
+            },
+            ChunkRow {
+                chunk_id: "c2".into(),
+                file_id: "f2".into(),
+                chunk_index: 0,
+                start_line: 1,
+                end_line: 4,
+                embedding: vec![0.1, 0.9, 0.0, 0.0],
+            },
+        ];
+        let chunks_batch = build_chunks_batch(&chunks, 4);
+        write_parquet(&chunks_path, &chunks_batch).unwrap();
+
+        let sc = SearchContext::new(
+            &files_path,
+            &chunks_path,
+            vec![1.0, 0.0, 0.0, 0.0],
+            "",
+            &std::collections::HashMap::new(),
+        )
+        .await
+        .unwrap();
+
+        // Dot notation: the `cal` Struct child is auto-promoted to a
+        // top-level alias by SearchContext::new, and DataFusion handles
+        // `.baseline.wavelength` as native struct field access.
+        let sql = "
+            SELECT f.filepath,
+                   MAX(cosine_similarity(c.embedding)) AS score
+            FROM chunks c JOIN files_v f ON c.file_id = f.file_id
+            WHERE cal.baseline.wavelength > 800.0
+            GROUP BY f.file_id, f.filepath
+            ORDER BY score DESC
+        ";
+
+        let batches = sc.query(sql).await.unwrap();
+        let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
+        assert_eq!(total_rows, 1, "exactly one file matches wavelength > 800");
+
+        let filenames = batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringViewArray>()
+            .unwrap();
+        assert_eq!(filenames.value(0), "experiments/exp-1.md");
+    }
+
+    /// Bracket-form access into a nested Struct stays valid as an
+    /// alternative to dot notation — useful for programmatically built
+    /// queries or for field names that don't parse cleanly bare.
+    #[tokio::test]
+    async fn dotted_leaf_where_clause_via_bracket_syntax() {
+        use crate::index::storage::{build_chunks_batch, build_files_batch, write_parquet};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let files_path = tmp.path().join("files.parquet");
+        let chunks_path = tmp.path().join("chunks.parquet");
+
+        let schema_fields = vec![("cal.baseline.wavelength".into(), FieldType::Float)];
+        let files = vec![FileRow {
+            file_id: "f1".into(),
+            filename: "exp.md".into(),
+            frontmatter: Some(serde_json::json!({
+                "cal": {"baseline": {"wavelength": 850.0}}
+            })),
+            content_hash: "h".into(),
+            built_at: 1_700_000_000_000_000,
+        }];
+        write_parquet(&files_path, &build_files_batch(&schema_fields, &files)).unwrap();
+
+        let chunks = vec![ChunkRow {
+            chunk_id: "c1".into(),
+            file_id: "f1".into(),
+            chunk_index: 0,
+            start_line: 1,
+            end_line: 1,
+            embedding: vec![1.0, 0.0, 0.0, 0.0],
+        }];
+        write_parquet(&chunks_path, &build_chunks_batch(&chunks, 4)).unwrap();
+
+        let sc = SearchContext::new(
+            &files_path,
+            &chunks_path,
+            vec![1.0, 0.0, 0.0, 0.0],
+            "",
+            &std::collections::HashMap::new(),
+        )
+        .await
+        .unwrap();
+
+        // Bracket form: `f.data['cal']['baseline']['wavelength']`. Works
+        // because storage.rs's `transpose_to_storage_type` produces a
+        // proper nested Struct, and DataFusion supports both dot and
+        // bracket forms for field access.
+        let sql = "
+            SELECT cosine_similarity(c.embedding) AS score
+            FROM chunks c JOIN files_v f ON c.file_id = f.file_id
+            WHERE f.data['cal']['baseline']['wavelength'] > 800.0
+        ";
+        let batches = sc.query(sql).await.unwrap();
+        let total: usize = batches.iter().map(|b| b.num_rows()).sum();
+        assert_eq!(total, 1);
+    }
+
     #[tokio::test]
     async fn frontmatter_filter_bracket_syntax() {
         let idx = setup_test_index();
