@@ -474,6 +474,60 @@ mod tests {
     }
 
     #[test]
+    fn array_of_object_widens_inner_keys_across_files() {
+        // File A's inner Object has `time`; file B's has `value`. The
+        // inner Object widens to the union of children (existing pre-Wave-C
+        // FieldType::from_widen behavior, preserved for Array's inner type).
+        // No dotted-name flattening — readings stays a single field.
+        let scanned = ScannedFiles {
+            files: vec![
+                sf("a.md", Some(json!({"readings": [{"time": "10:00"}]}))),
+                sf("b.md", Some(json!({"readings": [{"value": 0.5}]}))),
+            ],
+        };
+        let info = infer_field_types(&scanned);
+        assert_eq!(info.len(), 1, "readings should still be the only field");
+        let r = &info["readings"];
+        match &r.field_type {
+            FieldType::Array(inner) => match inner.as_ref() {
+                FieldType::Object(fields) => {
+                    assert!(fields.contains_key("time"));
+                    assert!(fields.contains_key("value"));
+                    assert_eq!(fields["time"], FieldType::String);
+                    assert_eq!(fields["value"], FieldType::Float);
+                }
+                other => panic!("expected Array(Object), got Array({other:?})"),
+            },
+            other => panic!("expected Array(Object), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn array_of_object_widens_inner_scalar_types() {
+        // Inner Object's `time` field is observed as both String and
+        // Integer across files. The inner widening (via FieldType::from_widen)
+        // collapses to String — matching how top-level mixed scalars widen
+        // pre-flattening.
+        let scanned = ScannedFiles {
+            files: vec![
+                sf("a.md", Some(json!({"readings": [{"time": "10:00"}]}))),
+                sf("b.md", Some(json!({"readings": [{"time": 5}]}))),
+            ],
+        };
+        let info = infer_field_types(&scanned);
+        let r = &info["readings"];
+        match &r.field_type {
+            FieldType::Array(inner) => match inner.as_ref() {
+                FieldType::Object(fields) => {
+                    assert_eq!(fields["time"], FieldType::String);
+                }
+                other => panic!("expected Array(Object), got Array({other:?})"),
+            },
+            other => panic!("expected Array(Object), got {other:?}"),
+        }
+    }
+
+    #[test]
     fn nested_null_leaf_is_nullable() {
         let scanned = ScannedFiles {
             files: vec![
