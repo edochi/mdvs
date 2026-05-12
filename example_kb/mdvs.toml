@@ -1,0 +1,383 @@
+# ───────────────────────────────────────────────────────────────────────
+# WARNING — manual constraints below are NOT auto-inferred.
+#
+# This file is tracked in git. Several fields carry hand-added `pattern`,
+# `min`/`max`, and `min_length`/`max_length` constraints (e.g. `email`,
+# `equipment_id`, `firmware_version`, `sample_count`, `version`,
+# `wavelength_nm`). The `measurements` field exercises Array(Object).
+#
+# `mdvs init --force example_kb` will REGENERATE this file from inference
+# and silently drop all manual constraints. To regenerate without losing
+# them, run `mdvs update reinfer` (preserves manual edits) or restore
+# from git after init.
+# ───────────────────────────────────────────────────────────────────────
+
+[scan]
+glob = "**"
+include_bare_files = true
+skip_gitignore = false
+
+[check]
+auto_update = true
+
+[build]
+auto_update = true
+
+[search]
+default_limit = 10
+auto_update = true
+auto_build = true
+
+[fields]
+ignore = []
+
+[[fields.field]]
+name = "action_items"
+type = { array = "String" }
+allowed = ["meetings/**", "projects/alpha/meetings/**", "projects/beta/meetings/**"]
+required = ["meetings/all-hands/**", "projects/alpha/meetings/**", "projects/beta/meetings/**"]
+nullable = false
+
+[[fields.field]]
+name = "algorithm"
+type = "String"
+allowed = ["projects/beta/notes/**"]
+required = ["projects/beta/notes/**"]
+nullable = false
+
+[[fields.field]]
+name = "ambient_humidity"
+type = "Float"
+allowed = ["projects/alpha/notes/**"]
+required = []
+nullable = false
+
+[[fields.field]]
+name = "approved_by"
+type = "String"
+allowed = ["reference/protocols/**"]
+required = ["reference/protocols/**"]
+nullable = false
+
+[[fields.field]]
+name = "attendees"
+type = { array = "String" }
+allowed = ["meetings/**", "projects/alpha/meetings/**", "projects/beta/meetings/**"]
+required = ["meetings/**", "projects/alpha/meetings/**", "projects/beta/meetings/**"]
+nullable = false
+
+[fields.field.constraints]
+categories = ["Chiara Russo", "Giulia Ferretti", "Marco Bianchi", "REMO", "Sara Dell'Acqua"]
+
+[[fields.field]]
+name = "author"
+type = "String"
+allowed = ["blog/**", "projects/alpha/*", "projects/alpha/notes/**", "projects/archived/**", "projects/beta/*", "projects/beta/notes/**"]
+required = ["blog/**", "projects/alpha/notes/**", "projects/archived/**", "projects/beta/notes/**"]
+nullable = false
+
+[fields.field.constraints]
+categories = ["Chiara Russo", "Giulia Ferretti", "Marco Bianchi", "REMO", "Sara Dell'Acqua"]
+
+[[fields.field]]
+name = "author's_note"
+type = "String"
+allowed = ["people/*", "projects/alpha/notes/**", "projects/archived/**"]
+required = []
+nullable = false
+
+[[fields.field]]
+name = "batch"
+type = "String"
+allowed = ["projects/alpha/notes/**", "projects/beta/notes/**"]
+required = ["projects/alpha/notes/**", "projects/beta/notes/**"]
+nullable = false
+preprocess = ["coerce_to_string"]
+
+[[fields.field]]
+name = "calibration.adjusted.intensity"
+type = "Float"
+allowed = ["projects/alpha/notes/**"]
+required = []
+nullable = false
+
+[[fields.field]]
+name = "calibration.adjusted.wavelength"
+type = "Float"
+allowed = ["projects/alpha/notes/**"]
+required = []
+nullable = false
+
+[[fields.field]]
+name = "calibration.baseline.intensity"
+type = "Float"
+allowed = ["projects/alpha/notes/**"]
+required = []
+nullable = false
+preprocess = ["widen_int_to_float"]
+
+[[fields.field]]
+name = "calibration.baseline.notes"
+type = "String"
+allowed = ["projects/alpha/notes/**"]
+required = []
+nullable = false
+
+[[fields.field]]
+name = "calibration.baseline.wavelength"
+type = "Float"
+allowed = ["projects/alpha/notes/**"]
+required = []
+nullable = false
+preprocess = ["widen_int_to_float"]
+
+[[fields.field]]
+name = "commission_date"
+type = "String"
+allowed = ["people/*"]
+required = []
+nullable = false
+
+[[fields.field]]
+name = "convergence_ms"
+type = "Integer"
+allowed = ["projects/beta/notes/**"]
+required = []
+nullable = false
+
+[[fields.field]]
+name = "dataset"
+type = "String"
+allowed = ["projects/beta/notes/**"]
+required = ["projects/beta/notes/**"]
+nullable = false
+
+[[fields.field]]
+name = "date"
+type = "String"
+allowed = ["blog/published/**", "meetings/**", "projects/alpha/meetings/**", "projects/archived/**", "projects/beta/meetings/**"]
+required = ["blog/published/**", "meetings/**", "projects/alpha/meetings/**", "projects/beta/meetings/**"]
+nullable = false
+
+[[fields.field]]
+name = "draft"
+type = "Boolean"
+allowed = ["blog/**"]
+required = ["blog/**"]
+nullable = false
+
+[[fields.field]]
+name = "drift_rate"
+type = "Float"
+allowed = ["projects/alpha/notes/**"]
+required = ["projects/alpha/notes/**"]
+nullable = true
+
+[[fields.field]]
+name = "duration_minutes"
+type = "Integer"
+allowed = ["meetings/**", "projects/alpha/meetings/**", "projects/beta/meetings/**"]
+required = ["meetings/**", "projects/alpha/meetings/**", "projects/beta/meetings/**"]
+nullable = false
+
+[[fields.field]]
+name = "email"
+type = "String"
+allowed = ["people/**"]
+required = ["people/interns/**"]
+nullable = false
+
+[fields.field.constraints]
+pattern = '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'
+
+[[fields.field]]
+name = "equipment_id"
+type = "String"
+allowed = ["reference/protocols/equipment/**"]
+required = ["reference/protocols/equipment/**"]
+nullable = false
+
+[fields.field.constraints]
+pattern = '^[A-Z]+-\d+[A-Z]?$'
+
+[[fields.field]]
+name = "firmware_version"
+type = "String"
+allowed = ["people/*"]
+required = []
+nullable = false
+
+[fields.field.constraints]
+pattern = '^\d+\.\d+\.\d+$'
+min_length = 5
+max_length = 11
+
+[[fields.field]]
+name = "funding"
+type = "String"
+allowed = ["projects/alpha/notes/**", "projects/archived/**", "projects/beta/notes/**"]
+required = ["projects/alpha/notes/**", "projects/archived/**", "projects/beta/notes/**"]
+nullable = false
+preprocess = ["coerce_to_string"]
+
+[fields.field.constraints]
+categories = ['["internal"]', "internal"]
+
+[[fields.field]]
+name = "joined"
+type = "String"
+allowed = ["people/**"]
+required = ["people/**"]
+nullable = false
+
+[[fields.field]]
+name = "lab section"
+type = "String"
+allowed = ["people/*"]
+required = []
+nullable = false
+
+[[fields.field]]
+name = "last_reviewed"
+type = "String"
+allowed = ["reference/protocols/**"]
+required = ["reference/protocols/**"]
+nullable = false
+
+[[fields.field]]
+name = "measurements"
+type = { array = { object = { timestamp = "String", value = "Float" } } }
+allowed = ["projects/alpha/notes/**"]
+required = []
+nullable = false
+
+[[fields.field]]
+name = 'notes"v2"'
+type = "Boolean"
+allowed = ["projects/beta/notes/**"]
+required = []
+nullable = false
+
+[[fields.field]]
+name = "observation_notes"
+type = "String"
+allowed = ["projects/alpha/notes/**"]
+required = []
+nullable = false
+
+[[fields.field]]
+name = "priority"
+type = "String"
+allowed = ["projects/alpha/*", "projects/alpha/notes/**", "projects/archived/**", "projects/beta/*", "projects/beta/notes/**"]
+required = ["projects/alpha/notes/**", "projects/archived/**", "projects/beta/notes/**"]
+nullable = false
+
+[fields.field.constraints]
+categories = ["high", "low", "medium"]
+
+[[fields.field]]
+name = "project"
+type = "String"
+allowed = ["meetings/project-syncs/**", "projects/beta/meetings/**"]
+required = ["meetings/project-syncs/**", "projects/beta/meetings/**"]
+nullable = false
+
+[[fields.field]]
+name = "publications"
+type = "Integer"
+allowed = ["people/*"]
+required = []
+nullable = false
+
+[[fields.field]]
+name = "review_score"
+type = "String"
+allowed = ["blog/drafts/**"]
+required = []
+nullable = true
+
+[[fields.field]]
+name = "role"
+type = "String"
+allowed = ["people/**"]
+required = ["people/**"]
+nullable = false
+
+[[fields.field]]
+name = "sample_count"
+type = "Integer"
+allowed = ["projects/alpha/notes/**"]
+required = ["projects/alpha/notes/**"]
+nullable = false
+
+[fields.field.constraints]
+min = 1
+max = 10000
+
+[[fields.field]]
+name = "sensor_type"
+type = "String"
+allowed = ["projects/alpha/notes/**"]
+required = ["projects/alpha/notes/**"]
+nullable = false
+
+[[fields.field]]
+name = "specialization"
+type = "String"
+allowed = ["people/*"]
+required = []
+nullable = false
+
+[[fields.field]]
+name = "status"
+type = "String"
+allowed = ["blog/**", "projects/alpha/*", "projects/alpha/notes/**", "projects/archived/**", "projects/beta/*", "projects/beta/notes/**"]
+required = ["blog/**", "projects/alpha/notes/**", "projects/archived/**"]
+nullable = false
+
+[fields.field.constraints]
+categories = ["active", "archived", "completed", "draft", "published"]
+
+[[fields.field]]
+name = "tags"
+type = { array = "String" }
+allowed = ["blog/**", "projects/alpha/*", "projects/alpha/notes/**", "projects/archived/**", "projects/beta/*", "projects/beta/notes/**"]
+required = ["blog/published/**", "projects/alpha/notes/**", "projects/archived/**", "projects/beta/notes/**"]
+nullable = false
+preprocess = ["coerce_to_string"]
+
+[[fields.field]]
+name = "title"
+type = "String"
+allowed = ["blog/**", "meetings/**", "people/**", "projects/**", "reference/protocols/**"]
+required = ["blog/**", "meetings/**", "people/**", "projects/**", "reference/protocols/**"]
+nullable = false
+
+[[fields.field]]
+name = "unit_id"
+type = "String"
+allowed = ["people/*"]
+required = []
+nullable = false
+
+[[fields.field]]
+name = "version"
+type = "String"
+allowed = ["reference/protocols/**"]
+required = ["reference/protocols/**"]
+nullable = false
+
+[fields.field.constraints]
+pattern = '^\d+\.\d+$'
+
+[[fields.field]]
+name = "wavelength_nm"
+type = "Float"
+allowed = ["projects/alpha/notes/**"]
+required = ["projects/alpha/notes/**"]
+nullable = false
+preprocess = ["widen_int_to_float"]
+
+[fields.field.constraints]
+min = 100
+max = 2000
