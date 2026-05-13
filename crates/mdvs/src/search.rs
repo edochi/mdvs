@@ -101,9 +101,11 @@ impl ScalarUDFImpl for CosineSimilarityUDF {
                     return None;
                 }
                 let row = embeddings.value(i);
-                // Infallible: we wrote the embedding column as FixedSizeList<Float32>,
-                // so the inner array is always Float32Array.
-                let floats = row.as_any().downcast_ref::<Float32Array>().unwrap();
+                // The embedding column is written as FixedSizeList<Float32>, so
+                // the inner array is always Float32Array. `?` returns a null
+                // score for this row rather than panicking if a future edit
+                // changes the column type.
+                let floats = row.as_any().downcast_ref::<Float32Array>()?;
 
                 let mut dot = 0.0f32;
                 let mut row_norm = 0.0f32;
@@ -308,10 +310,10 @@ mod tests {
         let chunks_path = tmp.path().join("chunks.parquet");
 
         let (schema_fields, files) = test_files();
-        let files_batch = build_files_batch(&schema_fields, &files);
+        let files_batch = build_files_batch(&schema_fields, &files).unwrap();
         write_parquet(&files_path, &files_batch).unwrap();
 
-        let chunks_batch = build_chunks_batch(&test_chunks(), 4);
+        let chunks_batch = build_chunks_batch(&test_chunks(), 4).unwrap();
         write_parquet(&chunks_path, &chunks_batch).unwrap();
 
         TestIndex {
@@ -581,9 +583,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let files_path = tmp.path().join("files.parquet");
         let chunks_path = tmp.path().join("chunks.parquet");
-        let files_batch = build_files_batch(&schema_fields, &files);
+        let files_batch = build_files_batch(&schema_fields, &files).unwrap();
         write_parquet(&files_path, &files_batch).unwrap();
-        let chunks_batch = build_chunks_batch(&chunks, 4);
+        let chunks_batch = build_chunks_batch(&chunks, 4).unwrap();
         write_parquet(&chunks_path, &chunks_batch).unwrap();
 
         let query_vec = vec![1.0, 0.0, 0.0, 0.0];
@@ -639,9 +641,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let files_path = tmp.path().join("files.parquet");
         let chunks_path = tmp.path().join("chunks.parquet");
-        let files_batch = build_files_batch(&schema_fields, &files);
+        let files_batch = build_files_batch(&schema_fields, &files).unwrap();
         write_parquet(&files_path, &files_batch).unwrap();
-        let chunks_batch = build_chunks_batch(&chunks, 4);
+        let chunks_batch = build_chunks_batch(&chunks, 4).unwrap();
         write_parquet(&chunks_path, &chunks_batch).unwrap();
 
         let query_vec = vec![1.0, 0.0, 0.0, 0.0];
@@ -738,9 +740,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let files_path = tmp.path().join("files.parquet");
         let chunks_path = tmp.path().join("chunks.parquet");
-        let files_batch = build_files_batch(&schema_fields, &files);
+        let files_batch = build_files_batch(&schema_fields, &files).unwrap();
         write_parquet(&files_path, &files_batch).unwrap();
-        let chunks_batch = build_chunks_batch(&chunks, 4);
+        let chunks_batch = build_chunks_batch(&chunks, 4).unwrap();
         write_parquet(&chunks_path, &chunks_batch).unwrap();
 
         let query_vec = vec![1.0, 0.0, 0.0, 0.0];
@@ -834,7 +836,7 @@ mod tests {
             },
         ];
 
-        let files_batch = build_files_batch(&schema_fields, &files);
+        let files_batch = build_files_batch(&schema_fields, &files).unwrap();
         write_parquet(&files_path, &files_batch).unwrap();
 
         let chunks = vec![
@@ -855,7 +857,7 @@ mod tests {
                 embedding: vec![0.1, 0.9, 0.0, 0.0],
             },
         ];
-        let chunks_batch = build_chunks_batch(&chunks, 4);
+        let chunks_batch = build_chunks_batch(&chunks, 4).unwrap();
         write_parquet(&chunks_path, &chunks_batch).unwrap();
 
         let sc = SearchContext::new(
@@ -913,7 +915,11 @@ mod tests {
             content_hash: "h".into(),
             built_at: 1_700_000_000_000_000,
         }];
-        write_parquet(&files_path, &build_files_batch(&schema_fields, &files)).unwrap();
+        write_parquet(
+            &files_path,
+            &build_files_batch(&schema_fields, &files).unwrap(),
+        )
+        .unwrap();
 
         let chunks = vec![ChunkRow {
             chunk_id: "c1".into(),
@@ -923,7 +929,7 @@ mod tests {
             end_line: 1,
             embedding: vec![1.0, 0.0, 0.0, 0.0],
         }];
-        write_parquet(&chunks_path, &build_chunks_batch(&chunks, 4)).unwrap();
+        write_parquet(&chunks_path, &build_chunks_batch(&chunks, 4).unwrap()).unwrap();
 
         let sc = SearchContext::new(
             &files_path,
@@ -1011,9 +1017,9 @@ mod tests {
             embedding: vec![1.0, 0.0, 0.0, 0.0],
         }];
 
-        let files_batch = build_files_batch(&schema_fields, &files);
+        let files_batch = build_files_batch(&schema_fields, &files).unwrap();
         write_parquet(&files_path, &files_batch).unwrap();
-        let chunks_batch = build_chunks_batch(&chunks, 4);
+        let chunks_batch = build_chunks_batch(&chunks, 4).unwrap();
         write_parquet(&chunks_path, &chunks_batch).unwrap();
 
         let query_vec = vec![1.0, 0.0, 0.0, 0.0];
@@ -1059,9 +1065,9 @@ mod tests {
             embedding: vec![1.0, 0.0, 0.0, 0.0],
         }];
 
-        let files_batch = build_files_batch(&schema_fields, &files);
+        let files_batch = build_files_batch(&schema_fields, &files).unwrap();
         write_parquet(&files_path, &files_batch).unwrap();
-        let chunks_batch = build_chunks_batch(&chunks, 4);
+        let chunks_batch = build_chunks_batch(&chunks, 4).unwrap();
         write_parquet(&chunks_path, &chunks_batch).unwrap();
 
         // Prefix "_" resolves collision: internal filepath → _filepath
@@ -1106,9 +1112,9 @@ mod tests {
             embedding: vec![1.0, 0.0, 0.0, 0.0],
         }];
 
-        let files_batch = build_files_batch(&schema_fields, &files);
+        let files_batch = build_files_batch(&schema_fields, &files).unwrap();
         write_parquet(&files_path, &files_batch).unwrap();
-        let chunks_batch = build_chunks_batch(&chunks, 4);
+        let chunks_batch = build_chunks_batch(&chunks, 4).unwrap();
         write_parquet(&chunks_path, &chunks_batch).unwrap();
 
         // Alias resolves collision: internal filepath → "path"

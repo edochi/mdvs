@@ -211,12 +211,10 @@ async fn main() -> anyhow::Result<()> {
                 (mdvs::output::OutputFormat::Text, false) => {
                     mdvs::render::format_text(&result.render_compact())
                 }
-                (mdvs::output::OutputFormat::Json, true) => {
-                    serde_json::to_string_pretty(&result).unwrap()
-                }
+                (mdvs::output::OutputFormat::Json, true) => serde_json::to_string_pretty(&result)?,
                 (mdvs::output::OutputFormat::Json, false) => match result.result_value() {
-                    Some(outcome) => serde_json::to_string_pretty(outcome).unwrap(),
-                    None => serde_json::to_string_pretty(&result).unwrap(),
+                    Some(outcome) => serde_json::to_string_pretty(outcome)?,
+                    None => serde_json::to_string_pretty(&result)?,
                 },
             };
             print!("{output_str}");
@@ -253,12 +251,10 @@ async fn main() -> anyhow::Result<()> {
                 (mdvs::output::OutputFormat::Text, false) => {
                     mdvs::render::format_text(&result.render_compact())
                 }
-                (mdvs::output::OutputFormat::Json, true) => {
-                    serde_json::to_string_pretty(&result).unwrap()
-                }
+                (mdvs::output::OutputFormat::Json, true) => serde_json::to_string_pretty(&result)?,
                 (mdvs::output::OutputFormat::Json, false) => match result.result_value() {
-                    Some(outcome) => serde_json::to_string_pretty(outcome).unwrap(),
-                    None => serde_json::to_string_pretty(&result).unwrap(),
+                    Some(outcome) => serde_json::to_string_pretty(outcome)?,
+                    None => serde_json::to_string_pretty(&result)?,
                 },
             };
             print!("{output_str}");
@@ -297,12 +293,10 @@ async fn main() -> anyhow::Result<()> {
                 (mdvs::output::OutputFormat::Text, false) => {
                     mdvs::render::format_text(&result.render_compact())
                 }
-                (mdvs::output::OutputFormat::Json, true) => {
-                    serde_json::to_string_pretty(&result).unwrap()
-                }
+                (mdvs::output::OutputFormat::Json, true) => serde_json::to_string_pretty(&result)?,
                 (mdvs::output::OutputFormat::Json, false) => match result.result_value() {
-                    Some(outcome) => serde_json::to_string_pretty(outcome).unwrap(),
-                    None => serde_json::to_string_pretty(&result).unwrap(),
+                    Some(outcome) => serde_json::to_string_pretty(outcome)?,
+                    None => serde_json::to_string_pretty(&result)?,
                 },
             };
             print!("{output_str}");
@@ -327,12 +321,10 @@ async fn main() -> anyhow::Result<()> {
                 (mdvs::output::OutputFormat::Text, false) => {
                     mdvs::render::format_text(&result.render_compact())
                 }
-                (mdvs::output::OutputFormat::Json, true) => {
-                    serde_json::to_string_pretty(&result).unwrap()
-                }
+                (mdvs::output::OutputFormat::Json, true) => serde_json::to_string_pretty(&result)?,
                 (mdvs::output::OutputFormat::Json, false) => match result.result_value() {
-                    Some(outcome) => serde_json::to_string_pretty(outcome).unwrap(),
-                    None => serde_json::to_string_pretty(&result).unwrap(),
+                    Some(outcome) => serde_json::to_string_pretty(outcome)?,
+                    None => serde_json::to_string_pretty(&result)?,
                 },
             };
             print!("{output_str}");
@@ -367,12 +359,10 @@ async fn main() -> anyhow::Result<()> {
                 (mdvs::output::OutputFormat::Text, false) => {
                     mdvs::render::format_text(&result.render_compact())
                 }
-                (mdvs::output::OutputFormat::Json, true) => {
-                    serde_json::to_string_pretty(&result).unwrap()
-                }
+                (mdvs::output::OutputFormat::Json, true) => serde_json::to_string_pretty(&result)?,
                 (mdvs::output::OutputFormat::Json, false) => match result.result_value() {
-                    Some(outcome) => serde_json::to_string_pretty(outcome).unwrap(),
-                    None => serde_json::to_string_pretty(&result).unwrap(),
+                    Some(outcome) => serde_json::to_string_pretty(outcome)?,
+                    None => serde_json::to_string_pretty(&result)?,
                 },
             };
             print!("{output_str}");
@@ -392,12 +382,10 @@ async fn main() -> anyhow::Result<()> {
                 (mdvs::output::OutputFormat::Text, false) => {
                     mdvs::render::format_text(&result.render_compact())
                 }
-                (mdvs::output::OutputFormat::Json, true) => {
-                    serde_json::to_string_pretty(&result).unwrap()
-                }
+                (mdvs::output::OutputFormat::Json, true) => serde_json::to_string_pretty(&result)?,
                 (mdvs::output::OutputFormat::Json, false) => match result.result_value() {
-                    Some(outcome) => serde_json::to_string_pretty(outcome).unwrap(),
-                    None => serde_json::to_string_pretty(&result).unwrap(),
+                    Some(outcome) => serde_json::to_string_pretty(outcome)?,
+                    None => serde_json::to_string_pretty(&result)?,
                 },
             };
             print!("{output_str}");
@@ -421,12 +409,10 @@ async fn main() -> anyhow::Result<()> {
                 (mdvs::output::OutputFormat::Text, false) => {
                     mdvs::render::format_text(&result.render_compact())
                 }
-                (mdvs::output::OutputFormat::Json, true) => {
-                    serde_json::to_string_pretty(&result).unwrap()
-                }
+                (mdvs::output::OutputFormat::Json, true) => serde_json::to_string_pretty(&result)?,
                 (mdvs::output::OutputFormat::Json, false) => match result.result_value() {
-                    Some(outcome) => serde_json::to_string_pretty(outcome).unwrap(),
-                    None => serde_json::to_string_pretty(&result).unwrap(),
+                    Some(outcome) => serde_json::to_string_pretty(outcome)?,
+                    None => serde_json::to_string_pretty(&result)?,
                 },
             };
             print!("{output_str}");
@@ -456,11 +442,11 @@ async fn main() -> anyhow::Result<()> {
                         mdvs::render::format_text(&result.render_compact())
                     }
                     (mdvs::output::OutputFormat::Json, true) => {
-                        serde_json::to_string_pretty(&result).unwrap()
+                        serde_json::to_string_pretty(&result)?
                     }
                     (mdvs::output::OutputFormat::Json, false) => match result.result_value() {
-                        Some(outcome) => serde_json::to_string_pretty(outcome).unwrap(),
-                        None => serde_json::to_string_pretty(&result).unwrap(),
+                        Some(outcome) => serde_json::to_string_pretty(outcome)?,
+                        None => serde_json::to_string_pretty(&result)?,
                     },
                 };
                 print!("{output_str}");

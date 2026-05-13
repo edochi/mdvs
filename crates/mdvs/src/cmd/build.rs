@@ -662,9 +662,8 @@ pub(crate) async fn build_core(
         return Err(());
     }
 
-    let embed_data = if needs_embedding {
+    let embed_data = if let Some(emb) = embedder.as_ref().filter(|_| needs_embedding) {
         let embed_start = Instant::now();
-        let emb = embedder.as_ref().unwrap();
         let mut embed_chunk_rows = Vec::new();
         let mut details = Vec::new();
         for fte in &classify_data.needs_embedding {
@@ -827,18 +826,18 @@ pub(crate) fn mutate_config(
             });
             config_changed = true;
         }
-        Some(ref mut ch) if set_chunk_size.is_some() => {
-            if !force {
-                return Some(
-                    "--set-chunk-size requires --force (changes chunking, triggers full re-embed)"
-                        .to_string(),
-                );
+        Some(ref mut ch) => {
+            if let Some(new_size) = set_chunk_size {
+                if !force {
+                    return Some(
+                        "--set-chunk-size requires --force (changes chunking, triggers full re-embed)"
+                            .to_string(),
+                    );
+                }
+                ch.max_chunk_size = new_size;
+                config_changed = true;
             }
-            // Safe: match guard ensures set_chunk_size.is_some()
-            ch.max_chunk_size = set_chunk_size.expect("guarded by is_some()");
-            config_changed = true;
         }
-        Some(_) => {}
     }
 
     if config.search.is_none() {
@@ -1072,7 +1071,7 @@ mod tests {
             end_line: 1,
             embedding: vec![0.1, 0.2], // dim=2
         }];
-        let bad_batch = build_chunks_batch(&bad_chunks, 2);
+        let bad_batch = build_chunks_batch(&bad_chunks, 2).unwrap();
         write_parquet(&tmp.path().join(".mdvs/chunks.parquet"), &bad_batch).unwrap();
 
         // Add a new file so model gets loaded (incremental detects new file)
@@ -1122,7 +1121,7 @@ mod tests {
             end_line: 1,
             embedding: vec![0.1, 0.2], // dim=2
         }];
-        let bad_batch = build_chunks_batch(&bad_chunks, 2);
+        let bad_batch = build_chunks_batch(&bad_chunks, 2).unwrap();
         write_parquet(&tmp.path().join(".mdvs/chunks.parquet"), &bad_batch).unwrap();
 
         // Build with --force should succeed despite dimension mismatch

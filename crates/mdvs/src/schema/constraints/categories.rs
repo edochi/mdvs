@@ -47,10 +47,13 @@ pub(super) fn validate_for_type(
     }
 
     for (i, val) in values.iter().enumerate() {
+        // The element_type narrowing above only produces String or Integer.
+        // Any other variant here is a code-path bug — treat the value as
+        // failing rather than panic.
         let ok = match &element_type {
             FieldType::String => val.is_str(),
             FieldType::Integer => val.is_integer(),
-            _ => unreachable!(),
+            _ => false,
         };
         if !ok {
             return Some(format!(

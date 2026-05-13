@@ -241,7 +241,11 @@ pub async fn run(
                                 c.max = r.max;
                             }
                         }
-                        WithKind::None => unreachable!("handled above"),
+                        // `None` is filtered out upstream by the
+                        // `args.with.contains(&WithKind::None)` branch.
+                        // If a future caller bypasses that, fall through
+                        // silently rather than panic.
+                        WithKind::None => {}
                     }
                 }
                 if c == Constraints::default() {

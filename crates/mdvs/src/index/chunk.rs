@@ -92,11 +92,22 @@ pub fn extract_plain_text(markdown: &str) -> String {
 /// - ![[embed]] → embed
 /// - ![[embed|display]] → display
 pub fn strip_wikilinks(text: &str) -> String {
-    let re = Regex::new(r"!?\[\[([^\]|]+)(?:\|([^\]]+))?\]\]").unwrap();
+    // Compiled once; the pattern is static so compilation can't fail at
+    // runtime. If a future edit accidentally produces an invalid pattern
+    // the fallback returns the input unchanged rather than panicking.
+    static WIKILINK_RE: std::sync::LazyLock<Option<Regex>> =
+        std::sync::LazyLock::new(|| Regex::new(r"!?\[\[([^\]|]+)(?:\|([^\]]+))?\]\]").ok());
+    let Some(re) = WIKILINK_RE.as_ref() else {
+        return text.to_string();
+    };
     re.replace_all(text, |caps: &regex::Captures| {
+        // Group 2 is the optional `|display` segment; group 1 is the required
+        // target. Fall back to empty string if neither matches (should be
+        // impossible given the regex shape, but no panic either way).
         caps.get(2)
-            .unwrap_or_else(|| caps.get(1).unwrap())
-            .as_str()
+            .or_else(|| caps.get(1))
+            .map(|m| m.as_str())
+            .unwrap_or("")
             .to_string()
     })
     .into_owned()

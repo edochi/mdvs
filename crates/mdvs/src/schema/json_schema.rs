@@ -164,11 +164,13 @@ fn insert_at_path(properties: &mut Map<String, Value>, segments: &[&str], leaf: 
         *entry = intermediate_object_schema();
     }
 
-    let inner_props = entry
-        .get_mut("properties")
-        .and_then(Value::as_object_mut)
-        .expect("intermediate_object_schema always has a `properties` map");
-    insert_at_path(inner_props, rest, leaf);
+    // The intermediate_object_schema() call above guarantees `properties`
+    // exists as an object. If a future edit breaks that invariant, silently
+    // skip rather than panic — the schema will be incomplete but the
+    // program won't crash.
+    if let Some(inner_props) = entry.get_mut("properties").and_then(Value::as_object_mut) {
+        insert_at_path(inner_props, rest, leaf);
+    }
 }
 
 fn intermediate_object_schema() -> Value {
@@ -204,10 +206,11 @@ fn field_to_subschema(field: &crate::schema::config::TomlField) -> Value {
     let mut subschema = type_subschema(&ft, field.nullable, field.constraints.as_ref());
 
     let x_mdvs = build_x_mdvs(field);
-    if !x_mdvs.is_empty() {
-        let map = subschema
-            .as_object_mut()
-            .expect("type_subschema always returns an object");
+    if !x_mdvs.is_empty()
+        && let Some(map) = subschema.as_object_mut()
+    {
+        // type_subschema always returns an object; the guard above guards
+        // against a future edit changing that.
         map.insert("x-mdvs".to_string(), Value::Object(x_mdvs));
     }
 
@@ -451,10 +454,13 @@ fn walk_properties_into_fields(
 
         if is_intermediate_object(sub) {
             // Intermediate Object — recurse into children, extending prefix.
-            let inner = sub
-                .get("properties")
-                .and_then(Value::as_object)
-                .expect("is_intermediate_object guarantees properties exists");
+            // is_intermediate_object guarantees `properties` exists as an
+            // object; the explicit `?`-style guard below is defensive.
+            let Some(inner) = sub.get("properties").and_then(Value::as_object) else {
+                return Err(format!(
+                    "property '{full_name}': internal error — intermediate object missing properties"
+                ));
+            };
             walk_properties_into_fields(inner, &full_name, fields, ignore, false)?;
         } else {
             // Leaf — emit a TomlField with the dotted full path.
@@ -522,7 +528,9 @@ fn extract_type(name: &str, sub: &Map<String, Value>) -> Result<(FieldType, bool
                     "property '{name}': type union must be exactly one non-null type plus optional null"
                 ));
             }
-            (non_null.into_iter().next().unwrap(), has_null)
+            // The length check above guarantees exactly one element; the
+            // `unwrap_or_default` fallback is defensive.
+            (non_null.into_iter().next().unwrap_or_default(), has_null)
         }
         _ => {
             return Err(format!(
@@ -1278,7 +1286,10 @@ mod tests {
 
     #[test]
     fn gate_rejects_unsupported_format() {
-        assert_rejects(json!({"format": "email"}), "format 'email' is not supported");
+        assert_rejects(
+            json!({"format": "email"}),
+            "format 'email' is not supported",
+        );
     }
 
     #[test]

@@ -179,17 +179,13 @@ impl InferredSchema {
     /// [`Self::dropped`] rather than included in [`Self::fields`].
     #[instrument(name = "infer", skip_all)]
     pub fn infer(scanned: &ScannedFiles) -> Self {
-        let mut type_info = infer_field_types(scanned);
+        let type_info = infer_field_types(scanned);
         let tree = DirectoryTree::from(scanned);
         let path_info = tree.infer_paths();
 
         let all_fields: Vec<InferredField> = type_info
-            .keys()
-            .cloned()
-            .collect::<Vec<_>>()
             .into_iter()
-            .map(|name| {
-                let ti = type_info.remove(&name).unwrap();
+            .map(|(name, ti)| {
                 let pi = path_info.get(&name);
                 let preprocess = infer_value_stages(&ti.observed_types, &ti.field_type);
                 InferredField {

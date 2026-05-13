@@ -255,7 +255,11 @@ fn build_array(values: &[Option<&Value>], ft: &FieldType) -> ArrayRef {
                         nulls.push(true);
                     }
                     None => {
-                        offsets.push(*offsets.last().unwrap());
+                        // `offsets` is seeded with `vec![0]`, so `.last()`
+                        // is always Some here. The `unwrap_or(&0)` fallback
+                        // preserves correctness if a future refactor breaks
+                        // that invariant.
+                        offsets.push(*offsets.last().unwrap_or(&0));
                         nulls.push(false);
                     }
                 }
@@ -306,7 +310,10 @@ fn build_array(values: &[Option<&Value>], ft: &FieldType) -> ArrayRef {
 ///
 /// Frontmatter values are packed into a single `data` Struct column whose
 /// child fields match `schema_fields`.
-pub fn build_files_batch(schema_fields: &[(String, FieldType)], files: &[FileRow]) -> RecordBatch {
+pub fn build_files_batch(
+    schema_fields: &[(String, FieldType)],
+    files: &[FileRow],
+) -> anyhow::Result<RecordBatch> {
     let file_id_arr: StringArray = files.iter().map(|f| Some(f.file_id.as_str())).collect();
     let filename_arr: StringArray = files.iter().map(|f| Some(f.filename.as_str())).collect();
     let content_hash_arr: StringArray = files
@@ -349,7 +356,7 @@ pub fn build_files_batch(schema_fields: &[(String, FieldType)], files: &[FileRow
             Arc::new(built_at_arr),
         ],
     )
-    .unwrap()
+    .map_err(|e| anyhow::anyhow!("failed to build files RecordBatch: {e}"))
 }
 
 /// Transpose a flat list of `(dotted_name, FieldType)` entries into a
@@ -400,7 +407,7 @@ fn insert_at_segments(map: &mut BTreeMap<String, FieldType>, segments: &[&str], 
 /// Build an Arrow `RecordBatch` for `chunks.parquet` from chunk rows.
 ///
 /// Embeddings are stored as a `FixedSizeList<Float32>` with the given `dimension`.
-pub fn build_chunks_batch(chunks: &[ChunkRow], dimension: i32) -> RecordBatch {
+pub fn build_chunks_batch(chunks: &[ChunkRow], dimension: i32) -> anyhow::Result<RecordBatch> {
     let chunk_id_arr: StringArray = chunks.iter().map(|c| Some(c.chunk_id.as_str())).collect();
     let file_id_arr: StringArray = chunks.iter().map(|c| Some(c.file_id.as_str())).collect();
     let chunk_index_arr: Int32Array = chunks.iter().map(|c| Some(c.chunk_index)).collect();
@@ -446,7 +453,7 @@ pub fn build_chunks_batch(chunks: &[ChunkRow], dimension: i32) -> RecordBatch {
             Arc::new(embedding_arr),
         ],
     )
-    .unwrap()
+    .map_err(|e| anyhow::anyhow!("failed to build chunks RecordBatch: {e}"))
 }
 
 // ============================================================================
@@ -643,7 +650,7 @@ mod tests {
             built_at: 1_700_000_000_000_000,
         }];
 
-        let batch = build_files_batch(&schema_fields, &files);
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
         let data = batch
             .column(2)
             .as_any()
@@ -696,7 +703,7 @@ mod tests {
             built_at: 1_700_000_000_000_000,
         }];
 
-        let batch = build_files_batch(&schema_fields, &files);
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
         let data = batch
             .column(2)
             .as_any()
@@ -731,7 +738,7 @@ mod tests {
             built_at: 1_700_000_000_000_000,
         }];
 
-        let batch = build_files_batch(&schema_fields, &files);
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
         let data = batch
             .column(2)
             .as_any()
@@ -800,7 +807,7 @@ mod tests {
             },
         ];
 
-        let batch = build_files_batch(&schema_fields, &files);
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("files.parquet");
 
@@ -882,7 +889,7 @@ mod tests {
             },
         ];
 
-        let batch = build_files_batch(&schema_fields, &files);
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
 
         let data = batch
             .column(2)
@@ -943,7 +950,7 @@ mod tests {
             },
         ];
 
-        let batch = build_files_batch(&schema_fields, &files);
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
 
         let data = batch
             .column(2)
@@ -1019,7 +1026,7 @@ mod tests {
             },
         ];
 
-        let batch = build_chunks_batch(&chunks, dimension);
+        let batch = build_chunks_batch(&chunks, dimension).unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("chunks.parquet");
 
@@ -1063,7 +1070,8 @@ mod tests {
                 content_hash: "h1".into(),
                 built_at: 1_700_000_000_000_000,
             }],
-        );
+        )
+        .unwrap();
         let batch2 = build_files_batch(
             &schema_fields,
             &[FileRow {
@@ -1073,7 +1081,8 @@ mod tests {
                 content_hash: "h2".into(),
                 built_at: 1_700_000_000_000_000,
             }],
-        );
+        )
+        .unwrap();
 
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("files_streamed.parquet");
@@ -1118,7 +1127,8 @@ mod tests {
                 content_hash: "h1".into(),
                 built_at: 1_700_000_000_000_000,
             }],
-        );
+        )
+        .unwrap();
         let batch2 = build_files_batch(
             &schema_fields,
             &[FileRow {
@@ -1128,7 +1138,8 @@ mod tests {
                 content_hash: "h2".into(),
                 built_at: 1_700_000_000_000_000,
             }],
-        );
+        )
+        .unwrap();
 
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("files_stream_read.parquet");
@@ -1181,7 +1192,7 @@ mod tests {
             },
         ];
 
-        let batch = build_files_batch(&schema_fields, &files);
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("files_proj.parquet");
 
@@ -1221,7 +1232,7 @@ mod tests {
             built_at: 1_700_000_000_000_000,
         }];
 
-        let batch = build_files_batch(&schema_fields, &files);
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("files_size.parquet");
 
@@ -1243,7 +1254,7 @@ mod tests {
             built_at: 1_700_000_000_000_000,
         }];
 
-        let batch = build_files_batch(&schema_fields, &files);
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("files.parquet");
 
@@ -1278,7 +1289,7 @@ mod tests {
             built_at: 1_700_000_000_000_000,
         }];
 
-        let batch = build_files_batch(&schema_fields, &files);
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("files.parquet");
 
@@ -1313,7 +1324,7 @@ mod tests {
             built_at: 1_700_000_000_000_000,
         }];
 
-        let batch = build_files_batch(&schema_fields, &files);
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("files.parquet");
 
@@ -1354,7 +1365,7 @@ mod tests {
             },
         ];
 
-        let batch = build_files_batch(&schema_fields, &files);
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("files.parquet");
         write_parquet(&path, &batch).unwrap();
@@ -1404,7 +1415,7 @@ mod tests {
             },
         ];
 
-        let batch = build_chunks_batch(&original, 4);
+        let batch = build_chunks_batch(&original, 4).unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("chunks.parquet");
         write_parquet(&path, &batch).unwrap();
@@ -1443,7 +1454,7 @@ mod tests {
             built_at: 1_700_000_000_000_000,
         }];
 
-        let batch = build_files_batch(&schema_fields, &files);
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("files.parquet");
         write_parquet(&path, &batch).unwrap();
@@ -1463,7 +1474,7 @@ mod tests {
             built_at: 1_700_000_000_000_000,
         }];
 
-        let batch = build_files_batch(&schema_fields, &files);
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("files.parquet");
         write_parquet(&path, &batch).unwrap();
@@ -1666,7 +1677,7 @@ mod tests {
             built_at: 1_700_000_000_000_000,
         }];
 
-        let batch = build_files_batch(&schema_fields, &files);
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("files.parquet");
         write_parquet(&path, &batch).unwrap();
