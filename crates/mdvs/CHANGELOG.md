@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## v0.4.1 - 2026-05-13
+#### Bug Fixes
+- (**release**) publish tomljson alongside mdvs - (ee3f7a9) - edoch
+
+- - -
+
 ## v0.4.0 - 2026-05-13
 #### Features
 - (**example_kb**) enrich with pattern/length/range constraints + Array(Object) - (2cc9fb1) - edoch
