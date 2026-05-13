@@ -141,6 +141,21 @@ mod tests {
     }
 
     #[test]
+    fn validate_for_type_date_accepts_string_categories() {
+        // Date categorical values are TOML strings on disk; jsonschema's
+        // format:date validator catches invalid ones at runtime.
+        let k = cats_kind(str_cats(&["2024-01-01", "2024-12-31"]));
+        assert!(k.validate_for_type("f", &FieldType::Date).is_none());
+    }
+
+    #[test]
+    fn validate_for_type_array_date_accepts_string_categories() {
+        let k = cats_kind(str_cats(&["2024-01-01", "2024-12-31"]));
+        let ft = FieldType::Array(Box::new(FieldType::Date));
+        assert!(k.validate_for_type("f", &ft).is_none());
+    }
+
+    #[test]
     fn validate_for_type_boolean_rejects() {
         let k = cats_kind(str_cats(&["a"]));
         let err = k.validate_for_type("f", &FieldType::Boolean).unwrap();

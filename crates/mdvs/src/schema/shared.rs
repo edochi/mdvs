@@ -491,8 +491,8 @@ mod tests {
     // --- Parser tests -----------------------------------------------------
 
     #[test]
-    fn parse_scalar_all_four() {
-        for name in &["String", "Integer", "Float", "Boolean"] {
+    fn parse_scalar_all_five() {
+        for name in &["String", "Integer", "Float", "Boolean", "Date"] {
             let ft = FieldTypeSerde::parse(name).unwrap();
             assert_eq!(ft, FieldTypeSerde::Scalar((*name).into()));
         }
@@ -500,7 +500,7 @@ mod tests {
 
     #[test]
     fn parse_array_of_each_scalar() {
-        for name in &["String", "Integer", "Float", "Boolean"] {
+        for name in &["String", "Integer", "Float", "Boolean", "Date"] {
             let s = format!("Array({name})");
             let ft = FieldTypeSerde::parse(&s).unwrap();
             assert_eq!(
@@ -510,6 +510,36 @@ mod tests {
                 }
             );
         }
+    }
+
+    #[test]
+    fn date_field_type_round_trip() {
+        // FieldType::Date ↔ FieldTypeSerde::Scalar("Date") in both directions.
+        let ft = FieldType::Date;
+        let serde_form = FieldTypeSerde::from(&ft);
+        assert_eq!(serde_form, FieldTypeSerde::Scalar("Date".into()));
+        let back: FieldType = FieldType::try_from(&serde_form).unwrap();
+        assert_eq!(back, FieldType::Date);
+    }
+
+    #[test]
+    fn array_of_date_round_trip() {
+        let ft = FieldType::Array(Box::new(FieldType::Date));
+        let serde_form = FieldTypeSerde::from(&ft);
+        assert_eq!(serde_form.to_string(), "Array(Date)");
+        let back: FieldType = FieldType::try_from(&serde_form).unwrap();
+        assert_eq!(back, ft);
+    }
+
+    #[test]
+    fn date_toml_disk_round_trip() {
+        // Disk form `type = "Date"` deserializes to FieldType::Date and
+        // serializes back to the same string.
+        let toml_str = r#"type = "Date""#;
+        let w: TypeWrapper = toml::from_str(toml_str).unwrap();
+        assert_eq!(w.field_type, FieldTypeSerde::Scalar("Date".into()));
+        let back = toml::to_string(&w).unwrap();
+        assert!(back.contains(r#"type = "Date""#));
     }
 
     #[test]

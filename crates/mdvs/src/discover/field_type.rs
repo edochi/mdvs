@@ -195,6 +195,58 @@ mod tests {
         );
     }
 
+    // --- Date widening tests (TODO-0007 Wave 1) ---
+
+    #[test]
+    fn widen_date_with_date() {
+        assert_eq!(
+            FieldType::from_widen(FieldType::Date, FieldType::Date),
+            FieldType::Date
+        );
+    }
+
+    #[test]
+    fn widen_date_with_string() {
+        assert_eq!(
+            FieldType::from_widen(FieldType::Date, FieldType::String),
+            FieldType::String
+        );
+        assert_eq!(
+            FieldType::from_widen(FieldType::String, FieldType::Date),
+            FieldType::String
+        );
+    }
+
+    #[test]
+    fn widen_date_with_non_string_scalars() {
+        for other in [FieldType::Integer, FieldType::Float, FieldType::Boolean] {
+            assert_eq!(
+                FieldType::from_widen(FieldType::Date, other.clone()),
+                FieldType::String
+            );
+            assert_eq!(
+                FieldType::from_widen(other, FieldType::Date),
+                FieldType::String
+            );
+        }
+    }
+
+    #[test]
+    fn array_of_date_arrow_data_type() {
+        let ft = FieldType::Array(Box::new(FieldType::Date));
+        let dt: DataType = (&ft).into();
+        assert!(matches!(dt, DataType::List(_)));
+        if let DataType::List(inner_field) = dt {
+            assert_eq!(inner_field.data_type(), &DataType::Date32);
+        }
+    }
+
+    #[test]
+    fn date_arrow_data_type_is_date32() {
+        let dt: DataType = (&FieldType::Date).into();
+        assert_eq!(dt, DataType::Date32);
+    }
+
     #[test]
     fn widen_array_plus_scalar_to_string() {
         assert_eq!(

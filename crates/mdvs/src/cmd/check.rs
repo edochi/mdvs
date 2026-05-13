@@ -2622,4 +2622,107 @@ mod tests {
     // NOTE: a former `array_of_object_validates_inner_shape` test was removed
     // as part of TODO-0155 (Array(Object{...}) is no longer a valid on-disk
     // type — see `parse_rejects_array_of_object` in schema::shared::tests).
+
+    // ===== Date type (TODO-0007 Wave 1) =====
+
+    fn date_field(name: &str) -> TomlField {
+        TomlField {
+            name: name.into(),
+            field_type: FieldTypeSerde::Scalar("Date".into()),
+            allowed: vec!["**".into()],
+            required: vec![],
+            nullable: false,
+            constraints: None,
+            preprocess: vec![],
+        }
+    }
+
+    #[test]
+    fn date_field_accepts_rfc3339_date() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("blog")).unwrap();
+        fs::write(
+            tmp.path().join("blog/post.md"),
+            "---\nbirthday: 1990-05-12\n---\n# Body",
+        )
+        .unwrap();
+        write_toml(tmp.path(), vec![date_field("birthday")], vec![]);
+
+        let step = run(tmp.path(), true, false, None);
+        let result = unwrap_check(&step);
+        assert!(
+            result.violations.is_empty(),
+            "expected no violations, got: {:?}",
+            result.violations
+        );
+    }
+
+    #[test]
+    fn date_field_rejects_invalid_calendar_date() {
+        // "2024-13-45" is RFC 3339 *syntax* but jsonschema's date validator
+        // catches invalid month/day.
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("blog")).unwrap();
+        fs::write(
+            tmp.path().join("blog/post.md"),
+            "---\nbirthday: \"2024-13-45\"\n---\n# Body",
+        )
+        .unwrap();
+        write_toml(tmp.path(), vec![date_field("birthday")], vec![]);
+
+        let step = run(tmp.path(), true, false, None);
+        let result = unwrap_check(&step);
+        let v = result
+            .violations
+            .iter()
+            .find(|v| v.field == "birthday" && matches!(v.kind, ViolationKind::WrongType))
+            .expect("expected WrongType violation on birthday");
+        assert!(v.rule.contains("format date"), "got rule: {}", v.rule);
+    }
+
+    #[test]
+    fn date_field_rejects_non_iso_format() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("blog")).unwrap();
+        fs::write(
+            tmp.path().join("blog/post.md"),
+            "---\nbirthday: \"05/12/1990\"\n---\n# Body",
+        )
+        .unwrap();
+        write_toml(tmp.path(), vec![date_field("birthday")], vec![]);
+
+        let step = run(tmp.path(), true, false, None);
+        let result = unwrap_check(&step);
+        let v = result
+            .violations
+            .iter()
+            .find(|v| v.field == "birthday" && matches!(v.kind, ViolationKind::WrongType));
+        assert!(
+            v.is_some(),
+            "expected WrongType violation on non-ISO date, got: {:?}",
+            result.violations
+        );
+    }
+
+    #[test]
+    fn date_field_rejects_non_string_value() {
+        // An integer-looking value YAML parses as an int — jsonschema's `string`
+        // type check fires before format validation.
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("blog")).unwrap();
+        fs::write(
+            tmp.path().join("blog/post.md"),
+            "---\nbirthday: 42\n---\n# Body",
+        )
+        .unwrap();
+        write_toml(tmp.path(), vec![date_field("birthday")], vec![]);
+
+        let step = run(tmp.path(), true, false, None);
+        let result = unwrap_check(&step);
+        let v = result
+            .violations
+            .iter()
+            .find(|v| v.field == "birthday" && matches!(v.kind, ViolationKind::WrongType));
+        assert!(v.is_some(), "violations: {:?}", result.violations);
+    }
 }

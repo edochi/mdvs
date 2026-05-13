@@ -92,6 +92,13 @@ mod tests {
     }
 
     #[test]
+    fn validate_for_type_date_rejects() {
+        let err = validate_for_type("f", &FieldType::Date, "^[A-Z]+$").unwrap();
+        assert!(err.contains("Date"));
+        assert!(err.contains("does not apply"));
+    }
+
+    #[test]
     fn validate_for_type_array_integer_rejects() {
         let ft = FieldType::Array(Box::new(FieldType::Integer));
         let err = validate_for_type("f", &ft, "^[A-Z]+$").unwrap();

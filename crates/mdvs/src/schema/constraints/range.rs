@@ -207,6 +207,13 @@ mod tests {
     }
 
     #[test]
+    fn type_date_rejects() {
+        let err = validate_for_type("f", &FieldType::Date, &int_min(0), &int_max(1)).unwrap();
+        assert!(err.contains("Date"));
+        assert!(err.contains("does not apply"));
+    }
+
+    #[test]
     fn type_object_rejects() {
         let ft = FieldType::Object(BTreeMap::new());
         let err = validate_for_type("f", &ft, &int_min(0), &int_max(1)).unwrap();

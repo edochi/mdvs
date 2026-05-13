@@ -1685,4 +1685,157 @@ mod tests {
         let batches = read_parquet(&path).unwrap();
         assert_eq!(batches[0].num_rows(), 1);
     }
+
+    // ===== Date type (TODO-0007 Wave 1) — Arrow Date32 storage =====
+
+    #[test]
+    fn date_field_writes_date32_column() {
+        let schema_fields = vec![("birthday".into(), FieldType::Date)];
+        let files = vec![FileRow {
+            file_id: "id-1".into(),
+            filename: "a.md".into(),
+            frontmatter: Some(serde_json::json!({"birthday": "1990-05-12"})),
+            content_hash: "h".into(),
+            built_at: 1_700_000_000_000_000,
+        }];
+
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
+        let data = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+        let bday = data
+            .column_by_name("birthday")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Date32Array>()
+            .unwrap();
+
+        // 1990-05-12 - 1970-01-01 = 7_436 days.
+        assert_eq!(bday.value(0), 7_436);
+    }
+
+    #[test]
+    fn date_epoch_value_is_zero() {
+        let schema_fields = vec![("d".into(), FieldType::Date)];
+        let files = vec![FileRow {
+            file_id: "id-1".into(),
+            filename: "a.md".into(),
+            frontmatter: Some(serde_json::json!({"d": "1970-01-01"})),
+            content_hash: "h".into(),
+            built_at: 1_700_000_000_000_000,
+        }];
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
+        let data = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+        let d = data
+            .column_by_name("d")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Date32Array>()
+            .unwrap();
+        assert_eq!(d.value(0), 0);
+    }
+
+    #[test]
+    fn array_of_date_writes_list_of_date32() {
+        let schema_fields = vec![(
+            "milestones".into(),
+            FieldType::Array(Box::new(FieldType::Date)),
+        )];
+        let files = vec![FileRow {
+            file_id: "id-1".into(),
+            filename: "a.md".into(),
+            frontmatter: Some(serde_json::json!({
+                "milestones": ["2024-01-01", "2024-06-15"]
+            })),
+            content_hash: "h".into(),
+            built_at: 1_700_000_000_000_000,
+        }];
+
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
+        let data = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+        let list = data
+            .column_by_name("milestones")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<ListArray>()
+            .unwrap();
+        let values = list
+            .values()
+            .as_any()
+            .downcast_ref::<Date32Array>()
+            .unwrap();
+        // 2024-01-01: days since 1970-01-01 = 19_723.
+        // 2024-06-15: 19_723 + 166 = 19_889.
+        assert_eq!(values.value(0), 19_723);
+        assert_eq!(values.value(1), 19_889);
+    }
+
+    #[test]
+    fn date_round_trips_through_parquet() {
+        let schema_fields = vec![("birthday".into(), FieldType::Date)];
+        let files = vec![FileRow {
+            file_id: "id-1".into(),
+            filename: "a.md".into(),
+            frontmatter: Some(serde_json::json!({"birthday": "2024-03-15"})),
+            content_hash: "h".into(),
+            built_at: 1_700_000_000_000_000,
+        }];
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("files.parquet");
+        write_parquet(&path, &batch).unwrap();
+
+        let batches = read_parquet(&path).unwrap();
+        let data = batches[0]
+            .column_by_name(COL_DATA)
+            .unwrap()
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+        let bday = data
+            .column_by_name("birthday")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Date32Array>()
+            .unwrap();
+        // 2024-03-15: 19_797 days since epoch.
+        assert_eq!(bday.value(0), 19_797);
+    }
+
+    #[test]
+    fn date_field_null_for_unparseable_value() {
+        // Defense in depth: jsonschema rejects bad dates at check, but if a
+        // bad value somehow reaches build_array, store NULL rather than panic.
+        let schema_fields = vec![("d".into(), FieldType::Date)];
+        let files = vec![FileRow {
+            file_id: "id-1".into(),
+            filename: "a.md".into(),
+            frontmatter: Some(serde_json::json!({"d": "not-a-date"})),
+            content_hash: "h".into(),
+            built_at: 1_700_000_000_000_000,
+        }];
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
+        let data = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+        let d = data
+            .column_by_name("d")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Date32Array>()
+            .unwrap();
+        assert!(d.is_null(0));
+    }
 }

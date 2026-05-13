@@ -913,6 +913,81 @@ mod tests {
     }
 
     #[test]
+    fn date_field_emits_string_with_format() {
+        let toml = with_fields(vec![field(
+            "birthday",
+            FieldTypeSerde::Scalar("Date".into()),
+        )]);
+        let out = dsl_to_canonical(&toml);
+        assert_eq!(
+            out["properties"]["birthday"],
+            json!({"type": "string", "format": "date"})
+        );
+    }
+
+    #[test]
+    fn array_of_date_emits_items_format() {
+        let toml = with_fields(vec![field(
+            "milestones",
+            FieldTypeSerde::Array {
+                array: Box::new(FieldTypeSerde::Scalar("Date".into())),
+            },
+        )]);
+        let out = dsl_to_canonical(&toml);
+        assert_eq!(
+            out["properties"]["milestones"],
+            json!({
+                "type": "array",
+                "items": {"type": "string", "format": "date"}
+            })
+        );
+    }
+
+    #[test]
+    fn nullable_date_emits_union_with_format() {
+        let mut f = field("birthday", FieldTypeSerde::Scalar("Date".into()));
+        f.nullable = true;
+        let toml = with_fields(vec![f]);
+        let out = dsl_to_canonical(&toml);
+        assert_eq!(
+            out["properties"]["birthday"],
+            json!({"type": ["string", "null"], "format": "date"})
+        );
+    }
+
+    #[test]
+    fn canonical_to_dsl_recognises_format_date() {
+        // Build a canonical schema by hand, run canonical_to_dsl, expect Date.
+        let schema = json!({
+            "$schema": JSON_SCHEMA_DRAFT,
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+                "birthday": {"type": "string", "format": "date"}
+            },
+        });
+        let imported = canonical_to_dsl(&schema).unwrap();
+        let fields = &imported.fields;
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].name, "birthday");
+        assert_eq!(fields[0].field_type, FieldTypeSerde::Scalar("Date".into()));
+    }
+
+    #[test]
+    fn dsl_to_canonical_round_trip_with_date() {
+        let toml = with_fields(vec![field(
+            "birthday",
+            FieldTypeSerde::Scalar("Date".into()),
+        )]);
+        let canonical = dsl_to_canonical(&toml);
+        let imported = canonical_to_dsl(&canonical).unwrap();
+        let fields = &imported.fields;
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].name, "birthday");
+        assert_eq!(fields[0].field_type, FieldTypeSerde::Scalar("Date".into()));
+    }
+
+    #[test]
     fn nullable_string_field_emits_union_type() {
         // String + nullable=true: standard `["string", "null"]` union.
         let mut f = field("title", FieldTypeSerde::Scalar("String".into()));
@@ -1290,6 +1365,20 @@ mod tests {
             json!({"format": "email"}),
             "format 'email' is not supported",
         );
+    }
+
+    #[test]
+    fn gate_rejects_date_time_format() {
+        // Wave 3 adds date-time; until then, only `date` is allowed.
+        assert_rejects(
+            json!({"format": "date-time"}),
+            "format 'date-time' is not supported",
+        );
+    }
+
+    #[test]
+    fn gate_rejects_non_string_format() {
+        assert_rejects(json!({"format": 42}), "'format' must be a string");
     }
 
     #[test]
