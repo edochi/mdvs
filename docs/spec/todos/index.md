@@ -8,7 +8,7 @@
 | [0004](TODO-0004.md) | Rename --where-clause to --where | done | low | 2026-03-02 |
 | [0005](TODO-0005.md) | Differentiate null from absent in check | done | high | 2026-03-02 |
 | [0006](TODO-0006.md) | Support categorical constraints on fields | done | medium | 2026-03-02 |
-| [0007](TODO-0007.md) | Support Date field type | todo | medium | 2026-03-02 |
+| [0007](TODO-0007.md) | Support Date and DateTime field types | todo | high | 2026-03-02 |
 | [0008](TODO-0008.md) | Support value boundary constraints on numeric fields | done | high | 2026-03-02 |
 | [0009](TODO-0009.md) | Custom field and text processors | todo | low | 2026-03-02 |
 | [0010](TODO-0010.md) | Support length constraints on strings and arrays | done | high | 2026-03-02 |
