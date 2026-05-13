@@ -327,9 +327,15 @@ type = "Float"
 
 The translator (`dsl_to_canonical`) reconstructs the nested shape from dotted names; `canonical_to_dsl` reverses it. Storage transposes the flat list back into a synthetic `FieldType::Object` tree before building Arrow arrays. Validation navigates frontmatter via dotted paths (`navigate_dotted` in `cmd/check.rs`).
 
-### Array-of-Object retention
+### Array-of-Object rejection (TODO-0155)
 
-Top-level Object is rejected (invariant 6). But `Array(Object{...})` is kept as a valid inline shape — per-array-element semantics (no per-leaf nullability, no per-leaf path-scoping inside an element) make flattening inappropriate for array elements. `FieldType::Object` remains in the Rust enum as a valid inner type for `Array` and is reached only via that path.
+Top-level Object is rejected (invariant 6), and `Array(Object{...})` is rejected at three layers:
+
+1. **Parser** (`FieldTypeSerde::parse`) — `type = "Array(Object{...})"` fails to deserialize.
+2. **Inference** (`InferredSchema::infer`) — observed Array-of-mapping fields are partitioned out of `fields` into `dropped`, and a stderr warning fires when init/update/build/check consumes the schema.
+3. **Config-load** (`MdvsToml::validate` invariant 9) — defense in depth for `--from-jsonschema` imports and programmatic construction that bypass the parser.
+
+`FieldType::Object` remains in the Rust enum because Wave C's storage layer synthesizes it transiently from dotted-name leaves (`transpose_to_storage_type` builds `Object` trees before Arrow encoding). It cannot reach the serde surface. A first-class on-disk representation for Array-of-structured-item is tracked in TODO-0156; the v0 workaround is parallel scalar arrays.
 
 ### Shape conflicts
 
@@ -393,16 +399,17 @@ Search uses DataFusion for SQL query execution (`search.rs`):
 
 ## Config Validation
 
-`MdvsToml::validate()` at `schema/config.rs` checks eight invariants:
+`MdvsToml::validate()` at `schema/config.rs` checks nine invariants:
 
 1. **Mutual exclusion** — a field cannot appear in both `[fields].ignore` and `[[fields.field]]`
 2. **Valid glob format** — all globs in `allowed`/`required` must end with `/*` or `/**` (or be `*` / `**`)
 3. **Required covered by allowed** — every `required` glob must be covered by some `allowed` glob
 4. **Constraint validity** — if a field has `[fields.field.constraints]`, the constraint must be valid for the field's type (type applicability + well-formed values + pairwise compatibility)
 5. **Preprocess applicability** — each `preprocess` entry must be applicable to the field's type, and the list must contain no duplicates
-6. **No top-level Object** — `[[fields.field]]` cannot use `Object` as its top-level type (per TODO-0097 / Wave C); nested data is expressed via dotted-name leaf fields. Object remains valid as `Array`'s inner type.
+6. **No top-level Object** — `[[fields.field]]` cannot use `Object` as its top-level type (per TODO-0097 / Wave C); nested data is expressed via dotted-name leaf fields.
 7. **Dotted name well-formedness** — field names must not start or end with `.`, nor contain empty segments (`..`). Names without dots are unaffected.
 8. **No shape conflicts** — a name cannot be declared both as a leaf and as a parent of nested leaves (e.g., `meta` *and* `meta.author`).
+9. **No Array(Object)** — `Array(Object{...})` is not representable on disk (TODO-0155); rejected anywhere in any field's type tree. Defense in depth alongside the parser rejection.
 
 All invariants bail on first error via `anyhow::bail!()`.
 

@@ -96,7 +96,7 @@ The inferred schema is permissive by default. To enforce stricter rules, edit `m
 ```toml
 [[fields.field]]
 name = "tags"
-type = { array = "String" }
+type = "Array(String)"
 allowed = ["**"]
 required = ["daily/**"]
 nullable = false

@@ -7,7 +7,7 @@ Validate frontmatter against the schema. Read-only — never modifies files or c
 `cmd/check.rs` → `run()`
 
 1. **Resolve config** — `resolve_check_config()` reads `mdvs.toml` and, if `--jsonschema PATH` is provided, overrides the `[fields]` section. When no `mdvs.toml` exists but `--jsonschema` is given, synthesizes a default via `MdvsToml::default_with_fields(fields, ignore)` so downstream code sees a normal `MdvsToml`.
-2. **Auto-update** — if `[check].auto_update` is true (default) and no `--jsonschema` override, runs `update::run()` first to detect new fields
+2. **Auto-update** — if `[check].auto_update` is true (default) and no `--jsonschema` override, runs inference + merges any newly-discovered fields into the config. Fields with unrepresentable shapes (`Array(Object{...})`) are partitioned out by `InferredSchema::infer` and surfaced via `emit_dropped_warnings()` to stderr; they are NOT added to the config.
 3. **Scan** — `ScannedFiles::scan(path, &config.scan)` — `ScannedFile.frontmatter_error` carries any YAML→JSON representation failure
 4. **Build validators + pipeline** — `dsl_to_canonical(config)`, compile one `jsonschema::Validator` per field, build the Stage 2 `Pipeline` for each field
 5. **Validate** — for each file:
@@ -27,6 +27,7 @@ Validation runs through the `jsonschema` crate (v0.46). Hand-rolled per-value va
 - **Strict subtype precheck** — `preprocess::strict_subtype_check` runs in Rust before the preprocessor pipeline. Currently enforces strict-Float (rejects integer-backed values on Float / Array(Float) fields unless `widen_int_to_float` is in `preprocess`). See [architecture.md](../architecture.md#strict-subtype-prechecks) for the rationale.
 - **Preprocessing** — each field's `preprocess` array (e.g. `["coerce_to_string"]`) runs before jsonschema, transforming the value via `Pipeline::apply_to_value`.
 - **Error mapping** — `map_validation_error` is an exhaustive match over `ValidationErrorKind`; new variants in future jsonschema versions cause a compile error rather than a silent fallback.
+- **Array-of-mappings against a scalar `Array` field** — fires the existing `WrongType` violation (the element is a JSON Object, not the expected scalar type). No special `Array(Object)` handling is needed in validation because the on-disk type vocabulary doesn't include it (TODO-0155).
 
 See [architecture.md](../architecture.md#validation-pipeline) for the full pipeline and error mapping table.
 

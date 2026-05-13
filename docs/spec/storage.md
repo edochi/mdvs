@@ -57,7 +57,7 @@ The `data` column is a nested Arrow Struct whose children mirror the YAML's natu
 | Float | Float64Array | `v.as_f64()`, falls back to `v.as_i64() as f64` |
 | String | StringArray | actual strings preserved; non-strings serialized to JSON repr |
 | Array(inner) | ListArray | variable-length, child built recursively via `build_array` |
-| Object(fields) | StructArray | nested Struct, children built recursively. Reached only via `Array(Object{...})` inner types or via the synthesized storage tree's intermediates. |
+| Object(fields) | StructArray | nested Struct, children built recursively. Reached only via the synthesized storage tree's intermediates (Wave C transposes flat dotted-name leaves back into a nested Object before Arrow encoding). `Array(Object{...})` is rejected on the disk surface (TODO-0155), so no on-disk type produces this arm directly. |
 
 **Per-row validity** follows the data: a file with `calibration: null` (or no `calibration` key) sees the `cal` Struct column's validity bit set to 0 for that row, propagating to all descendant columns. A file with `calibration: {baseline: {intensity: 0.5}}` but no `wavelength` leaf sees the leaf's validity bit set to 0 while the intermediate Structs are valid.
 

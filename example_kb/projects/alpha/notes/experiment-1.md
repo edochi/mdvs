@@ -18,13 +18,8 @@ calibration:
     wavelength: 850
     intensity: 1
     notes: "initial reference"
-measurements:
-  - timestamp: "10:23:14"
-    value: 0.847
-  - timestamp: "10:24:01"
-    value: 0.853
-  - timestamp: "10:24:48"
-    value: 0.851
+measurement_timestamps: ["10:23:14", "10:24:01", "10:24:48"]
+measurement_values: [0.847, 0.853, 0.851]
 ---
 # Experiment A-017: SPR-A1 Baseline Calibration
 

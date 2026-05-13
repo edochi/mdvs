@@ -303,12 +303,24 @@ impl MdvsToml {
             }
 
             // Invariant 6: top-level Object is not a valid field type.
-            // Array(Object{...}) is fine — we only reject Object at the
-            // top of the field's type tree.
+            // Express nested structure via dotted-name leaves (Wave C).
             if let Ok(FieldType::Object(_)) = FieldType::try_from(&field.field_type) {
                 anyhow::bail!(
-                    "field '{}': top-level Object type is not supported — flatten into dotted-name leaf fields (e.g. '{}.<child>'). Object remains valid as Array's inner type.",
+                    "field '{}': top-level Object type is not supported — flatten into dotted-name leaf fields (e.g. '{}.<child>').",
                     field.name,
+                    field.name
+                );
+            }
+
+            // Invariant 9 (TODO-0155): Object inside Array is not representable
+            // on disk. Defense in depth alongside the parser rejection — catches
+            // --from-jsonschema imports and programmatic construction.
+            if let Ok(ft) = FieldType::try_from(&field.field_type)
+                && type_contains_object_inside_array(&ft)
+            {
+                anyhow::bail!(
+                    "field '{}': Array(Object{{...}}) is not representable on disk. \
+                     Consider parallel scalar arrays (see TODO-0156).",
                     field.name
                 );
             }
@@ -439,6 +451,23 @@ fn validate_field_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// True iff a `FieldType` tree contains an `Object` directly inside an
+/// `Array` (transitively). Used by invariant 9 (TODO-0155).
+///
+/// Top-level `Object` is rejected by invariant 6 separately; this helper
+/// only walks past `Array` and `Object` nodes looking for `Array(Object{...})`
+/// or deeper nestings of the same pattern.
+fn type_contains_object_inside_array(ft: &FieldType) -> bool {
+    match ft {
+        FieldType::Array(inner) => {
+            matches!(inner.as_ref(), FieldType::Object(_))
+                || type_contains_object_inside_array(inner)
+        }
+        FieldType::Object(fields) => fields.values().any(type_contains_object_inside_array),
+        _ => false,
+    }
+}
+
 /// Check if a glob pattern has a valid format for allowed/required lists.
 /// Valid: `*`, `**`, `path/*`, `path/**`. Invalid: bare paths, `*.md`, etc.
 fn is_valid_glob_format(glob: &str) -> bool {
@@ -496,16 +525,16 @@ fn strip_glob_suffix(glob: &str) -> &str {
     }
 }
 
-/// Post-process serialized TOML to render `type` fields as inline tables
-/// and place them right after `name` in each `[[fields.field]]` block.
+/// Post-process serialized TOML to enforce canonical key order within
+/// each `[[fields.field]]` block: `name, type, allowed, required,
+/// nullable, constraints, preprocess`.
 ///
-/// The `toml` crate expands `Array` / `Object` `type` values into
-/// `[fields.field.type]` sub-tables, which land **after** all bare-key
-/// entries (TOML convention). We convert those back to
-/// `type = { array = "String" }` form and reorder so the field block
-/// reads `name, type, allowed, required, nullable, ...` — matching the
-/// `TomlField` struct declaration order and what users get for scalar
-/// `type` values (which serde already inlines correctly).
+/// `type` is a string after TODO-0155 (e.g. `"Array(String)"`), so the
+/// previous sub-table-to-inline-table conversion is no longer needed.
+/// Key ordering is still done here because TOML emits keys in struct
+/// declaration order at the top level, but post-Wave-C sub-sections
+/// (`constraints`, `preprocess`) can still alter the layout depending
+/// on whether they're populated.
 fn inline_field_types(toml_str: &str) -> anyhow::Result<String> {
     let mut doc = toml_str.parse::<toml_edit::DocumentMut>()?;
 
@@ -514,21 +543,6 @@ fn inline_field_types(toml_str: &str) -> anyhow::Result<String> {
         && let Some(array_of_tables) = field_array.as_array_of_tables_mut()
     {
         for table in array_of_tables.iter_mut() {
-            // 1. Convert any Array/Object `type` sub-table into an inline table.
-            if let Some(type_item) = table.get_mut("type")
-                && let Some(t) = type_item.as_table_mut()
-            {
-                let inline = t.clone().into_inline_table();
-                *type_item = toml_edit::Item::Value(inline.into());
-            }
-            // 2. Normalize key formatting (fix missing space before `=`).
-            if let Some(mut key) = table.key_mut("type") {
-                key.fmt();
-            }
-            // 3. Reorder keys: `name` first, `type` second, others follow
-            //    in their existing relative order. Uses toml_edit's
-            //    key-position API. Keys without explicit position fall
-            //    into their insertion order.
             reorder_field_keys(table);
         }
     }
@@ -652,20 +666,6 @@ mod tests {
                         constraints: None,
                         preprocess: vec![],
                     },
-                    TomlField {
-                        name: "meta".into(),
-                        field_type: FieldTypeSerde::Object {
-                            object: BTreeMap::from([
-                                ("author".into(), FieldTypeSerde::Scalar("String".into())),
-                                ("version".into(), FieldTypeSerde::Scalar("Float".into())),
-                            ]),
-                        },
-                        allowed: vec!["**".into()],
-                        required: vec!["**".into()],
-                        nullable: false,
-                        constraints: None,
-                        preprocess: vec![],
-                    },
                 ],
                 max_categories: 10,
                 min_category_repetition: 3,
@@ -711,15 +711,9 @@ required = ["**"]
 
 [[fields.field]]
 name = "tags"
-type = { array = "String" }
+type = "Array(String)"
 allowed = ["blog/**"]
 required = []
-
-[[fields.field]]
-name = "meta"
-type = { object = { author = "String", count = "Integer" } }
-allowed = ["**"]
-required = ["blog/**"]
 
 [embedding_model]
 name = "minishlab/potion-base-8M"
@@ -735,22 +729,13 @@ default_limit = 10
         assert_eq!(parsed.scan.glob, "blog/**");
         assert!(parsed.scan.include_bare_files);
         assert_eq!(parsed.fields.ignore, vec!["internal_id"]);
-        assert_eq!(parsed.fields.field.len(), 3);
+        assert_eq!(parsed.fields.field.len(), 2);
 
         let title_ft = FieldType::try_from(&parsed.fields.field[0].field_type).unwrap();
         assert_eq!(title_ft, FieldType::String);
 
         let tags_ft = FieldType::try_from(&parsed.fields.field[1].field_type).unwrap();
         assert_eq!(tags_ft, FieldType::Array(Box::new(FieldType::String)));
-
-        let meta_ft = FieldType::try_from(&parsed.fields.field[2].field_type).unwrap();
-        assert_eq!(
-            meta_ft,
-            FieldType::Object(BTreeMap::from([
-                ("author".into(), FieldType::String),
-                ("count".into(), FieldType::Integer),
-            ]))
-        );
     }
 
     #[test]
@@ -799,6 +784,7 @@ default_limit = 10
                     preprocess: vec![],
                 },
             ],
+            dropped: vec![],
         };
 
         let scan = ScanConfig {
@@ -833,7 +819,10 @@ default_limit = 10
 
     #[test]
     fn from_inferred_empty() {
-        let schema = InferredSchema { fields: vec![] };
+        let schema = InferredSchema {
+            fields: vec![],
+            dropped: vec![],
+        };
         let scan = ScanConfig {
             glob: "docs/**".into(),
             include_bare_files: true,
@@ -848,7 +837,10 @@ default_limit = 10
 
     #[test]
     fn from_inferred_schema_only() {
-        let schema = InferredSchema { fields: vec![] };
+        let schema = InferredSchema {
+            fields: vec![],
+            dropped: vec![],
+        };
         let scan = ScanConfig {
             glob: "**".into(),
             include_bare_files: false,
@@ -876,6 +868,7 @@ default_limit = 10
                 occurrence_count: 0,
                 preprocess: vec![],
             }],
+            dropped: vec![],
         };
         let scan = ScanConfig {
             glob: "**".into(),
@@ -893,55 +886,39 @@ default_limit = 10
     }
 
     #[test]
-    fn write_uses_inline_tables_for_type() {
-        let mut doc = full_toml(vec![
-            TomlField {
-                name: "tags".into(),
-                field_type: FieldTypeSerde::Array {
-                    array: Box::new(FieldTypeSerde::Scalar("String".into())),
-                },
-                allowed: vec!["**".into()],
-                required: vec![],
-                nullable: false,
-                constraints: None,
-                preprocess: vec![],
+    fn write_uses_function_style_string_for_type() {
+        let mut doc = full_toml(vec![TomlField {
+            name: "tags".into(),
+            field_type: FieldTypeSerde::Array {
+                array: Box::new(FieldTypeSerde::Scalar("String".into())),
             },
-            TomlField {
-                name: "meta".into(),
-                field_type: FieldTypeSerde::Object {
-                    object: BTreeMap::from([(
-                        "author".into(),
-                        FieldTypeSerde::Scalar("String".into()),
-                    )]),
-                },
-                allowed: vec!["**".into()],
-                required: vec![],
-                nullable: false,
-                constraints: None,
-                preprocess: vec![],
-            },
-        ]);
+            allowed: vec!["**".into()],
+            required: vec![],
+            nullable: false,
+            constraints: None,
+            preprocess: vec![],
+        }]);
 
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("mdvs.toml");
         doc.write(&path).unwrap();
         let content = fs::read_to_string(&path).unwrap();
 
-        // Should use inline tables, not separate sections
+        // TODO-0155: function-style strings, not inline tables or section tables.
         assert!(
-            content.contains(r#"type = { array = "String" }"#),
-            "expected inline array type, got:\n{content}"
-        );
-        assert!(
-            content.contains(r#"type = { object = { author = "String" } }"#),
-            "expected inline object type, got:\n{content}"
+            content.contains(r#"type = "Array(String)""#),
+            "expected function-style array type, got:\n{content}"
         );
         assert!(
             !content.contains("[fields.field.type]"),
             "should not have expanded type sections"
         );
+        assert!(
+            !content.contains("type = {"),
+            "should not emit inline-table type form"
+        );
 
-        // Still roundtrips correctly
+        // Still roundtrips correctly.
         let loaded = MdvsToml::read(&path).unwrap();
         assert_eq!(loaded, doc);
     }
@@ -1058,7 +1035,7 @@ include_bare_files = false
 
 [[fields.field]]
 name = "tags"
-type = { array = "String" }
+type = "Array(String)"
 allowed = ["blog/**"]
 required = ["blog/**"]
 nullable = false
@@ -1400,8 +1377,8 @@ nullable = false
     }
 
     #[test]
-    fn validate_accepts_array_of_object() {
-        // Array(Object{...}) is fine — only top-level Object is rejected.
+    fn validate_rejects_array_of_object() {
+        // TODO-0155 invariant 9: Array(Object{...}) is rejected at config load.
         let config = full_toml(vec![TomlField {
             name: "readings".into(),
             field_type: FieldTypeSerde::Array {
@@ -1411,6 +1388,25 @@ nullable = false
                         ("value".into(), FieldTypeSerde::Scalar("Float".into())),
                     ]),
                 }),
+            },
+            allowed: vec!["**".into()],
+            required: vec![],
+            nullable: false,
+            constraints: None,
+            preprocess: vec![],
+        }]);
+        let err = config.validate().unwrap_err().to_string();
+        assert!(err.contains("readings"), "got: {err}");
+        assert!(err.contains("Array(Object"), "got: {err}");
+        assert!(err.contains("TODO-0156"), "got: {err}");
+    }
+
+    #[test]
+    fn validate_accepts_array_of_scalar() {
+        let config = full_toml(vec![TomlField {
+            name: "tags".into(),
+            field_type: FieldTypeSerde::Array {
+                array: Box::new(FieldTypeSerde::Scalar("String".into())),
             },
             allowed: vec!["**".into()],
             required: vec![],
