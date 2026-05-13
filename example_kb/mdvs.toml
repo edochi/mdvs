@@ -1,17 +1,3 @@
-# ───────────────────────────────────────────────────────────────────────
-# WARNING — manual constraints below are NOT auto-inferred.
-#
-# This file is tracked in git. Several fields carry hand-added `pattern`,
-# `min`/`max`, and `min_length`/`max_length` constraints (e.g. `email`,
-# `equipment_id`, `firmware_version`, `sample_count`, `version`,
-# `wavelength_nm`). The `measurements` field exercises Array(Object).
-#
-# `mdvs init --force example_kb` will REGENERATE this file from inference
-# and silently drop all manual constraints. To regenerate without losing
-# them, run `mdvs update reinfer` (preserves manual edits) or restore
-# from git after init.
-# ───────────────────────────────────────────────────────────────────────
-
 [scan]
 glob = "**"
 include_bare_files = true
@@ -33,7 +19,7 @@ ignore = []
 
 [[fields.field]]
 name = "action_items"
-type = { array = "String" }
+type = "Array(String)"
 allowed = ["meetings/**", "projects/alpha/meetings/**", "projects/beta/meetings/**"]
 required = ["meetings/all-hands/**", "projects/alpha/meetings/**", "projects/beta/meetings/**"]
 nullable = false
@@ -61,7 +47,7 @@ nullable = false
 
 [[fields.field]]
 name = "attendees"
-type = { array = "String" }
+type = "Array(String)"
 allowed = ["meetings/**", "projects/alpha/meetings/**", "projects/beta/meetings/**"]
 required = ["meetings/**", "projects/alpha/meetings/**", "projects/beta/meetings/**"]
 nullable = false
@@ -208,9 +194,9 @@ required = []
 nullable = false
 
 [fields.field.constraints]
-pattern = '^\d+\.\d+\.\d+$'
 min_length = 5
 max_length = 11
+pattern = '^\d+\.\d+\.\d+$'
 
 [[fields.field]]
 name = "funding"
@@ -245,8 +231,15 @@ required = ["reference/protocols/**"]
 nullable = false
 
 [[fields.field]]
-name = "measurements"
-type = { array = { object = { timestamp = "String", value = "Float" } } }
+name = "measurement_timestamps"
+type = "Array(String)"
+allowed = ["projects/alpha/notes/**"]
+required = []
+nullable = false
+
+[[fields.field]]
+name = "measurement_values"
+type = "Array(Float)"
 allowed = ["projects/alpha/notes/**"]
 required = []
 nullable = false
@@ -340,7 +333,7 @@ categories = ["active", "archived", "completed", "draft", "published"]
 
 [[fields.field]]
 name = "tags"
-type = { array = "String" }
+type = "Array(String)"
 allowed = ["blog/**", "projects/alpha/*", "projects/alpha/notes/**", "projects/archived/**", "projects/beta/*", "projects/beta/notes/**"]
 required = ["blog/published/**", "projects/alpha/notes/**", "projects/archived/**", "projects/beta/notes/**"]
 nullable = false

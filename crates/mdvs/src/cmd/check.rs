@@ -2611,48 +2611,7 @@ mod tests {
         assert!(!names.contains(&"cal.baseline.wavelength"));
     }
 
-    #[test]
-    fn array_of_object_validates_inner_shape() {
-        use std::collections::BTreeMap;
-        let tmp = tempfile::tempdir().unwrap();
-        fs::create_dir_all(tmp.path().join("blog")).unwrap();
-        fs::write(
-            tmp.path().join("blog/post.md"),
-            "---\nreadings:\n  - time: \"10:00\"\n    value: 0.5\n  - time: \"10:05\"\n    value: \"oops\"\n---\n# Body",
-        )
-        .unwrap();
-
-        write_toml(
-            tmp.path(),
-            vec![TomlField {
-                name: "readings".into(),
-                field_type: FieldTypeSerde::Array {
-                    array: Box::new(FieldTypeSerde::Object {
-                        object: BTreeMap::from([
-                            ("time".into(), FieldTypeSerde::Scalar("String".into())),
-                            ("value".into(), FieldTypeSerde::Scalar("Float".into())),
-                        ]),
-                    }),
-                },
-                allowed: vec!["**".into()],
-                required: vec![],
-                nullable: false,
-                constraints: None,
-                preprocess: vec![],
-            }],
-            vec![],
-        );
-
-        let step = run(tmp.path(), true, false, None);
-        let result = unwrap_check(&step);
-        // The second element's `value` is a String, not a Float — should fire WrongType.
-        let v = result
-            .violations
-            .iter()
-            .find(|v| v.field == "readings" && matches!(v.kind, ViolationKind::WrongType))
-            .expect("expected WrongType on readings (inner Object's value field)");
-        // jsonschema's instance_path points into the array; the violation
-        // surfaces under the array field's name.
-        let _ = v;
-    }
+    // NOTE: a former `array_of_object_validates_inner_shape` test was removed
+    // as part of TODO-0155 (Array(Object{...}) is no longer a valid on-disk
+    // type — see `parse_rejects_array_of_object` in schema::shared::tests).
 }
