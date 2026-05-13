@@ -38,7 +38,7 @@ The new `mdvs.toml` reproduces the original `[[fields.field]]` definitions:
 - Field types (strict — `String` is `String`, not a permissive set)
 - Constraints (`categories`, `min`/`max`, `min_length`/`max_length`, `pattern`)
 - Path-scoping (`allowed`, `required`)
-- Preprocessor arrays (`preprocess = ["coerce_to_string"]`, etc.)
+- Preprocessor arrays (`preprocess = ["coerce-to-string"]`, etc.)
 - The `[fields].ignore` list
 
 mdvs-specific metadata that JSON Schema 2020-12 doesn't model is carried in `x-mdvs.*` extension keys; generic JSON Schema validators ignore them, and `init --from-jsonschema` reads them back.

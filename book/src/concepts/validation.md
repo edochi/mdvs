@@ -72,8 +72,8 @@ Type checking is strict — a `String` field rejects integers, a `Boolean` field
 
 **Preprocessors normalize before validation.** A field's `preprocess` array runs before jsonschema sees the value. Two built-ins:
 
-- `coerce_to_string` — non-string values (booleans, integers, arrays) are serialized to their JSON string representation, then validated as strings. Auto-inferred when the inferred type widened to `String` because of mixed-type observations.
-- `widen_int_to_float` — integers are widened to equivalent floats. Auto-inferred when the inferred type widened to `Float` because some files used `5` and others `5.0`. Without it, a Float field rejects integer values.
+- `coerce-to-string` — non-string values (booleans, integers, arrays) are serialized to their JSON string representation, then validated as strings. Auto-inferred when the inferred type widened to `String` because of mixed-type observations.
+- `widen-int-to-float` — integers are widened to equivalent floats. Auto-inferred when the inferred type widened to `Float` because some files used `5` and others `5.0`. Without it, a Float field rejects integer values.
 
 Fields with empty `preprocess` arrays are validated strictly — there are no implicit leniencies. See [Types & Widening](./types.md) for how inference picks the preprocessors.
 
@@ -85,7 +85,7 @@ Fields with empty `preprocess` arrays are validated strictly — there are no im
 
 Per-value validation runs through the `jsonschema` crate. mdvs translates `mdvs.toml`'s `[fields]` block into a JSON Schema 2020-12 document, compiles one validator per field, runs Stage 2 preprocessors, then validates each value. Errors from `jsonschema` are mapped exhaustively into the seven `ViolationKind`s above.
 
-One subtype check runs in Rust ahead of jsonschema: a `Float` field without `widen_int_to_float` rejects integer-backed values (`5` is rejected, `5.0` is accepted). JSON Schema's `"number"` accepts both — but YAML and TOML preserve the int/float distinction at parse time, and so does mdvs.
+One subtype check runs in Rust ahead of jsonschema: a `Float` field without `widen-int-to-float` rejects integer-backed values (`5` is rejected, `5.0` is accepted). JSON Schema's `"number"` accepts both — but YAML and TOML preserve the int/float distinction at parse time, and so does mdvs.
 
 ## Null handling
 

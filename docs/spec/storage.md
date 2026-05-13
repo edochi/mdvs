@@ -61,7 +61,7 @@ The `data` column is a nested Arrow Struct whose children mirror the YAML's natu
 
 **Per-row validity** follows the data: a file with `calibration: null` (or no `calibration` key) sees the `cal` Struct column's validity bit set to 0 for that row, propagating to all descendant columns. A file with `calibration: {baseline: {intensity: 0.5}}` but no `wavelength` leaf sees the leaf's validity bit set to 0 while the intermediate Structs are valid.
 
-**String preprocessing**: a `String` field is strict by default — non-string JSON values violate validation and never reach the storage layer. Fields declaring `preprocess = ["coerce_to_string"]` (often auto-inferred when mixed types were observed) accept any JSON value; non-strings are serialized to their JSON string representation before validation, then stored as strings. This preserves the "never silently drop data" contract for fields that opt in.
+**String preprocessing**: a `String` field is strict by default — non-string JSON values violate validation and never reach the storage layer. Fields declaring `preprocess = ["coerce-to-string"]` (often auto-inferred when mixed types were observed) accept any JSON value; non-strings are serialized to their JSON string representation before validation, then stored as strings. This preserves the "never silently drop data" contract for fields that opt in.
 
 ## Content Hash
 

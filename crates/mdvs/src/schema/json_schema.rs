@@ -1503,7 +1503,7 @@ mod tests {
         let out = dsl_to_canonical(&with_fields(vec![f]));
         assert_eq!(
             out["properties"]["score"]["x-mdvs"]["preprocess"],
-            json!(["widen_int_to_float"])
+            json!(["widen-int-to-float"])
         );
     }
 

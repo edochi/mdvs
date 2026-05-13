@@ -166,7 +166,7 @@ type = "String"
 allowed = ["**"]
 required = []
 nullable = false
-preprocess = ["coerce_to_string"]
+preprocess = ["coerce-to-string"]
 "#;
         fs::write(dir.join("mdvs.toml"), toml_content).unwrap();
     }

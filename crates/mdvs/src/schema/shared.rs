@@ -158,7 +158,7 @@ impl<'a> Parser<'a> {
         self.skip_ws();
         if self.peek() == Some(b'@') {
             return Err(ParseError {
-                message: "reference syntax (@Name) is not supported in v0 (see TODO-0156)".into(),
+                message: "reference syntax (@Name) is not supported".into(),
                 column: self.pos + 1,
             });
         }
@@ -177,8 +177,8 @@ impl<'a> Parser<'a> {
                 })
             }
             "Object" => Err(ParseError {
-                message: "Object types are not supported on disk (Wave C). \
-                          Express nested structure via dotted-name leaves \
+                message: "Object types are not supported on disk. \
+                          Express nested structure with dotted-name leaf fields \
                           (e.g. `calibration.baseline.wavelength`)"
                     .into(),
                 column: ident_start + 1,
@@ -197,7 +197,7 @@ impl<'a> Parser<'a> {
         self.skip_ws();
         if self.peek() == Some(b'@') {
             return Err(ParseError {
-                message: "reference syntax (@Name) is not supported in v0 (see TODO-0156)".into(),
+                message: "reference syntax (@Name) is not supported".into(),
                 column: self.pos + 1,
             });
         }
@@ -212,8 +212,8 @@ impl<'a> Parser<'a> {
                 column: inner_start + 1,
             }),
             "Object" => Err(ParseError {
-                message: "Array(Object{...}) is not supported in v0. \
-                          Consider parallel scalar arrays (see TODO-0156)"
+                message: "Array of Object is not supported. \
+                          Use parallel scalar arrays — one Array(Scalar) field per element-leaf"
                     .into(),
                 column: inner_start + 1,
             }),
@@ -516,8 +516,8 @@ mod tests {
     #[test]
     fn parse_rejects_array_of_object_points_at_object() {
         let err = FieldTypeSerde::parse("Array(Object{x: String})").unwrap_err();
-        assert!(err.message.contains("Array(Object"));
-        assert!(err.message.contains("TODO-0156"));
+        assert!(err.message.contains("Array of Object is not supported"));
+        assert!(err.message.contains("parallel scalar arrays"));
         // 'Object' starts at byte 7 → column 7 (1-based).
         assert_eq!(err.column, 7);
     }
@@ -533,15 +533,15 @@ mod tests {
     fn parse_rejects_object_top_level() {
         let err = FieldTypeSerde::parse("Object{x: String}").unwrap_err();
         assert!(err.message.contains("Object types are not supported"));
-        assert!(err.message.contains("dotted-name leaves"));
+        assert!(err.message.contains("dotted-name leaf fields"));
         assert_eq!(err.column, 1);
     }
 
     #[test]
-    fn parse_rejects_at_ref_mentions_todo_0156() {
+    fn parse_rejects_at_ref() {
         let err = FieldTypeSerde::parse("@SensorReading").unwrap_err();
         assert!(err.message.contains("@Name"));
-        assert!(err.message.contains("TODO-0156"));
+        assert!(err.message.contains("not supported"));
         assert_eq!(err.column, 1);
     }
 
@@ -549,7 +549,7 @@ mod tests {
     fn parse_rejects_at_ref_inside_array() {
         let err = FieldTypeSerde::parse("Array(@SensorReading)").unwrap_err();
         assert!(err.message.contains("@Name"));
-        assert!(err.message.contains("TODO-0156"));
+        assert!(err.message.contains("not supported"));
         assert_eq!(err.column, 7);
     }
 

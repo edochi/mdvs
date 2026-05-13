@@ -48,8 +48,8 @@ impl DropReason {
     pub fn message(&self) -> &'static str {
         match self {
             DropReason::ArrayOfObject => {
-                "Array(Object{...}) isn't representable on disk. \
-                 Consider parallel scalar arrays (see TODO-0156)."
+                "Array of Object isn't representable on disk. \
+                 Use parallel scalar arrays — one Array(Scalar) field per element-leaf."
             }
         }
     }

@@ -312,15 +312,15 @@ impl MdvsToml {
                 );
             }
 
-            // Invariant 9 (TODO-0155): Object inside Array is not representable
-            // on disk. Defense in depth alongside the parser rejection — catches
+            // Invariant 9: Object inside Array is not representable on disk.
+            // Defense in depth alongside the parser rejection — catches
             // --from-jsonschema imports and programmatic construction.
             if let Ok(ft) = FieldType::try_from(&field.field_type)
                 && type_contains_object_inside_array(&ft)
             {
                 anyhow::bail!(
-                    "field '{}': Array(Object{{...}}) is not representable on disk. \
-                     Consider parallel scalar arrays (see TODO-0156).",
+                    "field '{}': Array of Object is not representable on disk. \
+                     Use parallel scalar arrays — one Array(Scalar) field per element-leaf.",
                     field.name
                 );
             }
@@ -1274,7 +1274,7 @@ nullable = false
         }]);
         let err = config.validate().unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("widen_int_to_float"), "got: {msg}");
+        assert!(msg.contains("widen-int-to-float"), "got: {msg}");
         assert!(msg.contains("not applicable"), "got: {msg}");
         assert!(msg.contains("Float, Array(Float)"), "got: {msg}");
     }
@@ -1292,7 +1292,7 @@ nullable = false
         }]);
         let err = config.validate().unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("coerce_to_string"), "got: {msg}");
+        assert!(msg.contains("coerce-to-string"), "got: {msg}");
         assert!(msg.contains("not applicable"), "got: {msg}");
     }
 
@@ -1397,8 +1397,8 @@ nullable = false
         }]);
         let err = config.validate().unwrap_err().to_string();
         assert!(err.contains("readings"), "got: {err}");
-        assert!(err.contains("Array(Object"), "got: {err}");
-        assert!(err.contains("TODO-0156"), "got: {err}");
+        assert!(err.contains("Array of Object"), "got: {err}");
+        assert!(err.contains("parallel scalar arrays"), "got: {err}");
     }
 
     #[test]

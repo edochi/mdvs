@@ -78,7 +78,7 @@ type = "String"
 allowed = ["projects/alpha/notes/**", "projects/beta/notes/**"]
 required = ["projects/alpha/notes/**", "projects/beta/notes/**"]
 nullable = false
-preprocess = ["coerce_to_string"]
+preprocess = ["coerce-to-string"]
 
 [[fields.field]]
 name = "calibration.adjusted.intensity"
@@ -100,7 +100,7 @@ type = "Float"
 allowed = ["projects/alpha/notes/**"]
 required = []
 nullable = false
-preprocess = ["widen_int_to_float"]
+preprocess = ["widen-int-to-float"]
 
 [[fields.field]]
 name = "calibration.baseline.notes"
@@ -115,7 +115,7 @@ type = "Float"
 allowed = ["projects/alpha/notes/**"]
 required = []
 nullable = false
-preprocess = ["widen_int_to_float"]
+preprocess = ["widen-int-to-float"]
 
 [[fields.field]]
 name = "commission_date"
@@ -204,7 +204,7 @@ type = "String"
 allowed = ["projects/alpha/notes/**", "projects/archived/**", "projects/beta/notes/**"]
 required = ["projects/alpha/notes/**", "projects/archived/**", "projects/beta/notes/**"]
 nullable = false
-preprocess = ["coerce_to_string"]
+preprocess = ["coerce-to-string"]
 
 [fields.field.constraints]
 categories = ['["internal"]', "internal"]
@@ -337,7 +337,7 @@ type = "Array(String)"
 allowed = ["blog/**", "projects/alpha/*", "projects/alpha/notes/**", "projects/archived/**", "projects/beta/*", "projects/beta/notes/**"]
 required = ["blog/published/**", "projects/alpha/notes/**", "projects/archived/**", "projects/beta/notes/**"]
 nullable = false
-preprocess = ["coerce_to_string"]
+preprocess = ["coerce-to-string"]
 
 [[fields.field]]
 name = "title"
@@ -369,7 +369,7 @@ type = "Float"
 allowed = ["projects/alpha/notes/**"]
 required = ["projects/alpha/notes/**"]
 nullable = false
-preprocess = ["widen_int_to_float"]
+preprocess = ["widen-int-to-float"]
 
 [fields.field.constraints]
 min = 100

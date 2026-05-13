@@ -1,9 +1,9 @@
 //! Preprocessor pipeline run before jsonschema validation.
 //!
-//! Three-stage architecture (per TODO-0149 design):
-//! - Stage 1 (field-name, global): no built-ins in v0; framework only.
-//! - Stage 2 (per-field value): `coerce_to_string`, `widen_int_to_float`.
-//! - Stage 3 (per-document, global): no built-ins in v0; framework only.
+//! Three-stage architecture:
+//! - Stage 1 (field-name, global): framework only.
+//! - Stage 2 (per-field value): `coerce-to-string`, `widen-int-to-float`.
+//! - Stage 3 (per-document, global): framework only.
 //!
 //! Stages are configured per `[[fields.field]]` (Stage 2) or in a future
 //! top-level `[preprocess]` section (Stages 1 + 3). Inference auto-populates
@@ -19,13 +19,13 @@ use std::collections::HashMap;
 
 /// Per-field value preprocessor.
 ///
-/// `coerce_to_string` serializes non-string non-null values via `Value::to_string()`
+/// `coerce-to-string` serializes non-string non-null values via `Value::to_string()`
 /// (matching the build-time JSON serialization in storage.rs).
 ///
-/// `widen_int_to_float` converts integer-backed numbers to f64-backed numbers
+/// `widen-int-to-float` converts integer-backed numbers to f64-backed numbers
 /// for fields typed `Float` or `Array(Float)` that received integer values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "kebab-case")]
 pub enum ValueStage {
     /// Serialize non-string non-null values to JSON-stringified form.
     /// Auto-inferred when widening landed on `String` due to mixed scalar types.
@@ -75,12 +75,12 @@ impl ValueStage {
 }
 
 impl std::fmt::Display for ValueStage {
-    /// Renders the snake_case form used in `mdvs.toml`. Matches the serde
+    /// Renders the kebab-case form used in `mdvs.toml`. Matches the serde
     /// rename rule — error messages and toml stay consistent.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let name = match self {
-            ValueStage::CoerceToString => "coerce_to_string",
-            ValueStage::WidenIntToFloat => "widen_int_to_float",
+            ValueStage::CoerceToString => "coerce-to-string",
+            ValueStage::WidenIntToFloat => "widen-int-to-float",
         };
         f.write_str(name)
     }
@@ -403,11 +403,11 @@ mod tests {
         // Display matches the serde rename — error messages and toml stay in sync.
         assert_eq!(
             format!("{}", ValueStage::CoerceToString),
-            "coerce_to_string"
+            "coerce-to-string"
         );
         assert_eq!(
             format!("{}", ValueStage::WidenIntToFloat),
-            "widen_int_to_float"
+            "widen-int-to-float"
         );
     }
 

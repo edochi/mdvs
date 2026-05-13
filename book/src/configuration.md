@@ -336,17 +336,17 @@ The optional `preprocess` array on a field declares value transformations that r
 
 | Stage | Applies to | Effect |
 |---|---|---|
-| `coerce_to_string` | `String`, `Array(String)` | Serialize non-string JSON values to their JSON string form before validation |
-| `widen_int_to_float` | `Float`, `Array(Float)` | Treat integer values as their float equivalent |
+| `coerce-to-string` | `String`, `Array(String)` | Serialize non-string JSON values to their JSON string form before validation |
+| `widen-int-to-float` | `Float`, `Array(Float)` | Treat integer values as their float equivalent |
 
 ```toml
 [[fields.field]]
 name = "priority"
 type = "String"
-preprocess = ["coerce_to_string"]
+preprocess = ["coerce-to-string"]
 ```
 
-Preprocessors are **auto-inferred** during `init` and `update reinfer` based on observed type-widening events: a field that widened to `String` because of mixed-type observations gets `coerce_to_string`; a `Float` field that observed integers gets `widen_int_to_float`. An empty `preprocess` array means strict validation — no coercion.
+Preprocessors are **auto-inferred** during `init` and `update reinfer` based on observed type-widening events: a field that widened to `String` because of mixed-type observations gets `coerce-to-string`; a `Float` field that observed integers gets `widen-int-to-float`. An empty `preprocess` array means strict validation — no coercion.
 
 Each entry must be applicable to the field's type, and duplicates are rejected at config load. See [Types & Widening](./concepts/types.md) for the full rules.
 

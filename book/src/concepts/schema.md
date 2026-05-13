@@ -153,7 +153,7 @@ Only `name` is required — properties you omit use permissive defaults:
 
 | Property | Default | Meaning |
 |---|---|---|
-| `type` | `String` | Strict string check (add `preprocess = ["coerce_to_string"]` to accept any JSON value) |
+| `type` | `String` | Strict string check (add `preprocess = ["coerce-to-string"]` to accept any JSON value) |
 | `allowed` | `["**"]` | Allowed in every file |
 | `required` | `[]` | Not required anywhere |
 | `nullable` | `true` | Null values accepted |

@@ -202,7 +202,7 @@ type = "Float"
 [[fields.field]]
 name = "calibration.baseline.intensity"
 type = "Float"
-preprocess = ["widen_int_to_float"]   # Integer + Float mix → opted in
+preprocess = ["widen-int-to-float"]   # Integer + Float mix → opted in
 
 [[fields.field]]
 name = "calibration.baseline.notes"
@@ -211,11 +211,11 @@ type = "String"
 [[fields.field]]
 name = "calibration.baseline.wavelength"
 type = "Float"
-preprocess = ["widen_int_to_float"]
+preprocess = ["widen-int-to-float"]
 ```
 
 What happened:
-- `calibration.baseline.wavelength` seen as both Integer (850) and Float (632.8) → widened to Float with `widen_int_to_float` preprocessor recording the mix
+- `calibration.baseline.wavelength` seen as both Integer (850) and Float (632.8) → widened to Float with `widen-int-to-float` preprocessor recording the mix
 - `calibration.baseline.intensity` similar: Integer (1) + Float (0.95) → Float with the preprocessor
 - `calibration.baseline.notes` only in experiment-1 → still inferred as String (with a `required` glob narrowed to just the files that have it)
 - `calibration.adjusted.*` only in experiment-2 → inferred from that file alone
@@ -292,23 +292,23 @@ When inference observes a field as a mix of types (some files have `priority: 1`
 [[fields.field]]
 name = "priority"
 type = "String"
-preprocess = ["coerce_to_string"]
+preprocess = ["coerce-to-string"]
 ```
 
-The `coerce_to_string` entry tells validation: "before checking this value is a string, serialize whatever you find to its JSON representation." Without it, the field is strict — integers and booleans fail validation.
+The `coerce-to-string` entry tells validation: "before checking this value is a string, serialize whatever you find to its JSON representation." Without it, the field is strict — integers and booleans fail validation.
 
-Same for Float: a mix of `5` and `5.0` widens to `Float` with `preprocess = ["widen_int_to_float"]`. Without it, integers fail the float check.
+Same for Float: a mix of `5` and `5.0` widens to `Float` with `preprocess = ["widen-int-to-float"]`. Without it, integers fail the float check.
 
 The two built-in Stage 2 preprocessors:
 
 | Preprocessor | Applies to | Effect |
 |---|---|---|
-| `coerce_to_string` | `String`, `Array(String)` | Serialize non-strings to their JSON string representation before validation |
-| `widen_int_to_float` | `Float`, `Array(Float)` | Treat integer values as their float equivalent |
+| `coerce-to-string` | `String`, `Array(String)` | Serialize non-strings to their JSON string representation before validation |
+| `widen-int-to-float` | `Float`, `Array(Float)` | Treat integer values as their float equivalent |
 
 **`preprocess = []` means strict.** If you delete a preprocessor from `mdvs.toml`, the field rejects values that would have been coerced. Conversely, you can hand-add a preprocessor to a strict-inferred field if you want to accept type variation.
 
-**In storage** — when validation accepts a coerced value, the coerced form is what gets stored. A `priority: 1` value with `coerce_to_string` becomes `"1"` in the search index. No data is silently dropped.
+**In storage** — when validation accepts a coerced value, the coerced form is what gets stored. A `priority: 1` value with `coerce-to-string` becomes `"1"` in the search index. No data is silently dropped.
 
 Re-run `mdvs update reinfer <field>` to refresh both the inferred type and the inferred preprocessors after editing source files.
 
