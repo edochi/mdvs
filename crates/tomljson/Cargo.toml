@@ -8,7 +8,6 @@ repository = "https://github.com/edochi/mdvs"
 readme = "README.md"
 keywords = ["toml", "json", "schema", "serde"]
 categories = ["encoding", "parser-implementations"]
-publish = false
 
 [dependencies]
 toml = "1"
