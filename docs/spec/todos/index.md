@@ -156,4 +156,5 @@
 | [0152](TODO-0152.md) | Layered internal structure with strict downward dependencies | todo | medium | 2026-05-06 |
 | [0153](TODO-0153.md) | Small composable extension crates around `jsonschema` (potential extraction) | deferred | low | 2026-05-06 |
 | [0154](TODO-0154.md) | Cache overlay validators by signature for path-scoped validation | todo | medium | 2026-05-11 |
-| [0155](TODO-0155.md) | Rationalize mdvs.toml type syntax: unify display ↔ serde + reusable $defs / $ref | todo | high | 2026-05-11 |
+| [0155](TODO-0155.md) | Unify mdvs.toml type syntax with CLI Display (function-style) | todo | high | 2026-05-11 |
+| [0156](TODO-0156.md) | Represent Array of structured items without violating Wave C's flattening | todo | low | 2026-05-13 |
