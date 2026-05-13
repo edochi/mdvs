@@ -201,10 +201,11 @@ nullable = false
 |---|---|---|---|
 | `name` | String | (required) | Frontmatter key |
 | `type` | FieldType | `"String"` | Expected value type |
-| `allowed` | String[] | `["**"]` | Glob patterns where the field may appear |
-| `required` | String[] | `[]` | Glob patterns where the field must be present |
+| `allowed` | Array(String) | `["**"]` | Glob patterns where the field may appear |
+| `required` | Array(String) | `[]` | Glob patterns where the field must be present |
 | `nullable` | Boolean | `true` | Whether null values are accepted |
 | `constraints` | Table | (absent) | Optional value constraints (see [Constraints](#constraints)) |
+| `preprocess` | Array(String) | `[]` | Stage 2 value preprocessors — see [Preprocessors](#preprocessors) |
 
 All fields except `name` have permissive defaults. A minimal entry with just a name:
 
@@ -234,16 +235,30 @@ Scalar types are plain strings:
 type = "String"    # also: "Boolean", "Integer", "Float"
 ```
 
-Arrays use an inline table:
+Arrays use a function-style string:
 
 ```toml
-type = { array = "String" }
+type = "Array(String)"
 ```
 
-Objects use a nested inline table:
+**Structured types are not supported on disk.** Nested Objects in frontmatter are expressed via dotted-name leaf fields — see [Types](./concepts/types.md) for the flattening rule. Arrays of structured items (`Array(Object{...})`) have no first-class representation in v0; use **parallel scalar arrays** as a workaround:
 
 ```toml
-type = { object = { author = "String", count = "Integer" } }
+# Instead of an unsupported Array(Object{timestamp, value}):
+[[fields.field]]
+name = "measurement_timestamps"
+type = "Array(String)"
+
+[[fields.field]]
+name = "measurement_values"
+type = "Array(Float)"
+```
+
+The valid type grammar is:
+
+```text
+Type   := Scalar | Array(Scalar)
+Scalar := String | Integer | Float | Boolean
 ```
 
 See [Types](./concepts/types.md) for the full type system, including widening rules.
@@ -290,7 +305,50 @@ min = 1
 max = 5
 ```
 
-Categories are auto-inferred during `init` and `update reinfer`. Range constraints are not auto-inferred but can be inferred on demand with `update reinfer <field> --with=range`. See [Constraints](./concepts/constraints.md) for the full reference.
+**`min_length` / `max_length`** — bounds string length (Unicode scalar count) or array length:
+
+```toml
+[[fields.field]]
+name = "slug"
+type = "String"
+
+[fields.field.constraints]
+min_length = 3
+max_length = 64
+```
+
+**`pattern`** — regex applied to string values, compiled at config load:
+
+```toml
+[[fields.field]]
+name = "version"
+type = "String"
+
+[fields.field.constraints]
+pattern = '^v\d+\.\d+\.\d+$'
+```
+
+Categories are auto-inferred during `init` and `update reinfer`. Range constraints are not auto-inferred but can be inferred on demand with `update reinfer <field> --with=range`. Length and pattern are not auto-inferred — add them by hand. See [Constraints](./concepts/constraints.md) for the full reference.
+
+### Preprocessors
+
+The optional `preprocess` array on a field declares value transformations that run **before** validation. Two built-in stages:
+
+| Stage | Applies to | Effect |
+|---|---|---|
+| `coerce-to-string` | `String`, `Array(String)` | Serialize non-string JSON values to their JSON string form before validation |
+| `widen-int-to-float` | `Float`, `Array(Float)` | Treat integer values as their float equivalent |
+
+```toml
+[[fields.field]]
+name = "priority"
+type = "String"
+preprocess = ["coerce-to-string"]
+```
+
+Preprocessors are **auto-inferred** during `init` and `update reinfer` based on observed type-widening events: a field that widened to `String` because of mixed-type observations gets `coerce-to-string`; a `Float` field that observed integers gets `widen-int-to-float`. An empty `preprocess` array means strict validation — no coercion.
+
+Each entry must be applicable to the field's type, and duplicates are rejected at config load. See [Types & Widening](./concepts/types.md) for the full rules.
 
 ### Inference thresholds
 
@@ -341,10 +399,10 @@ nullable = false
 
 [[fields.field]]
 name = "tags"
+type = "Array(String)"
 allowed = ["blog/**", "projects/alpha/*", "projects/alpha/notes/**", "projects/archived/**", "projects/beta/*", "projects/beta/notes/**"]
 required = ["blog/published/**", "projects/alpha/notes/**", "projects/archived/**", "projects/beta/notes/**"]
 nullable = false
-type = { array = "String" }
 
 [[fields.field]]
 name = "drift_rate"
@@ -353,10 +411,12 @@ allowed = ["projects/alpha/notes/**"]
 required = ["projects/alpha/notes/**"]
 nullable = true
 
+# Nested YAML (calibration.baseline.wavelength, etc.) is expressed as
+# one [[fields.field]] per leaf — see Types.
 [[fields.field]]
-name = "calibration"
+name = "calibration.baseline.wavelength"
+type = "Float"
 allowed = ["projects/alpha/notes/**"]
 required = []
 nullable = false
-type = { object = { adjusted = { object = { intensity = "Float", wavelength = "Float" } }, baseline = { object = { intensity = "Float", notes = "String", wavelength = "Float" } } } }
 ```

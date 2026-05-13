@@ -33,7 +33,7 @@ mdvs info example_kb
 The output is organized into sections: Config, Index (if built), and one key-value table per field. Only a few fields are shown here:
 
 ```
-43 files, 37 fields, 59 chunks
+43 files, 43 fields, 59 chunks
 
 Config:
 ┌──────────────────────────┬───────────────────────────────────────────────────┐
@@ -57,9 +57,9 @@ Index:
 │ files                    │ 43 out of 43                                      │
 └──────────────────────────┴───────────────────────────────────────────────────┘
 
-37 fields:
+43 fields:
 ┌ action_items ────────────┬───────────────────────────────────────────────────┐
-│ type                     │ String[]                                          │
+│ type                     │ Array(String)                                     │
 ├──────────────────────────┼───────────────────────────────────────────────────┤
 │ files                    │ 9 out of 43                                       │
 ├──────────────────────────┼───────────────────────────────────────────────────┤
@@ -96,7 +96,7 @@ The `config` row shows `match` when `mdvs.toml` matches the index metadata, or `
 When no index has been built:
 
 ```
-43 files, 37 fields
+43 files, 43 fields
 
 Config:
 ┌──────────────────────────┬───────────────────────────────────────────────────┐
@@ -105,7 +105,7 @@ Config:
 │ ignored fields           │ (none)                                            │
 └──────────────────────────┴───────────────────────────────────────────────────┘
 
-37 fields:
+43 fields:
 ...
 ```
 
@@ -119,7 +119,7 @@ Verbose output adds pipeline timing lines before the result:
 Read config: example_kb/mdvs.toml (2ms)
 Scan: 43 files (3ms)
 Read index: 43 files, 59 chunks (2ms)
-43 files, 37 fields, 59 chunks
+43 files, 43 fields, 59 chunks
 
 Config:
 ...

@@ -63,6 +63,15 @@ config changed since last build:
 Use --force to rebuild with new config
 ```
 
+The same check covers **schema changes**. A hash of the post-translation JSON Schema is stored in the parquet metadata; if the current schema doesn't match, the build refuses with:
+
+```
+schema: fields, types, constraints, path-scoping, or preprocessors have changed
+Use --force to rebuild with new schema
+```
+
+This catches edits to `[[fields.field]]` definitions, constraint changes, preprocessor changes, and path-scoping changes — anything that affects what gets stored in the `data` column of `files.parquet`.
+
 The `--set-model`, `--set-revision`, and `--set-chunk-size` flags update `mdvs.toml` and require `--force` (since they change the config and trigger a full re-embed). For example, to switch to a larger model:
 
 ```bash

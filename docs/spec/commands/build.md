@@ -28,6 +28,7 @@ Returns `BuildOutcome` with file/chunk counts, `new_fields`, `file_details`.
 - **Build includes check** — validation runs before embedding. Any violation aborts the build.
 - **Incremental by default** — `content_hash` (xxh3 on body) determines what needs re-embedding. Frontmatter-only changes don't trigger re-embedding.
 - **Model skip** — if all files are unchanged, model loading is skipped entirely (fast no-op).
-- **`--force`** — required when config changes (model, chunk_size, prefix) are detected. First build (no parquets) never needs `--force`.
+- **`--force`** — required when config changes (model, chunk_size, prefix) are detected, or when the schema content hash differs from the stored hash. The schema-hash error reads: `"schema: fields, types, constraints, path-scoping, or preprocessors have changed"`. First build (no parquets) never needs `--force`.
+- **Schema hash** — `compute_schema_hash(config)` hashes the post-translation canonical JSON of `dsl_to_canonical(config)` via xxh3-64. Stored as `mdvs.schema_hash` in parquet metadata. Pre-Wave-B parquets without this key read as `""` → always treated as changed.
 
 See [storage.md](../storage.md) for Parquet schema and incremental classification details.

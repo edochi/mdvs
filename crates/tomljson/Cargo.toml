@@ -1,0 +1,16 @@
+[package]
+name = "tomljson"
+version = "0.1.0"
+edition = "2024"
+description = "Lossless TOML ↔ JSON translation"
+license = "MIT"
+repository = "https://github.com/edochi/mdvs"
+readme = "README.md"
+keywords = ["toml", "json", "schema", "serde"]
+categories = ["encoding", "parser-implementations"]
+publish = false
+
+[dependencies]
+toml = "1"
+toml_writer = "1"
+serde_json = "1"

@@ -47,7 +47,7 @@ Array categories constrain each element:
 ```toml
 [[fields.field]]
 name = "tags"
-type = { array = "String" }
+type = "Array(String)"
 
 [fields.field.constraints]
 categories = ["go", "python", "rust"]
@@ -134,7 +134,7 @@ Array example — each element checked against the bounds:
 ```toml
 [[fields.field]]
 name = "ratings"
-type = { array = "Integer" }
+type = "Array(Integer)"
 
 [fields.field.constraints]
 min = 1
@@ -175,17 +175,56 @@ mdvs update example_kb reinfer status --with=none
 
 **Manual TOML edit** — you can also add or remove constraints by hand. Running `update` (without `reinfer`) preserves existing constraints as-is. Only `update reinfer` re-evaluates them.
 
+## Length
+
+The **length** constraint bounds string length or array length. It applies to:
+
+- **String** — `min_length <= len(value) <= max_length`, where length is the Unicode scalar count
+- **Array(T)** — `min_length <= array length <= max_length`
+
+```toml
+[[fields.field]]
+name = "slug"
+type = "String"
+
+[fields.field.constraints]
+min_length = 3
+max_length = 64
+```
+
+Both bounds are optional. Integer fields, Float fields, and Boolean fields don't support length. Length violations surface as `OutOfRange`. If both bounds are present, `min_length <= max_length` is enforced at config load.
+
+## Pattern
+
+The **pattern** constraint runs a regular expression against String values:
+
+```toml
+[[fields.field]]
+name = "version"
+type = "String"
+
+[fields.field.constraints]
+pattern = '^v\d+\.\d+\.\d+$'
+```
+
+The regex is compiled at config load time — invalid syntax fails fast. Pattern is currently String-only. Pattern violations surface as `WrongType` (with detail naming the offending value). Categorical fields can't also have a pattern — categories already enumerate the legal forms.
+
 ## Conflicts between constraint kinds
 
 Some combinations are mutually exclusive on the same field:
 
-- **`categories` + `range`** — redundant: enumerated values already define the range. Rejected at config load.
+- **`categories` + anything else** — categories enumerate the legal values; other constraints would be redundant or contradictory. Rejected at config load.
+- **`range` + `length`** — range bounds numeric values; length bounds size. They apply to different field types (numeric vs. String/Array), so they should never collide in practice; the check is still enforced.
 
-Compatible combinations may exist for future constraint kinds (e.g., range + length would be orthogonal — range constrains value, length constrains size).
+Compatible combinations: `min`/`max` together; `min_length`/`max_length` together; `pattern` with `min_length`/`max_length`.
 
-## Future constraint kinds
+## Constraint kinds summary
 
-- **Length** (`min_length` / `max_length`) — length bounds on String and Array fields
-- **Pattern** — regex validation on String fields
+| Constraint | Field types | Violation |
+|---|---|---|
+| `categories` | String, Integer, Array(String), Array(Integer) | `InvalidCategory` |
+| `min` / `max` | Integer, Float, Array(Integer), Array(Float) | `OutOfRange` |
+| `min_length` / `max_length` | String, Array(T) | `OutOfRange` |
+| `pattern` | String | `WrongType` |
 
-Each constraint kind is an additional key in the `[fields.field.constraints]` sub-table. Compatibility between constraint kinds is checked at config load time.
+Each constraint kind is a key in the `[fields.field.constraints]` sub-table. Compatibility is checked at config load time.

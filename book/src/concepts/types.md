@@ -2,7 +2,7 @@
 
 mdvs infers a type for every frontmatter field it encounters. When the same field appears with different types across files, mdvs resolves the conflict automatically through **type widening**.
 
-## The six types
+## The supported types
 
 | Type | YAML example | example_kb field |
 |---|---|---|
@@ -10,10 +10,18 @@ mdvs infers a type for every frontmatter field it encounters. When the same fiel
 | **Integer** | `sample_count: 24` | `sample_count` in experiments |
 | **Float** | `drift_rate: 0.023` | `drift_rate` in experiments |
 | **String** | `author: Giulia Ferretti` | `author` across many files |
-| **Array** | `tags: [calibration, SPR-A1]` | `tags` in projects and blog |
-| **Object** | `calibration: {baseline: ...}` | `calibration` in experiment-2 |
+| **Array(Scalar)** | `tags: [calibration, SPR-A1]` | `tags` in projects and blog |
 
-Arrays carry an element type — `String[]`, `Integer[]`, etc. Objects carry named sub-fields, and can nest arbitrarily deep:
+The on-disk type grammar is tight:
+
+```text
+Type   := Scalar | Array(Scalar)
+Scalar := String | Integer | Float | Boolean
+```
+
+`Array(Array(...))` and `Array(Object{...})` are not representable on disk — see [Arrays of structured items](#arrays-of-structured-items) below for the workaround.
+
+**Nested Objects in YAML are expressed as dotted-name leaf fields** in `mdvs.toml`. A frontmatter shape like:
 
 ```yaml
 calibration:
@@ -25,7 +33,54 @@ calibration:
     intensity: 0.97
 ```
 
-This infers as `{baseline: {wavelength: Float, intensity: Float}, adjusted: {wavelength: Float, intensity: Float}}`.
+infers as five separate leaf fields, one per nested path:
+
+- `calibration.baseline.wavelength` → Float
+- `calibration.baseline.intensity` → Float
+- `calibration.adjusted.wavelength` → Float
+- `calibration.adjusted.intensity` → Float
+
+Each leaf gets its own nullability and `allowed`/`required` glob set. This avoids the readability and per-leaf-validation problems of monolithic Object types. Top-level Object types are not supported in `mdvs.toml`, and neither are Objects nested inside Array fields — see [Arrays of structured items](#arrays-of-structured-items) below.
+
+## Arrays of structured items
+
+A YAML field like:
+
+```yaml
+measurements:
+  - timestamp: "14:02:11"
+    value: 0.612
+  - timestamp: "14:03:00"
+    value: 0.598
+```
+
+has no first-class representation on disk in v0. Inference detects the `Array(Object{...})` shape, **skips the field**, and emits a warning to stderr:
+
+```
+warning: skipped field 'measurements' — Array(Object{...}) isn't representable on disk.
+  Consider parallel scalar arrays (see TODO-0156). (first observed in projects/alpha/notes/experiment-2.md)
+```
+
+The recommended workaround is **parallel scalar arrays** — one field per element-leaf. Replace the YAML above with:
+
+```yaml
+measurement_timestamps: ["14:02:11", "14:03:00"]
+measurement_values: [0.612, 0.598]
+```
+
+and the corresponding `mdvs.toml`:
+
+```toml
+[[fields.field]]
+name = "measurement_timestamps"
+type = "Array(String)"
+
+[[fields.field]]
+name = "measurement_values"
+type = "Array(Float)"
+```
+
+The downside is the loss of per-element grouping — there's no schema-level guarantee that `measurement_timestamps[3]` and `measurement_values[3]` belong to the same record. A first-class Array-of-structured-item representation is tracked in TODO-0156.
 
 ## Type hierarchy
 
@@ -37,7 +92,6 @@ graph BT
     Float --> String
     Boolean --> String
     Array["Array(T)"] --> String
-    Object["Object({...})"] --> String
 ```
 
 Each arrow means "widens to." **String is the top type** — every type eventually reaches it.
@@ -45,10 +99,10 @@ Each arrow means "widens to." **String is the top type** — every type eventual
 The one special case is Integer → Float: integers widen to floats (not directly to String) because the conversion is lossless.
 
 Two same-category combinations widen internally instead of jumping to String:
-- **Array + Array** — element types are widened recursively (e.g., Integer[] + String[] → String[])
-- **Object + Object** — keys are merged, and shared keys have their values widened recursively
+- **Array + Array** — element types are widened recursively (e.g., `Array(Integer)` + `Array(String)` → `Array(String)`)
+- **Object + Object** — at the leaf level: each dotted path's type is widened independently across files. A file with `cal.wave = 850` (Integer) and another with `cal.wave = 632.8` (Float) yields `cal.wave: Float`. New leaf paths in some files are added to the schema; leaves absent from some files affect nullability/required-globs naturally.
 
-Everything else (Boolean + any other type, Array + scalar, Object + scalar, Array + Object) widens to String.
+Everything else (Boolean + any other type, Array + scalar, Object + scalar) widens to String. The one exception is **Array containing Object** — `Array(Object{...})` isn't representable on disk, so inference drops the field with a warning instead of widening to String (see [Arrays of structured items](#arrays-of-structured-items)).
 
 ## Type widening in practice
 
@@ -99,20 +153,20 @@ The `tags` field is a string array in most files, but one file accidentally used
 # projects/alpha/overview.md
 tags:
   - biosensor
-  - metamaterial          # String[]
+  - metamaterial          # Array(String)
 
 # projects/beta/notes/replication.md
 tags:
   - 1
   - 2
-  - 3                     # Integer[]
+  - 3                     # Array(Integer)
 ```
 
-Result: `tags` is inferred as **String[]**. The array element types (String vs Integer) are widened to String, giving String[].
+Result: `tags` is inferred as **`Array(String)`**. The array element types (String vs Integer) are widened to String, giving `Array(String)`.
 
-### Object key merging
+### Object leaf merging (dotted-name flattening)
 
-When two files have the same Object field with different keys, mdvs merges all keys. If a key appears in both files with different value types, the value is widened.
+When two files have nested keys at the same paths, each leaf is inferred independently. New leaves seen in one file but not another are added to the schema; their `required` glob naturally narrows to just the files that contain them.
 
 In `example_kb`, the `calibration` object appears in two experiment files with different structures:
 
@@ -134,25 +188,39 @@ calibration:
     intensity: 0.97
 ```
 
-Result: `calibration` is inferred as:
+Result: five dotted-name leaf fields are inferred in `mdvs.toml`:
 
-```json
-{
-  "adjusted": {
-    "intensity": "Float",
-    "wavelength": "Float"
-  },
-  "baseline": {
-    "intensity": "Float",
-    "notes": "String",
-    "wavelength": "Float"
-  }
-}
+```toml
+[[fields.field]]
+name = "calibration.adjusted.intensity"
+type = "Float"
+
+[[fields.field]]
+name = "calibration.adjusted.wavelength"
+type = "Float"
+
+[[fields.field]]
+name = "calibration.baseline.intensity"
+type = "Float"
+preprocess = ["widen-int-to-float"]   # Integer + Float mix → opted in
+
+[[fields.field]]
+name = "calibration.baseline.notes"
+type = "String"
+
+[[fields.field]]
+name = "calibration.baseline.wavelength"
+type = "Float"
+preprocess = ["widen-int-to-float"]
 ```
 
 What happened:
-- `baseline` appears in both → keys merged, values widened: `wavelength` Integer + Float → Float, `intensity` Integer + Float → Float, `notes` only in experiment-1 → kept as String
-- `adjusted` only in experiment-2 → kept as-is
+- `calibration.baseline.wavelength` seen as both Integer (850) and Float (632.8) → widened to Float with `widen-int-to-float` preprocessor recording the mix
+- `calibration.baseline.intensity` similar: Integer (1) + Float (0.95) → Float with the preprocessor
+- `calibration.baseline.notes` only in experiment-1 → still inferred as String (with a `required` glob narrowed to just the files that have it)
+- `calibration.adjusted.*` only in experiment-2 → inferred from that file alone
+
+The user-facing schema is flat, but its semantics still match the YAML's nested shape. Validation, storage, and `--where` queries all operate on the natural nested structure — the dotted-name form is purely a `mdvs.toml` UX choice.
 
 ## The full widening matrix
 
@@ -164,12 +232,14 @@ Every possible combination of types and its result:
 | **Integer** | String | Integer | **Float** | String | String | String |
 | **Float** | String | **Float** | Float | String | String | String |
 | **String** | String | String | String | String | String | String |
-| **Array** | String | String | String | String | Array\* | String |
-| **Object** | String | String | String | String | String | Object\* |
+| **Array** | String | String | String | String | Array\* | dropped\*\* |
+| **Object** | String | String | String | String | dropped\*\* | Object\* |
 
 \* Array + Array: element types are widened recursively.
 
-\* Object + Object: keys are merged; shared keys are widened recursively.
+\* Object + Object: not a top-level on-disk type. Nested Objects in YAML flatten to dotted-name leaves before widening; each leaf path is widened independently.
+
+\*\* Inference observed Array(Object{...}) — not representable on disk in v0. The field is dropped from the schema and a warning is emitted (see [Arrays of structured items](#arrays-of-structured-items)).
 
 The matrix is symmetric — `widen(A, B)` always equals `widen(B, A)`.
 
@@ -212,18 +282,38 @@ Result: `review_score` is inferred as **String?**.
 - `nullable` is a separate boolean, not part of the type itself
 - In validation: null values skip type checks, but a non-nullable required field with a null value triggers a `NullNotAllowed` violation (see [Validation](./validation.md))
 
-## String is the top type
+## Widening and preprocessors
 
-This has two important consequences:
+Widening picks the type. **Preprocessors** are how the schema declares what coercions were needed to get there. Inference auto-populates them — you rarely write them by hand.
 
-**In validation** — a field typed as String **never** triggers a `WrongType` violation. If `priority` is String, then `priority: 1`, `priority: true`, and `priority: [a, b]` all pass. The value is stored as-is.
+When inference observes a field as a mix of types (some files have `priority: 1`, others `priority: high`), it widens to `String` and writes:
 
-**In storage** — when building the search index, non-string values in String-typed fields are serialized to JSON. So `priority: 1` in a String field is stored as `"1"`, not silently dropped as NULL. No data is ever lost.
+```toml
+[[fields.field]]
+name = "priority"
+type = "String"
+preprocess = ["coerce-to-string"]
+```
 
-There's also a leniency for Float fields: integer values like `5` pass as Float (since every integer is a valid float). This handles the common case where YAML doesn't distinguish `5` from `5.0`.
+The `coerce-to-string` entry tells validation: "before checking this value is a string, serialize whatever you find to its JSON representation." Without it, the field is strict — integers and booleans fail validation.
+
+Same for Float: a mix of `5` and `5.0` widens to `Float` with `preprocess = ["widen-int-to-float"]`. Without it, integers fail the float check.
+
+The two built-in Stage 2 preprocessors:
+
+| Preprocessor | Applies to | Effect |
+|---|---|---|
+| `coerce-to-string` | `String`, `Array(String)` | Serialize non-strings to their JSON string representation before validation |
+| `widen-int-to-float` | `Float`, `Array(Float)` | Treat integer values as their float equivalent |
+
+**`preprocess = []` means strict.** If you delete a preprocessor from `mdvs.toml`, the field rejects values that would have been coerced. Conversely, you can hand-add a preprocessor to a strict-inferred field if you want to accept type variation.
+
+**In storage** — when validation accepts a coerced value, the coerced form is what gets stored. A `priority: 1` value with `coerce-to-string` becomes `"1"` in the search index. No data is silently dropped.
+
+Re-run `mdvs update reinfer <field>` to refresh both the inferred type and the inferred preprocessors after editing source files.
 
 ## Edge cases
 
-- **Empty arrays** `[]` default to **String[]** — if real values are added later, the field must be re-inferred with `mdvs update reinfer <field>` to pick up the new element type
+- **Empty arrays** `[]` default to **`Array(String)`** — if real values are added later, the field must be re-inferred with `mdvs update reinfer <field>` to pick up the new element type
 - **Empty frontmatter** (`---` followed immediately by `---`) is a file with zero fields — not a bare file. It still counts as "having frontmatter" for inference purposes.
 - **Bare files** (no `---` fences at all) are handled differently — see [Schema Inference](./schema.md)

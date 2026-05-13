@@ -219,8 +219,9 @@ No config files to write. No models to download manually. No services to start.
 
 ## Features
 
-- **Schema inference** — types (boolean, integer, float, string, arrays, nested objects), path constraints (allowed/required per directory), nullable detection. All automatic.
-- **Frontmatter validation** — wrong types, disallowed fields, missing required fields, null violations. Four independent checks, path-aware.
+- **Schema inference** — types (boolean, integer, float, string, arrays), nested YAML structure exposed as dotted-name leaf fields (`calibration.baseline.wavelength`), path constraints (allowed/required per directory), nullable detection, value preprocessors. All automatic.
+- **Frontmatter validation** — wrong types, disallowed fields, missing required fields, nullability, categories, numeric/length ranges, regex patterns, and unrepresentable frontmatter. Powered by [`jsonschema`](https://crates.io/crates/jsonschema) under the hood — your `mdvs.toml` translates to a real JSON Schema 2020-12 document.
+- **JSON Schema interop** — `mdvs export-jsonschema` translates your config into a JSON Schema document; `mdvs init --from-jsonschema` imports one. Lossless round-trip.
 - **Semantic search** — instant vector search using lightweight [Model2Vec](https://minish.ai/) static embeddings. Default model is ~30MB. No GPU, no API keys.
 - **SQL filtering** — `--where` clauses on any frontmatter field, powered by [DataFusion](https://datafusion.apache.org/). Arrays, nested objects, LIKE, IS NULL — full SQL.
 - **Incremental builds** — only changed files are re-embedded. Unchanged files keep their chunks. If nothing changed, the model isn't even loaded.
@@ -232,13 +233,14 @@ No config files to write. No models to download manually. No services to start.
 
 | Command | Description |
 |---------|-------------|
-| `init`  | Scan files, infer schema, write `mdvs.toml` |
-| `check` | Validate frontmatter against schema |
+| `init`  | Scan files, infer schema, write `mdvs.toml` (or import via `--from-jsonschema`) |
+| `check` | Validate frontmatter against schema (optionally `--jsonschema` to override) |
 | `update` | Re-scan and update field definitions |
 | `build` | Validate + embed + write search index |
 | `search` | Semantic search with optional SQL filtering |
 | `info`  | Show config and index status |
 | `clean` | Delete search index |
+| `export-jsonschema` | Translate `mdvs.toml` fields into a JSON Schema 2020-12 document |
 
 ## Documentation
 

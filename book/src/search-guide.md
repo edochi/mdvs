@@ -71,7 +71,7 @@ mdvs search "notes" --where "NOT status = 'archived'"
 
 ## Array fields
 
-Fields typed as `String[]` (like `tags`, `attendees`, `action_items`) support array functions.
+Fields typed as `Array(String)` (like `tags`, `attendees`, `action_items`) support array functions.
 
 ### Containment
 

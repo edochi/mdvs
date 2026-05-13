@@ -21,6 +21,8 @@ calibration:
   adjusted:
     wavelength: 633.1
     intensity: 0.97
+measurement_timestamps: ["14:02:11", "14:03:00"]
+measurement_values: [0.612, 0.598]
 ---
 # Experiment A-022: SPR-B2 Multi-Wavelength Sweep
 

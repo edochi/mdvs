@@ -20,6 +20,7 @@
   - [search](./commands/search.md)
   - [info](./commands/info.md)
   - [clean](./commands/clean.md)
+  - [export-jsonschema](./commands/export-jsonschema.md)
 
 # Reference
 
