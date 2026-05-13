@@ -8,9 +8,10 @@ Scan a directory, infer a typed schema, and write `mdvs.toml`. Optionally import
 
 1. **Pre-checks** — directory exists, config path resolved, `--force` deletes existing config + `.mdvs/`
 2. **Scan** — `ScannedFiles::scan(path, &scan_config)` (`discover/scan.rs`)
-3. **Infer** — `InferredSchema::infer(&scanned)` (`discover/infer/mod.rs`) — type widening, path inference, distinct value collection, observed-types tracking
-4. **Build config** — `MdvsToml::from_inferred(&schema, scan_config)` (`schema/config.rs`) — converts `InferredField` to `TomlField`, runs `infer_constraints()` for categorical fields, runs `infer_value_stages()` to populate `preprocess` arrays from observed widening events
-5. **Write** — `config.write(&path)` — serializes TOML, post-processes complex types to inline tables
+3. **Infer** — `InferredSchema::infer(&scanned)` (`discover/infer/mod.rs`) — type widening, path inference, distinct value collection, observed-types tracking. Fields with unrepresentable shapes (`Array(Object{...})`) are partitioned into `schema.dropped`.
+4. **Warn** — `schema.emit_dropped_warnings()` prints one stderr line per dropped field with the field name, reason, and first-observed file path.
+5. **Build config** — `MdvsToml::from_inferred(&schema, scan_config)` (`schema/config.rs`) — converts representable `InferredField`s to `TomlField`s, runs `infer_constraints()` for categorical fields, runs `infer_value_stages()` to populate `preprocess` arrays from observed widening events
+6. **Write** — `config.write(&path)` — serializes TOML; `type` is written as a function-style string (`"Array(String)"`).
 
 Returns `InitOutcome` with `files_scanned`, `fields: Vec<DiscoveredField>`, `dry_run`.
 

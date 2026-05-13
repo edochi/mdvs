@@ -235,20 +235,30 @@ Scalar types are plain strings:
 type = "String"    # also: "Boolean", "Integer", "Float"
 ```
 
-Arrays use an inline table:
+Arrays use a function-style string:
 
 ```toml
-type = { array = "String" }
+type = "Array(String)"
 ```
 
-**Top-level Object types are not supported**. Nested frontmatter structure is expressed via dotted-name leaf fields — see [Types](./concepts/types.md) for the flattening rule. The inline `{ object = {...} }` form remains valid **inside `Array`** for arrays of structured items:
+**Structured types are not supported on disk.** Nested Objects in frontmatter are expressed via dotted-name leaf fields — see [Types](./concepts/types.md) for the flattening rule. Arrays of structured items (`Array(Object{...})`) have no first-class representation in v0; use **parallel scalar arrays** as a workaround:
 
 ```toml
-# Valid: Array of Objects (each element is structured)
-type = { array = { object = { time = "String", value = "Float" } } }
+# Instead of an unsupported Array(Object{timestamp, value}):
+[[fields.field]]
+name = "measurement_timestamps"
+type = "Array(String)"
 
-# Invalid: top-level Object — rejected at config load.
-# type = { object = { author = "String", count = "Integer" } }
+[[fields.field]]
+name = "measurement_values"
+type = "Array(Float)"
+```
+
+The valid type grammar is:
+
+```text
+Type   := Scalar | Array(Scalar)
+Scalar := String | Integer | Float | Boolean
 ```
 
 See [Types](./concepts/types.md) for the full type system, including widening rules.
@@ -389,10 +399,10 @@ nullable = false
 
 [[fields.field]]
 name = "tags"
+type = "Array(String)"
 allowed = ["blog/**", "projects/alpha/*", "projects/alpha/notes/**", "projects/archived/**", "projects/beta/*", "projects/beta/notes/**"]
 required = ["blog/published/**", "projects/alpha/notes/**", "projects/archived/**", "projects/beta/notes/**"]
 nullable = false
-type = { array = "String" }
 
 [[fields.field]]
 name = "drift_rate"
@@ -401,10 +411,12 @@ allowed = ["projects/alpha/notes/**"]
 required = ["projects/alpha/notes/**"]
 nullable = true
 
+# Nested YAML (calibration.baseline.wavelength, etc.) is expressed as
+# one [[fields.field]] per leaf — see Types.
 [[fields.field]]
-name = "calibration"
+name = "calibration.baseline.wavelength"
+type = "Float"
 allowed = ["projects/alpha/notes/**"]
 required = []
 nullable = false
-type = { object = { adjusted = { object = { intensity = "Float", wavelength = "Float" } }, baseline = { object = { intensity = "Float", notes = "String", wavelength = "Float" } } } }
 ```

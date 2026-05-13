@@ -2,7 +2,7 @@
 
 mdvs infers a type for every frontmatter field it encounters. When the same field appears with different types across files, mdvs resolves the conflict automatically through **type widening**.
 
-## The six types
+## The supported types
 
 | Type | YAML example | example_kb field |
 |---|---|---|
@@ -10,10 +10,16 @@ mdvs infers a type for every frontmatter field it encounters. When the same fiel
 | **Integer** | `sample_count: 24` | `sample_count` in experiments |
 | **Float** | `drift_rate: 0.023` | `drift_rate` in experiments |
 | **String** | `author: Giulia Ferretti` | `author` across many files |
-| **Array** | `tags: [calibration, SPR-A1]` | `tags` in projects and blog |
-| **Object** | structured nested keys (see below) | `calibration.*` leaves in experiments |
+| **Array(Scalar)** | `tags: [calibration, SPR-A1]` | `tags` in projects and blog |
 
-Arrays carry an element type — rendered as `Array(String)`, `Array(Integer)`, etc. The function-style notation reads cleanly at any depth: `Array(Array(Integer))` for an array of arrays, `Array(Object{time: String, value: Float})` for an array of structured items.
+The on-disk type grammar is tight:
+
+```text
+Type   := Scalar | Array(Scalar)
+Scalar := String | Integer | Float | Boolean
+```
+
+`Array(Array(...))` and `Array(Object{...})` are not representable on disk — see [Arrays of structured items](#arrays-of-structured-items) below for the workaround.
 
 **Nested Objects in YAML are expressed as dotted-name leaf fields** in `mdvs.toml`. A frontmatter shape like:
 
@@ -34,7 +40,47 @@ infers as five separate leaf fields, one per nested path:
 - `calibration.adjusted.wavelength` → Float
 - `calibration.adjusted.intensity` → Float
 
-Each leaf gets its own nullability and `allowed`/`required` glob set. This avoids the readability and per-leaf-validation problems of monolithic Object types. Top-level Object types are not supported in `mdvs.toml` — only Objects **nested inside Array fields** (`Array(Object{...})`) keep their inline shape, since per-element validation doesn't compose with file-path scoping.
+Each leaf gets its own nullability and `allowed`/`required` glob set. This avoids the readability and per-leaf-validation problems of monolithic Object types. Top-level Object types are not supported in `mdvs.toml`, and neither are Objects nested inside Array fields — see [Arrays of structured items](#arrays-of-structured-items) below.
+
+## Arrays of structured items
+
+A YAML field like:
+
+```yaml
+measurements:
+  - timestamp: "14:02:11"
+    value: 0.612
+  - timestamp: "14:03:00"
+    value: 0.598
+```
+
+has no first-class representation on disk in v0. Inference detects the `Array(Object{...})` shape, **skips the field**, and emits a warning to stderr:
+
+```
+warning: skipped field 'measurements' — Array(Object{...}) isn't representable on disk.
+  Consider parallel scalar arrays (see TODO-0156). (first observed in projects/alpha/notes/experiment-2.md)
+```
+
+The recommended workaround is **parallel scalar arrays** — one field per element-leaf. Replace the YAML above with:
+
+```yaml
+measurement_timestamps: ["14:02:11", "14:03:00"]
+measurement_values: [0.612, 0.598]
+```
+
+and the corresponding `mdvs.toml`:
+
+```toml
+[[fields.field]]
+name = "measurement_timestamps"
+type = "Array(String)"
+
+[[fields.field]]
+name = "measurement_values"
+type = "Array(Float)"
+```
+
+The downside is the loss of per-element grouping — there's no schema-level guarantee that `measurement_timestamps[3]` and `measurement_values[3]` belong to the same record. A first-class Array-of-structured-item representation is tracked in TODO-0156.
 
 ## Type hierarchy
 
@@ -46,7 +92,6 @@ graph BT
     Float --> String
     Boolean --> String
     Array["Array(T)"] --> String
-    Object["Object({...})"] --> String
 ```
 
 Each arrow means "widens to." **String is the top type** — every type eventually reaches it.
@@ -57,7 +102,7 @@ Two same-category combinations widen internally instead of jumping to String:
 - **Array + Array** — element types are widened recursively (e.g., `Array(Integer)` + `Array(String)` → `Array(String)`)
 - **Object + Object** — at the leaf level: each dotted path's type is widened independently across files. A file with `cal.wave = 850` (Integer) and another with `cal.wave = 632.8` (Float) yields `cal.wave: Float`. New leaf paths in some files are added to the schema; leaves absent from some files affect nullability/required-globs naturally.
 
-Everything else (Boolean + any other type, Array + scalar, Object + scalar, Array + Object) widens to String.
+Everything else (Boolean + any other type, Array + scalar, Object + scalar) widens to String. The one exception is **Array containing Object** — `Array(Object{...})` isn't representable on disk, so inference drops the field with a warning instead of widening to String (see [Arrays of structured items](#arrays-of-structured-items)).
 
 ## Type widening in practice
 
@@ -187,12 +232,14 @@ Every possible combination of types and its result:
 | **Integer** | String | Integer | **Float** | String | String | String |
 | **Float** | String | **Float** | Float | String | String | String |
 | **String** | String | String | String | String | String | String |
-| **Array** | String | String | String | String | Array\* | String |
-| **Object** | String | String | String | String | String | Object\* |
+| **Array** | String | String | String | String | Array\* | dropped\*\* |
+| **Object** | String | String | String | String | dropped\*\* | Object\* |
 
 \* Array + Array: element types are widened recursively.
 
-\* Object + Object: keys are merged; shared keys are widened recursively.
+\* Object + Object: not a top-level on-disk type. Nested Objects in YAML flatten to dotted-name leaves before widening; each leaf path is widened independently.
+
+\*\* Inference observed Array(Object{...}) — not representable on disk in v0. The field is dropped from the schema and a warning is emitted (see [Arrays of structured items](#arrays-of-structured-items)).
 
 The matrix is symmetric — `widen(A, B)` always equals `widen(B, A)`.
 

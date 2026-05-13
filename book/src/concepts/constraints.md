@@ -47,7 +47,7 @@ Array categories constrain each element:
 ```toml
 [[fields.field]]
 name = "tags"
-type = { array = "String" }
+type = "Array(String)"
 
 [fields.field.constraints]
 categories = ["go", "python", "rust"]
@@ -134,7 +134,7 @@ Array example — each element checked against the bounds:
 ```toml
 [[fields.field]]
 name = "ratings"
-type = { array = "Integer" }
+type = "Array(Integer)"
 
 [fields.field.constraints]
 min = 1
