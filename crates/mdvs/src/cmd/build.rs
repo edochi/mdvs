@@ -318,6 +318,7 @@ pub(crate) async fn build_core(
             }),
             infer_start.elapsed().as_millis() as u64,
         ));
+        schema.emit_dropped_warnings();
 
         let existing: HashSet<&str> = config
             .fields

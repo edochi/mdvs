@@ -28,6 +28,46 @@ use serde_json::Value;
 use std::path::PathBuf;
 use tracing::{info, instrument};
 
+/// Reason an inferred field was dropped from the final schema.
+///
+/// Inference observes shapes that mdvs's on-disk type vocabulary can't
+/// express (TODO-0155). Rather than producing an unrepresentable
+/// `mdvs.toml` (which would fail to parse on the next read), we drop the
+/// field at the inference boundary and surface a warning. Callers
+/// (init, update, check's auto-update) render these to the user.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DropReason {
+    /// `Array(Object{...})` — no v0 on-disk representation.
+    /// The recommended workaround is parallel scalar arrays. Tracked
+    /// for a first-class representation in TODO-0156.
+    ArrayOfObject,
+}
+
+impl DropReason {
+    /// Human-readable explanation + remediation hint for stderr.
+    pub fn message(&self) -> &'static str {
+        match self {
+            DropReason::ArrayOfObject => {
+                "Array(Object{...}) isn't representable on disk. \
+                 Consider parallel scalar arrays (see TODO-0156)."
+            }
+        }
+    }
+}
+
+/// A field that inference saw but the on-disk type vocabulary can't express.
+#[derive(Debug, Clone)]
+pub struct DroppedField {
+    /// Field name (frontmatter key — may be dotted).
+    pub name: String,
+    /// Final widened type, kept for diagnostic Display rendering.
+    pub field_type: FieldType,
+    /// First file path observed with this field.
+    pub first_seen: PathBuf,
+    /// Why this field was dropped.
+    pub reason: DropReason,
+}
+
 /// Walk a frontmatter Object, yielding `(dotted_path, &Value)` for each leaf.
 ///
 /// A **leaf** is anything that's not a non-empty nested `Value::Object`:
@@ -119,22 +159,31 @@ impl InferredField {
     }
 }
 
-/// Complete inferred schema: all fields with types and path constraints.
+/// Complete inferred schema: all fields with types and path constraints,
+/// plus any fields that were observed but couldn't be represented on disk.
 #[derive(Debug)]
 pub struct InferredSchema {
-    /// Fields sorted by name.
+    /// Fields sorted by name; representable on disk.
     pub fields: Vec<InferredField>,
+    /// Fields skipped because their shape isn't expressible in the v0
+    /// on-disk type vocabulary. Surfaced to the user via stderr by the
+    /// CLI consumers (init, update, check auto-update).
+    pub dropped: Vec<DroppedField>,
 }
 
 impl InferredSchema {
     /// Run full inference: types + directory tree → fields with glob patterns.
+    ///
+    /// Fields whose inferred type isn't representable in v0 (TODO-0155 —
+    /// currently only `Array(Object{...})`) are partitioned into
+    /// [`Self::dropped`] rather than included in [`Self::fields`].
     #[instrument(name = "infer", skip_all)]
     pub fn infer(scanned: &ScannedFiles) -> Self {
         let mut type_info = infer_field_types(scanned);
         let tree = DirectoryTree::from(scanned);
         let path_info = tree.infer_paths();
 
-        let mut fields: Vec<InferredField> = type_info
+        let all_fields: Vec<InferredField> = type_info
             .keys()
             .cloned()
             .collect::<Vec<_>>()
@@ -157,16 +206,66 @@ impl InferredSchema {
             })
             .collect();
 
+        let (mut fields, dropped_raw): (Vec<InferredField>, Vec<InferredField>) = all_fields
+            .into_iter()
+            .partition(|f| !contains_object_inside_array(&f.field_type));
+
+        let dropped: Vec<DroppedField> = dropped_raw
+            .into_iter()
+            .map(|f| DroppedField {
+                first_seen: f.files.first().cloned().unwrap_or_default(),
+                name: f.name,
+                field_type: f.field_type,
+                reason: DropReason::ArrayOfObject,
+            })
+            .collect();
+
         fields.sort_by(|a, b| a.name.cmp(&b.name));
 
-        info!(fields = fields.len(), "inference complete");
+        info!(
+            fields = fields.len(),
+            dropped = dropped.len(),
+            "inference complete"
+        );
 
-        InferredSchema { fields }
+        InferredSchema { fields, dropped }
     }
 
     /// Look up a field by name.
     pub fn field(&self, name: &str) -> Option<&InferredField> {
         self.fields.iter().find(|f| f.name == name)
+    }
+
+    /// Render a one-line stderr warning per dropped field. Called by the
+    /// CLI consumers (init, update, check's auto-update) so users see
+    /// which fields the inference skipped and why.
+    pub fn emit_dropped_warnings(&self) {
+        for d in &self.dropped {
+            eprintln!(
+                "warning: skipped field '{}' — {} (first observed in {})",
+                d.name,
+                d.reason.message(),
+                d.first_seen.display(),
+            );
+        }
+    }
+}
+
+/// True iff a `FieldType` tree contains an `Object` directly inside an
+/// `Array` (transitively).
+///
+/// Wave C flattens top-level Object into dotted-name leaves before
+/// inference's final list is built, so top-level Object can't appear at
+/// this layer. The only path that produces an `Object` node is
+/// `Array(Object{...})` (Wave C kept that shape inline). TODO-0155
+/// removes that on-disk representation.
+fn contains_object_inside_array(ft: &FieldType) -> bool {
+    match ft {
+        FieldType::Array(inner) => {
+            matches!(inner.as_ref(), FieldType::Object(_)) || contains_object_inside_array(inner)
+        }
+        FieldType::Object(fields) => fields.values().any(contains_object_inside_array),
+        _ => false,
     }
 }
 
@@ -1017,5 +1116,87 @@ mod tests {
         assert_eq!(cats.len(), 2);
         assert!(cats.contains(&toml::Value::String("internal".into())));
         assert!(cats.contains(&toml::Value::String(r#"["internal"]"#.into())));
+    }
+
+    // ------------------------------------------------------------------------
+    // Dropped fields (TODO-0155): Array(Object) is unrepresentable on disk.
+    // Inference partitions these out so downstream writes can't produce
+    // invalid mdvs.toml.
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn infer_drops_array_of_object_with_dropped_field_record() {
+        let scanned = ScannedFiles {
+            files: vec![sf(
+                "blog/post.md",
+                Some(json!({
+                    "readings": [
+                        {"time": "10:00", "value": 0.5},
+                        {"time": "10:05", "value": 0.6},
+                    ]
+                })),
+                "# body",
+            )],
+        };
+        let schema = InferredSchema::infer(&scanned);
+
+        // `readings` does NOT appear in the kept fields list.
+        assert!(
+            schema.field("readings").is_none(),
+            "Array(Object) field should be dropped, not kept"
+        );
+
+        // It DOES appear in the dropped list with the right reason.
+        assert_eq!(schema.dropped.len(), 1);
+        let d = &schema.dropped[0];
+        assert_eq!(d.name, "readings");
+        assert_eq!(d.reason, DropReason::ArrayOfObject);
+        assert_eq!(d.first_seen, PathBuf::from("blog/post.md"));
+        // Field type retained for diagnostic Display.
+        match &d.field_type {
+            FieldType::Array(inner) => match inner.as_ref() {
+                FieldType::Object(_) => {}
+                other => panic!("expected Array(Object), got Array({other:?})"),
+            },
+            other => panic!("expected Array(Object), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn infer_does_not_drop_array_of_scalar() {
+        let scanned = ScannedFiles {
+            files: vec![sf(
+                "blog/post.md",
+                Some(json!({"tags": ["a", "b"]})),
+                "# body",
+            )],
+        };
+        let schema = InferredSchema::infer(&scanned);
+        assert!(schema.field("tags").is_some());
+        assert!(schema.dropped.is_empty());
+    }
+
+    #[test]
+    fn infer_drops_array_of_object_alongside_kept_fields() {
+        // Regression for the auto_update gap surfaced during TODO-0155
+        // batches 1+2: when a file has both a representable field and an
+        // Array(Object) field, the representable one is kept and the
+        // unrepresentable one is dropped — not both lost together.
+        let scanned = ScannedFiles {
+            files: vec![sf(
+                "blog/post.md",
+                Some(json!({
+                    "title": "Hello",
+                    "readings": [{"t": 1, "v": 0.5}],
+                })),
+                "# body",
+            )],
+        };
+        let schema = InferredSchema::infer(&scanned);
+
+        assert!(schema.field("title").is_some());
+        assert!(schema.field("readings").is_none());
+        assert_eq!(schema.dropped.len(), 1);
+        assert_eq!(schema.dropped[0].name, "readings");
     }
 }

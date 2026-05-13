@@ -303,12 +303,24 @@ impl MdvsToml {
             }
 
             // Invariant 6: top-level Object is not a valid field type.
-            // Array(Object{...}) is fine — we only reject Object at the
-            // top of the field's type tree.
+            // Express nested structure via dotted-name leaves (Wave C).
             if let Ok(FieldType::Object(_)) = FieldType::try_from(&field.field_type) {
                 anyhow::bail!(
-                    "field '{}': top-level Object type is not supported — flatten into dotted-name leaf fields (e.g. '{}.<child>'). Object remains valid as Array's inner type.",
+                    "field '{}': top-level Object type is not supported — flatten into dotted-name leaf fields (e.g. '{}.<child>').",
                     field.name,
+                    field.name
+                );
+            }
+
+            // Invariant 9 (TODO-0155): Object inside Array is not representable
+            // on disk. Defense in depth alongside the parser rejection — catches
+            // --from-jsonschema imports and programmatic construction.
+            if let Ok(ft) = FieldType::try_from(&field.field_type)
+                && type_contains_object_inside_array(&ft)
+            {
+                anyhow::bail!(
+                    "field '{}': Array(Object{{...}}) is not representable on disk. \
+                     Consider parallel scalar arrays (see TODO-0156).",
                     field.name
                 );
             }
@@ -437,6 +449,23 @@ fn validate_field_name(name: &str) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+/// True iff a `FieldType` tree contains an `Object` directly inside an
+/// `Array` (transitively). Used by invariant 9 (TODO-0155).
+///
+/// Top-level `Object` is rejected by invariant 6 separately; this helper
+/// only walks past `Array` and `Object` nodes looking for `Array(Object{...})`
+/// or deeper nestings of the same pattern.
+fn type_contains_object_inside_array(ft: &FieldType) -> bool {
+    match ft {
+        FieldType::Array(inner) => {
+            matches!(inner.as_ref(), FieldType::Object(_))
+                || type_contains_object_inside_array(inner)
+        }
+        FieldType::Object(fields) => fields.values().any(type_contains_object_inside_array),
+        _ => false,
+    }
 }
 
 /// Check if a glob pattern has a valid format for allowed/required lists.
@@ -755,6 +784,7 @@ default_limit = 10
                     preprocess: vec![],
                 },
             ],
+            dropped: vec![],
         };
 
         let scan = ScanConfig {
@@ -789,7 +819,10 @@ default_limit = 10
 
     #[test]
     fn from_inferred_empty() {
-        let schema = InferredSchema { fields: vec![] };
+        let schema = InferredSchema {
+            fields: vec![],
+            dropped: vec![],
+        };
         let scan = ScanConfig {
             glob: "docs/**".into(),
             include_bare_files: true,
@@ -804,7 +837,10 @@ default_limit = 10
 
     #[test]
     fn from_inferred_schema_only() {
-        let schema = InferredSchema { fields: vec![] };
+        let schema = InferredSchema {
+            fields: vec![],
+            dropped: vec![],
+        };
         let scan = ScanConfig {
             glob: "**".into(),
             include_bare_files: false,
@@ -832,6 +868,7 @@ default_limit = 10
                 occurrence_count: 0,
                 preprocess: vec![],
             }],
+            dropped: vec![],
         };
         let scan = ScanConfig {
             glob: "**".into(),
@@ -1340,8 +1377,8 @@ nullable = false
     }
 
     #[test]
-    fn validate_accepts_array_of_object() {
-        // Array(Object{...}) is fine — only top-level Object is rejected.
+    fn validate_rejects_array_of_object() {
+        // TODO-0155 invariant 9: Array(Object{...}) is rejected at config load.
         let config = full_toml(vec![TomlField {
             name: "readings".into(),
             field_type: FieldTypeSerde::Array {
@@ -1351,6 +1388,25 @@ nullable = false
                         ("value".into(), FieldTypeSerde::Scalar("Float".into())),
                     ]),
                 }),
+            },
+            allowed: vec!["**".into()],
+            required: vec![],
+            nullable: false,
+            constraints: None,
+            preprocess: vec![],
+        }]);
+        let err = config.validate().unwrap_err().to_string();
+        assert!(err.contains("readings"), "got: {err}");
+        assert!(err.contains("Array(Object"), "got: {err}");
+        assert!(err.contains("TODO-0156"), "got: {err}");
+    }
+
+    #[test]
+    fn validate_accepts_array_of_scalar() {
+        let config = full_toml(vec![TomlField {
+            name: "tags".into(),
+            field_type: FieldTypeSerde::Array {
+                array: Box::new(FieldTypeSerde::Scalar("String".into())),
             },
             allowed: vec!["**".into()],
             required: vec![],

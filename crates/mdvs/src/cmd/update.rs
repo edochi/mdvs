@@ -178,6 +178,7 @@ pub async fn run(
         }),
         infer_start.elapsed().as_millis() as u64,
     ));
+    schema.emit_dropped_warnings();
 
     let total_files = scanned.files.len();
 
