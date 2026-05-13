@@ -7,8 +7,8 @@ use std::collections::{BTreeMap, HashMap};
 use xxhash_rust::xxh3::xxh3_64;
 
 use datafusion::arrow::array::{
-    ArrayRef, BooleanArray, FixedSizeListArray, Float32Array, Float64Array, Int32Array, Int64Array,
-    ListArray, StringArray, StructArray, TimestampMicrosecondArray,
+    ArrayRef, BooleanArray, Date32Array, FixedSizeListArray, Float32Array, Float64Array,
+    Int32Array, Int64Array, ListArray, StringArray, StructArray, TimestampMicrosecondArray,
 };
 use datafusion::arrow::buffer::{NullBuffer, OffsetBuffer};
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
@@ -215,6 +215,28 @@ fn build_array(values: &[Option<&Value>], ft: &FieldType) -> ArrayRef {
                         Value::String(s) => Some(s.clone()),
                         other => Some(other.to_string()),
                     })
+                })
+                .collect();
+            Arc::new(arr)
+        }
+        FieldType::Date => {
+            // Parse JSON strings as RFC 3339 full-date (`YYYY-MM-DD`) and
+            // store as Arrow `Date32` (days since 1970-01-01). jsonschema's
+            // `format: date` validator runs upstream during check, so by the
+            // time we get here the values that survived are well-formed.
+            // Defensively skip anything that doesn't parse.
+            //
+            // `num_days_from_ce()` returns days since 1 CE; the constant
+            // `EPOCH_DAYS_FROM_CE = 719163` is `NaiveDate(1970, 1, 1)
+            // .num_days_from_ce()`, used to convert to Date32's epoch (1970-01-01).
+            use chrono::Datelike;
+            const EPOCH_DAYS_FROM_CE: i32 = 719_163;
+            let arr: Date32Array = values
+                .iter()
+                .map(|v| {
+                    v.and_then(|v| v.as_str())
+                        .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
+                        .map(|d| d.num_days_from_ce() - EPOCH_DAYS_FROM_CE)
                 })
                 .collect();
             Arc::new(arr)

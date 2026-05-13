@@ -133,12 +133,20 @@ impl<'a> Parser<'a> {
         }
         if start == self.pos {
             return Err(ParseError {
-                message: "expected a type name (String, Integer, Float, Boolean, or Array(...))"
-                    .into(),
+                message:
+                    "expected a type name (String, Integer, Float, Boolean, Date, or Array(...))"
+                        .into(),
                 column: start + 1,
             });
         }
-        Ok(std::str::from_utf8(&self.input[start..self.pos]).expect("ascii-only by construction"))
+        std::str::from_utf8(&self.input[start..self.pos]).map_err(|_| ParseError {
+            // The byte loop above only advances over ASCII alphabetic +
+            // underscore bytes, so this arm is unreachable in practice. If
+            // a future contributor relaxes the loop, this surfaces a clear
+            // error instead of UB or a panic.
+            message: "internal parser error: identifier bytes are not valid UTF-8".into(),
+            column: start + 1,
+        })
     }
 
     fn expect_char(&mut self, c: u8, ctx: &str) -> Result<(), ParseError> {
@@ -165,7 +173,7 @@ impl<'a> Parser<'a> {
         let ident_start = self.pos;
         let ident = self.parse_ident()?;
         match ident {
-            "String" | "Integer" | "Float" | "Boolean" => {
+            "String" | "Integer" | "Float" | "Boolean" | "Date" => {
                 Ok(FieldTypeSerde::Scalar(ident.to_string()))
             }
             "Array" => {
@@ -186,7 +194,7 @@ impl<'a> Parser<'a> {
             other => Err(ParseError {
                 message: format!(
                     "unknown type `{other}`. \
-                     Expected one of String, Integer, Float, Boolean, or Array(...)"
+                     Expected one of String, Integer, Float, Boolean, Date, or Array(...)"
                 ),
                 column: ident_start + 1,
             }),
@@ -204,7 +212,7 @@ impl<'a> Parser<'a> {
         let inner_start = self.pos;
         let ident = self.parse_ident()?;
         match ident {
-            "String" | "Integer" | "Float" | "Boolean" => {
+            "String" | "Integer" | "Float" | "Boolean" | "Date" => {
                 Ok(FieldTypeSerde::Scalar(ident.to_string()))
             }
             "Array" => Err(ParseError {
@@ -257,6 +265,7 @@ impl From<&FieldType> for FieldTypeSerde {
             FieldType::Integer => FieldTypeSerde::Scalar("Integer".into()),
             FieldType::Float => FieldTypeSerde::Scalar("Float".into()),
             FieldType::String => FieldTypeSerde::Scalar("String".into()),
+            FieldType::Date => FieldTypeSerde::Scalar("Date".into()),
             FieldType::Array(inner) => FieldTypeSerde::Array {
                 array: Box::new(FieldTypeSerde::from(inner.as_ref())),
             },
@@ -280,6 +289,7 @@ impl TryFrom<&FieldTypeSerde> for FieldType {
                 "Integer" => Ok(FieldType::Integer),
                 "Float" => Ok(FieldType::Float),
                 "String" => Ok(FieldType::String),
+                "Date" => Ok(FieldType::Date),
                 other => Err(format!("unknown type: {other}")),
             },
             FieldTypeSerde::Array { array } => {
@@ -414,7 +424,7 @@ mod tests {
 
     #[test]
     fn unknown_scalar_type_error() {
-        let bad = FieldTypeSerde::Scalar("Date".into());
+        let bad = FieldTypeSerde::Scalar("Bogus".into());
         let result = FieldType::try_from(&bad);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("unknown type"));
@@ -555,8 +565,8 @@ mod tests {
 
     #[test]
     fn parse_rejects_unknown_scalar() {
-        let err = FieldTypeSerde::parse("Date").unwrap_err();
-        assert!(err.message.contains("unknown type `Date`"));
+        let err = FieldTypeSerde::parse("Bogus").unwrap_err();
+        assert!(err.message.contains("unknown type `Bogus`"));
         assert_eq!(err.column, 1);
     }
 

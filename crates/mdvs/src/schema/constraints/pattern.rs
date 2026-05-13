@@ -45,6 +45,7 @@ fn field_type_name(ft: &FieldType) -> &'static str {
         FieldType::Integer => "Integer",
         FieldType::Float => "Float",
         FieldType::String => "String",
+        FieldType::Date => "Date",
         FieldType::Array(_) => "Array",
         FieldType::Object(_) => "Object",
     }

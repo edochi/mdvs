@@ -614,9 +614,12 @@ impl FieldValidators {
             // ignores unknown keywords by default) but keeps schemas tidy
             // for any future debug printing.
             let stripped = strip_x_mdvs(subschema.clone());
-            let validator = jsonschema::validator_for(&stripped).map_err(|e| {
-                anyhow::anyhow!("failed to compile schema for '{}': {e}", field.name)
-            })?;
+            let validator = jsonschema::options()
+                .should_validate_formats(true)
+                .build(&stripped)
+                .map_err(|e| {
+                    anyhow::anyhow!("failed to compile schema for '{}': {e}", field.name)
+                })?;
             per_field.insert(field.name.clone(), validator);
         }
         Ok(Self { per_field })
@@ -796,6 +799,11 @@ fn map_validation_error(
             rule: format!("pattern {pattern}"),
             detail: Some(format!("got {instance}")),
         },
+        E::Format { format } => MappedViolation {
+            kind: ViolationKind::WrongType,
+            rule: format!("format {format}"),
+            detail: Some(format!("got {instance}")),
+        },
         E::MinItems { limit } => MappedViolation {
             kind: ViolationKind::OutOfRange,
             rule: format!("minItems {limit}"),
@@ -824,7 +832,6 @@ fn map_validation_error(
         | E::ContentMediaType { .. }
         | E::Custom { .. }
         | E::FalseSchema
-        | E::Format { .. }
         | E::FromUtf8 { .. }
         | E::MaxProperties { .. }
         | E::MinProperties { .. }

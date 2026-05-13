@@ -14,6 +14,9 @@ pub enum FieldType {
     Float,
     /// YAML string. Top type in the widening hierarchy — incompatible types widen here.
     String,
+    /// Calendar date in RFC 3339 full-date format (`YYYY-MM-DD`). Stored on disk
+    /// as an Arrow `Date32` column. Validated via JSON Schema's `format: date`.
+    Date,
     /// YAML sequence with a uniform element type.
     Array(Box<FieldType>),
     /// YAML mapping with named sub-fields.
@@ -100,6 +103,7 @@ impl From<&FieldType> for DataType {
             FieldType::Integer => DataType::Int64,
             FieldType::Float => DataType::Float64,
             FieldType::String => DataType::Utf8,
+            FieldType::Date => DataType::Date32,
             FieldType::Array(inner) => {
                 let inner_dt: DataType = inner.as_ref().into();
                 DataType::List(Arc::new(Field::new("item", inner_dt, true)))

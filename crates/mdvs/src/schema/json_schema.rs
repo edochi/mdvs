@@ -44,12 +44,17 @@ const ALLOW_LIST: &[&str] = &[
     "minItems",
     "maxItems",
     "uniqueItems",
+    "format",
     "$schema",
     "$id",
     "title",
     "description",
     "x-mdvs",
 ];
+
+/// JSON Schema `format` values mdvs supports. Any other format value is
+/// rejected by the gate with a "use pattern" hint.
+const ALLOWED_FORMATS: &[&str] = &["date"];
 
 /// Common JSON Schema keywords mdvs explicitly does not support, paired with
 /// a user-facing reason. Catching these by name produces a better error than
@@ -79,10 +84,6 @@ const HARD_REJECT: &[(&str, &str)] = &[
     (
         "prefixItems",
         "prefixItems (tuple validation) is out of scope; use uniform items",
-    ),
-    (
-        "format",
-        "format is out of scope; use pattern for regex-based validation",
     ),
     ("contains", "contains is out of scope"),
     ("propertyNames", "propertyNames is out of scope"),
@@ -227,6 +228,16 @@ fn type_subschema(ft: &FieldType, nullable: bool, constraints: Option<&Constrain
         FieldType::Integer => scalar_subschema("integer", nullable, constraints),
         FieldType::Float => scalar_subschema("number", nullable, constraints),
         FieldType::String => scalar_subschema("string", nullable, constraints),
+        FieldType::Date => {
+            // `Date` is encoded as a JSON string with `format: date` (RFC 3339
+            // full-date). The `jsonschema` crate validates the format when the
+            // Validator is built with `should_validate_formats(true)`.
+            let mut obj = Map::new();
+            insert_type(&mut obj, "string", nullable);
+            obj.insert("format".into(), Value::String("date".into()));
+            apply_constraints(&mut obj, nullable, constraints);
+            Value::Object(obj)
+        }
         FieldType::Array(inner) => {
             // Array constraints apply to items (per Constraints docstring:
             // categories applies to Array(String)/Array(Integer); range applies
@@ -521,7 +532,15 @@ fn extract_type(name: &str, sub: &Map<String, Value>) -> Result<(FieldType, bool
     };
 
     let field_type = match type_str.as_str() {
-        "string" => FieldType::String,
+        "string" => match sub.get("format").and_then(Value::as_str) {
+            Some("date") => FieldType::Date,
+            Some(other) => {
+                return Err(format!(
+                    "property '{name}': unsupported format '{other}' on string type"
+                ));
+            }
+            None => FieldType::String,
+        },
         "integer" => FieldType::Integer,
         "number" => FieldType::Float,
         "boolean" => FieldType::Boolean,
@@ -748,6 +767,17 @@ fn walk(node: &Value, location: Location) -> Result<(), String> {
             // Allowed values: bool or schema. If schema, walk it.
             "additionalProperties" if value.is_object() => {
                 walk(value, Location::Property)?;
+            }
+            "format" => {
+                let format_str = value
+                    .as_str()
+                    .ok_or_else(|| "'format' must be a string".to_string())?;
+                if !ALLOWED_FORMATS.contains(&format_str) {
+                    return Err(format!(
+                        "format '{format_str}' is not supported by mdvs — \
+                         use 'pattern' for regex-based validation"
+                    ));
+                }
             }
             "x-mdvs" => {
                 let xm = value
@@ -1247,8 +1277,13 @@ mod tests {
     }
 
     #[test]
-    fn gate_rejects_format() {
-        assert_rejects(json!({"format": "email"}), "'format' is not supported");
+    fn gate_rejects_unsupported_format() {
+        assert_rejects(json!({"format": "email"}), "format 'email' is not supported");
+    }
+
+    #[test]
+    fn gate_accepts_format_date() {
+        assert!(validate_mdvs_schema(&json!({"format": "date"})).is_ok());
     }
 
     #[test]

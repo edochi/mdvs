@@ -13,17 +13,19 @@ pub(super) fn validate_for_type(
     field_type: &FieldType,
     values: &[toml::Value],
 ) -> Option<String> {
+    // Date categorical values are TOML strings on disk (e.g. "2024-01-15");
+    // the runtime jsonschema `format: date` validator catches invalid ones.
     let element_type = match field_type {
-        FieldType::String => FieldType::String,
+        FieldType::String | FieldType::Date => FieldType::String,
         FieldType::Integer => FieldType::Integer,
         FieldType::Array(inner) => match inner.as_ref() {
-            FieldType::String => FieldType::String,
+            FieldType::String | FieldType::Date => FieldType::String,
             FieldType::Integer => FieldType::Integer,
             other => {
                 return Some(format!(
                     "field '{field_name}': categories constraint does not apply \
-                     to Array({}) fields — only Array(String) and \
-                     Array(Integer) are supported",
+                     to Array({}) fields — only Array(String), Array(Integer), \
+                     and Array(Date) are supported",
                     field_type_name(other),
                 ));
             }
@@ -31,8 +33,8 @@ pub(super) fn validate_for_type(
         other => {
             return Some(format!(
                 "field '{field_name}': categories constraint does not apply \
-                 to {} fields — only String, Integer, Array(String), \
-                 and Array(Integer) are supported",
+                 to {} fields — only String, Integer, Date, Array(String), \
+                 Array(Integer), and Array(Date) are supported",
                 field_type_name(other),
             ));
         }
@@ -73,6 +75,7 @@ fn field_type_name(ft: &FieldType) -> &'static str {
         FieldType::Integer => "Integer",
         FieldType::Float => "Float",
         FieldType::String => "String",
+        FieldType::Date => "Date",
         FieldType::Array(_) => "Array",
         FieldType::Object(_) => "Object",
     }
