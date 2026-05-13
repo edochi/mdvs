@@ -745,11 +745,9 @@ fn walk(node: &Value, location: Location) -> Result<(), String> {
             "items" => {
                 walk(value, Location::Property)?;
             }
-            "additionalProperties" => {
-                // Allowed values: bool or schema. If schema, walk it.
-                if value.is_object() {
-                    walk(value, Location::Property)?;
-                }
+            // Allowed values: bool or schema. If schema, walk it.
+            "additionalProperties" if value.is_object() => {
+                walk(value, Location::Property)?;
             }
             "x-mdvs" => {
                 let xm = value
