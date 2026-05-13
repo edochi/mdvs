@@ -2,6 +2,76 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## v0.4.0 - 2026-05-13
+#### Features
+- (**example_kb**) enrich with pattern/length/range constraints + Array(Object) - (2cc9fb1) - edoch
+- (**infer**) drop Array(Object) fields at inference + invariant 9 - (5525c07) - edoch
+- (**mdvs**) function-style type display (TODO-0097 step 7, closes 0096) - (2ef8999) - edoch
+- (**mdvs**) nested Arrow Structs from dotted-name leaves (TODO-0097 step 5) - (0126987) - edoch
+- (**mdvs**) per-leaf validation by dotted path (TODO-0097 step 4) - (4b36049) - edoch
+- (**mdvs**) translator handles dotted names (TODO-0097 step 3) - (cbf3e39) - edoch
+- (**mdvs**) reject top-level Object + validate dotted names (TODO-0097 step 2) - (fb9afd4) - edoch
+- (**mdvs**) emit one InferredField per leaf (TODO-0097 step 1) - (ba88c7a) - edoch
+- (**mdvs**) strict-Float fields reject integers by default - (b98033c) - edoch
+- (**mdvs**) schema content hash in build metadata (TODO-0149 Wave B step 14) - (9254846) - edoch
+- (**mdvs**) mdvs export-jsonschema command (TODO-0149 Wave B step 9) - (96d33c2) - edoch
+- (**mdvs**) --schema flag on init and check (TODO-0149 Wave B step 10) - (66ca07a) - edoch
+- (**mdvs**) schema loader + source resolver (TODO-0149 Wave B steps 11+12) - (7c65295) - edoch
+- (**mdvs**) add min_length, max_length, pattern constraints (TODO-0149 Wave B step 7) - (243513d) - edoch
+- (**mdvs**) preprocessor pipeline + inference-driven preprocess field (TODO-0149 Wave B step 3) - (910df86) - edoch
+- (**mdvs**) swap hand-rolled validation for jsonschema (TODO-0149 Wave B step 4+5) - (c52e765) - edoch
+- (**mdvs**) add DSL→canonical translator and schema gate (TODO-0149 Wave B step 2) - (9fcc7b3) - edoch
+- (**tomljson**) make root wrapper key configurable - (51b869f) - edoch
+- (**tomljson**) lift baseline encoding-rules tests (TODO-0149 Wave A step 6) - (9219e41) - edoch
+- (**tomljson**) implement deserialize tree walker (TODO-0149 Wave A step 5) - (8b80ff4) - edoch
+- (**tomljson**) implement serialize dispatcher (TODO-0149 Wave A step 4) - (3bf9749) - edoch
+- <span style="background-color: #d73a49; color: white; padding: 2px 6px; border-radius: 3px; font-weight: bold; font-size: 0.85em;">BREAKING</span>(**types**) function-style type syntax on disk + reject Array(Object) - (d51c7a2) - edoch
+#### Bug Fixes
+- (**check**) collapse additionalProperties match guard - (7833f4e) - edoch
+- (**mdvs**) correct key order on Array/Object field types in mdvs.toml - (bd31c17) - edoch
+- (**mdvs**) respect --dry-run when --force is set on init - (37e023d) - edoch
+- (**mdvs**) surface YAML→JSON conversion failures (TODO-0149 Wave B step 8) - (d1e9316) - edoch
+#### Documentation
+- (**TODO-0149**) add Wave B execution plan appendix - (9980ea2) - edoch
+- (**TODO-0149**) drop standalone API and $tomljson-null directive - (79d8f43) - edoch
+- (**mdvs**) Wave C docs sweep (TODO-0097 step 10) - (1a82ad1) - edoch
+- (**mdvs**) refresh specs + mdBook + README for Wave B - (0ce9fd7) - edoch
+- (**todos**) close TODO-0155 (function-style syntax shipped) - (95b3def) - edoch
+- (**todos**) split TODO-0155 into syntax unification + Array-of-Object - (5dfcfd8) - edoch
+- (**todos**) expand TODO-0155 to cover display ↔ serde unification - (0c79bdf) - edoch
+- (**todos**) close TODO-0097 + TODO-0149 (all three waves done) - (f1df13b) - edoch
+- (**todos**) TODO-0097 — execution plan + resolved design decisions - (9e0a9df) - edoch
+- (**todos**) TODO-0155 — reusable type definitions via $defs / $ref - (1413cc1) - edoch
+- (**todos**) reopen TODO-0149 — Wave C still pending - (0a4a5bb) - edoch
+- (**todos**) close TODO-0149 (Wave B complete; step 13 deferred to 154) - (7bc707a) - edoch
+- (**todos**) TODO-0154 (overlay cache) + couple to TODO-0149 step 13 - (1513f99) - edoch
+- (**tomljson**) trim apologetic tone from README - (84aa7ec) - edoch
+- (**tomljson**) write README.md (TODO-0149 Wave A step 7) - (1bf0a88) - edoch
+- (**types**) sweep specs + mdBook for function-style syntax and Array(Object) rejection - (1918522) - edoch
+- rewrite AGENTS.md to be provider-agnostic + update for Wave B - (c441076) - edoch
+- reframe TODO-0153 as three small composable crates - (fe65d69) - edoch
+- add TODO-0152 (layered structure) and TODO-0153 (validation engine) - (15e59da) - edoch
+- simplify --schema flag and drop validate/search crate split (TODO-0149) - (900260a) - edoch
+- design path-scoped validation + error mapping (TODO-0149) - (df55687) - edoch
+- split schema sourcing into reference / import / override (TODO-0149) - (a606108) - edoch
+- add crate organization and pipeline architecture (TODO-0149) - (95baaf5) - edoch
+- rename tomlschema → tomljson, finalize crate design (TODO-0149) - (41816b0) - edoch
+- design tomlschema crate + JSON Schema integration (TODO-0149) - (3cc2838) - edoch
+- reprioritize TODOs and mark TODO-0151 done - (dc5b643) - edoch, *Claude*
+#### Tests
+- (**mdvs**) Array(Object) inference + example_kb closeout (TODO-0097 8+9) - (cac2a94) - edoch
+- (**mdvs**) dotted-leaf --where regression coverage (TODO-0097 step 6) - (f1535e7) - edoch
+#### Refactoring
+- (**mdvs**) rename --schema to --from-jsonschema (init) and --jsonschema (check) - (74d9959) - edoch
+- (**mdvs**) delete unreachable per-value validation (TODO-0149 Wave B step 6) - (489d3d4) - edoch
+- <span style="background-color: #d73a49; color: white; padding: 2px 6px; border-radius: 3px; font-weight: bold; font-size: 0.85em;">BREAKING</span>(**types**) kebab-case preprocess names + clean error messages - (62894f1) - edoch
+#### Miscellaneous Chores
+- (**mdvs**) add jsonschema and tomljson deps (TODO-0149 Wave B step 1) - (2bcca1f) - edoch
+- (**workspace**) restructure to Cargo workspace, add tomljson skeleton - (158f78d) - edoch
+- Wave B closeout — cargo audit/deny + CI workflow - (c14a17b) - edoch
+
+- - -
+
 ## v0.3.3 - 2026-04-21
 #### Bug Fixes
 - serialize widened-to-String values in category inference and validation - (a6ecd2c) - edoch, *Claude*
