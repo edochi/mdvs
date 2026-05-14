@@ -133,12 +133,20 @@ impl<'a> Parser<'a> {
         }
         if start == self.pos {
             return Err(ParseError {
-                message: "expected a type name (String, Integer, Float, Boolean, or Array(...))"
-                    .into(),
+                message:
+                    "expected a type name (String, Integer, Float, Boolean, Date, DateTime, or Array(...))"
+                        .into(),
                 column: start + 1,
             });
         }
-        Ok(std::str::from_utf8(&self.input[start..self.pos]).expect("ascii-only by construction"))
+        std::str::from_utf8(&self.input[start..self.pos]).map_err(|_| ParseError {
+            // The byte loop above only advances over ASCII alphabetic +
+            // underscore bytes, so this arm is unreachable in practice. If
+            // a future contributor relaxes the loop, this surfaces a clear
+            // error instead of UB or a panic.
+            message: "internal parser error: identifier bytes are not valid UTF-8".into(),
+            column: start + 1,
+        })
     }
 
     fn expect_char(&mut self, c: u8, ctx: &str) -> Result<(), ParseError> {
@@ -165,7 +173,7 @@ impl<'a> Parser<'a> {
         let ident_start = self.pos;
         let ident = self.parse_ident()?;
         match ident {
-            "String" | "Integer" | "Float" | "Boolean" => {
+            "String" | "Integer" | "Float" | "Boolean" | "Date" | "DateTime" => {
                 Ok(FieldTypeSerde::Scalar(ident.to_string()))
             }
             "Array" => {
@@ -186,7 +194,7 @@ impl<'a> Parser<'a> {
             other => Err(ParseError {
                 message: format!(
                     "unknown type `{other}`. \
-                     Expected one of String, Integer, Float, Boolean, or Array(...)"
+                     Expected one of String, Integer, Float, Boolean, Date, DateTime, or Array(...)"
                 ),
                 column: ident_start + 1,
             }),
@@ -204,7 +212,7 @@ impl<'a> Parser<'a> {
         let inner_start = self.pos;
         let ident = self.parse_ident()?;
         match ident {
-            "String" | "Integer" | "Float" | "Boolean" => {
+            "String" | "Integer" | "Float" | "Boolean" | "Date" | "DateTime" => {
                 Ok(FieldTypeSerde::Scalar(ident.to_string()))
             }
             "Array" => Err(ParseError {
@@ -257,6 +265,8 @@ impl From<&FieldType> for FieldTypeSerde {
             FieldType::Integer => FieldTypeSerde::Scalar("Integer".into()),
             FieldType::Float => FieldTypeSerde::Scalar("Float".into()),
             FieldType::String => FieldTypeSerde::Scalar("String".into()),
+            FieldType::Date => FieldTypeSerde::Scalar("Date".into()),
+            FieldType::DateTime => FieldTypeSerde::Scalar("DateTime".into()),
             FieldType::Array(inner) => FieldTypeSerde::Array {
                 array: Box::new(FieldTypeSerde::from(inner.as_ref())),
             },
@@ -280,6 +290,8 @@ impl TryFrom<&FieldTypeSerde> for FieldType {
                 "Integer" => Ok(FieldType::Integer),
                 "Float" => Ok(FieldType::Float),
                 "String" => Ok(FieldType::String),
+                "Date" => Ok(FieldType::Date),
+                "DateTime" => Ok(FieldType::DateTime),
                 other => Err(format!("unknown type: {other}")),
             },
             FieldTypeSerde::Array { array } => {
@@ -414,7 +426,7 @@ mod tests {
 
     #[test]
     fn unknown_scalar_type_error() {
-        let bad = FieldTypeSerde::Scalar("Date".into());
+        let bad = FieldTypeSerde::Scalar("Bogus".into());
         let result = FieldType::try_from(&bad);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("unknown type"));
@@ -481,8 +493,8 @@ mod tests {
     // --- Parser tests -----------------------------------------------------
 
     #[test]
-    fn parse_scalar_all_four() {
-        for name in &["String", "Integer", "Float", "Boolean"] {
+    fn parse_scalar_all_five() {
+        for name in &["String", "Integer", "Float", "Boolean", "Date"] {
             let ft = FieldTypeSerde::parse(name).unwrap();
             assert_eq!(ft, FieldTypeSerde::Scalar((*name).into()));
         }
@@ -490,7 +502,7 @@ mod tests {
 
     #[test]
     fn parse_array_of_each_scalar() {
-        for name in &["String", "Integer", "Float", "Boolean"] {
+        for name in &["String", "Integer", "Float", "Boolean", "Date"] {
             let s = format!("Array({name})");
             let ft = FieldTypeSerde::parse(&s).unwrap();
             assert_eq!(
@@ -500,6 +512,36 @@ mod tests {
                 }
             );
         }
+    }
+
+    #[test]
+    fn date_field_type_round_trip() {
+        // FieldType::Date ↔ FieldTypeSerde::Scalar("Date") in both directions.
+        let ft = FieldType::Date;
+        let serde_form = FieldTypeSerde::from(&ft);
+        assert_eq!(serde_form, FieldTypeSerde::Scalar("Date".into()));
+        let back: FieldType = FieldType::try_from(&serde_form).unwrap();
+        assert_eq!(back, FieldType::Date);
+    }
+
+    #[test]
+    fn array_of_date_round_trip() {
+        let ft = FieldType::Array(Box::new(FieldType::Date));
+        let serde_form = FieldTypeSerde::from(&ft);
+        assert_eq!(serde_form.to_string(), "Array(Date)");
+        let back: FieldType = FieldType::try_from(&serde_form).unwrap();
+        assert_eq!(back, ft);
+    }
+
+    #[test]
+    fn date_toml_disk_round_trip() {
+        // Disk form `type = "Date"` deserializes to FieldType::Date and
+        // serializes back to the same string.
+        let toml_str = r#"type = "Date""#;
+        let w: TypeWrapper = toml::from_str(toml_str).unwrap();
+        assert_eq!(w.field_type, FieldTypeSerde::Scalar("Date".into()));
+        let back = toml::to_string(&w).unwrap();
+        assert!(back.contains(r#"type = "Date""#));
     }
 
     #[test]
@@ -555,8 +597,8 @@ mod tests {
 
     #[test]
     fn parse_rejects_unknown_scalar() {
-        let err = FieldTypeSerde::parse("Date").unwrap_err();
-        assert!(err.message.contains("unknown type `Date`"));
+        let err = FieldTypeSerde::parse("Bogus").unwrap_err();
+        assert!(err.message.contains("unknown type `Bogus`"));
         assert_eq!(err.column, 1);
     }
 

@@ -207,8 +207,18 @@ pub async fn run(
         return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
     }
 
-    // 3. Load model (reuse from build if available)
-    let emb_config = embedding.unwrap();
+    // 3. Load model (reuse from build if available).
+    // The pre_check above ensures `embedding` is Some when we reach this
+    // point; fall through to a step-level error if a future refactor
+    // breaks that invariant.
+    let Some(emb_config) = embedding else {
+        steps.push(StepEntry::err(
+            ErrorKind::Application,
+            "internal: missing embedding config after pre-check passed".to_string(),
+            0,
+        ));
+        return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
+    };
     let embedder = if let Some(emb) = build_embedder {
         steps.push(StepEntry::ok(
             Outcome::LoadModel(LoadModelOutcome {
@@ -262,8 +272,16 @@ pub async fn run(
         embed_start.elapsed().as_millis() as u64,
     ));
 
-    // 5. Execute search — calls backend.search() directly with quote validation
-    let cfg = config.as_ref().unwrap();
+    // 5. Execute search — calls backend.search() directly with quote validation.
+    // Same invariant as `embedding` above: pre_check guarantees `config` is Some.
+    let Some(cfg) = config.as_ref() else {
+        steps.push(StepEntry::err(
+            ErrorKind::Application,
+            "internal: missing config after pre-check passed".to_string(),
+            0,
+        ));
+        return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
+    };
     let backend = Backend::parquet(path);
     let (prefix, aliases) = match &cfg.search {
         Some(sc) => (sc.internal_prefix.as_str(), &sc.aliases),

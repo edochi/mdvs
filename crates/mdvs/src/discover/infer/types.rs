@@ -575,4 +575,124 @@ mod tests {
         assert_eq!(info["meta"].field_type, FieldType::String);
         assert_eq!(info["meta.author"].field_type, FieldType::String);
     }
+
+    // ===== Date inference (TODO-0007 Wave 2) =====
+
+    #[test]
+    fn pure_date_observations_infer_date() {
+        let scanned = ScannedFiles {
+            files: vec![
+                sf("a.md", Some(json!({"published": "2024-01-15"}))),
+                sf("b.md", Some(json!({"published": "2024-06-20"}))),
+                sf("c.md", Some(json!({"published": "2024-12-31"}))),
+            ],
+        };
+        let info = infer_field_types(&scanned);
+        assert_eq!(info["published"].field_type, FieldType::Date);
+    }
+
+    #[test]
+    fn one_non_date_observation_downgrades_to_string() {
+        let scanned = ScannedFiles {
+            files: vec![
+                sf("a.md", Some(json!({"published": "2024-01-15"}))),
+                sf("b.md", Some(json!({"published": "see protocol"}))),
+            ],
+        };
+        let info = infer_field_types(&scanned);
+        assert_eq!(info["published"].field_type, FieldType::String);
+    }
+
+    #[test]
+    fn one_invalid_calendar_date_downgrades_to_string() {
+        // Even with mostly valid dates, a single calendrically invalid
+        // observation (`2024-13-01`) forces the field to String.
+        let scanned = ScannedFiles {
+            files: vec![
+                sf("a.md", Some(json!({"published": "2024-01-15"}))),
+                sf("b.md", Some(json!({"published": "2024-06-20"}))),
+                sf("c.md", Some(json!({"published": "2024-13-01"}))),
+            ],
+        };
+        let info = infer_field_types(&scanned);
+        assert_eq!(info["published"].field_type, FieldType::String);
+    }
+
+    #[test]
+    fn pure_date_array_inferred_as_array_date() {
+        let scanned = ScannedFiles {
+            files: vec![
+                sf(
+                    "a.md",
+                    Some(json!({"milestones": ["2024-01-01", "2024-06-15"]})),
+                ),
+                sf(
+                    "b.md",
+                    Some(json!({"milestones": ["2024-03-15", "2024-12-31"]})),
+                ),
+            ],
+        };
+        let info = infer_field_types(&scanned);
+        assert_eq!(
+            info["milestones"].field_type,
+            FieldType::Array(Box::new(FieldType::Date))
+        );
+    }
+
+    #[test]
+    fn date_field_widens_with_other_type_to_string() {
+        // File A has a date string, File B has an integer. Widening collapses
+        // to String regardless of Date detection.
+        let scanned = ScannedFiles {
+            files: vec![
+                sf("a.md", Some(json!({"x": "2024-01-15"}))),
+                sf("b.md", Some(json!({"x": 42}))),
+            ],
+        };
+        let info = infer_field_types(&scanned);
+        assert_eq!(info["x"].field_type, FieldType::String);
+    }
+
+    // ===== DateTime inference (TODO-0007 Wave 3) =====
+
+    #[test]
+    fn pure_datetime_observations_infer_datetime() {
+        let scanned = ScannedFiles {
+            files: vec![
+                sf("a.md", Some(json!({"synced_at": "2024-01-15T14:30:00Z"}))),
+                sf(
+                    "b.md",
+                    Some(json!({"synced_at": "2024-06-20T08:00:00+05:30"})),
+                ),
+            ],
+        };
+        let info = infer_field_types(&scanned);
+        assert_eq!(info["synced_at"].field_type, FieldType::DateTime);
+    }
+
+    #[test]
+    fn mixed_date_and_datetime_widens_to_string() {
+        // Cross-shape: one file has a date, another a datetime.
+        let scanned = ScannedFiles {
+            files: vec![
+                sf("a.md", Some(json!({"x": "2024-01-15"}))),
+                sf("b.md", Some(json!({"x": "2024-06-20T08:00:00Z"}))),
+            ],
+        };
+        let info = infer_field_types(&scanned);
+        assert_eq!(info["x"].field_type, FieldType::String);
+    }
+
+    #[test]
+    fn naive_datetime_observation_downgrades_to_string() {
+        // Even one timezone-naive datetime forces String.
+        let scanned = ScannedFiles {
+            files: vec![
+                sf("a.md", Some(json!({"x": "2024-01-15T14:30:00Z"}))),
+                sf("b.md", Some(json!({"x": "2024-06-20T08:00:00"}))),
+            ],
+        };
+        let info = infer_field_types(&scanned);
+        assert_eq!(info["x"].field_type, FieldType::String);
+    }
 }

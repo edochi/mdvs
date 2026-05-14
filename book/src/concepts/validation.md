@@ -81,6 +81,8 @@ Fields with empty `preprocess` arrays are validated strictly — there are no im
 
 **Pattern.** A `pattern` constraint on a String field is enforced as a regex; pattern failures surface as `WrongType` (with detail naming the offending value).
 
+**Date and DateTime format validation.** `Date` and `DateTime` fields use JSON Schema's `format: date` / `format: date-time` keywords. Non-conforming values (invalid calendar dates, missing timezones, wrong separators) fire `WrongType` with a rule like `format date` or `format date-time`. See [Date and DateTime](./types.md#date-and-datetime) for the exact accepted shapes.
+
 ## Engine
 
 Per-value validation runs through the `jsonschema` crate. mdvs translates `mdvs.toml`'s `[fields]` block into a JSON Schema 2020-12 document, compiles one validator per field, runs Stage 2 preprocessors, then validates each value. Errors from `jsonschema` are mapped exhaustively into the seven `ViolationKind`s above.

@@ -232,8 +232,10 @@ This is not the same as putting the field in the `ignore` list. Both prevent the
 Scalar types are plain strings:
 
 ```toml
-type = "String"    # also: "Boolean", "Integer", "Float"
+type = "String"    # also: "Boolean", "Integer", "Float", "Date", "DateTime"
 ```
+
+`Date` and `DateTime` accept RFC 3339 values only (`YYYY-MM-DD` for Date, `YYYY-MM-DDTHH:MM:SS[.frac]<Z|±HH:MM>` for DateTime). See [Date and DateTime](./concepts/types.md#date-and-datetime) for the exact accepted shapes and storage semantics.
 
 Arrays use a function-style string:
 
@@ -258,7 +260,7 @@ The valid type grammar is:
 
 ```text
 Type   := Scalar | Array(Scalar)
-Scalar := String | Integer | Float | Boolean
+Scalar := String | Integer | Float | Boolean | Date | DateTime
 ```
 
 See [Types](./concepts/types.md) for the full type system, including widening rules.

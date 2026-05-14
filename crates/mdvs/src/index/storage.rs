@@ -7,8 +7,9 @@ use std::collections::{BTreeMap, HashMap};
 use xxhash_rust::xxh3::xxh3_64;
 
 use datafusion::arrow::array::{
-    ArrayRef, BooleanArray, FixedSizeListArray, Float32Array, Float64Array, Int32Array, Int64Array,
-    ListArray, StringArray, StructArray, TimestampMicrosecondArray,
+    ArrayRef, BooleanArray, Date32Array, FixedSizeListArray, Float32Array, Float64Array,
+    Int32Array, Int64Array, ListArray, StringArray, StructArray, TimestampMicrosecondArray,
+    TimestampMillisecondArray,
 };
 use datafusion::arrow::buffer::{NullBuffer, OffsetBuffer};
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
@@ -219,6 +220,44 @@ fn build_array(values: &[Option<&Value>], ft: &FieldType) -> ArrayRef {
                 .collect();
             Arc::new(arr)
         }
+        FieldType::Date => {
+            // Parse JSON strings as RFC 3339 full-date (`YYYY-MM-DD`) and
+            // store as Arrow `Date32` (days since 1970-01-01). jsonschema's
+            // `format: date` validator runs upstream during check, so by the
+            // time we get here the values that survived are well-formed.
+            // Defensively skip anything that doesn't parse.
+            //
+            // `num_days_from_ce()` returns days since 1 CE; the constant
+            // `EPOCH_DAYS_FROM_CE = 719163` is `NaiveDate(1970, 1, 1)
+            // .num_days_from_ce()`, used to convert to Date32's epoch (1970-01-01).
+            use chrono::Datelike;
+            const EPOCH_DAYS_FROM_CE: i32 = 719_163;
+            let arr: Date32Array = values
+                .iter()
+                .map(|v| {
+                    v.and_then(|v| v.as_str())
+                        .and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
+                        .map(|d| d.num_days_from_ce() - EPOCH_DAYS_FROM_CE)
+                })
+                .collect();
+            Arc::new(arr)
+        }
+        FieldType::DateTime => {
+            // Parse RFC 3339 datetimes and store as Arrow Timestamp(ms, UTC).
+            // Values with any offset are normalized to UTC at storage time;
+            // the original offset is intentionally dropped (we store absolute
+            // moments, not local-time + offset pairs). Naive datetimes are
+            // rejected by parse_from_rfc3339, so they end up as NULL.
+            let raw: TimestampMillisecondArray = values
+                .iter()
+                .map(|v| {
+                    v.and_then(|v| v.as_str())
+                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                        .map(|dt| dt.with_timezone(&chrono::Utc).timestamp_millis())
+                })
+                .collect();
+            Arc::new(raw.with_timezone(Arc::from("UTC")))
+        }
         FieldType::Array(inner) => {
             let mut offsets: Vec<i32> = vec![0];
             let mut child_values: Vec<Option<&Value>> = Vec::new();
@@ -233,7 +272,11 @@ fn build_array(values: &[Option<&Value>], ft: &FieldType) -> ArrayRef {
                         nulls.push(true);
                     }
                     None => {
-                        offsets.push(*offsets.last().unwrap());
+                        // `offsets` is seeded with `vec![0]`, so `.last()`
+                        // is always Some here. The `unwrap_or(&0)` fallback
+                        // preserves correctness if a future refactor breaks
+                        // that invariant.
+                        offsets.push(*offsets.last().unwrap_or(&0));
                         nulls.push(false);
                     }
                 }
@@ -284,7 +327,10 @@ fn build_array(values: &[Option<&Value>], ft: &FieldType) -> ArrayRef {
 ///
 /// Frontmatter values are packed into a single `data` Struct column whose
 /// child fields match `schema_fields`.
-pub fn build_files_batch(schema_fields: &[(String, FieldType)], files: &[FileRow]) -> RecordBatch {
+pub fn build_files_batch(
+    schema_fields: &[(String, FieldType)],
+    files: &[FileRow],
+) -> anyhow::Result<RecordBatch> {
     let file_id_arr: StringArray = files.iter().map(|f| Some(f.file_id.as_str())).collect();
     let filename_arr: StringArray = files.iter().map(|f| Some(f.filename.as_str())).collect();
     let content_hash_arr: StringArray = files
@@ -327,7 +373,7 @@ pub fn build_files_batch(schema_fields: &[(String, FieldType)], files: &[FileRow
             Arc::new(built_at_arr),
         ],
     )
-    .unwrap()
+    .map_err(|e| anyhow::anyhow!("failed to build files RecordBatch: {e}"))
 }
 
 /// Transpose a flat list of `(dotted_name, FieldType)` entries into a
@@ -378,7 +424,7 @@ fn insert_at_segments(map: &mut BTreeMap<String, FieldType>, segments: &[&str], 
 /// Build an Arrow `RecordBatch` for `chunks.parquet` from chunk rows.
 ///
 /// Embeddings are stored as a `FixedSizeList<Float32>` with the given `dimension`.
-pub fn build_chunks_batch(chunks: &[ChunkRow], dimension: i32) -> RecordBatch {
+pub fn build_chunks_batch(chunks: &[ChunkRow], dimension: i32) -> anyhow::Result<RecordBatch> {
     let chunk_id_arr: StringArray = chunks.iter().map(|c| Some(c.chunk_id.as_str())).collect();
     let file_id_arr: StringArray = chunks.iter().map(|c| Some(c.file_id.as_str())).collect();
     let chunk_index_arr: Int32Array = chunks.iter().map(|c| Some(c.chunk_index)).collect();
@@ -424,7 +470,7 @@ pub fn build_chunks_batch(chunks: &[ChunkRow], dimension: i32) -> RecordBatch {
             Arc::new(embedding_arr),
         ],
     )
-    .unwrap()
+    .map_err(|e| anyhow::anyhow!("failed to build chunks RecordBatch: {e}"))
 }
 
 // ============================================================================
@@ -621,7 +667,7 @@ mod tests {
             built_at: 1_700_000_000_000_000,
         }];
 
-        let batch = build_files_batch(&schema_fields, &files);
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
         let data = batch
             .column(2)
             .as_any()
@@ -674,7 +720,7 @@ mod tests {
             built_at: 1_700_000_000_000_000,
         }];
 
-        let batch = build_files_batch(&schema_fields, &files);
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
         let data = batch
             .column(2)
             .as_any()
@@ -709,7 +755,7 @@ mod tests {
             built_at: 1_700_000_000_000_000,
         }];
 
-        let batch = build_files_batch(&schema_fields, &files);
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
         let data = batch
             .column(2)
             .as_any()
@@ -778,7 +824,7 @@ mod tests {
             },
         ];
 
-        let batch = build_files_batch(&schema_fields, &files);
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("files.parquet");
 
@@ -860,7 +906,7 @@ mod tests {
             },
         ];
 
-        let batch = build_files_batch(&schema_fields, &files);
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
 
         let data = batch
             .column(2)
@@ -921,7 +967,7 @@ mod tests {
             },
         ];
 
-        let batch = build_files_batch(&schema_fields, &files);
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
 
         let data = batch
             .column(2)
@@ -997,7 +1043,7 @@ mod tests {
             },
         ];
 
-        let batch = build_chunks_batch(&chunks, dimension);
+        let batch = build_chunks_batch(&chunks, dimension).unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("chunks.parquet");
 
@@ -1041,7 +1087,8 @@ mod tests {
                 content_hash: "h1".into(),
                 built_at: 1_700_000_000_000_000,
             }],
-        );
+        )
+        .unwrap();
         let batch2 = build_files_batch(
             &schema_fields,
             &[FileRow {
@@ -1051,7 +1098,8 @@ mod tests {
                 content_hash: "h2".into(),
                 built_at: 1_700_000_000_000_000,
             }],
-        );
+        )
+        .unwrap();
 
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("files_streamed.parquet");
@@ -1096,7 +1144,8 @@ mod tests {
                 content_hash: "h1".into(),
                 built_at: 1_700_000_000_000_000,
             }],
-        );
+        )
+        .unwrap();
         let batch2 = build_files_batch(
             &schema_fields,
             &[FileRow {
@@ -1106,7 +1155,8 @@ mod tests {
                 content_hash: "h2".into(),
                 built_at: 1_700_000_000_000_000,
             }],
-        );
+        )
+        .unwrap();
 
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("files_stream_read.parquet");
@@ -1159,7 +1209,7 @@ mod tests {
             },
         ];
 
-        let batch = build_files_batch(&schema_fields, &files);
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("files_proj.parquet");
 
@@ -1199,7 +1249,7 @@ mod tests {
             built_at: 1_700_000_000_000_000,
         }];
 
-        let batch = build_files_batch(&schema_fields, &files);
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("files_size.parquet");
 
@@ -1221,7 +1271,7 @@ mod tests {
             built_at: 1_700_000_000_000_000,
         }];
 
-        let batch = build_files_batch(&schema_fields, &files);
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("files.parquet");
 
@@ -1256,7 +1306,7 @@ mod tests {
             built_at: 1_700_000_000_000_000,
         }];
 
-        let batch = build_files_batch(&schema_fields, &files);
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("files.parquet");
 
@@ -1291,7 +1341,7 @@ mod tests {
             built_at: 1_700_000_000_000_000,
         }];
 
-        let batch = build_files_batch(&schema_fields, &files);
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("files.parquet");
 
@@ -1332,7 +1382,7 @@ mod tests {
             },
         ];
 
-        let batch = build_files_batch(&schema_fields, &files);
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("files.parquet");
         write_parquet(&path, &batch).unwrap();
@@ -1382,7 +1432,7 @@ mod tests {
             },
         ];
 
-        let batch = build_chunks_batch(&original, 4);
+        let batch = build_chunks_batch(&original, 4).unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("chunks.parquet");
         write_parquet(&path, &batch).unwrap();
@@ -1421,7 +1471,7 @@ mod tests {
             built_at: 1_700_000_000_000_000,
         }];
 
-        let batch = build_files_batch(&schema_fields, &files);
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("files.parquet");
         write_parquet(&path, &batch).unwrap();
@@ -1441,7 +1491,7 @@ mod tests {
             built_at: 1_700_000_000_000_000,
         }];
 
-        let batch = build_files_batch(&schema_fields, &files);
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("files.parquet");
         write_parquet(&path, &batch).unwrap();
@@ -1644,12 +1694,333 @@ mod tests {
             built_at: 1_700_000_000_000_000,
         }];
 
-        let batch = build_files_batch(&schema_fields, &files);
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("files.parquet");
         write_parquet(&path, &batch).unwrap();
 
         let batches = read_parquet(&path).unwrap();
         assert_eq!(batches[0].num_rows(), 1);
+    }
+
+    // ===== Date type (TODO-0007 Wave 1) — Arrow Date32 storage =====
+
+    #[test]
+    fn date_field_writes_date32_column() {
+        let schema_fields = vec![("birthday".into(), FieldType::Date)];
+        let files = vec![FileRow {
+            file_id: "id-1".into(),
+            filename: "a.md".into(),
+            frontmatter: Some(serde_json::json!({"birthday": "1990-05-12"})),
+            content_hash: "h".into(),
+            built_at: 1_700_000_000_000_000,
+        }];
+
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
+        let data = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+        let bday = data
+            .column_by_name("birthday")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Date32Array>()
+            .unwrap();
+
+        // 1990-05-12 - 1970-01-01 = 7_436 days.
+        assert_eq!(bday.value(0), 7_436);
+    }
+
+    #[test]
+    fn date_epoch_value_is_zero() {
+        let schema_fields = vec![("d".into(), FieldType::Date)];
+        let files = vec![FileRow {
+            file_id: "id-1".into(),
+            filename: "a.md".into(),
+            frontmatter: Some(serde_json::json!({"d": "1970-01-01"})),
+            content_hash: "h".into(),
+            built_at: 1_700_000_000_000_000,
+        }];
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
+        let data = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+        let d = data
+            .column_by_name("d")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Date32Array>()
+            .unwrap();
+        assert_eq!(d.value(0), 0);
+    }
+
+    #[test]
+    fn array_of_date_writes_list_of_date32() {
+        let schema_fields = vec![(
+            "milestones".into(),
+            FieldType::Array(Box::new(FieldType::Date)),
+        )];
+        let files = vec![FileRow {
+            file_id: "id-1".into(),
+            filename: "a.md".into(),
+            frontmatter: Some(serde_json::json!({
+                "milestones": ["2024-01-01", "2024-06-15"]
+            })),
+            content_hash: "h".into(),
+            built_at: 1_700_000_000_000_000,
+        }];
+
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
+        let data = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+        let list = data
+            .column_by_name("milestones")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<ListArray>()
+            .unwrap();
+        let values = list
+            .values()
+            .as_any()
+            .downcast_ref::<Date32Array>()
+            .unwrap();
+        // 2024-01-01: days since 1970-01-01 = 19_723.
+        // 2024-06-15: 19_723 + 166 = 19_889.
+        assert_eq!(values.value(0), 19_723);
+        assert_eq!(values.value(1), 19_889);
+    }
+
+    #[test]
+    fn date_round_trips_through_parquet() {
+        let schema_fields = vec![("birthday".into(), FieldType::Date)];
+        let files = vec![FileRow {
+            file_id: "id-1".into(),
+            filename: "a.md".into(),
+            frontmatter: Some(serde_json::json!({"birthday": "2024-03-15"})),
+            content_hash: "h".into(),
+            built_at: 1_700_000_000_000_000,
+        }];
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("files.parquet");
+        write_parquet(&path, &batch).unwrap();
+
+        let batches = read_parquet(&path).unwrap();
+        let data = batches[0]
+            .column_by_name(COL_DATA)
+            .unwrap()
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+        let bday = data
+            .column_by_name("birthday")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Date32Array>()
+            .unwrap();
+        // 2024-03-15: 19_797 days since epoch.
+        assert_eq!(bday.value(0), 19_797);
+    }
+
+    #[test]
+    fn date_field_null_for_unparseable_value() {
+        // Defense in depth: jsonschema rejects bad dates at check, but if a
+        // bad value somehow reaches build_array, store NULL rather than panic.
+        let schema_fields = vec![("d".into(), FieldType::Date)];
+        let files = vec![FileRow {
+            file_id: "id-1".into(),
+            filename: "a.md".into(),
+            frontmatter: Some(serde_json::json!({"d": "not-a-date"})),
+            content_hash: "h".into(),
+            built_at: 1_700_000_000_000_000,
+        }];
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
+        let data = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+        let d = data
+            .column_by_name("d")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Date32Array>()
+            .unwrap();
+        assert!(d.is_null(0));
+    }
+
+    // ===== DateTime type (TODO-0007 Wave 3) — Arrow Timestamp(ms, UTC) =====
+
+    #[test]
+    fn datetime_field_writes_timestamp_ms_utc_column() {
+        let schema_fields = vec![("synced_at".into(), FieldType::DateTime)];
+        let files = vec![FileRow {
+            file_id: "id-1".into(),
+            filename: "a.md".into(),
+            frontmatter: Some(serde_json::json!({"synced_at": "1970-01-01T00:00:00Z"})),
+            content_hash: "h".into(),
+            built_at: 1_700_000_000_000_000,
+        }];
+
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
+        let data = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+        let synced = data
+            .column_by_name("synced_at")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<TimestampMillisecondArray>()
+            .unwrap();
+        // Epoch → 0 millis.
+        assert_eq!(synced.value(0), 0);
+        // Timezone metadata on the column type.
+        match synced.data_type() {
+            DataType::Timestamp(unit, tz) => {
+                assert_eq!(*unit, TimeUnit::Millisecond);
+                assert_eq!(tz.as_deref(), Some("UTC"));
+            }
+            other => panic!("expected Timestamp(ms, UTC), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn datetime_normalises_offsets_to_utc() {
+        // Both inputs represent the same absolute moment (2024-01-15 14:30 UTC).
+        let schema_fields = vec![
+            ("a".into(), FieldType::DateTime),
+            ("b".into(), FieldType::DateTime),
+        ];
+        let files = vec![FileRow {
+            file_id: "id-1".into(),
+            filename: "a.md".into(),
+            frontmatter: Some(serde_json::json!({
+                "a": "2024-01-15T14:30:00Z",
+                "b": "2024-01-15T20:00:00+05:30",
+            })),
+            content_hash: "h".into(),
+            built_at: 1_700_000_000_000_000,
+        }];
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
+        let data = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+        let a = data
+            .column_by_name("a")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<TimestampMillisecondArray>()
+            .unwrap();
+        let b = data
+            .column_by_name("b")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<TimestampMillisecondArray>()
+            .unwrap();
+        assert_eq!(a.value(0), b.value(0));
+    }
+
+    #[test]
+    fn datetime_round_trips_through_parquet() {
+        let schema_fields = vec![("synced_at".into(), FieldType::DateTime)];
+        let files = vec![FileRow {
+            file_id: "id-1".into(),
+            filename: "a.md".into(),
+            frontmatter: Some(serde_json::json!({"synced_at": "2024-03-15T14:30:00Z"})),
+            content_hash: "h".into(),
+            built_at: 1_700_000_000_000_000,
+        }];
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("files.parquet");
+        write_parquet(&path, &batch).unwrap();
+
+        let batches = read_parquet(&path).unwrap();
+        let data = batches[0]
+            .column_by_name(COL_DATA)
+            .unwrap()
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+        let synced = data
+            .column_by_name("synced_at")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<TimestampMillisecondArray>()
+            .unwrap();
+        // 2024-03-15T14:30:00Z = 1_710_513_000_000 ms since epoch.
+        assert_eq!(synced.value(0), 1_710_513_000_000);
+    }
+
+    #[test]
+    fn array_of_datetime_writes_list_of_timestamp_ms() {
+        let schema_fields = vec![(
+            "events".into(),
+            FieldType::Array(Box::new(FieldType::DateTime)),
+        )];
+        let files = vec![FileRow {
+            file_id: "id-1".into(),
+            filename: "a.md".into(),
+            frontmatter: Some(serde_json::json!({
+                "events": ["2024-01-15T14:30:00Z", "2024-06-01T08:00:00+00:00"]
+            })),
+            content_hash: "h".into(),
+            built_at: 1_700_000_000_000_000,
+        }];
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
+        let data = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+        let list = data
+            .column_by_name("events")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<ListArray>()
+            .unwrap();
+        let values = list
+            .values()
+            .as_any()
+            .downcast_ref::<TimestampMillisecondArray>()
+            .unwrap();
+        assert_eq!(values.len(), 2);
+        assert!(values.value(1) > values.value(0));
+    }
+
+    #[test]
+    fn datetime_field_null_for_unparseable_value() {
+        let schema_fields = vec![("x".into(), FieldType::DateTime)];
+        let files = vec![FileRow {
+            file_id: "id-1".into(),
+            filename: "a.md".into(),
+            frontmatter: Some(serde_json::json!({"x": "not-a-datetime"})),
+            content_hash: "h".into(),
+            built_at: 1_700_000_000_000_000,
+        }];
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
+        let data = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+        let x = data
+            .column_by_name("x")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<TimestampMillisecondArray>()
+            .unwrap();
+        assert!(x.is_null(0));
     }
 }

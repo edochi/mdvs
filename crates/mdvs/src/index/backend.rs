@@ -160,14 +160,14 @@ impl ParquetBackend {
     ) -> anyhow::Result<()> {
         std::fs::create_dir_all(self.mdvs_dir())?;
 
-        let files_batch = build_files_batch(schema_fields, files);
+        let files_batch = build_files_batch(schema_fields, files)?;
         write_parquet_with_metadata(&self.files_parquet(), &files_batch, metadata.to_hash_map())?;
 
         let dimension = chunks
             .first()
             .map(|c| c.embedding.len() as i32)
             .unwrap_or(0);
-        let chunks_batch = build_chunks_batch(chunks, dimension);
+        let chunks_batch = build_chunks_batch(chunks, dimension)?;
         write_parquet(&self.chunks_parquet(), &chunks_batch)?;
 
         Ok(())

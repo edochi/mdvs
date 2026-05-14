@@ -13,6 +13,7 @@ wavelength_nm: 632.8
 sample_count: 16
 drift_rate: null
 funding: "internal"
+synced_at: "2024-04-02T16:14:30+02:00"
 author's_note: Sensor malfunction halfway through — drift data is unreliable, discarded.
 calibration:
   baseline:

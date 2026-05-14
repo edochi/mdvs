@@ -9,7 +9,7 @@ Re-scan files, infer field changes, and update `mdvs.toml`. Pure inference — n
 1. **Read config** — `MdvsToml::read()` + `validate()`
 2. **Pre-check** — validate `--with` requires named fields; validate `--with` value list (no `none` mixed with other kinds; pairwise compatibility via `with_kinds_conflict()`)
 3. **Scan** — `ScannedFiles::scan(path, &config.scan)`
-4. **Infer** — `InferredSchema::infer(&scanned)` — full inference (types, paths, distinct values). Fields with unrepresentable shapes (`Array(Object{...})`) are partitioned into `schema.dropped`; `emit_dropped_warnings()` prints one stderr line per dropped field.
+4. **Infer** — `InferredSchema::infer(&scanned)` — full inference (types, paths, distinct values). Fields with unrepresentable shapes (`Array(Object{...})`) are partitioned into `schema.dropped`; `emit_dropped_warnings()` prints one stderr line per dropped field. Date and DateTime are auto-detected from RFC 3339 strings — see [TODO-0007](../todos/TODO-0007.md).
 5. **Partition** — split config fields into `protected` (keep) and `targets` (reinfer):
    - No reinfer → all protected, empty targets (only new fields discovered)
    - `reinfer field1 field2` → named fields are targets, rest protected

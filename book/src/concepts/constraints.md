@@ -10,8 +10,9 @@ The **categories** constraint restricts a field's values to a declared set. It a
 
 - **String** — the value must be one of the listed strings
 - **Integer** — the value must be one of the listed integers
-- **Array(String)** — each element must be one of the listed strings
-- **Array(Integer)** — each element must be one of the listed integers
+- **Date** — each category is a string in RFC 3339 full-date shape
+- **DateTime** — each category is a string in RFC 3339 datetime shape
+- **Array(String)**, **Array(Integer)**, **Array(Date)**, **Array(DateTime)** — each element must be one of the listed values
 
 Boolean, Float, and Object fields don't support categories — Boolean is already two-valued, Float is continuous, and Object is structural.
 
@@ -103,7 +104,7 @@ The **range** constraint restricts a numeric field's value to an inclusive `[min
 - **Array(Integer)** — each element must satisfy the range
 - **Array(Float)** — same, element-wise
 
-Both `min` and `max` are optional — you can specify just one bound. Boolean, String, and Object fields don't support range.
+Both `min` and `max` are optional — you can specify just one bound. Boolean, String, Date, DateTime, and Object fields don't support range. Date / DateTime bounds (e.g. "published after 2024-01-01") aren't supported in v1 — they require JSON Schema's `formatMinimum`/`formatMaximum` vocab and are tracked as a follow-up.
 
 ### TOML representation
 
@@ -207,7 +208,7 @@ type = "String"
 pattern = '^v\d+\.\d+\.\d+$'
 ```
 
-The regex is compiled at config load time — invalid syntax fails fast. Pattern is currently String-only. Pattern violations surface as `WrongType` (with detail naming the offending value). Categorical fields can't also have a pattern — categories already enumerate the legal forms.
+The regex is compiled at config load time — invalid syntax fails fast. Pattern is currently String-only. Pattern violations surface as `WrongType` (with detail naming the offending value). Categorical fields can't also have a pattern — categories already enumerate the legal forms. Date and DateTime fields don't accept `pattern` either — the type's format is itself the pattern (see [Date and DateTime](./types.md#date-and-datetime)).
 
 ## Conflicts between constraint kinds
 

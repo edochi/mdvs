@@ -137,7 +137,7 @@ src/
 |------|----------|------|
 | `ScannedFile` | `discover/scan.rs:32` | Parsed markdown: path, frontmatter as JSON, body, line offset |
 | `ScannedFiles` | `discover/scan.rs:46` | Collection of scanned files, entry point via `::scan()` |
-| `FieldType` | `discover/field_type.rs:8` | Recursive type enum (Boolean, Integer, Float, String, Array, Object) |
+| `FieldType` | `discover/field_type.rs:8` | Recursive type enum (Boolean, Integer, Float, String, Date, DateTime, Array, Object). Date and DateTime auto-inferred from RFC 3339 strings (TODO-0007). |
 | `FieldTypeInfo` | `discover/infer/types.rs:12` | Per-field widened type + file list + distinct values + occurrence count |
 | `DirectoryTree` | `discover/infer/paths.rs:20` | Arena-based tree for glob pattern collapsing |
 | `FieldPaths` | `discover/infer/paths.rs:12` | Inferred allowed + required glob patterns |
@@ -212,9 +212,9 @@ Post-Wave-B, runtime validation goes through the `jsonschema` crate. Hand-rolled
 
 ### Stages
 
-1. **Translation** — `dsl_to_canonical(config)` in `schema/json_schema.rs` translates `MdvsToml` into a JSON Schema 2020-12 document. Strict types: `FieldType::String` emits `{"type": "string"}` (no permissive set). Path-scoping is carried as `x-mdvs.allowed` / `x-mdvs.required` per property; preprocessor stages as `x-mdvs.preprocess`.
-2. **Gate** — `validate_mdvs_schema(schema)` checks an allow-list of keywords + a hard-reject list for unsupported JSON Schema features (`oneOf`, `$ref`, `format`, etc.) with explanatory messages. Run on any schema before it enters the pipeline (`init --from-jsonschema`, `check --jsonschema`).
-3. **Compile** — `validate()` in `cmd/check.rs` builds a per-field `jsonschema::Validator` once per call. Stage 2 preprocessors are applied before validation; values arrive normalized.
+1. **Translation** — `dsl_to_canonical(config)` in `schema/json_schema.rs` translates `MdvsToml` into a JSON Schema 2020-12 document. Strict types: `FieldType::String` emits `{"type": "string"}` (no permissive set). `FieldType::Date` and `FieldType::DateTime` emit `{"type": "string", "format": "date"}` and `{"type": "string", "format": "date-time"}`. Path-scoping is carried as `x-mdvs.allowed` / `x-mdvs.required` per property; preprocessor stages as `x-mdvs.preprocess`.
+2. **Gate** — `validate_mdvs_schema(schema)` checks an allow-list of keywords + a hard-reject list for unsupported JSON Schema features (`oneOf`, `$ref`, etc.) with explanatory messages. The `format` keyword is allowed only with values in `ALLOWED_FORMATS = ["date", "date-time"]`; other format strings are rejected with a "use pattern" hint. Run on any schema before it enters the pipeline (`init --from-jsonschema`, `check --jsonschema`).
+3. **Compile** — `validate()` in `cmd/check.rs` builds a per-field `jsonschema::Validator` once per call via `jsonschema::options().should_validate_formats(true).build()`. Format validation is enabled so `date` and `date-time` are checked at runtime, not just annotated. Stage 2 preprocessors are applied before validation; values arrive normalized.
 4. **Validate** — each frontmatter value runs through its field's compiled validator. Errors map via `map_validation_error` (exhaustive match over `ValidationErrorKind`) into mdvs `ViolationKind`s.
 
 ### Error mapping (exhaustive)
@@ -227,10 +227,11 @@ Post-Wave-B, runtime validation goes through the `jsonschema` crate. Hand-rolled
 | `Minimum`, `Maximum`, `ExclusiveMinimum`, `ExclusiveMaximum`, `MultipleOf` | `OutOfRange` |
 | `MinLength`, `MaxLength`, `MinItems`, `MaxItems`, `UniqueItems` | `OutOfRange` |
 | `Pattern` | `WrongType` |
+| `Format` | `WrongType` (rule = `format <name>`) |
 | `Required` | `MissingRequired` |
 | `AdditionalProperties` | `Disallowed` |
 
-Gate-rejected variants (`OneOfNotValid`, `Format`, `Referencing`, etc.) bucket to a "schema gate should reject this — please report" path; reaching one means the gate has drifted.
+Gate-rejected variants (`OneOfNotValid`, `Referencing`, etc.) bucket to a "schema gate should reject this — please report" path; reaching one means the gate has drifted.
 
 ### Round-trip
 
@@ -292,6 +293,29 @@ For some preprocessor stages, **the absence of the stage** must enforce a check 
 - The preprocessor pipeline and the jsonschema validator are skipped for that value — no double violation.
 
 Current scope: `Float` and `Array(Float)` fields without `WidenIntToFloat` in `preprocess` reject integer-backed values. Future ValueStages with a similar "absence-must-be-enforced-in-Rust" requirement extend the same function.
+
+## Date and DateTime types (TODO-0007)
+
+Two type variants for time-shaped strings. Both store the canonical wire form per RFC 3339:
+
+| Type | Wire format | JSON Schema | Arrow type | Validation |
+|---|---|---|---|---|
+| `Date` | `YYYY-MM-DD` | `{"type": "string", "format": "date"}` | `Date32` (days since 1970-01-01) | jsonschema `format: date` + chrono parse |
+| `DateTime` | `YYYY-MM-DDTHH:MM:SS[.frac]<Z\|±HH:MM>` | `{"type": "string", "format": "date-time"}` | `Timestamp(Millisecond, "UTC")` | jsonschema `format: date-time` + `chrono::DateTime::parse_from_rfc3339` |
+
+### Inference
+
+`From<&Value> for FieldType` checks `Value::String(s)` against two regex+chrono gates:
+- `looks_like_date_time(s)` — RFC 3339 datetime regex + `chrono::DateTime::parse_from_rfc3339(s).is_ok()`. Checked first.
+- `looks_like_date(s)` — RFC 3339 full-date regex + `chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").is_ok()`.
+
+Shapes are disjoint (datetime requires `T`, date forbids it). Per-value detection; widening picks up mixed-observation cases via the standard rules: `Date + Date → Date`, `DateTime + DateTime → DateTime`, `Date + DateTime → String` (cross-shape), `Date + non-string → String`. Strict — one non-matching observation downgrades the whole field to String.
+
+### Storage normalization
+
+DateTime values are normalized to UTC at storage time (`dt.with_timezone(&chrono::Utc).timestamp_millis()`). `2024-04-02T16:14:30+02:00` and `2024-04-02T14:14:30Z` are the same absolute moment and store identically. The original offset is intentionally discarded; the Arrow column carries `Some("UTC")` as its timezone metadata.
+
+Date and DateTime do **not** support any preprocessor — there's no `parse-loose-date` opt-in. A string either parses as RFC 3339 or it falls back to String.
 
 ## Dotted-name leaf flattening (Wave C / TODO-0097)
 

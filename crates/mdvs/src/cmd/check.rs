@@ -614,9 +614,12 @@ impl FieldValidators {
             // ignores unknown keywords by default) but keeps schemas tidy
             // for any future debug printing.
             let stripped = strip_x_mdvs(subschema.clone());
-            let validator = jsonschema::validator_for(&stripped).map_err(|e| {
-                anyhow::anyhow!("failed to compile schema for '{}': {e}", field.name)
-            })?;
+            let validator = jsonschema::options()
+                .should_validate_formats(true)
+                .build(&stripped)
+                .map_err(|e| {
+                    anyhow::anyhow!("failed to compile schema for '{}': {e}", field.name)
+                })?;
             per_field.insert(field.name.clone(), validator);
         }
         Ok(Self { per_field })
@@ -796,6 +799,11 @@ fn map_validation_error(
             rule: format!("pattern {pattern}"),
             detail: Some(format!("got {instance}")),
         },
+        E::Format { format } => MappedViolation {
+            kind: ViolationKind::WrongType,
+            rule: format!("format {format}"),
+            detail: Some(format!("got {instance}")),
+        },
         E::MinItems { limit } => MappedViolation {
             kind: ViolationKind::OutOfRange,
             rule: format!("minItems {limit}"),
@@ -824,7 +832,6 @@ fn map_validation_error(
         | E::ContentMediaType { .. }
         | E::Custom { .. }
         | E::FalseSchema
-        | E::Format { .. }
         | E::FromUtf8 { .. }
         | E::MaxProperties { .. }
         | E::MinProperties { .. }
@@ -2615,4 +2622,187 @@ mod tests {
     // NOTE: a former `array_of_object_validates_inner_shape` test was removed
     // as part of TODO-0155 (Array(Object{...}) is no longer a valid on-disk
     // type — see `parse_rejects_array_of_object` in schema::shared::tests).
+
+    // ===== Date type (TODO-0007 Wave 1) =====
+
+    fn date_field(name: &str) -> TomlField {
+        TomlField {
+            name: name.into(),
+            field_type: FieldTypeSerde::Scalar("Date".into()),
+            allowed: vec!["**".into()],
+            required: vec![],
+            nullable: false,
+            constraints: None,
+            preprocess: vec![],
+        }
+    }
+
+    #[test]
+    fn date_field_accepts_rfc3339_date() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("blog")).unwrap();
+        fs::write(
+            tmp.path().join("blog/post.md"),
+            "---\nbirthday: 1990-05-12\n---\n# Body",
+        )
+        .unwrap();
+        write_toml(tmp.path(), vec![date_field("birthday")], vec![]);
+
+        let step = run(tmp.path(), true, false, None);
+        let result = unwrap_check(&step);
+        assert!(
+            result.violations.is_empty(),
+            "expected no violations, got: {:?}",
+            result.violations
+        );
+    }
+
+    #[test]
+    fn date_field_rejects_invalid_calendar_date() {
+        // "2024-13-45" is RFC 3339 *syntax* but jsonschema's date validator
+        // catches invalid month/day.
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("blog")).unwrap();
+        fs::write(
+            tmp.path().join("blog/post.md"),
+            "---\nbirthday: \"2024-13-45\"\n---\n# Body",
+        )
+        .unwrap();
+        write_toml(tmp.path(), vec![date_field("birthday")], vec![]);
+
+        let step = run(tmp.path(), true, false, None);
+        let result = unwrap_check(&step);
+        let v = result
+            .violations
+            .iter()
+            .find(|v| v.field == "birthday" && matches!(v.kind, ViolationKind::WrongType))
+            .expect("expected WrongType violation on birthday");
+        assert!(v.rule.contains("format date"), "got rule: {}", v.rule);
+    }
+
+    #[test]
+    fn date_field_rejects_non_iso_format() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("blog")).unwrap();
+        fs::write(
+            tmp.path().join("blog/post.md"),
+            "---\nbirthday: \"05/12/1990\"\n---\n# Body",
+        )
+        .unwrap();
+        write_toml(tmp.path(), vec![date_field("birthday")], vec![]);
+
+        let step = run(tmp.path(), true, false, None);
+        let result = unwrap_check(&step);
+        let v = result
+            .violations
+            .iter()
+            .find(|v| v.field == "birthday" && matches!(v.kind, ViolationKind::WrongType));
+        assert!(
+            v.is_some(),
+            "expected WrongType violation on non-ISO date, got: {:?}",
+            result.violations
+        );
+    }
+
+    #[test]
+    fn date_field_rejects_non_string_value() {
+        // An integer-looking value YAML parses as an int — jsonschema's `string`
+        // type check fires before format validation.
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("blog")).unwrap();
+        fs::write(
+            tmp.path().join("blog/post.md"),
+            "---\nbirthday: 42\n---\n# Body",
+        )
+        .unwrap();
+        write_toml(tmp.path(), vec![date_field("birthday")], vec![]);
+
+        let step = run(tmp.path(), true, false, None);
+        let result = unwrap_check(&step);
+        let v = result
+            .violations
+            .iter()
+            .find(|v| v.field == "birthday" && matches!(v.kind, ViolationKind::WrongType));
+        assert!(v.is_some(), "violations: {:?}", result.violations);
+    }
+
+    // ===== DateTime type (TODO-0007 Wave 3) =====
+
+    fn datetime_field(name: &str) -> TomlField {
+        TomlField {
+            name: name.into(),
+            field_type: FieldTypeSerde::Scalar("DateTime".into()),
+            allowed: vec!["**".into()],
+            required: vec![],
+            nullable: false,
+            constraints: None,
+            preprocess: vec![],
+        }
+    }
+
+    #[test]
+    fn datetime_field_accepts_rfc3339_datetime() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("blog")).unwrap();
+        fs::write(
+            tmp.path().join("blog/post.md"),
+            "---\nsynced_at: \"2024-01-15T14:30:00Z\"\n---\n# Body",
+        )
+        .unwrap();
+        write_toml(tmp.path(), vec![datetime_field("synced_at")], vec![]);
+
+        let step = run(tmp.path(), true, false, None);
+        let result = unwrap_check(&step);
+        assert!(
+            result.violations.is_empty(),
+            "expected no violations, got: {:?}",
+            result.violations
+        );
+    }
+
+    #[test]
+    fn datetime_field_rejects_naive_datetime() {
+        // Missing tz offset — not valid RFC 3339.
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("blog")).unwrap();
+        fs::write(
+            tmp.path().join("blog/post.md"),
+            "---\nsynced_at: \"2024-01-15T14:30:00\"\n---\n# Body",
+        )
+        .unwrap();
+        write_toml(tmp.path(), vec![datetime_field("synced_at")], vec![]);
+
+        let step = run(tmp.path(), true, false, None);
+        let result = unwrap_check(&step);
+        let v = result
+            .violations
+            .iter()
+            .find(|v| v.field == "synced_at" && matches!(v.kind, ViolationKind::WrongType));
+        assert!(
+            v.is_some(),
+            "expected WrongType on naive datetime; got: {:?}",
+            result.violations
+        );
+    }
+
+    #[test]
+    fn datetime_field_rejects_pure_date() {
+        // RFC 3339 full-date is not a valid datetime.
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("blog")).unwrap();
+        fs::write(
+            tmp.path().join("blog/post.md"),
+            "---\nsynced_at: \"2024-01-15\"\n---\n# Body",
+        )
+        .unwrap();
+        write_toml(tmp.path(), vec![datetime_field("synced_at")], vec![]);
+
+        let step = run(tmp.path(), true, false, None);
+        let result = unwrap_check(&step);
+        let v = result
+            .violations
+            .iter()
+            .find(|v| v.field == "synced_at" && matches!(v.kind, ViolationKind::WrongType));
+        assert!(v.is_some(), "violations: {:?}", result.violations);
+    }
 }

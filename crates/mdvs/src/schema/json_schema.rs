@@ -44,12 +44,17 @@ const ALLOW_LIST: &[&str] = &[
     "minItems",
     "maxItems",
     "uniqueItems",
+    "format",
     "$schema",
     "$id",
     "title",
     "description",
     "x-mdvs",
 ];
+
+/// JSON Schema `format` values mdvs supports. Any other format value is
+/// rejected by the gate with a "use pattern" hint.
+const ALLOWED_FORMATS: &[&str] = &["date", "date-time"];
 
 /// Common JSON Schema keywords mdvs explicitly does not support, paired with
 /// a user-facing reason. Catching these by name produces a better error than
@@ -79,10 +84,6 @@ const HARD_REJECT: &[(&str, &str)] = &[
     (
         "prefixItems",
         "prefixItems (tuple validation) is out of scope; use uniform items",
-    ),
-    (
-        "format",
-        "format is out of scope; use pattern for regex-based validation",
     ),
     ("contains", "contains is out of scope"),
     ("propertyNames", "propertyNames is out of scope"),
@@ -163,11 +164,13 @@ fn insert_at_path(properties: &mut Map<String, Value>, segments: &[&str], leaf: 
         *entry = intermediate_object_schema();
     }
 
-    let inner_props = entry
-        .get_mut("properties")
-        .and_then(Value::as_object_mut)
-        .expect("intermediate_object_schema always has a `properties` map");
-    insert_at_path(inner_props, rest, leaf);
+    // The intermediate_object_schema() call above guarantees `properties`
+    // exists as an object. If a future edit breaks that invariant, silently
+    // skip rather than panic — the schema will be incomplete but the
+    // program won't crash.
+    if let Some(inner_props) = entry.get_mut("properties").and_then(Value::as_object_mut) {
+        insert_at_path(inner_props, rest, leaf);
+    }
 }
 
 fn intermediate_object_schema() -> Value {
@@ -203,10 +206,11 @@ fn field_to_subschema(field: &crate::schema::config::TomlField) -> Value {
     let mut subschema = type_subschema(&ft, field.nullable, field.constraints.as_ref());
 
     let x_mdvs = build_x_mdvs(field);
-    if !x_mdvs.is_empty() {
-        let map = subschema
-            .as_object_mut()
-            .expect("type_subschema always returns an object");
+    if !x_mdvs.is_empty()
+        && let Some(map) = subschema.as_object_mut()
+    {
+        // type_subschema always returns an object; the guard above guards
+        // against a future edit changing that.
         map.insert("x-mdvs".to_string(), Value::Object(x_mdvs));
     }
 
@@ -227,6 +231,25 @@ fn type_subschema(ft: &FieldType, nullable: bool, constraints: Option<&Constrain
         FieldType::Integer => scalar_subschema("integer", nullable, constraints),
         FieldType::Float => scalar_subschema("number", nullable, constraints),
         FieldType::String => scalar_subschema("string", nullable, constraints),
+        FieldType::Date => {
+            // `Date` is encoded as a JSON string with `format: date` (RFC 3339
+            // full-date). The `jsonschema` crate validates the format when the
+            // Validator is built with `should_validate_formats(true)`.
+            let mut obj = Map::new();
+            insert_type(&mut obj, "string", nullable);
+            obj.insert("format".into(), Value::String("date".into()));
+            apply_constraints(&mut obj, nullable, constraints);
+            Value::Object(obj)
+        }
+        FieldType::DateTime => {
+            // `DateTime` is encoded as a JSON string with `format: date-time`
+            // (RFC 3339 datetime).
+            let mut obj = Map::new();
+            insert_type(&mut obj, "string", nullable);
+            obj.insert("format".into(), Value::String("date-time".into()));
+            apply_constraints(&mut obj, nullable, constraints);
+            Value::Object(obj)
+        }
         FieldType::Array(inner) => {
             // Array constraints apply to items (per Constraints docstring:
             // categories applies to Array(String)/Array(Integer); range applies
@@ -440,10 +463,13 @@ fn walk_properties_into_fields(
 
         if is_intermediate_object(sub) {
             // Intermediate Object — recurse into children, extending prefix.
-            let inner = sub
-                .get("properties")
-                .and_then(Value::as_object)
-                .expect("is_intermediate_object guarantees properties exists");
+            // is_intermediate_object guarantees `properties` exists as an
+            // object; the explicit `?`-style guard below is defensive.
+            let Some(inner) = sub.get("properties").and_then(Value::as_object) else {
+                return Err(format!(
+                    "property '{full_name}': internal error — intermediate object missing properties"
+                ));
+            };
             walk_properties_into_fields(inner, &full_name, fields, ignore, false)?;
         } else {
             // Leaf — emit a TomlField with the dotted full path.
@@ -511,7 +537,9 @@ fn extract_type(name: &str, sub: &Map<String, Value>) -> Result<(FieldType, bool
                     "property '{name}': type union must be exactly one non-null type plus optional null"
                 ));
             }
-            (non_null.into_iter().next().unwrap(), has_null)
+            // The length check above guarantees exactly one element; the
+            // `unwrap_or_default` fallback is defensive.
+            (non_null.into_iter().next().unwrap_or_default(), has_null)
         }
         _ => {
             return Err(format!(
@@ -521,7 +549,16 @@ fn extract_type(name: &str, sub: &Map<String, Value>) -> Result<(FieldType, bool
     };
 
     let field_type = match type_str.as_str() {
-        "string" => FieldType::String,
+        "string" => match sub.get("format").and_then(Value::as_str) {
+            Some("date") => FieldType::Date,
+            Some("date-time") => FieldType::DateTime,
+            Some(other) => {
+                return Err(format!(
+                    "property '{name}': unsupported format '{other}' on string type"
+                ));
+            }
+            None => FieldType::String,
+        },
         "integer" => FieldType::Integer,
         "number" => FieldType::Float,
         "boolean" => FieldType::Boolean,
@@ -749,6 +786,17 @@ fn walk(node: &Value, location: Location) -> Result<(), String> {
             "additionalProperties" if value.is_object() => {
                 walk(value, Location::Property)?;
             }
+            "format" => {
+                let format_str = value
+                    .as_str()
+                    .ok_or_else(|| "'format' must be a string".to_string())?;
+                if !ALLOWED_FORMATS.contains(&format_str) {
+                    return Err(format!(
+                        "format '{format_str}' is not supported by mdvs — \
+                         use 'pattern' for regex-based validation"
+                    ));
+                }
+            }
             "x-mdvs" => {
                 let xm = value
                     .as_object()
@@ -872,6 +920,163 @@ mod tests {
         )]);
         let out = dsl_to_canonical(&toml);
         assert_eq!(out["properties"]["draft"], json!({"type": "boolean"}));
+    }
+
+    #[test]
+    fn date_field_emits_string_with_format() {
+        let toml = with_fields(vec![field(
+            "birthday",
+            FieldTypeSerde::Scalar("Date".into()),
+        )]);
+        let out = dsl_to_canonical(&toml);
+        assert_eq!(
+            out["properties"]["birthday"],
+            json!({"type": "string", "format": "date"})
+        );
+    }
+
+    #[test]
+    fn array_of_date_emits_items_format() {
+        let toml = with_fields(vec![field(
+            "milestones",
+            FieldTypeSerde::Array {
+                array: Box::new(FieldTypeSerde::Scalar("Date".into())),
+            },
+        )]);
+        let out = dsl_to_canonical(&toml);
+        assert_eq!(
+            out["properties"]["milestones"],
+            json!({
+                "type": "array",
+                "items": {"type": "string", "format": "date"}
+            })
+        );
+    }
+
+    #[test]
+    fn nullable_date_emits_union_with_format() {
+        let mut f = field("birthday", FieldTypeSerde::Scalar("Date".into()));
+        f.nullable = true;
+        let toml = with_fields(vec![f]);
+        let out = dsl_to_canonical(&toml);
+        assert_eq!(
+            out["properties"]["birthday"],
+            json!({"type": ["string", "null"], "format": "date"})
+        );
+    }
+
+    #[test]
+    fn canonical_to_dsl_recognises_format_date() {
+        // Build a canonical schema by hand, run canonical_to_dsl, expect Date.
+        let schema = json!({
+            "$schema": JSON_SCHEMA_DRAFT,
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+                "birthday": {"type": "string", "format": "date"}
+            },
+        });
+        let imported = canonical_to_dsl(&schema).unwrap();
+        let fields = &imported.fields;
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].name, "birthday");
+        assert_eq!(fields[0].field_type, FieldTypeSerde::Scalar("Date".into()));
+    }
+
+    #[test]
+    fn dsl_to_canonical_round_trip_with_date() {
+        let toml = with_fields(vec![field(
+            "birthday",
+            FieldTypeSerde::Scalar("Date".into()),
+        )]);
+        let canonical = dsl_to_canonical(&toml);
+        let imported = canonical_to_dsl(&canonical).unwrap();
+        let fields = &imported.fields;
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].name, "birthday");
+        assert_eq!(fields[0].field_type, FieldTypeSerde::Scalar("Date".into()));
+    }
+
+    // --- DateTime translator tests (TODO-0007 Wave 3) ---
+
+    #[test]
+    fn datetime_field_emits_string_with_format_date_time() {
+        let toml = with_fields(vec![field(
+            "synced_at",
+            FieldTypeSerde::Scalar("DateTime".into()),
+        )]);
+        let out = dsl_to_canonical(&toml);
+        assert_eq!(
+            out["properties"]["synced_at"],
+            json!({"type": "string", "format": "date-time"})
+        );
+    }
+
+    #[test]
+    fn array_of_datetime_emits_items_format() {
+        let toml = with_fields(vec![field(
+            "events",
+            FieldTypeSerde::Array {
+                array: Box::new(FieldTypeSerde::Scalar("DateTime".into())),
+            },
+        )]);
+        let out = dsl_to_canonical(&toml);
+        assert_eq!(
+            out["properties"]["events"],
+            json!({
+                "type": "array",
+                "items": {"type": "string", "format": "date-time"}
+            })
+        );
+    }
+
+    #[test]
+    fn nullable_datetime_emits_union_with_format() {
+        let mut f = field("synced_at", FieldTypeSerde::Scalar("DateTime".into()));
+        f.nullable = true;
+        let toml = with_fields(vec![f]);
+        let out = dsl_to_canonical(&toml);
+        assert_eq!(
+            out["properties"]["synced_at"],
+            json!({"type": ["string", "null"], "format": "date-time"})
+        );
+    }
+
+    #[test]
+    fn canonical_to_dsl_recognises_format_date_time() {
+        let schema = json!({
+            "$schema": JSON_SCHEMA_DRAFT,
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+                "synced_at": {"type": "string", "format": "date-time"}
+            },
+        });
+        let imported = canonical_to_dsl(&schema).unwrap();
+        let fields = &imported.fields;
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].name, "synced_at");
+        assert_eq!(
+            fields[0].field_type,
+            FieldTypeSerde::Scalar("DateTime".into())
+        );
+    }
+
+    #[test]
+    fn dsl_to_canonical_round_trip_with_datetime() {
+        let toml = with_fields(vec![field(
+            "synced_at",
+            FieldTypeSerde::Scalar("DateTime".into()),
+        )]);
+        let canonical = dsl_to_canonical(&toml);
+        let imported = canonical_to_dsl(&canonical).unwrap();
+        let fields = &imported.fields;
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].name, "synced_at");
+        assert_eq!(
+            fields[0].field_type,
+            FieldTypeSerde::Scalar("DateTime".into())
+        );
     }
 
     #[test]
@@ -1247,8 +1452,26 @@ mod tests {
     }
 
     #[test]
-    fn gate_rejects_format() {
-        assert_rejects(json!({"format": "email"}), "'format' is not supported");
+    fn gate_rejects_unsupported_format() {
+        assert_rejects(
+            json!({"format": "email"}),
+            "format 'email' is not supported",
+        );
+    }
+
+    #[test]
+    fn gate_accepts_date_time_format() {
+        assert!(validate_mdvs_schema(&json!({"format": "date-time"})).is_ok());
+    }
+
+    #[test]
+    fn gate_rejects_non_string_format() {
+        assert_rejects(json!({"format": 42}), "'format' must be a string");
+    }
+
+    #[test]
+    fn gate_accepts_format_date() {
+        assert!(validate_mdvs_schema(&json!({"format": "date"})).is_ok());
     }
 
     #[test]

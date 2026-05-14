@@ -56,6 +56,8 @@ The `data` column is a nested Arrow Struct whose children mirror the YAML's natu
 | Integer | Int64Array | `v.as_i64()` |
 | Float | Float64Array | `v.as_f64()`, falls back to `v.as_i64() as f64` |
 | String | StringArray | actual strings preserved; non-strings serialized to JSON repr |
+| Date | Date32Array | `chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")`, encoded as days since 1970-01-01. Unparseable values → NULL (defensive; jsonschema's `format: date` already rejects them upstream) |
+| DateTime | TimestampMillisecondArray (tz = "UTC") | `chrono::DateTime::parse_from_rfc3339(s)` → `with_timezone(&Utc).timestamp_millis()`. Offsets normalized to UTC; the original offset is intentionally not preserved. Unparseable values → NULL |
 | Array(inner) | ListArray | variable-length, child built recursively via `build_array` |
 | Object(fields) | StructArray | nested Struct, children built recursively. Reached only via the synthesized storage tree's intermediates (Wave C transposes flat dotted-name leaves back into a nested Object before Arrow encoding). `Array(Object{...})` is rejected on the disk surface (TODO-0155), so no on-disk type produces this arm directly. |
 

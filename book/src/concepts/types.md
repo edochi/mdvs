@@ -10,16 +10,20 @@ mdvs infers a type for every frontmatter field it encounters. When the same fiel
 | **Integer** | `sample_count: 24` | `sample_count` in experiments |
 | **Float** | `drift_rate: 0.023` | `drift_rate` in experiments |
 | **String** | `author: Giulia Ferretti` | `author` across many files |
+| **Date** | `joined: 2023-02-01` | `joined`, `date`, `commission_date`, `last_reviewed` |
+| **DateTime** | `synced_at: "2024-04-02T16:14:30+02:00"` | `synced_at` in experiments |
 | **Array(Scalar)** | `tags: [calibration, SPR-A1]` | `tags` in projects and blog |
 
 The on-disk type grammar is tight:
 
 ```text
 Type   := Scalar | Array(Scalar)
-Scalar := String | Integer | Float | Boolean
+Scalar := String | Integer | Float | Boolean | Date | DateTime
 ```
 
 `Array(Array(...))` and `Array(Object{...})` are not representable on disk — see [Arrays of structured items](#arrays-of-structured-items) below for the workaround.
+
+`Date` and `DateTime` are described in detail in [Date and DateTime](#date-and-datetime) below.
 
 **Nested Objects in YAML are expressed as dotted-name leaf fields** in `mdvs.toml`. A frontmatter shape like:
 
@@ -82,6 +86,104 @@ type = "Array(Float)"
 
 The downside is the loss of per-element grouping — there's no schema-level guarantee that `measurement_timestamps[3]` and `measurement_values[3]` belong to the same record. A first-class Array-of-structured-item representation is tracked in TODO-0156.
 
+## Date and DateTime
+
+Both types use **RFC 3339** as the canonical wire format — a strict subset of ISO 8601 designed for machine interoperability.
+
+### `Date` — calendar date, no time
+
+```text
+Date   = YYYY-MM-DD
+```
+
+Rules:
+- Exactly 4-digit year, 2-digit month, 2-digit day (no `2024-1-1` shorthand).
+- Hyphen separators.
+- Calendar-valid: `2024-13-01` (month 13) and `2024-02-30` (no Feb 30th) are rejected.
+- No time component, no timezone.
+
+Accepted:
+```text
+2023-02-01
+1990-05-12
+2024-02-29        ← valid leap-year date
+```
+
+Rejected:
+```text
+2024-1-1          ← single-digit components not allowed
+2024-13-01        ← month must be 01-12
+"see 2024-01-15"  ← must be the whole string
+2024/01/15        ← only hyphens
+```
+
+Stored as Arrow `Date32` (days since 1970-01-01). Native date arithmetic works in `--where` queries — e.g. `WHERE date > '2024-01-01'`, `WHERE date_part('year', published) = 2024`, `WHERE date BETWEEN '2024-06-01' AND '2024-06-30'`.
+
+### `DateTime` — date + time, mandatory timezone
+
+```text
+DateTime = YYYY-MM-DDTHH:MM:SS[.frac]<tz>
+
+<tz>     = 'Z'                        ← UTC shorthand
+         | '+HH:MM'                   ← positive offset
+         | '-HH:MM'                   ← negative offset
+```
+
+Rules:
+- Date part: same as `Date` above.
+- `T` separator between date and time is **mandatory** — no space alternative.
+- `HH:MM:SS` (24-hour, all two digits). Seconds are required.
+- Fractional seconds optional, any number of digits.
+- **Timezone is mandatory** — naive `2024-01-15T14:30:00` is rejected (not valid RFC 3339).
+
+Accepted:
+```text
+2024-01-15T14:30:00Z              ← Zulu = UTC
+2024-01-15T14:30:00+00:00         ← same moment, explicit offset
+2024-04-02T16:14:30+02:00         ← positive offset
+2024-01-15T14:30:00-08:00         ← negative offset
+2024-01-15T14:30:00.123Z          ← fractional seconds
+2024-01-15T14:30:00.123456789Z    ← nanosecond precision
+```
+
+Rejected:
+```text
+2024-01-15T14:30:00               ← no timezone
+2024-01-15 14:30:00Z              ← space instead of T
+2024-01-15T14:30                  ← seconds required
+2024-13-01T14:30:00Z              ← invalid month
+2024-01-15T25:30:00Z              ← invalid hour
+```
+
+Stored as Arrow `Timestamp(Millisecond, "UTC")`. Offsets are **normalized to UTC** at storage time — `2024-04-02T16:14:30+02:00` and `2024-04-02T14:14:30Z` are the same absolute moment and store identically. The original offset is intentionally not preserved.
+
+### example_kb demonstration
+
+Both types are auto-inferred in the example vault:
+
+| Field | Type | Files |
+|---|---|---|
+| `joined` | Date | `people/**` |
+| `date` | Date | meetings + blog/published |
+| `commission_date` | Date | `people/*` |
+| `last_reviewed` | Date | `reference/protocols/**` |
+| `synced_at` | DateTime | `experiment-1.md` uses `Z`, `experiment-2.md` uses `+02:00` |
+
+No manual configuration was needed for any of these — inference detects the RFC 3339 shape and assigns the appropriate type. See [Type widening in practice](#date-and-datetime-inference) below for the inference rule.
+
+### Validation
+
+JSON Schema's `format: date` and `format: date-time` keywords validate values at check time. Bad shapes (invalid calendar dates, missing timezones, wrong separators) produce `WrongType` violations with a rule like `format date` or `format date-time`.
+
+### Constraints
+
+- `categories` applies (e.g. `categories = ["2024-01-01", "2024-12-31"]` on a Date field; values are strings, the runtime format validator catches malformed entries).
+- `pattern`, `min`, `max`, `min_length`, `max_length` do **not** apply — the type's format is itself the pattern. Bounded date ranges (e.g. "published in 2024") are tracked as a future feature.
+
+### Preprocessors
+
+No preprocessor applies to `Date` or `DateTime` in v1. Unlike `String` (which can opt in to `coerce-to-string`) or `Float` (which can opt in to `widen-int-to-float`), date types are strict — either the string parses as RFC 3339 or it doesn't.
+
 ## Type hierarchy
 
 When two values have different types, mdvs widens to a common type. The hierarchy looks like this:
@@ -91,12 +193,14 @@ graph BT
     Integer --> Float
     Float --> String
     Boolean --> String
+    Date --> String
+    DateTime --> String
     Array["Array(T)"] --> String
 ```
 
 Each arrow means "widens to." **String is the top type** — every type eventually reaches it.
 
-The one special case is Integer → Float: integers widen to floats (not directly to String) because the conversion is lossless.
+The one special case is Integer → Float: integers widen to floats (not directly to String) because the conversion is lossless. Date and DateTime have no internal cross-promotion — mixed `Date + DateTime` observations widen to String (the two shapes are disjoint).
 
 Two same-category combinations widen internally instead of jumping to String:
 - **Array + Array** — element types are widened recursively (e.g., `Array(Integer)` + `Array(String)` → `Array(String)`)
@@ -144,6 +248,58 @@ Result: `priority` is inferred as **String**. There's no numeric type that can h
 If the same field is `true` in one file and `3` in another, there's no numeric or boolean type that can hold both. The result is String.
 
 This doesn't happen in `example_kb` because booleans (`draft`) are used consistently — but it's a common mistake in organically grown vaults where someone writes `draft: yes` (String) instead of `draft: true` (Boolean).
+
+### Date and DateTime inference
+
+A string is inferred as `Date` or `DateTime` when **every observation** across all files matches the RFC 3339 shape AND parses as a real value. A single non-matching value downgrades the whole field to String.
+
+Pure-date observations across files:
+
+```yaml
+# people/alice.md
+joined: 2023-02-01
+
+# people/bob.md
+joined: 2024-09-15
+```
+
+Result: `joined` is inferred as **Date**.
+
+One non-date value forces String:
+
+```yaml
+# people/alice.md
+joined: 2023-02-01
+
+# people/carol.md
+joined: "see HR records"        # not a date
+```
+
+Result: `joined` widens to **String** — the second observation can't be typed as Date, and `Date + String → String` is the widening rule.
+
+Same logic for invalid calendar dates:
+
+```yaml
+# fileA.md
+published: 2024-06-01
+
+# fileB.md
+published: 2024-13-01           # invalid month — typed String per-value
+```
+
+Result: `published` widens to **String**. The typo gets silently absorbed into String typing; the user only catches it via a `WrongType` violation if they manually set `type = "Date"` in `mdvs.toml`.
+
+Date + DateTime are cross-shape — never auto-promote:
+
+```yaml
+# meeting/a.md
+when: 2024-01-15                # Date
+
+# meeting/b.md
+when: 2024-01-15T14:30:00Z      # DateTime
+```
+
+Result: `when` widens to **String**. Pick one shape consistently to get a typed field.
 
 ### Array element widening
 
@@ -226,20 +382,24 @@ The user-facing schema is flat, but its semantics still match the YAML's nested 
 
 Every possible combination of types and its result:
 
-|  | Boolean | Integer | Float | String | Array | Object |
-|---|---|---|---|---|---|---|
-| **Boolean** | Boolean | String | String | String | String | String |
-| **Integer** | String | Integer | **Float** | String | String | String |
-| **Float** | String | **Float** | Float | String | String | String |
-| **String** | String | String | String | String | String | String |
-| **Array** | String | String | String | String | Array\* | dropped\*\* |
-| **Object** | String | String | String | String | dropped\*\* | Object\* |
+|  | Boolean | Integer | Float | String | Date | DateTime | Array | Object |
+|---|---|---|---|---|---|---|---|---|
+| **Boolean** | Boolean | String | String | String | String | String | String | String |
+| **Integer** | String | Integer | **Float** | String | String | String | String | String |
+| **Float** | String | **Float** | Float | String | String | String | String | String |
+| **String** | String | String | String | String | String | String | String | String |
+| **Date** | String | String | String | String | Date | String | String | String |
+| **DateTime** | String | String | String | String | String | DateTime | String | String |
+| **Array** | String | String | String | String | String | String | Array\* | dropped\*\* |
+| **Object** | String | String | String | String | String | String | dropped\*\* | Object\* |
 
 \* Array + Array: element types are widened recursively.
 
 \* Object + Object: not a top-level on-disk type. Nested Objects in YAML flatten to dotted-name leaves before widening; each leaf path is widened independently.
 
 \*\* Inference observed Array(Object{...}) — not representable on disk in v0. The field is dropped from the schema and a warning is emitted (see [Arrays of structured items](#arrays-of-structured-items)).
+
+Date and DateTime are cross-shape — they never auto-promote into each other. The single non-trivial pair is `Date + DateTime → String`.
 
 The matrix is symmetric — `widen(A, B)` always equals `widen(B, A)`.
 
@@ -307,6 +467,8 @@ The two built-in Stage 2 preprocessors:
 | `widen-int-to-float` | `Float`, `Array(Float)` | Treat integer values as their float equivalent |
 
 **`preprocess = []` means strict.** If you delete a preprocessor from `mdvs.toml`, the field rejects values that would have been coerced. Conversely, you can hand-add a preprocessor to a strict-inferred field if you want to accept type variation.
+
+**No preprocessor applies to `Date` or `DateTime`.** Those types are strict by design — values either parse as RFC 3339 or they don't. There is no `parse-loose-date` opt-in; non-ISO formats fall back to String (and the user can add a `pattern` constraint if they want a custom shape).
 
 **In storage** — when validation accepts a coerced value, the coerced form is what gets stored. A `priority: 1` value with `coerce-to-string` becomes `"1"` in the search index. No data is silently dropped.
 
