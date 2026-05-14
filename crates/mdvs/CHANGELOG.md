@@ -2,6 +2,24 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## v0.5.0 - 2026-05-14
+#### Features
+- (**infer**) auto-detect Date fields from RFC 3339 strings (Wave 2) - (ede5d4b) - edoch
+- (**types**) add DateTime field type (TODO-0007 Wave 3) - (5b6c84e) - edoch
+- (**types**) add Date field type (Wave 1 of TODO-0007) - (26529b1) - edoch
+#### Documentation
+- (**todos**) TODO-0007 pin canonical format to RFC 3339 - (2210997) - edoch
+- (**todos**) expand TODO-0007 with Date + DateTime design and waves - (604e1ee) - edoch
+- (**types**) document Date + DateTime + close TODO-0007 (Wave 4) - (96eaca8) - edoch
+#### Tests
+- (**types**) Date field type coverage (TODO-0007 Wave 1) - (90eafec) - edoch
+#### Refactoring
+- remove panicking calls from production code - (48c25c7) - edoch
+#### Miscellaneous Chores
+- (**example_kb**) infer Date type for date-shaped string fields - (9a6227b) - edoch
+
+- - -
+
 ## v0.4.2 - 2026-05-13
 #### Miscellaneous Chores
 - (**version**) v0.4.1 - (0386285) - release-bot
