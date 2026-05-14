@@ -9,6 +9,7 @@ use xxhash_rust::xxh3::xxh3_64;
 use datafusion::arrow::array::{
     ArrayRef, BooleanArray, Date32Array, FixedSizeListArray, Float32Array, Float64Array,
     Int32Array, Int64Array, ListArray, StringArray, StructArray, TimestampMicrosecondArray,
+    TimestampMillisecondArray,
 };
 use datafusion::arrow::buffer::{NullBuffer, OffsetBuffer};
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
@@ -240,6 +241,22 @@ fn build_array(values: &[Option<&Value>], ft: &FieldType) -> ArrayRef {
                 })
                 .collect();
             Arc::new(arr)
+        }
+        FieldType::DateTime => {
+            // Parse RFC 3339 datetimes and store as Arrow Timestamp(ms, UTC).
+            // Values with any offset are normalized to UTC at storage time;
+            // the original offset is intentionally dropped (we store absolute
+            // moments, not local-time + offset pairs). Naive datetimes are
+            // rejected by parse_from_rfc3339, so they end up as NULL.
+            let raw: TimestampMillisecondArray = values
+                .iter()
+                .map(|v| {
+                    v.and_then(|v| v.as_str())
+                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                        .map(|dt| dt.with_timezone(&chrono::Utc).timestamp_millis())
+                })
+                .collect();
+            Arc::new(raw.with_timezone(Arc::from("UTC")))
         }
         FieldType::Array(inner) => {
             let mut offsets: Vec<i32> = vec![0];
@@ -1837,5 +1854,173 @@ mod tests {
             .downcast_ref::<Date32Array>()
             .unwrap();
         assert!(d.is_null(0));
+    }
+
+    // ===== DateTime type (TODO-0007 Wave 3) — Arrow Timestamp(ms, UTC) =====
+
+    #[test]
+    fn datetime_field_writes_timestamp_ms_utc_column() {
+        let schema_fields = vec![("synced_at".into(), FieldType::DateTime)];
+        let files = vec![FileRow {
+            file_id: "id-1".into(),
+            filename: "a.md".into(),
+            frontmatter: Some(serde_json::json!({"synced_at": "1970-01-01T00:00:00Z"})),
+            content_hash: "h".into(),
+            built_at: 1_700_000_000_000_000,
+        }];
+
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
+        let data = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+        let synced = data
+            .column_by_name("synced_at")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<TimestampMillisecondArray>()
+            .unwrap();
+        // Epoch → 0 millis.
+        assert_eq!(synced.value(0), 0);
+        // Timezone metadata on the column type.
+        match synced.data_type() {
+            DataType::Timestamp(unit, tz) => {
+                assert_eq!(*unit, TimeUnit::Millisecond);
+                assert_eq!(tz.as_deref(), Some("UTC"));
+            }
+            other => panic!("expected Timestamp(ms, UTC), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn datetime_normalises_offsets_to_utc() {
+        // Both inputs represent the same absolute moment (2024-01-15 14:30 UTC).
+        let schema_fields = vec![
+            ("a".into(), FieldType::DateTime),
+            ("b".into(), FieldType::DateTime),
+        ];
+        let files = vec![FileRow {
+            file_id: "id-1".into(),
+            filename: "a.md".into(),
+            frontmatter: Some(serde_json::json!({
+                "a": "2024-01-15T14:30:00Z",
+                "b": "2024-01-15T20:00:00+05:30",
+            })),
+            content_hash: "h".into(),
+            built_at: 1_700_000_000_000_000,
+        }];
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
+        let data = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+        let a = data
+            .column_by_name("a")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<TimestampMillisecondArray>()
+            .unwrap();
+        let b = data
+            .column_by_name("b")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<TimestampMillisecondArray>()
+            .unwrap();
+        assert_eq!(a.value(0), b.value(0));
+    }
+
+    #[test]
+    fn datetime_round_trips_through_parquet() {
+        let schema_fields = vec![("synced_at".into(), FieldType::DateTime)];
+        let files = vec![FileRow {
+            file_id: "id-1".into(),
+            filename: "a.md".into(),
+            frontmatter: Some(serde_json::json!({"synced_at": "2024-03-15T14:30:00Z"})),
+            content_hash: "h".into(),
+            built_at: 1_700_000_000_000_000,
+        }];
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("files.parquet");
+        write_parquet(&path, &batch).unwrap();
+
+        let batches = read_parquet(&path).unwrap();
+        let data = batches[0]
+            .column_by_name(COL_DATA)
+            .unwrap()
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+        let synced = data
+            .column_by_name("synced_at")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<TimestampMillisecondArray>()
+            .unwrap();
+        // 2024-03-15T14:30:00Z = 1_710_513_000_000 ms since epoch.
+        assert_eq!(synced.value(0), 1_710_513_000_000);
+    }
+
+    #[test]
+    fn array_of_datetime_writes_list_of_timestamp_ms() {
+        let schema_fields = vec![(
+            "events".into(),
+            FieldType::Array(Box::new(FieldType::DateTime)),
+        )];
+        let files = vec![FileRow {
+            file_id: "id-1".into(),
+            filename: "a.md".into(),
+            frontmatter: Some(serde_json::json!({
+                "events": ["2024-01-15T14:30:00Z", "2024-06-01T08:00:00+00:00"]
+            })),
+            content_hash: "h".into(),
+            built_at: 1_700_000_000_000_000,
+        }];
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
+        let data = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+        let list = data
+            .column_by_name("events")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<ListArray>()
+            .unwrap();
+        let values = list
+            .values()
+            .as_any()
+            .downcast_ref::<TimestampMillisecondArray>()
+            .unwrap();
+        assert_eq!(values.len(), 2);
+        assert!(values.value(1) > values.value(0));
+    }
+
+    #[test]
+    fn datetime_field_null_for_unparseable_value() {
+        let schema_fields = vec![("x".into(), FieldType::DateTime)];
+        let files = vec![FileRow {
+            file_id: "id-1".into(),
+            filename: "a.md".into(),
+            frontmatter: Some(serde_json::json!({"x": "not-a-datetime"})),
+            content_hash: "h".into(),
+            built_at: 1_700_000_000_000_000,
+        }];
+        let batch = build_files_batch(&schema_fields, &files).unwrap();
+        let data = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .unwrap();
+        let x = data
+            .column_by_name("x")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<TimestampMillisecondArray>()
+            .unwrap();
+        assert!(x.is_null(0));
     }
 }

@@ -134,7 +134,7 @@ impl<'a> Parser<'a> {
         if start == self.pos {
             return Err(ParseError {
                 message:
-                    "expected a type name (String, Integer, Float, Boolean, Date, or Array(...))"
+                    "expected a type name (String, Integer, Float, Boolean, Date, DateTime, or Array(...))"
                         .into(),
                 column: start + 1,
             });
@@ -173,7 +173,7 @@ impl<'a> Parser<'a> {
         let ident_start = self.pos;
         let ident = self.parse_ident()?;
         match ident {
-            "String" | "Integer" | "Float" | "Boolean" | "Date" => {
+            "String" | "Integer" | "Float" | "Boolean" | "Date" | "DateTime" => {
                 Ok(FieldTypeSerde::Scalar(ident.to_string()))
             }
             "Array" => {
@@ -194,7 +194,7 @@ impl<'a> Parser<'a> {
             other => Err(ParseError {
                 message: format!(
                     "unknown type `{other}`. \
-                     Expected one of String, Integer, Float, Boolean, Date, or Array(...)"
+                     Expected one of String, Integer, Float, Boolean, Date, DateTime, or Array(...)"
                 ),
                 column: ident_start + 1,
             }),
@@ -212,7 +212,7 @@ impl<'a> Parser<'a> {
         let inner_start = self.pos;
         let ident = self.parse_ident()?;
         match ident {
-            "String" | "Integer" | "Float" | "Boolean" | "Date" => {
+            "String" | "Integer" | "Float" | "Boolean" | "Date" | "DateTime" => {
                 Ok(FieldTypeSerde::Scalar(ident.to_string()))
             }
             "Array" => Err(ParseError {
@@ -266,6 +266,7 @@ impl From<&FieldType> for FieldTypeSerde {
             FieldType::Float => FieldTypeSerde::Scalar("Float".into()),
             FieldType::String => FieldTypeSerde::Scalar("String".into()),
             FieldType::Date => FieldTypeSerde::Scalar("Date".into()),
+            FieldType::DateTime => FieldTypeSerde::Scalar("DateTime".into()),
             FieldType::Array(inner) => FieldTypeSerde::Array {
                 array: Box::new(FieldTypeSerde::from(inner.as_ref())),
             },
@@ -290,6 +291,7 @@ impl TryFrom<&FieldTypeSerde> for FieldType {
                 "Float" => Ok(FieldType::Float),
                 "String" => Ok(FieldType::String),
                 "Date" => Ok(FieldType::Date),
+                "DateTime" => Ok(FieldType::DateTime),
                 other => Err(format!("unknown type: {other}")),
             },
             FieldTypeSerde::Array { array } => {

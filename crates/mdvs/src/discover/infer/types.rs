@@ -652,4 +652,47 @@ mod tests {
         let info = infer_field_types(&scanned);
         assert_eq!(info["x"].field_type, FieldType::String);
     }
+
+    // ===== DateTime inference (TODO-0007 Wave 3) =====
+
+    #[test]
+    fn pure_datetime_observations_infer_datetime() {
+        let scanned = ScannedFiles {
+            files: vec![
+                sf("a.md", Some(json!({"synced_at": "2024-01-15T14:30:00Z"}))),
+                sf(
+                    "b.md",
+                    Some(json!({"synced_at": "2024-06-20T08:00:00+05:30"})),
+                ),
+            ],
+        };
+        let info = infer_field_types(&scanned);
+        assert_eq!(info["synced_at"].field_type, FieldType::DateTime);
+    }
+
+    #[test]
+    fn mixed_date_and_datetime_widens_to_string() {
+        // Cross-shape: one file has a date, another a datetime.
+        let scanned = ScannedFiles {
+            files: vec![
+                sf("a.md", Some(json!({"x": "2024-01-15"}))),
+                sf("b.md", Some(json!({"x": "2024-06-20T08:00:00Z"}))),
+            ],
+        };
+        let info = infer_field_types(&scanned);
+        assert_eq!(info["x"].field_type, FieldType::String);
+    }
+
+    #[test]
+    fn naive_datetime_observation_downgrades_to_string() {
+        // Even one timezone-naive datetime forces String.
+        let scanned = ScannedFiles {
+            files: vec![
+                sf("a.md", Some(json!({"x": "2024-01-15T14:30:00Z"}))),
+                sf("b.md", Some(json!({"x": "2024-06-20T08:00:00"}))),
+            ],
+        };
+        let info = infer_field_types(&scanned);
+        assert_eq!(info["x"].field_type, FieldType::String);
+    }
 }

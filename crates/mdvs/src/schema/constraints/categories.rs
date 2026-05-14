@@ -13,19 +13,20 @@ pub(super) fn validate_for_type(
     field_type: &FieldType,
     values: &[toml::Value],
 ) -> Option<String> {
-    // Date categorical values are TOML strings on disk (e.g. "2024-01-15");
-    // the runtime jsonschema `format: date` validator catches invalid ones.
+    // Date/DateTime categorical values are TOML strings on disk (e.g.
+    // "2024-01-15"); the runtime jsonschema `format: date` /
+    // `format: date-time` validators catch invalid ones.
     let element_type = match field_type {
-        FieldType::String | FieldType::Date => FieldType::String,
+        FieldType::String | FieldType::Date | FieldType::DateTime => FieldType::String,
         FieldType::Integer => FieldType::Integer,
         FieldType::Array(inner) => match inner.as_ref() {
-            FieldType::String | FieldType::Date => FieldType::String,
+            FieldType::String | FieldType::Date | FieldType::DateTime => FieldType::String,
             FieldType::Integer => FieldType::Integer,
             other => {
                 return Some(format!(
                     "field '{field_name}': categories constraint does not apply \
                      to Array({}) fields — only Array(String), Array(Integer), \
-                     and Array(Date) are supported",
+                     Array(Date), and Array(DateTime) are supported",
                     field_type_name(other),
                 ));
             }
@@ -33,8 +34,8 @@ pub(super) fn validate_for_type(
         other => {
             return Some(format!(
                 "field '{field_name}': categories constraint does not apply \
-                 to {} fields — only String, Integer, Date, Array(String), \
-                 Array(Integer), and Array(Date) are supported",
+                 to {} fields — only String, Integer, Date, DateTime, Array(String), \
+                 Array(Integer), Array(Date), and Array(DateTime) are supported",
                 field_type_name(other),
             ));
         }
@@ -79,6 +80,7 @@ fn field_type_name(ft: &FieldType) -> &'static str {
         FieldType::Float => "Float",
         FieldType::String => "String",
         FieldType::Date => "Date",
+        FieldType::DateTime => "DateTime",
         FieldType::Array(_) => "Array",
         FieldType::Object(_) => "Object",
     }
@@ -152,6 +154,19 @@ mod tests {
     fn validate_for_type_array_date_accepts_string_categories() {
         let k = cats_kind(str_cats(&["2024-01-01", "2024-12-31"]));
         let ft = FieldType::Array(Box::new(FieldType::Date));
+        assert!(k.validate_for_type("f", &ft).is_none());
+    }
+
+    #[test]
+    fn validate_for_type_datetime_accepts_string_categories() {
+        let k = cats_kind(str_cats(&["2024-01-01T00:00:00Z", "2024-12-31T23:59:59Z"]));
+        assert!(k.validate_for_type("f", &FieldType::DateTime).is_none());
+    }
+
+    #[test]
+    fn validate_for_type_array_datetime_accepts_string_categories() {
+        let k = cats_kind(str_cats(&["2024-01-01T00:00:00Z", "2024-12-31T23:59:59Z"]));
+        let ft = FieldType::Array(Box::new(FieldType::DateTime));
         assert!(k.validate_for_type("f", &ft).is_none());
     }
 

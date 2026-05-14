@@ -332,6 +332,13 @@ nullable = false
 categories = ["active", "archived", "completed", "draft", "published"]
 
 [[fields.field]]
+name = "synced_at"
+type = "DateTime"
+allowed = ["projects/alpha/notes/**"]
+required = []
+nullable = false
+
+[[fields.field]]
 name = "tags"
 type = "Array(String)"
 allowed = ["blog/**", "projects/alpha/*", "projects/alpha/notes/**", "projects/archived/**", "projects/beta/*", "projects/beta/notes/**"]

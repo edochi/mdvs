@@ -54,7 +54,7 @@ const ALLOW_LIST: &[&str] = &[
 
 /// JSON Schema `format` values mdvs supports. Any other format value is
 /// rejected by the gate with a "use pattern" hint.
-const ALLOWED_FORMATS: &[&str] = &["date"];
+const ALLOWED_FORMATS: &[&str] = &["date", "date-time"];
 
 /// Common JSON Schema keywords mdvs explicitly does not support, paired with
 /// a user-facing reason. Catching these by name produces a better error than
@@ -238,6 +238,15 @@ fn type_subschema(ft: &FieldType, nullable: bool, constraints: Option<&Constrain
             let mut obj = Map::new();
             insert_type(&mut obj, "string", nullable);
             obj.insert("format".into(), Value::String("date".into()));
+            apply_constraints(&mut obj, nullable, constraints);
+            Value::Object(obj)
+        }
+        FieldType::DateTime => {
+            // `DateTime` is encoded as a JSON string with `format: date-time`
+            // (RFC 3339 datetime).
+            let mut obj = Map::new();
+            insert_type(&mut obj, "string", nullable);
+            obj.insert("format".into(), Value::String("date-time".into()));
             apply_constraints(&mut obj, nullable, constraints);
             Value::Object(obj)
         }
@@ -542,6 +551,7 @@ fn extract_type(name: &str, sub: &Map<String, Value>) -> Result<(FieldType, bool
     let field_type = match type_str.as_str() {
         "string" => match sub.get("format").and_then(Value::as_str) {
             Some("date") => FieldType::Date,
+            Some("date-time") => FieldType::DateTime,
             Some(other) => {
                 return Err(format!(
                     "property '{name}': unsupported format '{other}' on string type"
@@ -987,6 +997,88 @@ mod tests {
         assert_eq!(fields[0].field_type, FieldTypeSerde::Scalar("Date".into()));
     }
 
+    // --- DateTime translator tests (TODO-0007 Wave 3) ---
+
+    #[test]
+    fn datetime_field_emits_string_with_format_date_time() {
+        let toml = with_fields(vec![field(
+            "synced_at",
+            FieldTypeSerde::Scalar("DateTime".into()),
+        )]);
+        let out = dsl_to_canonical(&toml);
+        assert_eq!(
+            out["properties"]["synced_at"],
+            json!({"type": "string", "format": "date-time"})
+        );
+    }
+
+    #[test]
+    fn array_of_datetime_emits_items_format() {
+        let toml = with_fields(vec![field(
+            "events",
+            FieldTypeSerde::Array {
+                array: Box::new(FieldTypeSerde::Scalar("DateTime".into())),
+            },
+        )]);
+        let out = dsl_to_canonical(&toml);
+        assert_eq!(
+            out["properties"]["events"],
+            json!({
+                "type": "array",
+                "items": {"type": "string", "format": "date-time"}
+            })
+        );
+    }
+
+    #[test]
+    fn nullable_datetime_emits_union_with_format() {
+        let mut f = field("synced_at", FieldTypeSerde::Scalar("DateTime".into()));
+        f.nullable = true;
+        let toml = with_fields(vec![f]);
+        let out = dsl_to_canonical(&toml);
+        assert_eq!(
+            out["properties"]["synced_at"],
+            json!({"type": ["string", "null"], "format": "date-time"})
+        );
+    }
+
+    #[test]
+    fn canonical_to_dsl_recognises_format_date_time() {
+        let schema = json!({
+            "$schema": JSON_SCHEMA_DRAFT,
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+                "synced_at": {"type": "string", "format": "date-time"}
+            },
+        });
+        let imported = canonical_to_dsl(&schema).unwrap();
+        let fields = &imported.fields;
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].name, "synced_at");
+        assert_eq!(
+            fields[0].field_type,
+            FieldTypeSerde::Scalar("DateTime".into())
+        );
+    }
+
+    #[test]
+    fn dsl_to_canonical_round_trip_with_datetime() {
+        let toml = with_fields(vec![field(
+            "synced_at",
+            FieldTypeSerde::Scalar("DateTime".into()),
+        )]);
+        let canonical = dsl_to_canonical(&toml);
+        let imported = canonical_to_dsl(&canonical).unwrap();
+        let fields = &imported.fields;
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].name, "synced_at");
+        assert_eq!(
+            fields[0].field_type,
+            FieldTypeSerde::Scalar("DateTime".into())
+        );
+    }
+
     #[test]
     fn nullable_string_field_emits_union_type() {
         // String + nullable=true: standard `["string", "null"]` union.
@@ -1368,12 +1460,8 @@ mod tests {
     }
 
     #[test]
-    fn gate_rejects_date_time_format() {
-        // Wave 3 adds date-time; until then, only `date` is allowed.
-        assert_rejects(
-            json!({"format": "date-time"}),
-            "format 'date-time' is not supported",
-        );
+    fn gate_accepts_date_time_format() {
+        assert!(validate_mdvs_schema(&json!({"format": "date-time"})).is_ok());
     }
 
     #[test]

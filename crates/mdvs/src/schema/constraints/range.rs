@@ -119,6 +119,7 @@ fn field_type_name(ft: &FieldType) -> &'static str {
         FieldType::Float => "Float",
         FieldType::String => "String",
         FieldType::Date => "Date",
+        FieldType::DateTime => "DateTime",
         FieldType::Array(_) => "Array",
         FieldType::Object(_) => "Object",
     }
@@ -210,6 +211,13 @@ mod tests {
     fn type_date_rejects() {
         let err = validate_for_type("f", &FieldType::Date, &int_min(0), &int_max(1)).unwrap();
         assert!(err.contains("Date"));
+        assert!(err.contains("does not apply"));
+    }
+
+    #[test]
+    fn type_datetime_rejects() {
+        let err = validate_for_type("f", &FieldType::DateTime, &int_min(0), &int_max(1)).unwrap();
+        assert!(err.contains("DateTime"));
         assert!(err.contains("does not apply"));
     }
 

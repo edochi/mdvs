@@ -18,6 +18,12 @@ pub enum FieldType {
     /// Calendar date in RFC 3339 full-date format (`YYYY-MM-DD`). Stored on disk
     /// as an Arrow `Date32` column. Validated via JSON Schema's `format: date`.
     Date,
+    /// Date + time in RFC 3339 datetime format
+    /// (`YYYY-MM-DDTHH:MM:SS[.frac]<Z|±HH:MM>`). Stored on disk as an Arrow
+    /// `Timestamp(Millisecond, "UTC")` column — all values are normalized to UTC
+    /// at storage time. Validated via JSON Schema's `format: date-time`.
+    /// Timezone-naive inputs (no `Z` or offset) are rejected by the RFC 3339 spec.
+    DateTime,
     /// YAML sequence with a uniform element type.
     Array(Box<FieldType>),
     /// YAML mapping with named sub-fields.
@@ -83,6 +89,29 @@ fn looks_like_date(s: &str) -> bool {
     re.is_match(s) && chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").is_ok()
 }
 
+/// Check if a string is a valid RFC 3339 datetime
+/// (`YYYY-MM-DDTHH:MM:SS[.frac]<Z|±HH:MM>`).
+///
+/// Two-step gate, parallel to [`looks_like_date`]:
+/// 1. Regex enforces the exact shape (date + `T` + time + mandatory tz).
+///    Timezone-naive inputs (no `Z` or offset) are rejected by RFC 3339
+///    and by this regex.
+/// 2. `chrono::DateTime::parse_from_rfc3339` rejects calendrically
+///    invalid values (e.g. `2024-13-01T...`, `2024-01-15T25:30:00Z`).
+///
+/// The RFC 3339 date-only and datetime shapes are disjoint (`T` is
+/// required in datetime, forbidden in date), so a string is at most one
+/// of the two.
+fn looks_like_date_time(s: &str) -> bool {
+    static DATE_TIME_RE: LazyLock<Option<Regex>> = LazyLock::new(|| {
+        Regex::new(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$").ok()
+    });
+    let Some(re) = DATE_TIME_RE.as_ref() else {
+        return false;
+    };
+    re.is_match(s) && chrono::DateTime::parse_from_rfc3339(s).is_ok()
+}
+
 impl From<&Value> for FieldType {
     fn from(value: &Value) -> Self {
         match value {
@@ -95,7 +124,12 @@ impl From<&Value> for FieldType {
                 }
             }
             Value::String(s) => {
-                if looks_like_date(s) {
+                // Check DateTime first (stricter regex, includes `T`);
+                // then Date (no `T`). Shapes are disjoint, so order is
+                // really for code clarity.
+                if looks_like_date_time(s) {
+                    FieldType::DateTime
+                } else if looks_like_date(s) {
                     FieldType::Date
                 } else {
                     FieldType::String
@@ -132,6 +166,10 @@ impl From<&FieldType> for DataType {
             FieldType::Float => DataType::Float64,
             FieldType::String => DataType::Utf8,
             FieldType::Date => DataType::Date32,
+            FieldType::DateTime => DataType::Timestamp(
+                datafusion::arrow::datatypes::TimeUnit::Millisecond,
+                Some(Arc::from("UTC")),
+            ),
             FieldType::Array(inner) => {
                 let inner_dt: DataType = inner.as_ref().into();
                 DataType::List(Arc::new(Field::new("item", inner_dt, true)))
@@ -275,6 +313,136 @@ mod tests {
         assert_eq!(dt, DataType::Date32);
     }
 
+    // --- DateTime widening + inference tests (TODO-0007 Wave 3) ---
+
+    #[test]
+    fn widen_datetime_with_datetime() {
+        assert_eq!(
+            FieldType::from_widen(FieldType::DateTime, FieldType::DateTime),
+            FieldType::DateTime
+        );
+    }
+
+    #[test]
+    fn widen_datetime_with_date_to_string() {
+        // Date and DateTime are cross-shape — neither is a subtype of the
+        // other. Mixed observations widen to String.
+        assert_eq!(
+            FieldType::from_widen(FieldType::Date, FieldType::DateTime),
+            FieldType::String
+        );
+        assert_eq!(
+            FieldType::from_widen(FieldType::DateTime, FieldType::Date),
+            FieldType::String
+        );
+    }
+
+    #[test]
+    fn widen_datetime_with_other_types() {
+        for other in [
+            FieldType::String,
+            FieldType::Integer,
+            FieldType::Float,
+            FieldType::Boolean,
+        ] {
+            assert_eq!(
+                FieldType::from_widen(FieldType::DateTime, other.clone()),
+                FieldType::String
+            );
+            assert_eq!(
+                FieldType::from_widen(other, FieldType::DateTime),
+                FieldType::String
+            );
+        }
+    }
+
+    #[test]
+    fn datetime_arrow_data_type_is_timestamp_millis_utc() {
+        let dt: DataType = (&FieldType::DateTime).into();
+        match dt {
+            DataType::Timestamp(unit, ref tz) => {
+                assert_eq!(unit, datafusion::arrow::datatypes::TimeUnit::Millisecond);
+                assert_eq!(tz.as_deref(), Some("UTC"));
+            }
+            other => panic!("expected Timestamp(ms, UTC), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn value_to_field_type_recognises_rfc3339_datetime() {
+        for s in &[
+            "2024-01-15T14:30:00Z",
+            "2024-01-15T14:30:00+00:00",
+            "2024-01-15T14:30:00+05:30",
+            "2024-01-15T14:30:00-08:00",
+            "2024-01-15T14:30:00.123Z",
+            "2024-01-15T14:30:00.123456789Z",
+        ] {
+            assert_eq!(
+                FieldType::from(&Value::String((*s).into())),
+                FieldType::DateTime,
+                "expected DateTime for {s}",
+            );
+        }
+    }
+
+    #[test]
+    fn value_to_field_type_rejects_naive_datetime() {
+        // No timezone offset = not valid RFC 3339.
+        for s in &["2024-01-15T14:30:00", "2024-01-15T14:30:00.123"] {
+            assert_eq!(
+                FieldType::from(&Value::String((*s).into())),
+                FieldType::String,
+                "expected String (no tz) for {s}",
+            );
+        }
+    }
+
+    #[test]
+    fn value_to_field_type_rejects_invalid_datetime_calendar() {
+        // Invalid month, day, or hour in an otherwise well-shaped datetime.
+        for s in &[
+            "2024-13-01T14:30:00Z",
+            "2024-02-30T14:30:00Z",
+            "2024-01-15T25:30:00Z",
+            "2024-01-15T14:61:00Z",
+        ] {
+            assert_eq!(
+                FieldType::from(&Value::String((*s).into())),
+                FieldType::String,
+                "expected String for invalid datetime {s}",
+            );
+        }
+    }
+
+    #[test]
+    fn value_to_field_type_rejects_space_separated_datetime() {
+        // RFC 3339 requires `T` between date and time; SQL-style space is
+        // permitted by RFC 3339 §5.6 only as an exception, but we stick to
+        // the canonical `T` form.
+        let v = Value::String("2024-01-15 14:30:00Z".into());
+        assert_eq!(FieldType::from(&v), FieldType::String);
+    }
+
+    #[test]
+    fn array_of_datetimes_inferred_as_array_datetime() {
+        let v = serde_json::json!(["2024-01-15T14:30:00Z", "2024-06-15T08:00:00+05:30",]);
+        assert_eq!(
+            FieldType::from(&v),
+            FieldType::Array(Box::new(FieldType::DateTime))
+        );
+    }
+
+    #[test]
+    fn array_mixing_date_and_datetime_widens_to_array_string() {
+        // Cross-shape: Date + DateTime → String element-wise.
+        let v = serde_json::json!(["2024-01-15", "2024-06-15T08:00:00Z"]);
+        assert_eq!(
+            FieldType::from(&v),
+            FieldType::Array(Box::new(FieldType::String))
+        );
+    }
+
     // --- Date inference tests (TODO-0007 Wave 2) ---
 
     #[test]
@@ -335,15 +503,15 @@ mod tests {
 
     #[test]
     fn value_to_field_type_rejects_other_date_formats() {
-        // ISO 8601 variants, RFC 3339 datetime, and common locale forms are
-        // all rejected — only the RFC 3339 full-date subset auto-infers.
+        // ISO 8601 looser variants and common locale forms are rejected as
+        // Date — only the RFC 3339 full-date subset auto-infers as Date.
+        // (RFC 3339 datetimes go to DateTime, see Wave 3 tests.)
         for s in &[
-            "20240115",             // basic ISO
-            "2024-W03-1",           // ISO week date
-            "2024-01-15T14:30:00Z", // date-time
-            "01/15/2024",           // US locale
-            "15/01/2024",           // EU locale
-            "Jan 15, 2024",         // long form
+            "20240115",     // basic ISO
+            "2024-W03-1",   // ISO week date
+            "01/15/2024",   // US locale
+            "15/01/2024",   // EU locale
+            "Jan 15, 2024", // long form
         ] {
             assert_eq!(
                 FieldType::from(&Value::String((*s).into())),

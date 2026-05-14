@@ -2725,4 +2725,84 @@ mod tests {
             .find(|v| v.field == "birthday" && matches!(v.kind, ViolationKind::WrongType));
         assert!(v.is_some(), "violations: {:?}", result.violations);
     }
+
+    // ===== DateTime type (TODO-0007 Wave 3) =====
+
+    fn datetime_field(name: &str) -> TomlField {
+        TomlField {
+            name: name.into(),
+            field_type: FieldTypeSerde::Scalar("DateTime".into()),
+            allowed: vec!["**".into()],
+            required: vec![],
+            nullable: false,
+            constraints: None,
+            preprocess: vec![],
+        }
+    }
+
+    #[test]
+    fn datetime_field_accepts_rfc3339_datetime() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("blog")).unwrap();
+        fs::write(
+            tmp.path().join("blog/post.md"),
+            "---\nsynced_at: \"2024-01-15T14:30:00Z\"\n---\n# Body",
+        )
+        .unwrap();
+        write_toml(tmp.path(), vec![datetime_field("synced_at")], vec![]);
+
+        let step = run(tmp.path(), true, false, None);
+        let result = unwrap_check(&step);
+        assert!(
+            result.violations.is_empty(),
+            "expected no violations, got: {:?}",
+            result.violations
+        );
+    }
+
+    #[test]
+    fn datetime_field_rejects_naive_datetime() {
+        // Missing tz offset — not valid RFC 3339.
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("blog")).unwrap();
+        fs::write(
+            tmp.path().join("blog/post.md"),
+            "---\nsynced_at: \"2024-01-15T14:30:00\"\n---\n# Body",
+        )
+        .unwrap();
+        write_toml(tmp.path(), vec![datetime_field("synced_at")], vec![]);
+
+        let step = run(tmp.path(), true, false, None);
+        let result = unwrap_check(&step);
+        let v = result
+            .violations
+            .iter()
+            .find(|v| v.field == "synced_at" && matches!(v.kind, ViolationKind::WrongType));
+        assert!(
+            v.is_some(),
+            "expected WrongType on naive datetime; got: {:?}",
+            result.violations
+        );
+    }
+
+    #[test]
+    fn datetime_field_rejects_pure_date() {
+        // RFC 3339 full-date is not a valid datetime.
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("blog")).unwrap();
+        fs::write(
+            tmp.path().join("blog/post.md"),
+            "---\nsynced_at: \"2024-01-15\"\n---\n# Body",
+        )
+        .unwrap();
+        write_toml(tmp.path(), vec![datetime_field("synced_at")], vec![]);
+
+        let step = run(tmp.path(), true, false, None);
+        let result = unwrap_check(&step);
+        let v = result
+            .violations
+            .iter()
+            .find(|v| v.field == "synced_at" && matches!(v.kind, ViolationKind::WrongType));
+        assert!(v.is_some(), "violations: {:?}", result.violations);
+    }
 }

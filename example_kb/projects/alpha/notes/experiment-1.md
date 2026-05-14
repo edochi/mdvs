@@ -13,6 +13,7 @@ wavelength_nm: 850
 sample_count: 24
 drift_rate: 0.023
 funding: "internal"
+synced_at: "2024-03-14T10:25:00Z"
 calibration:
   baseline:
     wavelength: 850
