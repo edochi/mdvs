@@ -29,6 +29,7 @@ Skips scan + infer; the external file is the source of truth for fields. `init_f
 
 - **Schema-only** — init never downloads a model, never creates `.mdvs/`, never embeds.
 - **Categorical inference** — `infer_constraints()` runs with defaults (max_categories=10, min_repetition=3). Qualifying fields get `[fields.field.constraints].categories`.
+- **Date / DateTime inference** — string values matching RFC 3339 full-date (`YYYY-MM-DD`) auto-infer as `Date`; values matching RFC 3339 datetime (`YYYY-MM-DDTHH:MM:SS[.frac]<Z|±HH:MM>`) auto-infer as `DateTime`. A single non-matching observation downgrades the field to `String`. See [TODO-0007](../todos/TODO-0007.md) and `book/src/concepts/types.md#date-and-datetime`.
 - **Preprocessor inference** — observed type-widening events drive `[fields.field].preprocess`. No implicit defaults: `preprocess = []` means strict.
 - **`init --force` vs `update reinfer`** — init rewrites the entire config (all sections). `update reinfer` re-infers only `[fields]`, preserving all other config.
 - **Round-trip with `mdvs export-jsonschema`** — exporting then re-importing reproduces the original `[[fields.field]]` definitions including constraints, path-scoping, and `preprocess` arrays (preserved via `x-mdvs.*` extension keys).
