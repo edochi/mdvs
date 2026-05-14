@@ -119,7 +119,7 @@ preprocess = ["widen-int-to-float"]
 
 [[fields.field]]
 name = "commission_date"
-type = "String"
+type = "Date"
 allowed = ["people/*"]
 required = []
 nullable = false
@@ -140,7 +140,7 @@ nullable = false
 
 [[fields.field]]
 name = "date"
-type = "String"
+type = "Date"
 allowed = ["blog/published/**", "meetings/**", "projects/alpha/meetings/**", "projects/archived/**", "projects/beta/meetings/**"]
 required = ["blog/published/**", "meetings/**", "projects/alpha/meetings/**", "projects/beta/meetings/**"]
 nullable = false
@@ -211,7 +211,7 @@ categories = ['["internal"]', "internal"]
 
 [[fields.field]]
 name = "joined"
-type = "String"
+type = "Date"
 allowed = ["people/**"]
 required = ["people/**"]
 nullable = false
@@ -225,7 +225,7 @@ nullable = false
 
 [[fields.field]]
 name = "last_reviewed"
-type = "String"
+type = "Date"
 allowed = ["reference/protocols/**"]
 required = ["reference/protocols/**"]
 nullable = false
