@@ -8,10 +8,12 @@ pre_bump_hooks = [
     "cargo generate-lockfile",
     "git add crates/mdvs/Cargo.toml Cargo.lock",
 ]
-post_bump_hooks = [
-    "git push origin",
-    "git push origin {{version_tag}}"
-]
+# post_bump_hooks intentionally empty: pushing is deferred to the release
+# workflow so it only happens AFTER crates.io publishes succeed. Pushing
+# inside post_bump_hooks would commit the bump (and tag) to origin even
+# when publishes fail, leaving main + release workflow inconsistent with
+# crates.io. See .github/workflows/bump.yml for the new order.
+post_bump_hooks = []
 
 [changelog]
 path = "crates/mdvs/CHANGELOG.md"
