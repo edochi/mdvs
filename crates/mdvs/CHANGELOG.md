@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## v0.5.1 - 2026-05-14
+#### Bug Fixes
+- (**release**) atomic-ish bump — publish before push, idempotent - (2838676) - edoch
+
+- - -
+
 ## v0.5.0 - 2026-05-14
 #### Features
 - (**infer**) auto-detect Date fields from RFC 3339 strings (Wave 2) - (ede5d4b) - edoch
