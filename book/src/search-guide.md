@@ -69,6 +69,86 @@ mdvs search "notes" --where "author = 'REMO' OR author = 'Marco Bianchi'"
 mdvs search "notes" --where "NOT status = 'archived'"
 ```
 
+## Date and DateTime
+
+Fields typed as `Date` (Arrow `Date32`) and `DateTime` (Arrow `Timestamp(Millisecond, UTC)`) support native date arithmetic, comparisons, and DataFusion's date functions. Auto-inferred from RFC 3339 strings — see [Date and DateTime](./concepts/types.md#date-and-datetime) for the type itself.
+
+### Direct comparison
+
+```bash
+mdvs search "researcher" --where "joined > '2024-01-01'"
+mdvs search "meeting" --where "date < '2032-01-01'"
+mdvs search "calibration" --where "synced_at >= '2024-04-01T00:00:00Z'"
+```
+
+DateTime offsets are normalized to UTC at storage time, so `2024-04-02T16:14:30+02:00` (in a YAML file) and `2024-04-02T14:14:30Z` (in a `--where` clause) compare as the same absolute moment.
+
+### Range filters (`BETWEEN`)
+
+```bash
+mdvs search "meeting" --where "date BETWEEN '2031-09-01' AND '2031-11-30'"
+mdvs search "report" --where "joined BETWEEN '2023-01-01' AND '2024-12-31'"
+```
+
+### Date functions (`EXTRACT`, `date_part`)
+
+Both extract numeric components from `Date` and `DateTime`. Two equivalent syntaxes:
+
+```bash
+mdvs search "meeting" --where "EXTRACT(YEAR FROM date) = 2031"
+mdvs search "meeting" --where "date_part('year', date) = 2031"
+mdvs search "meeting" --where "EXTRACT(MONTH FROM date) = 10"
+mdvs search "calibration" --where "EXTRACT(YEAR FROM synced_at) = 2024 AND EXTRACT(MONTH FROM synced_at) <= 3"
+```
+
+### Date arithmetic with `INTERVAL`
+
+DataFusion supports adding/subtracting intervals to dates and datetimes.
+
+```bash
+# Joined within the last 2 years (relative to a cutoff date)
+mdvs search "researcher" --where "joined > CAST('2032-01-01' AS DATE) - INTERVAL '2 years'"
+
+# Datetime offset by days
+mdvs search "experiment" \
+  --where "synced_at < CAST('2024-04-15T00:00:00Z' AS TIMESTAMP) - INTERVAL '7 days'"
+```
+
+`CAST('...' AS DATE)` and `CAST('...' AS TIMESTAMP)` are usually needed for string literals on the right side of the arithmetic — DataFusion's type inference doesn't always pick the date/timestamp type automatically.
+
+### Date subtraction (days between)
+
+Subtracting two `Date` values returns a number of days (an integer):
+
+```bash
+# People who joined more than 365 days before a cutoff
+mdvs search "researcher" --where "CAST('2032-01-01' AS DATE) - joined > 365"
+```
+
+### Null checks
+
+`Date` and `DateTime` columns support standard null predicates, including for fields scoped to a subset of directories (rows outside the scope have null values for that column):
+
+```bash
+mdvs search "protocol" --where "last_reviewed IS NOT NULL"
+mdvs search "experiment" \
+  --where "drift_rate IS NULL AND filepath LIKE 'projects/alpha/notes/%'"
+```
+
+### Combining with other filters
+
+Date filters compose freely with the rest of the language — string compare, `IN`, `LIKE`, dotted-leaf access, array operations, and search ranking:
+
+```bash
+# Blog posts in 2031 H2 by specific authors
+mdvs search "research" \
+  --where "filepath LIKE 'blog/published/%' AND author IN ('Marco Bianchi', 'Giulia Ferretti') AND date BETWEEN '2031-07-01' AND '2031-12-31'"
+
+# High-or-medium priority experiments with baseline > 700nm synced in 2024
+mdvs search "experiment SPR" \
+  --where "(priority = 'high' OR priority = 'medium') AND calibration.baseline.wavelength > 700 AND EXTRACT(YEAR FROM synced_at) = 2024"
+```
+
 ## Array fields
 
 Fields typed as `Array(String)` (like `tags`, `attendees`, `action_items`) support array functions.
