@@ -117,7 +117,7 @@ Rejected:
 2024/01/15        ← only hyphens
 ```
 
-Stored as Arrow `Date32` (days since 1970-01-01). Native date arithmetic works in `--where` queries — e.g. `WHERE date > '2024-01-01'`, `WHERE date_part('year', published) = 2024`, `WHERE date BETWEEN '2024-06-01' AND '2024-06-30'`.
+Stored as Arrow `Date32` (days since 1970-01-01). Native date arithmetic works in `--where` queries — e.g. `WHERE date > '2024-01-01'`, `WHERE date_part('year', published) = 2024`, `WHERE date BETWEEN '2024-06-01' AND '2024-06-30'`. See [Date and DateTime in --where queries](../search-guide.md#date-and-datetime) for worked examples including `EXTRACT`, `INTERVAL`, date subtraction, and compound filters.
 
 ### `DateTime` — date + time, mandatory timezone
 
