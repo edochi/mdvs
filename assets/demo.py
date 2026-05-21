@@ -18,7 +18,6 @@ Prerequisites
 - ``uv`` on ``$PATH`` (https://docs.astral.sh/uv/).
 - ``cargo build --release -p mdvs`` (the demo invokes
   ``target/release/mdvs``).
-- ``example_kb`` already built: ``./target/release/mdvs build example_kb``.
 
 Run
 ---
@@ -43,15 +42,29 @@ import pexpect
 
 REPO = Path(__file__).resolve().parent.parent
 CAST = Path(__file__).parent / "demo.cast"
+DEMO_KB = Path(__file__).parent / "demo_kb"
 PROMPT = r"\$ $"
+
+
+def reset_demo_kb() -> None:
+    """Remove generated state inside ``demo_kb`` so ``mdvs init`` runs clean."""
+    for path in (
+        DEMO_KB / "mdvs.toml",
+        DEMO_KB / ".mdvs",
+        DEMO_KB / "books" / "draft.md",
+    ):
+        if path.is_dir():
+            shutil.rmtree(path)
+        elif path.exists():
+            path.unlink()
 
 
 def main() -> None:
     asciinema = shutil.which("asciinema")
     if asciinema is None:
         raise SystemExit(
-            "asciinema not on PATH — install with "
-            "`pip install -r assets/requirements.txt` (preferably inside a venv)."
+            "asciinema not on PATH — install it with "
+            "`cargo install asciinema` or `brew install asciinema`."
         )
 
     binary = REPO / "target" / "release" / "mdvs"
@@ -59,6 +72,8 @@ def main() -> None:
         raise SystemExit(
             f"{binary} not found — run `cargo build --release -p mdvs` first."
         )
+
+    reset_demo_kb()
 
     with tempfile.NamedTemporaryFile(
         "w", prefix="mdvs-demo-rc-", suffix=".sh", delete=False
@@ -99,14 +114,23 @@ def main() -> None:
             child.expect(PROMPT)
             time.sleep(after)
 
-        run("mdvs --version", after=3.0)
-        run("cd example_kb", after=0.6)
-        run("mdvs info", after=3.5)
-        run("mdvs search 'experiment' --limit 1", after=3.5)
+        run("cd assets/demo_kb", after=0.6)
+        run("find . -name '*.md' | sort", after=2.5)
+        run("mdvs init", after=4.5)
+        run("mdvs check", after=3.0)
         run(
-            "mdvs search 'experiment' --limit 1 "
-            "--where \"date BETWEEN '2031-09-01' AND '2031-11-30'\"",
-            after=4.0,
+            "printf -- '---\\ntitle: Draft\\nrating: TBD\\n---\\n' "
+            "> books/draft.md",
+            after=0.6,
+        )
+        run("cat books/draft.md", after=2.5)
+        run("mdvs check", after=4.5)
+        run("rm books/draft.md", after=1.0)
+        run("mdvs build", after=4.0)
+        run(
+            "mdvs search 'sci-fi' --limit 2 "
+            "--where \"date_added > '2024-02-01'\"",
+            after=5.0,
         )
 
         child.sendline("exit")
