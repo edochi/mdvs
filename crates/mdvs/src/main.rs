@@ -10,7 +10,7 @@ enum LogLevel {
 }
 
 #[derive(Parser)]
-#[command(name = "mdvs", about = "Markdown Validation & Search")]
+#[command(name = "mdvs", version, about = "Markdown Validation & Search")]
 struct Cli {
     /// Output format
     #[arg(short, long, global = true, default_value = "text")]
