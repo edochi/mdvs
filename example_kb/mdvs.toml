@@ -6,6 +6,13 @@ skip_gitignore = false
 [check]
 auto_update = true
 
+[embedding_model]
+provider = "model2vec"
+name = "minishlab/potion-base-8M"
+
+[chunking]
+max_chunk_size = 1024
+
 [build]
 auto_update = true
 
