@@ -2,26 +2,24 @@
 
 <div align="center">
 
-[![CI](https://github.com/edochi/mdvs/actions/workflows/ci.yml/badge.svg)](https://github.com/edochi/mdvs/actions/workflows/ci.yml)
-[![crates.io](https://img.shields.io/crates/v/mdvs)](https://crates.io/crates/mdvs)
-[![downloads](https://img.shields.io/crates/d/mdvs)](https://crates.io/crates/mdvs)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Rust](https://img.shields.io/badge/rust-2024-orange.svg)](https://www.rust-lang.org/)
-[![Docs](https://img.shields.io/badge/docs-mdBook-green.svg)](https://edochi.github.io/mdvs/)
+**An in-process validation & search engine for markdown documents — schema inference, frontmatter validation, and local semantic search.**
+
+[![CI status](https://github.com/edochi/mdvs/actions/workflows/ci.yml/badge.svg)](https://github.com/edochi/mdvs/actions/workflows/ci.yml)
+[![Crates.io version](https://img.shields.io/crates/v/mdvs.svg?color=orange)](https://crates.io/crates/mdvs)
+[![Documentation](https://img.shields.io/badge/docs-mdBook-green.svg)](https://edochi.github.io/mdvs/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+---
+
+[Key Features](#features) • [Installation](#install) • [Documentation](https://edochi.github.io/mdvs/) • [Example Vault](example_kb/)
 
 </div>
 
-mdvs infers a typed schema from your markdown frontmatter, validates it, and lets you search everything with natural language + SQL. Single binary, runs locally, no setup.
+Designed for Obsidian vaults, Zettelkasten systems, docs-as-code repositories, and personal wikis. Single binary, runs locally, no setup.
 
-<div align="center">
-
-  :x: A Document Database
-
-  :white_check_mark: A Database for Documents
-
-</div>
-
-Schema inference, frontmatter validation, and semantic search for markdown directories. For Obsidian vaults, Zettelkasten, docs-as-code, research notes, wikis — any directory of markdown files with (or without) frontmatter.
+<p align="center">
+  <img src="assets/demo.gif" alt="mdvs: init, check, validate, build, search" width="800">
+</p>
 
 ## Why mdvs?
 
