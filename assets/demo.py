@@ -114,29 +114,72 @@ def main() -> None:
             child.expect(PROMPT)
             time.sleep(after)
 
+        def comment(text: str, after: float = 1.2) -> None:
+            for c in f"# {text}":
+                child.send(c)
+                time.sleep(0.025)
+            child.send("\r")
+            child.expect(PROMPT)
+            time.sleep(after)
+
         run("cd assets/demo_kb", after=0.6)
+
+        comment("The knowledge base — six markdown notes:", after=1.0)
         run("find . -name '*.md' | sort", after=2.5)
+
+        comment("Each file has YAML frontmatter:", after=1.0)
+        run("cat books/dune.md", after=3.0)
+
+        comment("Scan, infer the typed schema, write mdvs.toml:", after=1.0)
         run("mdvs init", after=4.5)
+
+        comment("Validate the files against the schema:", after=1.0)
         run("mdvs check", after=3.0)
+
+        comment("Add a draft with a wrong-type field:", after=1.0)
         run(
             "printf -- '---\\ntitle: Draft\\nrating: TBD\\n---\\n' "
             "> books/draft.md",
             after=0.6,
         )
         run("cat books/draft.md", after=2.5)
+
+        comment("check catches the violations:", after=1.0)
         run("mdvs check", after=4.5)
+
+        comment("Remove the bad file:", after=1.0)
         run("rm books/draft.md", after=1.0)
+
+        comment("Build the search index (local embeddings):", after=1.0)
         run("mdvs build", after=4.0)
+
+        comment("Semantic search + SQL filter:", after=1.0)
         run(
             "mdvs search 'sci-fi' --limit 2 "
             "--where \"date_added > '2024-02-01'\"",
             after=5.0,
         )
 
-        child.sendline("exit")
+        # Ctrl+D — bash exits on EOF. It still echoes "exit\r\n" because
+        # that's hardcoded for interactive shells; the post-processing step
+        # below strips that final event from the cast.
+        child.sendcontrol("d")
         child.expect(pexpect.EOF)
     finally:
         os.unlink(rcfile)
+
+    strip_trailing_exit(CAST)
+
+
+def strip_trailing_exit(cast_path: Path) -> None:
+    """Drop bash's trailing ``exit\\r\\n`` echo from the recorded cast."""
+    lines = cast_path.read_text().splitlines(keepends=True)
+    cleaned = [
+        line
+        for line in lines
+        if not (line.startswith("[") and '"o", "exit\\r\\n"' in line)
+    ]
+    cast_path.write_text("".join(cleaned))
 
 
 if __name__ == "__main__":
