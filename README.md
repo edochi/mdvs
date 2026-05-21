@@ -23,6 +23,10 @@ mdvs infers a typed schema from your markdown frontmatter, validates it, and let
 
 Schema inference, frontmatter validation, and semantic search for markdown directories. For Obsidian vaults, Zettelkasten, docs-as-code, research notes, wikis — any directory of markdown files with (or without) frontmatter.
 
+<p align="center">
+  <img src="assets/demo.gif" alt="mdvs: init, check, validate, build, search" width="800">
+</p>
+
 ## Why mdvs?
 
 Markdown files can have a YAML block at the top called **frontmatter** — structured fields that describe the document:
