@@ -158,3 +158,4 @@
 | [0154](TODO-0154.md) | Cache overlay validators by signature for path-scoped validation | todo | medium | 2026-05-11 |
 | [0155](TODO-0155.md) | Unify mdvs.toml type syntax with CLI Display (function-style) | done | high | 2026-05-11 |
 | [0156](TODO-0156.md) | Represent Array of structured items without violating Wave C's flattening | todo | low | 2026-05-13 |
+| [0157](TODO-0157.md) | Incremental ANN index optimize instead of full index rebuild | todo | low | 2026-05-22 |
