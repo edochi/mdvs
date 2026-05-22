@@ -92,6 +92,9 @@ enum Command {
             long_help = "SQL WHERE clause for filtering.\n\nExamples:\n  --where \"draft = false\"\n  --where \"tags = 'rust'\"\n  --where \"author = 'O''Brien'\"  (escape ' by doubling)\n\nField names with special characters require SQL quoting:\n  --where \"\\\"author's note\\\" = 'value'\""
         )]
         where_clause: Option<String>,
+        /// Retrieval mode: semantic (vector), fulltext (BM25), or hybrid (both)
+        #[arg(long, value_enum, default_value_t = mdvs::index::backend::SearchMode::Hybrid)]
+        mode: mdvs::index::backend::SearchMode,
         /// Skip auto-update before building/searching
         #[arg(long)]
         no_update: bool,
@@ -271,6 +274,7 @@ async fn main() -> anyhow::Result<()> {
             path,
             limit,
             where_clause,
+            mode,
             no_update,
             no_build,
         } => {
@@ -279,6 +283,7 @@ async fn main() -> anyhow::Result<()> {
                 &query,
                 limit,
                 where_clause.as_deref(),
+                mode,
                 no_update,
                 no_build,
                 cli.verbose,

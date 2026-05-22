@@ -1,8 +1,8 @@
 use crate::discover::field_type::FieldType;
 use crate::index::storage::{
-    BuildMetadata, COL_CHUNK_ID, COL_CHUNK_INDEX, COL_CHUNK_TEXT, COL_CONTENT_HASH, COL_EMBEDDING,
-    COL_END_LINE, COL_FILE_ID, COL_FILEPATH, COL_START_LINE, ChunkRow, FileIndexEntry, FileRow,
-    build_index_batch,
+    BuildMetadata, COL_BUILT_AT, COL_CHUNK_ID, COL_CHUNK_INDEX, COL_CHUNK_TEXT, COL_CONTENT_HASH,
+    COL_EMBEDDING, COL_END_LINE, COL_FILE_ID, COL_FILEPATH, COL_START_LINE, ChunkRow,
+    FileIndexEntry, FileRow, build_index_batch,
 };
 use anyhow::Context;
 use arrow::array::{
@@ -11,7 +11,11 @@ use arrow::array::{
 };
 use arrow::datatypes::DataType;
 use futures::TryStreamExt;
+use lance_index::scalar::FullTextSearchQuery;
+use lancedb::DistanceType;
 use lancedb::database::CreateTableMode;
+use lancedb::index::Index;
+use lancedb::index::vector::IvfPqIndexBuilder;
 use lancedb::query::{ExecutableQuery, QueryBase, Select};
 use serde::Serialize;
 use std::collections::HashSet;
@@ -20,6 +24,24 @@ use tracing::instrument;
 
 /// Name of the single denormalized Lance table.
 const LANCE_TABLE: &str = "index";
+
+/// Minimum chunk count before building the IVF-PQ vector index. Below this,
+/// exact flat search is used (IVF-PQ can't train on tiny corpora, and flat is
+/// fast enough — LanceDB recommends it up to ~100k vectors).
+const VECTOR_INDEX_MIN_ROWS: usize = 10_000;
+
+/// Retrieval mode for `mdvs search` (`--mode`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SearchMode {
+    /// Vector similarity only (cosine over embeddings).
+    Semantic,
+    /// BM25 full-text only (over `chunk_text`).
+    Fulltext,
+    /// Vector + BM25 fused by reciprocal rank fusion (default).
+    #[default]
+    Hybrid,
+}
 
 /// A single search result with its relevance score.
 #[derive(Debug, Serialize)]
@@ -102,9 +124,12 @@ impl Backend {
     }
 
     #[instrument(name = "search_index", skip_all)]
+    #[allow(clippy::too_many_arguments)]
     pub async fn search(
         &self,
         query_embedding: Vec<f32>,
+        query_text: &str,
+        mode: SearchMode,
         where_clause: Option<&str>,
         limit: usize,
         internal_prefix: &str,
@@ -114,6 +139,8 @@ impl Backend {
             Backend::Lance(b) => {
                 b.search(
                     query_embedding,
+                    query_text,
+                    mode,
                     where_clause,
                     limit,
                     internal_prefix,
@@ -203,11 +230,44 @@ impl LanceBackend {
             Box::new(RecordBatchIterator::new(vec![Ok(batch)], schema_md));
 
         let conn = self.connect().await?;
-        conn.create_table(LANCE_TABLE, reader)
+        let table = conn
+            .create_table(LANCE_TABLE, reader)
             .mode(CreateTableMode::Overwrite)
             .execute()
             .await
             .context("creating Lance index table")?;
+
+        self.build_indexes(&table, chunks.len()).await?;
+        Ok(())
+    }
+
+    /// Build the FTS index always, and the cosine IVF-PQ vector index only
+    /// above [`VECTOR_INDEX_MIN_ROWS`] (IVF-PQ needs enough vectors to train;
+    /// below the threshold LanceDB's exact flat scan is used instead).
+    async fn build_indexes(
+        &self,
+        table: &lancedb::table::Table,
+        n_chunks: usize,
+    ) -> anyhow::Result<()> {
+        if n_chunks == 0 {
+            return Ok(());
+        }
+        table
+            .create_index(&[COL_CHUNK_TEXT], Index::FTS(Default::default()))
+            .execute()
+            .await
+            .context("building full-text index")?;
+
+        if n_chunks >= VECTOR_INDEX_MIN_ROWS {
+            table
+                .create_index(
+                    &[COL_EMBEDDING],
+                    Index::IvfPq(IvfPqIndexBuilder::default().distance_type(DistanceType::Cosine)),
+                )
+                .execute()
+                .await
+                .context("building vector index")?;
+        }
         Ok(())
     }
 
@@ -348,35 +408,102 @@ impl LanceBackend {
         Ok(())
     }
 
-    /// Throwaway brute-force cosine search (TODO-0016 wave 1 only; deleted in
-    /// wave 2 in favour of native LanceDB ANN + hybrid). Reads candidate rows
-    /// (optionally filtered via `--where`), scores cosine in Rust, keeps the
-    /// best chunk per file, returns the top-K.
+    /// Native LanceDB search. `mode` selects vector (`nearest_to` + cosine),
+    /// full-text (BM25 over `chunk_text`), or hybrid (both, fused by LanceDB's
+    /// default RRF reranker). Over-fetches `limit * OVER_FETCH_FACTOR`
+    /// chunk-level hits, then keeps the best-scoring chunk per `file_id`.
+    #[allow(clippy::too_many_arguments)]
     async fn search(
         &self,
         query_embedding: Vec<f32>,
+        query_text: &str,
+        mode: SearchMode,
         where_clause: Option<&str>,
         limit: usize,
-        _internal_prefix: &str,
-        _aliases: &std::collections::HashMap<String, String>,
+        internal_prefix: &str,
+        aliases: &std::collections::HashMap<String, String>,
     ) -> anyhow::Result<Vec<SearchHit>> {
         let Some(table) = self.open_table().await? else {
             return Ok(vec![]);
         };
 
-        let mut query = table.query().select(Select::columns(&[
+        let translated = match where_clause {
+            Some(w) => {
+                let data_children = data_child_names(table.schema().await?.as_ref());
+                Some(translate_where_to_struct(
+                    w,
+                    &data_children,
+                    internal_prefix,
+                    aliases,
+                )?)
+            }
+            None => None,
+        };
+        let k = limit * OVER_FETCH_FACTOR;
+        let fts = || FullTextSearchQuery::new(query_text.to_string());
+
+        // Project only the columns we need. Critically, this excludes the
+        // `data` Struct and `embedding` columns — fetching them via the
+        // post-vector-search "take" trips a buffer-slicing panic in Lance's
+        // encoder (lance-encoding 6.0), and we don't need them for results.
+        let projection = Select::columns(&[
             COL_FILE_ID,
             COL_FILEPATH,
             COL_START_LINE,
             COL_END_LINE,
-            COL_EMBEDDING,
-        ]));
-        if let Some(w) = where_clause {
-            query = query.only_if(translate_where_to_struct(w));
-        }
-        let batches: Vec<RecordBatch> = query.execute().await?.try_collect().await?;
+            COL_CHUNK_TEXT,
+        ]);
 
-        // Best chunk per file_id.
+        // The branches have distinct query types (VectorQuery vs Query), so
+        // each collects its own batches.
+        let batches: Vec<RecordBatch> = match mode {
+            SearchMode::Semantic => {
+                let mut q = table
+                    .query()
+                    .select(projection)
+                    .nearest_to(query_embedding)?
+                    .distance_type(DistanceType::Cosine)
+                    .limit(k);
+                if let Some(w) = &translated {
+                    q = q.only_if(w);
+                }
+                q.execute().await?.try_collect().await?
+            }
+            SearchMode::Hybrid => {
+                let mut q = table
+                    .query()
+                    .select(projection)
+                    .nearest_to(query_embedding)?
+                    .distance_type(DistanceType::Cosine)
+                    .full_text_search(fts())
+                    .limit(k);
+                if let Some(w) = &translated {
+                    q = q.only_if(w);
+                }
+                q.execute().await?.try_collect().await?
+            }
+            SearchMode::Fulltext => {
+                let mut q = table
+                    .query()
+                    .select(projection)
+                    .full_text_search(fts())
+                    .limit(k);
+                if let Some(w) = &translated {
+                    q = q.only_if(w);
+                }
+                q.execute().await?.try_collect().await?
+            }
+        };
+
+        // Per-mode score column. Semantic returns cosine *distance* (lower is
+        // better → similarity = 1 - distance); the others return a score where
+        // higher is better.
+        let score_col = match mode {
+            SearchMode::Semantic => "_distance",
+            SearchMode::Fulltext => "_score",
+            SearchMode::Hybrid => "_relevance_score",
+        };
+
         let mut best: std::collections::HashMap<String, SearchHit> =
             std::collections::HashMap::new();
         for batch in &batches {
@@ -384,20 +511,15 @@ impl LanceBackend {
             let filepaths = str_col(batch, COL_FILEPATH)?;
             let start_lines = i32_col(batch, COL_START_LINE)?;
             let end_lines = i32_col(batch, COL_END_LINE)?;
-            let embeddings = batch
-                .column_by_name(COL_EMBEDDING)
-                .ok_or_else(|| anyhow::anyhow!("missing embedding column"))?
-                .as_any()
-                .downcast_ref::<FixedSizeListArray>()
-                .ok_or_else(|| anyhow::anyhow!("expected FixedSizeListArray for embedding"))?;
+            let chunk_texts = str_col(batch, COL_CHUNK_TEXT)?;
+            let scores = f32_col(batch, score_col)?;
             for i in 0..batch.num_rows() {
-                let emb = embeddings.value(i);
-                let floats = emb
-                    .as_any()
-                    .downcast_ref::<Float32Array>()
-                    .ok_or_else(|| anyhow::anyhow!("expected Float32Array in embedding"))?;
-                let v: Vec<f32> = (0..floats.len()).map(|j| floats.value(j)).collect();
-                let score = cosine_similarity(&query_embedding, &v);
+                let raw = scores.value(i) as f64;
+                let score = if mode == SearchMode::Semantic {
+                    1.0 - raw
+                } else {
+                    raw
+                };
                 let file_id = file_ids.value(i).to_string();
                 let entry = best.entry(file_id).or_insert_with(|| SearchHit {
                     filename: filepaths.value(i).to_string(),
@@ -411,6 +533,7 @@ impl LanceBackend {
                     entry.filename = filepaths.value(i).to_string();
                     entry.start_line = Some(start_lines.value(i));
                     entry.end_line = Some(end_lines.value(i));
+                    entry.chunk_text = Some(chunk_texts.value(i).to_string());
                 }
             }
         }
@@ -426,104 +549,132 @@ impl LanceBackend {
     }
 }
 
-/// Cosine similarity between two equal-length vectors. Returns 0 for a
-/// zero-norm input.
-fn cosine_similarity(a: &[f32], b: &[f32]) -> f64 {
-    let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
-    let na: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
-    let nb: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-    if na == 0.0 || nb == 0.0 {
-        0.0
-    } else {
-        (dot / (na * nb)) as f64
-    }
-}
+/// Over-fetch multiplier for chunk→file dedupe: to surface N files we pull
+/// roughly N×factor chunk-level hits, since several chunks may share a file.
+const OVER_FETCH_FACTOR: usize = 3;
 
-/// Minimal `--where` translator for the wave-1 throwaway search: prefix bare
-/// frontmatter field references with `data.` so they resolve against the
-/// denormalized table's `data` Struct column (the `files_v` view that used to
-/// promote them to top level is gone). Identifier chains whose first segment
-/// is a reserved top-level column, or that are SQL keywords/functions, are
-/// left untouched. Full alias / internal-prefix handling is wave 2.
-fn translate_where_to_struct(clause: &str) -> String {
+/// Reserved top-level columns of the denormalized Lance table.
+const RESERVED_COLS: &[&str] = &[
+    COL_CHUNK_ID,
+    COL_FILE_ID,
+    COL_CHUNK_INDEX,
+    COL_START_LINE,
+    COL_END_LINE,
+    COL_CHUNK_TEXT,
+    COL_EMBEDDING,
+    COL_FILEPATH,
+    COL_CONTENT_HASH,
+    "data",
+    COL_BUILT_AT,
+];
+
+/// SQL keywords / functions that look like identifiers but aren't columns.
+const SQL_KEYWORDS: &[&str] = &[
+    "AND",
+    "OR",
+    "NOT",
+    "IN",
+    "IS",
+    "NULL",
+    "LIKE",
+    "BETWEEN",
+    "TRUE",
+    "FALSE",
+    "DATE",
+    "TIMESTAMP",
+    "EXTRACT",
+    "DATE_PART",
+    "FROM",
+    "ARRAY_HAS",
+    "ARRAY_HAS_ANY",
+    "ARRAY_HAS_ALL",
+];
+
+/// Schema-aware `--where` translator. Frontmatter fields (children of the
+/// `data` Struct) are prefixed with `data.`; genuine internal columns are left
+/// top-level. A name that is *both* a frontmatter field and an internal column
+/// is a collision: it's resolved toward the frontmatter field when
+/// `internal_prefix`/aliases give the internal column another name, otherwise
+/// it errors (mirroring the old engine). Single-quoted string literals are
+/// never rewritten.
+fn translate_where_to_struct(
+    clause: &str,
+    data_children: &std::collections::HashSet<String>,
+    internal_prefix: &str,
+    aliases: &std::collections::HashMap<String, String>,
+) -> anyhow::Result<String> {
     use regex::Regex;
-    // Reserved top-level columns of the denormalized table.
-    const RESERVED: &[&str] = &[
-        "chunk_id",
-        "file_id",
-        "chunk_index",
-        "start_line",
-        "end_line",
-        "embedding",
-        "filepath",
-        "content_hash",
-        "data",
-        "built_at",
-    ];
-    // SQL keywords / functions that look like identifiers but aren't columns.
-    const KEYWORDS: &[&str] = &[
-        "AND",
-        "OR",
-        "NOT",
-        "IN",
-        "IS",
-        "NULL",
-        "LIKE",
-        "BETWEEN",
-        "TRUE",
-        "FALSE",
-        "DATE",
-        "TIMESTAMP",
-        "EXTRACT",
-        "DATE_PART",
-        "FROM",
-        "ARRAY_HAS",
-        "ARRAY_HAS_ANY",
-        "ARRAY_HAS_ALL",
-    ];
 
-    // Split off single-quoted string literals so we never rewrite inside them.
+    // Reverse alias lookup: alias name -> real internal column.
+    let alias_to_internal: std::collections::HashMap<&str, &str> = aliases
+        .iter()
+        .map(|(col, alias)| (alias.as_str(), col.as_str()))
+        .collect();
+    let has_aliasing = !internal_prefix.is_empty() || !aliases.is_empty();
+
     let lit = Regex::new(r"'(?:[^']|'')*'").expect("valid literal regex");
     let ident = Regex::new(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*")
         .expect("valid ident regex");
 
-    let mut out = String::with_capacity(clause.len());
-    let mut last = 0;
-    for m in lit.find_iter(clause) {
-        // Rewrite the non-literal segment before this string literal.
-        out.push_str(&rewrite_idents(
-            &clause[last..m.start()],
-            &ident,
-            RESERVED,
-            KEYWORDS,
-        ));
-        // Copy the literal verbatim.
-        out.push_str(m.as_str());
-        last = m.end();
-    }
-    out.push_str(&rewrite_idents(&clause[last..], &ident, RESERVED, KEYWORDS));
-    out
-}
-
-fn rewrite_idents(
-    segment: &str,
-    ident: &regex::Regex,
-    reserved: &[&str],
-    keywords: &[&str],
-) -> String {
-    ident
-        .replace_all(segment, |caps: &regex::Captures| {
-            let chain = &caps[0];
+    let rewrite_segment = |segment: &str| -> anyhow::Result<String> {
+        let mut out = String::new();
+        let mut last = 0;
+        for m in ident.find_iter(segment) {
+            out.push_str(&segment[last..m.start()]);
+            last = m.end();
+            let chain = m.as_str();
             let first = chain.split('.').next().unwrap_or(chain);
-            let is_reserved = reserved.contains(&first);
-            let is_keyword = keywords.iter().any(|k| k.eq_ignore_ascii_case(chain));
-            if is_reserved || is_keyword {
+
+            // Keyword / function — leave untouched.
+            if SQL_KEYWORDS.iter().any(|k| k.eq_ignore_ascii_case(chain)) {
+                out.push_str(chain);
+                continue;
+            }
+            // Explicit reference to an internal column via its alias or prefix.
+            if let Some(internal) = alias_to_internal.get(first) {
+                out.push_str(internal);
+                continue;
+            }
+            if !internal_prefix.is_empty()
+                && let Some(stripped) = first.strip_prefix(internal_prefix)
+                && RESERVED_COLS.contains(&stripped)
+            {
+                out.push_str(stripped);
+                continue;
+            }
+
+            let is_reserved = RESERVED_COLS.contains(&first);
+            let is_frontmatter = data_children.contains(first);
+            let rewritten = if is_reserved && is_frontmatter {
+                if has_aliasing {
+                    format!("data.{chain}")
+                } else {
+                    return Err(anyhow::anyhow!(
+                        "ambiguous column '{first}' in --where: it is both a frontmatter field and \
+                         an internal column. Disambiguate by setting [search].internal_prefix \
+                         (e.g. \"_\") or [search.aliases].{first} = \"<alias>\""
+                    ));
+                }
+            } else if is_reserved {
                 chain.to_string()
             } else {
                 format!("data.{chain}")
-            }
-        })
-        .into_owned()
+            };
+            out.push_str(&rewritten);
+        }
+        out.push_str(&segment[last..]);
+        Ok(out)
+    };
+
+    let mut out = String::with_capacity(clause.len());
+    let mut last = 0;
+    for m in lit.find_iter(clause) {
+        out.push_str(&rewrite_segment(&clause[last..m.start()])?);
+        out.push_str(m.as_str());
+        last = m.end();
+    }
+    out.push_str(&rewrite_segment(&clause[last..])?);
+    Ok(out)
 }
 
 /// Downcast a named column to `StringArray`.
@@ -544,6 +695,31 @@ fn i32_col<'a>(batch: &'a RecordBatch, name: &str) -> anyhow::Result<&'a Int32Ar
         .as_any()
         .downcast_ref::<Int32Array>()
         .ok_or_else(|| anyhow::anyhow!("expected Int32Array for {name}"))
+}
+
+/// Downcast a named column to `Float32Array`.
+fn f32_col<'a>(batch: &'a RecordBatch, name: &str) -> anyhow::Result<&'a Float32Array> {
+    batch
+        .column_by_name(name)
+        .ok_or_else(|| anyhow::anyhow!("missing score column {name}"))?
+        .as_any()
+        .downcast_ref::<Float32Array>()
+        .ok_or_else(|| anyhow::anyhow!("expected Float32Array for {name}"))
+}
+
+/// First-level child field names of the `data` Struct column — i.e. the
+/// top-level frontmatter field names. Used by the `--where` translator to
+/// tell frontmatter fields from internal columns.
+fn data_child_names(schema: &arrow::datatypes::Schema) -> std::collections::HashSet<String> {
+    let mut names = std::collections::HashSet::new();
+    if let Ok(field) = schema.field_with_name(crate::index::storage::COL_DATA)
+        && let DataType::Struct(children) = field.data_type()
+    {
+        for child in children {
+            names.insert(child.name().clone());
+        }
+    }
+    names
 }
 
 #[cfg(test)]
@@ -735,6 +911,8 @@ mod tests {
         let hits = backend
             .search(
                 vec![1.0, 0.0, 0.0, 0.0],
+                "rust",
+                SearchMode::Semantic,
                 None,
                 10,
                 "",
@@ -750,24 +928,62 @@ mod tests {
         assert_eq!(hits[0].end_line, Some(4));
     }
 
+    fn fields(names: &[&str]) -> std::collections::HashSet<String> {
+        names.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn xlate(clause: &str, children: &[&str]) -> String {
+        translate_where_to_struct(
+            clause,
+            &fields(children),
+            "",
+            &std::collections::HashMap::new(),
+        )
+        .unwrap()
+    }
+
     #[test]
     fn translate_where_prefixes_frontmatter_fields() {
         // bare frontmatter field gets data. prefix; keyword/literal untouched
+        assert_eq!(xlate("draft = false", &["draft"]), "data.draft = false");
+        // dotted leaf (first segment is the frontmatter field)
         assert_eq!(
-            translate_where_to_struct("draft = false"),
-            "data.draft = false"
-        );
-        // dotted leaf
-        assert_eq!(
-            translate_where_to_struct("calibration.baseline.wavelength > 800"),
+            xlate("calibration.baseline.wavelength > 800", &["calibration"]),
             "data.calibration.baseline.wavelength > 800"
         );
-        // reserved top-level column left alone
-        assert_eq!(translate_where_to_struct("file_id = 'x'"), "file_id = 'x'");
+        // genuine internal column (not a frontmatter field) left alone
+        assert_eq!(xlate("file_id = 'x'", &["draft"]), "file_id = 'x'");
         // already data-qualified left alone; string literal untouched
         assert_eq!(
-            translate_where_to_struct("data.tags = 'sci-fi' AND rating > 3"),
+            xlate("data.tags = 'sci-fi' AND rating > 3", &["tags", "rating"]),
             "data.tags = 'sci-fi' AND data.rating > 3"
         );
+    }
+
+    #[test]
+    fn translate_where_collision_errors_without_aliasing() {
+        // frontmatter field named like an internal column, no aliasing → error
+        let err = translate_where_to_struct(
+            "file_id = 'x'",
+            &fields(&["file_id"]),
+            "",
+            &std::collections::HashMap::new(),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("ambiguous column 'file_id'"));
+    }
+
+    #[test]
+    fn translate_where_collision_resolved_by_prefix() {
+        // with internal_prefix set, bare name = frontmatter field; the prefixed
+        // form addresses the internal column.
+        let out = translate_where_to_struct(
+            "file_id = 'x' AND _file_id = 'y'",
+            &fields(&["file_id"]),
+            "_",
+            &std::collections::HashMap::new(),
+        )
+        .unwrap();
+        assert_eq!(out, "data.file_id = 'x' AND file_id = 'y'");
     }
 }

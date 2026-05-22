@@ -36,6 +36,10 @@ lancedb = "0.29"
 # matches lancedb's arrow.
 arrow = "58"
 
+# Full-text search query type (not re-exported from lancedb). Exact pin
+# matches lancedb 0.29's lance-index dependency.
+lance-index = "=6.0.0"
+
 # Stream combinators for collecting LanceDB query result streams.
 futures = "0.3"
 

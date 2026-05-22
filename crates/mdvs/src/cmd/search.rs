@@ -1,4 +1,4 @@
-use crate::index::backend::Backend;
+use crate::index::backend::{Backend, SearchMode};
 use crate::index::embed::{Embedder, ModelConfig};
 use crate::index::storage::BuildMetadata;
 use crate::outcome::commands::SearchOutcome;
@@ -10,19 +10,7 @@ use crate::schema::config::MdvsToml;
 use crate::step::{CommandResult, ErrorKind, StepEntry};
 use std::path::Path;
 use std::time::Instant;
-use tracing::{instrument, warn};
-
-/// Read lines from a file (1-indexed, inclusive range).
-fn read_lines(path: &Path, start: i32, end: i32) -> Option<String> {
-    let content = std::fs::read_to_string(path).ok()?;
-    let lines: Vec<&str> = content.lines().collect();
-    let start = (start - 1).max(0) as usize;
-    let end = (end as usize).min(lines.len());
-    if start >= end {
-        return None;
-    }
-    Some(lines[start..end].join("\n"))
-}
+use tracing::instrument;
 
 /// Index metadata, used for model mismatch check.
 struct IndexData {
@@ -47,11 +35,13 @@ fn validate_where_clause(w: &str) -> Result<(), String> {
 
 /// Embed a query, search the index, and return ranked results.
 #[instrument(name = "search", skip_all)]
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     path: &Path,
     query: &str,
     limit: usize,
     where_clause: Option<&str>,
+    mode: SearchMode,
     no_update: bool,
     no_build: bool,
     _verbose: bool,
@@ -297,7 +287,15 @@ pub async fn run(
 
     let search_start = Instant::now();
     let hits = match backend
-        .search(query_embedding, where_clause, limit, prefix, aliases)
+        .search(
+            query_embedding,
+            query,
+            mode,
+            where_clause,
+            limit,
+            prefix,
+            aliases,
+        )
         .await
     {
         Ok(hits) => {
@@ -317,20 +315,7 @@ pub async fn run(
         }
     };
 
-    // Populate chunk text for each hit
-    let mut hits = hits;
-    for hit in &mut hits {
-        if let (Some(s), Some(e)) = (hit.start_line, hit.end_line) {
-            match read_lines(&path.join(&hit.filename), s, e) {
-                Some(text) => hit.chunk_text = Some(text),
-                None => warn!(
-                    file = %hit.filename,
-                    "could not read chunk text (file may have changed since build)"
-                ),
-            }
-        }
-    }
-
+    // chunk_text is populated by the backend from the persisted column.
     let model_name = emb_config.name.clone();
     CommandResult {
         steps,
@@ -428,7 +413,17 @@ mod tests {
     #[tokio::test]
     async fn missing_config() {
         let tmp = tempfile::tempdir().unwrap();
-        let output = run(tmp.path(), "test query", 10, None, true, true, false).await;
+        let output = run(
+            tmp.path(),
+            "test query",
+            10,
+            None,
+            SearchMode::Hybrid,
+            true,
+            true,
+            false,
+        )
+        .await;
         assert!(crate::step::has_failed(&output));
     }
 
@@ -437,7 +432,17 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         write_config(tmp.path(), "test-model");
 
-        let output = run(tmp.path(), "test query", 10, None, true, true, false).await;
+        let output = run(
+            tmp.path(),
+            "test query",
+            10,
+            None,
+            SearchMode::Hybrid,
+            true,
+            true,
+            false,
+        )
+        .await;
         assert!(crate::step::has_failed(&output));
         let err = unwrap_error(&output);
         assert!(err.message.contains("index not found"));
@@ -449,7 +454,17 @@ mod tests {
         create_test_vault(tmp.path());
         init_and_build(tmp.path()).await;
 
-        let output = run(tmp.path(), "rust programming", 10, None, true, true, false).await;
+        let output = run(
+            tmp.path(),
+            "rust programming",
+            10,
+            None,
+            SearchMode::Hybrid,
+            true,
+            true,
+            false,
+        )
+        .await;
         assert!(
             !crate::step::has_failed(&output),
             "search failed: {:?}",
@@ -471,7 +486,17 @@ mod tests {
         create_test_vault(tmp.path());
         init_and_build(tmp.path()).await;
 
-        let output = run(tmp.path(), "rust programming", 10, None, true, true, true).await;
+        let output = run(
+            tmp.path(),
+            "rust programming",
+            10,
+            None,
+            SearchMode::Hybrid,
+            true,
+            true,
+            true,
+        )
+        .await;
         assert!(!crate::step::has_failed(&output));
         let result = unwrap_search(&output);
         assert!(!result.hits.is_empty());
@@ -494,6 +519,8 @@ mod tests {
         let hits = backend
             .search(
                 query_embedding,
+                "rust programming",
+                SearchMode::Semantic,
                 None,
                 1,
                 "",
@@ -520,6 +547,8 @@ mod tests {
         let hits = backend
             .search(
                 query_embedding,
+                "cooking recipes",
+                SearchMode::Semantic,
                 Some("draft = false"),
                 10,
                 "",
@@ -543,7 +572,17 @@ mod tests {
         config.embedding_model.as_mut().unwrap().name = "some-other-model".into();
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
 
-        let output = run(tmp.path(), "test query", 10, None, true, true, false).await;
+        let output = run(
+            tmp.path(),
+            "test query",
+            10,
+            None,
+            SearchMode::Hybrid,
+            true,
+            true,
+            false,
+        )
+        .await;
         assert!(crate::step::has_failed(&output));
         let err = unwrap_error(&output);
         assert!(err.message.contains("model mismatch"));
@@ -560,6 +599,7 @@ mod tests {
             "test",
             10,
             Some("author = 'O'Brien'"),
+            SearchMode::Hybrid,
             true,
             true,
             false,
@@ -576,7 +616,17 @@ mod tests {
         create_test_vault(tmp.path());
         init_and_build(tmp.path()).await;
 
-        let output = run(tmp.path(), "test", 10, Some("x = \"bad"), true, true, false).await;
+        let output = run(
+            tmp.path(),
+            "test",
+            10,
+            Some("x = \"bad"),
+            SearchMode::Hybrid,
+            true,
+            true,
+            false,
+        )
+        .await;
         assert!(crate::step::has_failed(&output));
         let err = unwrap_error(&output);
         assert!(err.message.contains("unmatched double quote"));
@@ -593,6 +643,7 @@ mod tests {
             "test",
             10,
             Some("author's name = O'Brien"),
+            SearchMode::Hybrid,
             true,
             true,
             false,
@@ -612,6 +663,7 @@ mod tests {
             "test",
             10,
             Some("title = 'O''Brien'"),
+            SearchMode::Hybrid,
             true,
             true,
             false,
@@ -651,33 +703,5 @@ mod tests {
     #[test]
     fn validate_where_balanced_quotes() {
         assert!(validate_where_clause("name = 'O''Brien'").is_ok());
-    }
-
-    // --- Unit tests for read_lines ---
-
-    #[test]
-    fn read_lines_valid_range() {
-        let tmp = tempfile::tempdir().unwrap();
-        let file = tmp.path().join("test.md");
-        std::fs::write(&file, "line1\nline2\nline3\nline4\n").unwrap();
-        let result = read_lines(&file, 2, 3);
-        assert_eq!(result, Some("line2\nline3".to_string()));
-    }
-
-    #[test]
-    fn read_lines_out_of_bounds() {
-        let tmp = tempfile::tempdir().unwrap();
-        let file = tmp.path().join("test.md");
-        std::fs::write(&file, "line1\n").unwrap();
-        assert!(read_lines(&file, 10, 20).is_none());
-    }
-
-    #[test]
-    fn read_lines_single_line() {
-        let tmp = tempfile::tempdir().unwrap();
-        let file = tmp.path().join("test.md");
-        std::fs::write(&file, "only\n").unwrap();
-        let result = read_lines(&file, 1, 1);
-        assert_eq!(result, Some("only".to_string()));
     }
 }

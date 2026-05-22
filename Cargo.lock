@@ -4098,6 +4098,7 @@ dependencies = [
  "ignore",
  "indextree",
  "jsonschema",
+ "lance-index",
  "lancedb",
  "model2vec-rs",
  "pulldown-cmark",
