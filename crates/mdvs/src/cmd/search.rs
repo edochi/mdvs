@@ -704,4 +704,351 @@ mod tests {
     fn validate_where_balanced_quotes() {
         assert!(validate_where_clause("name = 'O''Brien'").is_ok());
     }
+
+    // ========================================================================
+    // Integration tests — real embedder + Lance index (TODO-0016 wave 2).
+    // A richer vault exercises all search modes and --where operator families.
+    // ========================================================================
+
+    /// Six-file vault with varied frontmatter (String/Integer/Boolean/Date/
+    /// Array/nested Float) and distinctive body keywords. `rust.md` has a long
+    /// body so it splits into multiple chunks (dedupe coverage).
+    fn create_rich_vault(dir: &Path) {
+        let blog = dir.join("blog");
+        let notes = dir.join("notes");
+        fs::create_dir_all(&blog).unwrap();
+        fs::create_dir_all(&notes).unwrap();
+
+        let long_body: String = "Rust gives strong guarantees about memory without a \
+            garbage collector. Ownership and borrowing are checked at compile time, so \
+            whole classes of bugs simply cannot happen. "
+            .repeat(20);
+        fs::write(
+            blog.join("rust.md"),
+            format!(
+                "---\ntitle: Rust Programming\nstatus: active\nrating: 5\ndraft: false\n\
+                 published: 2024-01-15\ntags:\n  - rust\n  - systems\n---\n# Rust\n{long_body}"
+            ),
+        )
+        .unwrap();
+
+        fs::write(
+            blog.join("cooking.md"),
+            "---\ntitle: Cooking Pasta\nstatus: archived\nrating: 2\ndraft: true\n\
+             published: 2023-06-15\ntags:\n  - food\n---\n# Cooking\nDelicious pasta recipes for weeknight dinners.",
+        )
+        .unwrap();
+
+        fs::write(
+            notes.join("photonics.md"),
+            "---\ntitle: Photonics Calibration\nstatus: active\nrating: 4\ndraft: false\n\
+             published: 2024-03-10\ntags:\n  - optics\ncalibration:\n  baseline:\n    wavelength: 850.0\n---\n\
+             # Photonics\nThe sensor wavelength drifts over time and requires periodic recalibration of each pixel.",
+        )
+        .unwrap();
+
+        fs::write(
+            notes.join("draftpost.md"),
+            "---\ntitle: Draft Ideas\nstatus: draft\nrating: 3\ndraft: true\n\
+             published: 2024-05-01\ntags:\n  - misc\n---\n# Ideas\nA scratch list of half-formed ideas.",
+        )
+        .unwrap();
+
+        fs::write(
+            notes.join("review.md"),
+            "---\ntitle: Annual Review\nstatus: active\nrating: 4\ndraft: false\n\
+             published: 2024-02-20\ntags:\n  - meta\n---\n# Review\nA look back at the year of work.",
+        )
+        .unwrap();
+
+        fs::write(
+            blog.join("archive.md"),
+            "---\ntitle: Old Archive\nstatus: archived\nrating: 1\ndraft: true\n\
+             published: 2022-11-05\ntags:\n  - old\n---\n# Archive\nLegacy content kept for posterity.",
+        )
+        .unwrap();
+    }
+
+    /// Build the rich vault once, then return the filenames of the hits for a
+    /// query/mode/where, sorted for stable assertions.
+    async fn search_files(
+        dir: &Path,
+        query: &str,
+        mode: SearchMode,
+        where_clause: Option<&str>,
+    ) -> Vec<String> {
+        let result = run(dir, query, 50, where_clause, mode, true, true, false).await;
+        assert!(
+            !crate::step::has_failed(&result),
+            "search failed: {result:#?}"
+        );
+        let mut files: Vec<String> = unwrap_search(&result)
+            .hits
+            .iter()
+            .map(|h| h.filename.clone())
+            .collect();
+        files.sort();
+        files
+    }
+
+    fn ends_with(files: &[String], suffix: &str) -> bool {
+        files.iter().any(|f| f.ends_with(suffix))
+    }
+
+    #[tokio::test]
+    async fn integration_modes() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_rich_vault(tmp.path());
+        init_and_build(tmp.path()).await;
+
+        // Semantic: a paraphrase ("memory safety guarantees") should surface the
+        // Rust doc even though those exact words aren't all present.
+        let sem = search_files(
+            tmp.path(),
+            "memory safety guarantees",
+            SearchMode::Semantic,
+            None,
+        )
+        .await;
+        assert!(
+            ends_with(&sem, "rust.md"),
+            "semantic should find rust.md: {sem:?}"
+        );
+
+        // Fulltext: the exact keyword "wavelength" appears only in photonics.md.
+        let ft = search_files(tmp.path(), "wavelength", SearchMode::Fulltext, None).await;
+        assert!(
+            ends_with(&ft, "photonics.md"),
+            "fulltext should find photonics.md: {ft:?}"
+        );
+        assert!(
+            !ends_with(&ft, "rust.md"),
+            "fulltext 'wavelength' should not match rust.md: {ft:?}"
+        );
+
+        // Hybrid (default) returns a non-empty fused ranking.
+        let hy = search_files(tmp.path(), "calibration drift", SearchMode::Hybrid, None).await;
+        assert!(!hy.is_empty(), "hybrid should return results");
+    }
+
+    #[tokio::test]
+    async fn integration_where_operators() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_rich_vault(tmp.path());
+        init_and_build(tmp.path()).await;
+        let q = "content";
+
+        // String equality
+        let active = search_files(
+            tmp.path(),
+            q,
+            SearchMode::Semantic,
+            Some("status = 'active'"),
+        )
+        .await;
+        assert!(
+            active.iter().all(|f| !f.ends_with("cooking.md")),
+            "active filter excludes archived: {active:?}"
+        );
+        assert!(ends_with(&active, "rust.md") && ends_with(&active, "photonics.md"));
+
+        // Integer comparisons
+        let hi = search_files(tmp.path(), q, SearchMode::Semantic, Some("rating >= 4")).await;
+        assert!(
+            !hi.is_empty()
+                && hi
+                    .iter()
+                    .all(|f| !f.ends_with("cooking.md") && !f.ends_with("archive.md"))
+        );
+        let lo = search_files(
+            tmp.path(),
+            q,
+            SearchMode::Semantic,
+            Some("rating BETWEEN 1 AND 2"),
+        )
+        .await;
+        assert!(ends_with(&lo, "cooking.md") && ends_with(&lo, "archive.md"));
+        let in_list = search_files(
+            tmp.path(),
+            q,
+            SearchMode::Semantic,
+            Some("rating IN (1, 5)"),
+        )
+        .await;
+        assert!(ends_with(&in_list, "rust.md") && ends_with(&in_list, "archive.md"));
+
+        // Boolean
+        let published =
+            search_files(tmp.path(), q, SearchMode::Semantic, Some("draft = false")).await;
+        assert!(
+            published
+                .iter()
+                .all(|f| !f.ends_with("cooking.md") && !f.ends_with("draftpost.md"))
+        );
+
+        // Array membership
+        let rusty = search_files(
+            tmp.path(),
+            q,
+            SearchMode::Semantic,
+            Some("array_has(tags, 'rust')"),
+        )
+        .await;
+        assert_eq!(rusty.len(), 1);
+        assert!(ends_with(&rusty, "rust.md"));
+
+        // LIKE on a string field
+        let titled = search_files(
+            tmp.path(),
+            q,
+            SearchMode::Semantic,
+            Some("title LIKE 'Rust%'"),
+        )
+        .await;
+        assert!(ends_with(&titled, "rust.md") && titled.len() == 1);
+
+        // Date literal comparison
+        let recent = search_files(
+            tmp.path(),
+            q,
+            SearchMode::Semantic,
+            Some("published >= date '2024-01-01'"),
+        )
+        .await;
+        assert!(
+            recent
+                .iter()
+                .all(|f| !f.ends_with("cooking.md") && !f.ends_with("archive.md"))
+        );
+
+        // Nested dotted struct access
+        let nested = search_files(
+            tmp.path(),
+            q,
+            SearchMode::Semantic,
+            Some("calibration.baseline.wavelength > 800"),
+        )
+        .await;
+        assert_eq!(nested.len(), 1);
+        assert!(ends_with(&nested, "photonics.md"));
+
+        // AND composition
+        let combo = search_files(
+            tmp.path(),
+            q,
+            SearchMode::Semantic,
+            Some("status = 'active' AND rating >= 5"),
+        )
+        .await;
+        assert_eq!(combo.len(), 1);
+        assert!(ends_with(&combo, "rust.md"));
+
+        // Internal column filter (filepath stays top-level, not data-prefixed)
+        let blog_only = search_files(
+            tmp.path(),
+            q,
+            SearchMode::Semantic,
+            Some("filepath LIKE 'blog/%'"),
+        )
+        .await;
+        assert!(blog_only.iter().all(|f| f.starts_with("blog/")));
+        assert!(!blog_only.is_empty());
+
+        // A filter that matches nothing returns zero hits (not an error)
+        let none = search_files(tmp.path(), q, SearchMode::Semantic, Some("rating > 100")).await;
+        assert!(none.is_empty());
+
+        // Filtering reduces the result set vs. no filter
+        let all = search_files(tmp.path(), q, SearchMode::Semantic, None).await;
+        let filtered = search_files(
+            tmp.path(),
+            q,
+            SearchMode::Semantic,
+            Some("status = 'archived'"),
+        )
+        .await;
+        assert!(filtered.len() < all.len() && !filtered.is_empty());
+    }
+
+    #[tokio::test]
+    async fn integration_dedupe_limit_and_snippet() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_rich_vault(tmp.path());
+        init_and_build(tmp.path()).await;
+
+        // rust.md has a long, multi-chunk body — it must appear at most once.
+        let files = search_files(
+            tmp.path(),
+            "rust ownership borrowing",
+            SearchMode::Semantic,
+            None,
+        )
+        .await;
+        let rust_count = files.iter().filter(|f| f.ends_with("rust.md")).count();
+        assert_eq!(
+            rust_count, 1,
+            "multi-chunk file should be deduped to one hit"
+        );
+
+        // Limit is respected.
+        let result = run(
+            tmp.path(),
+            "content",
+            2,
+            None,
+            SearchMode::Semantic,
+            true,
+            true,
+            false,
+        )
+        .await;
+        assert!(!crate::step::has_failed(&result));
+        assert!(unwrap_search(&result).hits.len() <= 2);
+
+        // The snippet (chunk_text) is populated from the persisted column.
+        let result = run(
+            tmp.path(),
+            "wavelength",
+            1,
+            None,
+            SearchMode::Fulltext,
+            true,
+            true,
+            false,
+        )
+        .await;
+        let hits = &unwrap_search(&result).hits;
+        assert!(!hits.is_empty());
+        assert!(hits[0].chunk_text.as_ref().is_some_and(|t| !t.is_empty()));
+    }
+
+    #[tokio::test]
+    async fn integration_collision_surfaces_error() {
+        // A frontmatter field named like an internal column, with no aliasing,
+        // must surface the translator's collision error rather than silently
+        // shadowing the field.
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(
+            tmp.path().join("note.md"),
+            "---\ntitle: Note\nfile_id: abc\n---\n# Note\nbody text here",
+        )
+        .unwrap();
+        init_and_build(tmp.path()).await;
+
+        let result = run(
+            tmp.path(),
+            "note",
+            10,
+            Some("file_id = 'abc'"),
+            SearchMode::Semantic,
+            true,
+            true,
+            false,
+        )
+        .await;
+        assert!(
+            crate::step::has_failed(&result),
+            "collision should fail the search"
+        );
+    }
 }

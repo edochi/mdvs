@@ -986,4 +986,246 @@ mod tests {
         .unwrap();
         assert_eq!(out, "data.file_id = 'x' AND file_id = 'y'");
     }
+
+    // --- Translator: comparison operators ---
+
+    #[test]
+    fn translate_where_eq() {
+        assert_eq!(
+            xlate("status = 'active'", &["status"]),
+            "data.status = 'active'"
+        );
+    }
+
+    #[test]
+    fn translate_where_not_equal_both_spellings() {
+        assert_eq!(xlate("rating <> 5", &["rating"]), "data.rating <> 5");
+        assert_eq!(xlate("rating != 5", &["rating"]), "data.rating != 5");
+    }
+
+    #[test]
+    fn translate_where_lt_gt_le_ge() {
+        assert_eq!(xlate("rating < 3", &["rating"]), "data.rating < 3");
+        assert_eq!(xlate("rating > 3", &["rating"]), "data.rating > 3");
+        assert_eq!(xlate("rating <= 3", &["rating"]), "data.rating <= 3");
+        assert_eq!(xlate("rating >= 3", &["rating"]), "data.rating >= 3");
+    }
+
+    #[test]
+    fn translate_where_in_list() {
+        assert_eq!(
+            xlate("rating IN (4, 5)", &["rating"]),
+            "data.rating IN (4, 5)"
+        );
+    }
+
+    #[test]
+    fn translate_where_in_string_list_literals_untouched() {
+        // string literals — even ones that look like field names — are not rewritten
+        assert_eq!(
+            xlate("status IN ('active', 'rating')", &["status", "rating"]),
+            "data.status IN ('active', 'rating')"
+        );
+    }
+
+    #[test]
+    fn translate_where_between() {
+        assert_eq!(
+            xlate("rating BETWEEN 3 AND 5", &["rating"]),
+            "data.rating BETWEEN 3 AND 5"
+        );
+    }
+
+    #[test]
+    fn translate_where_like() {
+        assert_eq!(
+            xlate("title LIKE 'Rust%'", &["title"]),
+            "data.title LIKE 'Rust%'"
+        );
+    }
+
+    #[test]
+    fn translate_where_is_null_and_not_null() {
+        assert_eq!(xlate("note IS NULL", &["note"]), "data.note IS NULL");
+        assert_eq!(
+            xlate("note IS NOT NULL", &["note"]),
+            "data.note IS NOT NULL"
+        );
+    }
+
+    // --- Translator: keywords / functions / literals ---
+
+    #[test]
+    fn translate_where_keywords_case_insensitive() {
+        assert_eq!(
+            xlate("a > 1 and b < 2 Or c = 3", &["a", "b", "c"]),
+            "data.a > 1 and data.b < 2 Or data.c = 3"
+        );
+    }
+
+    #[test]
+    fn translate_where_boolean_literals_untouched() {
+        assert_eq!(xlate("draft = true", &["draft"]), "data.draft = true");
+        assert_eq!(xlate("draft = FALSE", &["draft"]), "data.draft = FALSE");
+    }
+
+    #[test]
+    fn translate_where_numbers_untouched() {
+        assert_eq!(
+            xlate("wavelength = 850.5", &["wavelength"]),
+            "data.wavelength = 850.5"
+        );
+    }
+
+    #[test]
+    fn translate_where_date_literal() {
+        assert_eq!(
+            xlate("published >= date '2024-01-01'", &["published"]),
+            "data.published >= date '2024-01-01'"
+        );
+    }
+
+    #[test]
+    fn translate_where_timestamp_literal() {
+        assert_eq!(
+            xlate(
+                "synced_at < timestamp '2024-01-01T00:00:00Z'",
+                &["synced_at"]
+            ),
+            "data.synced_at < timestamp '2024-01-01T00:00:00Z'"
+        );
+    }
+
+    #[test]
+    fn translate_where_array_has() {
+        // array_has is a function (keyword) → untouched; its column arg → data.
+        assert_eq!(
+            xlate("array_has(tags, 'rust')", &["tags"]),
+            "array_has(data.tags, 'rust')"
+        );
+    }
+
+    #[test]
+    fn translate_where_string_literal_with_field_like_token() {
+        // a literal containing a token that matches a field name is left intact
+        assert_eq!(
+            xlate("title = 'draft status'", &["title", "draft", "status"]),
+            "data.title = 'draft status'"
+        );
+    }
+
+    #[test]
+    fn translate_where_escaped_quote_in_literal() {
+        assert_eq!(
+            xlate("author = 'O''Brien'", &["author"]),
+            "data.author = 'O''Brien'"
+        );
+    }
+
+    #[test]
+    fn translate_where_literal_with_dotted_token() {
+        // a dotted token inside a literal must not be prefixed
+        assert_eq!(xlate("path = 'a.b.c'", &["path"]), "data.path = 'a.b.c'");
+    }
+
+    // --- Translator: struct paths & internal columns ---
+
+    #[test]
+    fn translate_where_all_internal_columns_left_alone() {
+        for col in [
+            "chunk_id",
+            "file_id",
+            "chunk_index",
+            "start_line",
+            "end_line",
+            "chunk_text",
+            "embedding",
+            "filepath",
+            "content_hash",
+            "built_at",
+        ] {
+            // not a frontmatter field → internal column, left as-is
+            let clause = format!("{col} = 1");
+            assert_eq!(
+                xlate(&clause, &["other"]),
+                clause,
+                "{col} should be left alone"
+            );
+        }
+    }
+
+    #[test]
+    fn translate_where_filepath_filter() {
+        assert_eq!(
+            xlate("filepath LIKE 'blog/%'", &["title"]),
+            "filepath LIKE 'blog/%'"
+        );
+    }
+
+    #[test]
+    fn translate_where_deeply_nested_dotted() {
+        assert_eq!(xlate("a.b.c.d.e = 1", &["a"]), "data.a.b.c.d.e = 1");
+    }
+
+    #[test]
+    fn translate_where_already_data_qualified_untouched() {
+        // first segment `data` is reserved → left as-is (idempotent)
+        assert_eq!(xlate("data.title = 'x'", &["title"]), "data.title = 'x'");
+    }
+
+    #[test]
+    fn translate_where_unknown_field_treated_as_frontmatter() {
+        // a name that's neither reserved nor a known field is assumed frontmatter
+        assert_eq!(xlate("typo = 1", &["title"]), "data.typo = 1");
+    }
+
+    #[test]
+    fn translate_where_field_with_digits_and_underscores() {
+        assert_eq!(
+            xlate("sample_count_2 > 10", &["sample_count_2"]),
+            "data.sample_count_2 > 10"
+        );
+    }
+
+    #[test]
+    fn translate_where_none_when_no_clause_is_handled_by_caller() {
+        // empty clause translates to empty (caller passes None for absent --where)
+        assert_eq!(xlate("", &["title"]), "");
+    }
+
+    // --- Translator: collisions & aliasing ---
+
+    #[test]
+    fn translate_where_collision_resolved_by_alias() {
+        let mut aliases = std::collections::HashMap::new();
+        aliases.insert("file_id".to_string(), "fid".to_string());
+        let out = translate_where_to_struct(
+            "file_id = 'x' AND fid = 'y'",
+            &fields(&["file_id"]),
+            "",
+            &aliases,
+        )
+        .unwrap();
+        // bare `file_id` = frontmatter field → data.file_id; alias `fid` → internal file_id
+        assert_eq!(out, "data.file_id = 'x' AND file_id = 'y'");
+    }
+
+    #[test]
+    fn translate_where_no_collision_when_field_not_reserved() {
+        // a frontmatter field that doesn't shadow an internal column never collides
+        assert_eq!(xlate("author = 'x'", &["author"]), "data.author = 'x'");
+    }
+
+    #[test]
+    fn translate_where_collision_only_on_matching_reserved_name() {
+        // `filepath` frontmatter field collides; `title` does not — mixed clause
+        let err = translate_where_to_struct(
+            "filepath = 'a' AND title = 'b'",
+            &fields(&["filepath", "title"]),
+            "",
+            &std::collections::HashMap::new(),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("ambiguous column 'filepath'"));
+    }
 }
