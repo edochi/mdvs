@@ -1044,6 +1044,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn integration_scalar_functions_in_where() {
+        // Scalar functions over frontmatter fields work: the translator leaves
+        // the function name and prefixes only its column arguments.
+        let tmp = tempfile::tempdir().unwrap();
+        create_rich_vault(tmp.path());
+        init_and_build(tmp.path()).await;
+
+        // lower() — case-folded match against the lowercase status values.
+        let lowered = search_files(
+            tmp.path(),
+            "content",
+            SearchMode::Semantic,
+            Some("lower(status) = 'active'"),
+        )
+        .await;
+        assert!(ends_with(&lowered, "rust.md") && ends_with(&lowered, "photonics.md"));
+
+        // length() — titles longer than 6 chars (excludes none of the long ones).
+        let lengthy = search_files(
+            tmp.path(),
+            "content",
+            SearchMode::Semantic,
+            Some("length(title) > 6"),
+        )
+        .await;
+        assert!(!lengthy.is_empty());
+
+        // arithmetic on an integer field
+        let arith = search_files(
+            tmp.path(),
+            "content",
+            SearchMode::Semantic,
+            Some("rating + 1 >= 6"),
+        )
+        .await;
+        assert!(ends_with(&arith, "rust.md"));
+    }
+
+    #[tokio::test]
     async fn integration_limit_zero_is_empty_not_error() {
         // `--limit 0` must return zero hits gracefully across all modes
         // (LanceDB rejects a zero `k` internally).

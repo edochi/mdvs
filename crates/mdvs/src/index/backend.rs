@@ -641,6 +641,14 @@ fn translate_where_to_struct(
             let chain = m.as_str();
             let first = chain.split('.').next().unwrap_or(chain);
 
+            // A bare identifier immediately followed by `(` is a function call
+            // (lower, length, abs, cast, coalesce, array_length, ...); leave the
+            // function name and let its column arguments be rewritten normally.
+            if !chain.contains('.') && segment[last..].trim_start().starts_with('(') {
+                out.push_str(chain);
+                continue;
+            }
+
             // Keyword / function — leave untouched.
             if SQL_KEYWORDS.iter().any(|k| k.eq_ignore_ascii_case(chain)) {
                 out.push_str(chain);
@@ -1139,6 +1147,42 @@ mod tests {
         assert_eq!(
             xlate("array_has(tags, 'rust')", &["tags"]),
             "array_has(data.tags, 'rust')"
+        );
+    }
+
+    #[test]
+    fn translate_where_scalar_functions_left_unprefixed() {
+        // A bare identifier followed by `(` is a function name, not a column.
+        assert_eq!(
+            xlate("lower(status) = 'active'", &["status"]),
+            "lower(data.status) = 'active'"
+        );
+        assert_eq!(
+            xlate("length(title) > 10", &["title"]),
+            "length(data.title) > 10"
+        );
+        assert_eq!(
+            xlate("abs(drift_rate) < 1", &["drift_rate"]),
+            "abs(data.drift_rate) < 1"
+        );
+        // function with whitespace before the paren
+        assert_eq!(
+            xlate("upper (status) = 'A'", &["status"]),
+            "upper (data.status) = 'A'"
+        );
+    }
+
+    #[test]
+    fn translate_where_field_not_followed_by_paren_is_prefixed() {
+        // a field literally named like a function, used as a column, IS prefixed
+        assert_eq!(xlate("lower > 5", &["lower"]), "data.lower > 5");
+    }
+
+    #[test]
+    fn translate_where_arithmetic_on_column() {
+        assert_eq!(
+            xlate("sample_count + 1 > 5", &["sample_count"]),
+            "data.sample_count + 1 > 5"
         );
     }
 
