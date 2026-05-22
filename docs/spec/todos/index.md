@@ -160,3 +160,4 @@
 | [0156](TODO-0156.md) | Represent Array of structured items without violating Wave C's flattening | todo | low | 2026-05-13 |
 | [0157](TODO-0157.md) | Incremental ANN index optimize instead of full index rebuild | todo | low | 2026-05-22 |
 | [0158](TODO-0158.md) | --where translator does not handle quoted/special-character field names | todo | low | 2026-05-22 |
+| [0159](TODO-0159.md) | --where on an Array(Float) field panics inside lance-encoding | todo | medium | 2026-05-22 |
