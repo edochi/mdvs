@@ -27,7 +27,7 @@ fn walk_dir_stats(dir: &Path) -> anyhow::Result<(usize, u64)> {
 
 /// Delete the `.mdvs/` index directory if it exists.
 #[instrument(name = "clean", skip_all)]
-pub fn run(path: &Path) -> CommandResult {
+pub async fn run(path: &Path) -> CommandResult {
     let start = Instant::now();
     let mut steps = Vec::new();
 
@@ -61,8 +61,8 @@ pub fn run(path: &Path) -> CommandResult {
             }
         };
 
-        let backend = Backend::parquet(path);
-        if let Err(e) = backend.clean() {
+        let backend = Backend::lance(path);
+        if let Err(e) = backend.clean().await {
             steps.push(StepEntry::err(
                 ErrorKind::Application,
                 e.to_string(),
@@ -117,15 +117,15 @@ mod tests {
         }
     }
 
-    #[test]
-    fn clean_removes_mdvs_dir() {
+    #[tokio::test]
+    async fn clean_removes_mdvs_dir() {
         let tmp = tempfile::tempdir().unwrap();
         fs::write(tmp.path().join("mdvs.toml"), "[scan]\nglob = \"**\"\n").unwrap();
         let mdvs_dir = tmp.path().join(".mdvs");
         fs::create_dir_all(&mdvs_dir).unwrap();
         fs::write(mdvs_dir.join("files.parquet"), "dummy").unwrap();
 
-        let result = run(tmp.path());
+        let result = run(tmp.path()).await;
         assert!(!crate::step::has_failed(&result));
 
         let outcome = unwrap_clean(&result);
@@ -136,11 +136,11 @@ mod tests {
         assert!(tmp.path().join("mdvs.toml").exists());
     }
 
-    #[test]
-    fn clean_nothing_to_clean() {
+    #[tokio::test]
+    async fn clean_nothing_to_clean() {
         let tmp = tempfile::tempdir().unwrap();
 
-        let result = run(tmp.path());
+        let result = run(tmp.path()).await;
         assert!(!crate::step::has_failed(&result));
 
         let outcome = unwrap_clean(&result);

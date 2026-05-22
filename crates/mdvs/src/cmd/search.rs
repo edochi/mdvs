@@ -134,7 +134,7 @@ pub async fn run(
     let index_data = match &config {
         Some(_) => {
             let index_start = Instant::now();
-            let backend = Backend::parquet(path);
+            let backend = Backend::lance(path);
             if !backend.exists() {
                 steps.push(StepEntry::ok(
                     Outcome::ReadIndex(ReadIndexOutcome {
@@ -146,8 +146,8 @@ pub async fn run(
                 ));
                 None
             } else {
-                let build_meta = backend.read_metadata().ok().flatten();
-                let idx_stats = backend.stats().ok().flatten();
+                let build_meta = backend.read_metadata().await.ok().flatten();
+                let idx_stats = backend.stats().await.ok().flatten();
                 match (build_meta, idx_stats) {
                     (Some(metadata), Some(stats)) => {
                         steps.push(StepEntry::ok(
@@ -282,7 +282,7 @@ pub async fn run(
         ));
         return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
     };
-    let backend = Backend::parquet(path);
+    let backend = Backend::lance(path);
     let (prefix, aliases) = match &cfg.search {
         Some(sc) => (sc.internal_prefix.as_str(), &sc.aliases),
         None => ("", &std::collections::HashMap::new()),
@@ -485,7 +485,7 @@ mod tests {
         init_and_build(tmp.path()).await;
 
         let config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
-        let backend = Backend::parquet(tmp.path());
+        let backend = Backend::lance(tmp.path());
         let embedding = config.embedding_model.as_ref().unwrap();
         let model_config = ModelConfig::try_from(embedding).unwrap();
         let embedder = Embedder::load(&model_config).unwrap();
@@ -511,7 +511,7 @@ mod tests {
         init_and_build(tmp.path()).await;
 
         let config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
-        let backend = Backend::parquet(tmp.path());
+        let backend = Backend::lance(tmp.path());
         let embedding = config.embedding_model.as_ref().unwrap();
         let model_config = ModelConfig::try_from(embedding).unwrap();
         let embedder = Embedder::load(&model_config).unwrap();

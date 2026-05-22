@@ -1,17 +1,27 @@
 use crate::discover::field_type::FieldType;
 use crate::index::storage::{
-    BuildMetadata, COL_EMBEDDING, COL_END_LINE, COL_FILE_ID, COL_FILEPATH, COL_START_LINE,
-    ChunkRow, FileIndexEntry, FileRow, build_chunks_batch, build_files_batch, read_build_metadata,
-    read_chunk_rows, read_file_index, read_parquet, resolve_view_name, write_parquet,
-    write_parquet_with_metadata,
+    BuildMetadata, COL_CHUNK_ID, COL_CHUNK_INDEX, COL_CONTENT_HASH, COL_EMBEDDING, COL_END_LINE,
+    COL_FILE_ID, COL_FILEPATH, COL_START_LINE, ChunkRow, FileIndexEntry, FileRow,
+    build_chunks_batch, build_files_batch, build_index_batch, read_build_metadata, read_chunk_rows,
+    read_file_index, read_parquet, resolve_view_name, write_parquet, write_parquet_with_metadata,
 };
 use crate::search::SearchContext;
 use anyhow::Context;
-use datafusion::arrow::array::{Array, Float64Array, Int32Array, StringViewArray};
+use datafusion::arrow::array::{
+    Array, FixedSizeListArray, Float32Array, Float64Array, Int32Array, RecordBatch,
+    RecordBatchIterator, RecordBatchReader, StringArray, StringViewArray,
+};
 use datafusion::arrow::datatypes::DataType;
+use futures::TryStreamExt;
+use lancedb::database::CreateTableMode;
+use lancedb::query::{ExecutableQuery, QueryBase, Select};
 use serde::Serialize;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use tracing::instrument;
+
+/// Name of the single denormalized Lance table.
+const LANCE_TABLE: &str = "index";
 
 /// A single search result with its relevance score.
 #[derive(Debug, Serialize)]
@@ -39,18 +49,29 @@ pub struct IndexStats {
 }
 
 pub(crate) enum Backend {
+    /// Parquet + DataFusion backend. Dormant during TODO-0016 wave 1
+    /// (kept compiling as a comparison baseline); deleted in wave 2.
     Parquet(ParquetBackend),
+    /// Lance + LanceDB backend (TODO-0016). The active backend.
+    Lance(LanceBackend),
 }
 
 impl Backend {
+    #[allow(dead_code)]
     pub(crate) fn parquet(root: &Path) -> Self {
         Backend::Parquet(ParquetBackend {
             root: root.to_path_buf(),
         })
     }
 
+    pub(crate) fn lance(root: &Path) -> Self {
+        Backend::Lance(LanceBackend {
+            root: root.to_path_buf(),
+        })
+    }
+
     #[instrument(name = "write_index", skip_all)]
-    pub fn write_index(
+    pub async fn write_index(
         &self,
         schema_fields: &[(String, FieldType)],
         files: &[FileRow],
@@ -59,34 +80,39 @@ impl Backend {
     ) -> anyhow::Result<()> {
         match self {
             Backend::Parquet(b) => b.write_index(schema_fields, files, chunks, metadata),
+            Backend::Lance(b) => b.write_index(schema_fields, files, chunks, metadata).await,
         }
     }
 
     #[instrument(name = "read_metadata", skip_all, level = "debug")]
-    pub fn read_metadata(&self) -> anyhow::Result<Option<BuildMetadata>> {
+    pub async fn read_metadata(&self) -> anyhow::Result<Option<BuildMetadata>> {
         match self {
             Backend::Parquet(b) => b.read_metadata(),
+            Backend::Lance(b) => b.read_metadata().await,
         }
     }
 
     #[instrument(name = "read_file_index", skip_all, level = "debug")]
-    pub fn read_file_index(&self) -> anyhow::Result<Vec<FileIndexEntry>> {
+    pub async fn read_file_index(&self) -> anyhow::Result<Vec<FileIndexEntry>> {
         match self {
             Backend::Parquet(b) => b.read_file_index(),
+            Backend::Lance(b) => b.read_file_index().await,
         }
     }
 
     #[instrument(name = "read_chunk_rows", skip_all, level = "debug")]
-    pub fn read_chunk_rows(&self) -> anyhow::Result<Vec<ChunkRow>> {
+    pub async fn read_chunk_rows(&self) -> anyhow::Result<Vec<ChunkRow>> {
         match self {
             Backend::Parquet(b) => b.read_chunk_rows(),
+            Backend::Lance(b) => b.read_chunk_rows().await,
         }
     }
 
     #[instrument(name = "embedding_dimension", skip_all, level = "debug")]
-    pub fn embedding_dimension(&self) -> anyhow::Result<Option<i32>> {
+    pub async fn embedding_dimension(&self) -> anyhow::Result<Option<i32>> {
         match self {
             Backend::Parquet(b) => b.embedding_dimension(),
+            Backend::Lance(b) => b.embedding_dimension().await,
         }
     }
 
@@ -110,26 +136,39 @@ impl Backend {
                 )
                 .await
             }
+            Backend::Lance(b) => {
+                b.search(
+                    query_embedding,
+                    where_clause,
+                    limit,
+                    internal_prefix,
+                    aliases,
+                )
+                .await
+            }
         }
     }
 
     #[instrument(name = "stats", skip_all, level = "debug")]
-    pub fn stats(&self) -> anyhow::Result<Option<IndexStats>> {
+    pub async fn stats(&self) -> anyhow::Result<Option<IndexStats>> {
         match self {
             Backend::Parquet(b) => b.stats(),
+            Backend::Lance(b) => b.stats().await,
         }
     }
 
     pub fn exists(&self) -> bool {
         match self {
             Backend::Parquet(b) => b.exists(),
+            Backend::Lance(b) => b.exists(),
         }
     }
 
     #[instrument(name = "clean_index", skip_all)]
-    pub fn clean(&self) -> anyhow::Result<()> {
+    pub async fn clean(&self) -> anyhow::Result<()> {
         match self {
             Backend::Parquet(b) => b.clean(),
+            Backend::Lance(b) => b.clean(),
         }
     }
 }
@@ -334,6 +373,406 @@ impl ParquetBackend {
     }
 }
 
+/// Lance + LanceDB backend (TODO-0016). One denormalized table at
+/// `.mdvs/index.lance/`: one row per chunk, file metadata duplicated inline.
+pub(crate) struct LanceBackend {
+    root: PathBuf,
+}
+
+impl LanceBackend {
+    fn db_dir(&self) -> PathBuf {
+        self.root.join(".mdvs")
+    }
+
+    fn table_dir(&self) -> PathBuf {
+        self.db_dir().join("index.lance")
+    }
+
+    async fn connect(&self) -> anyhow::Result<lancedb::Connection> {
+        let uri = self
+            .db_dir()
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("non-UTF8 path: {}", self.db_dir().display()))?
+            .to_string();
+        lancedb::connect(&uri)
+            .execute()
+            .await
+            .context("connecting to Lance database")
+    }
+
+    /// Open the index table, or `None` if it doesn't exist yet.
+    async fn open_table(&self) -> anyhow::Result<Option<lancedb::table::Table>> {
+        if !self.table_dir().exists() {
+            return Ok(None);
+        }
+        let conn = self.connect().await?;
+        match conn.open_table(LANCE_TABLE).execute().await {
+            Ok(t) => Ok(Some(t)),
+            Err(lancedb::Error::TableNotFound { .. }) => Ok(None),
+            Err(e) => Err(e).context("opening Lance index table"),
+        }
+    }
+
+    async fn write_index(
+        &self,
+        schema_fields: &[(String, FieldType)],
+        files: &[FileRow],
+        chunks: &[ChunkRow],
+        metadata: BuildMetadata,
+    ) -> anyhow::Result<()> {
+        std::fs::create_dir_all(self.db_dir())?;
+
+        let batch = build_index_batch(schema_fields, files, chunks)?;
+        // Bake the seven mdvs.* build-metadata keys into the schema (spike #5).
+        let schema_md = (*batch.schema())
+            .clone()
+            .with_metadata(metadata.to_hash_map());
+        let schema_md = std::sync::Arc::new(schema_md);
+        let batch = batch.with_schema(schema_md.clone())?;
+        let reader: Box<dyn RecordBatchReader + Send> =
+            Box::new(RecordBatchIterator::new(vec![Ok(batch)], schema_md));
+
+        let conn = self.connect().await?;
+        conn.create_table(LANCE_TABLE, reader)
+            .mode(CreateTableMode::Overwrite)
+            .execute()
+            .await
+            .context("creating Lance index table")?;
+        Ok(())
+    }
+
+    async fn read_metadata(&self) -> anyhow::Result<Option<BuildMetadata>> {
+        let Some(table) = self.open_table().await? else {
+            return Ok(None);
+        };
+        let schema = table.schema().await?;
+        Ok(BuildMetadata::from_hash_map(schema.metadata()))
+    }
+
+    async fn read_file_index(&self) -> anyhow::Result<Vec<FileIndexEntry>> {
+        let Some(table) = self.open_table().await? else {
+            return Ok(vec![]);
+        };
+        let batches: Vec<RecordBatch> = table
+            .query()
+            .select(Select::columns(&[
+                COL_FILE_ID,
+                COL_FILEPATH,
+                COL_CONTENT_HASH,
+            ]))
+            .execute()
+            .await?
+            .try_collect()
+            .await?;
+
+        // Rows are per-chunk; dedupe to one entry per file_id (first wins).
+        let mut seen = HashSet::new();
+        let mut entries = Vec::new();
+        for batch in &batches {
+            let file_ids = str_col(batch, COL_FILE_ID)?;
+            let filenames = str_col(batch, COL_FILEPATH)?;
+            let hashes = str_col(batch, COL_CONTENT_HASH)?;
+            for i in 0..batch.num_rows() {
+                let file_id = file_ids.value(i).to_string();
+                if seen.insert(file_id.clone()) {
+                    entries.push(FileIndexEntry {
+                        file_id,
+                        filename: filenames.value(i).to_string(),
+                        content_hash: hashes.value(i).to_string(),
+                    });
+                }
+            }
+        }
+        Ok(entries)
+    }
+
+    async fn read_chunk_rows(&self) -> anyhow::Result<Vec<ChunkRow>> {
+        let Some(table) = self.open_table().await? else {
+            return Ok(vec![]);
+        };
+        let batches: Vec<RecordBatch> = table
+            .query()
+            .select(Select::columns(&[
+                COL_CHUNK_ID,
+                COL_FILE_ID,
+                COL_CHUNK_INDEX,
+                COL_START_LINE,
+                COL_END_LINE,
+                COL_EMBEDDING,
+            ]))
+            .execute()
+            .await?
+            .try_collect()
+            .await?;
+
+        let mut rows = Vec::new();
+        for batch in &batches {
+            let chunk_ids = str_col(batch, COL_CHUNK_ID)?;
+            let file_ids = str_col(batch, COL_FILE_ID)?;
+            let chunk_indices = i32_col(batch, COL_CHUNK_INDEX)?;
+            let start_lines = i32_col(batch, COL_START_LINE)?;
+            let end_lines = i32_col(batch, COL_END_LINE)?;
+            let embeddings = batch
+                .column_by_name(COL_EMBEDDING)
+                .ok_or_else(|| anyhow::anyhow!("missing embedding column"))?
+                .as_any()
+                .downcast_ref::<FixedSizeListArray>()
+                .ok_or_else(|| anyhow::anyhow!("expected FixedSizeListArray for embedding"))?;
+            for i in 0..batch.num_rows() {
+                let emb = embeddings.value(i);
+                let floats = emb
+                    .as_any()
+                    .downcast_ref::<Float32Array>()
+                    .ok_or_else(|| anyhow::anyhow!("expected Float32Array in embedding"))?;
+                let embedding: Vec<f32> = (0..floats.len()).map(|j| floats.value(j)).collect();
+                rows.push(ChunkRow {
+                    chunk_id: chunk_ids.value(i).to_string(),
+                    file_id: file_ids.value(i).to_string(),
+                    chunk_index: chunk_indices.value(i),
+                    start_line: start_lines.value(i),
+                    end_line: end_lines.value(i),
+                    embedding,
+                });
+            }
+        }
+        Ok(rows)
+    }
+
+    async fn embedding_dimension(&self) -> anyhow::Result<Option<i32>> {
+        let Some(table) = self.open_table().await? else {
+            return Ok(None);
+        };
+        let schema = table.schema().await?;
+        if let Ok(field) = schema.field_with_name(COL_EMBEDDING)
+            && let DataType::FixedSizeList(_, dim) = field.data_type()
+        {
+            return Ok(Some(*dim));
+        }
+        Ok(None)
+    }
+
+    async fn stats(&self) -> anyhow::Result<Option<IndexStats>> {
+        let Some(table) = self.open_table().await? else {
+            return Ok(None);
+        };
+        let chunks = table.count_rows(None).await?;
+        let files_indexed = self.read_file_index().await?.len();
+        Ok(Some(IndexStats {
+            files_indexed,
+            chunks,
+        }))
+    }
+
+    fn exists(&self) -> bool {
+        self.table_dir().exists()
+    }
+
+    fn clean(&self) -> anyhow::Result<()> {
+        let dir = self.db_dir();
+        if dir.exists() {
+            std::fs::remove_dir_all(&dir)?;
+        }
+        Ok(())
+    }
+
+    /// Throwaway brute-force cosine search (TODO-0016 wave 1 only; deleted in
+    /// wave 2 in favour of native LanceDB ANN + hybrid). Reads candidate rows
+    /// (optionally filtered via `--where`), scores cosine in Rust, keeps the
+    /// best chunk per file, returns the top-K.
+    async fn search(
+        &self,
+        query_embedding: Vec<f32>,
+        where_clause: Option<&str>,
+        limit: usize,
+        _internal_prefix: &str,
+        _aliases: &std::collections::HashMap<String, String>,
+    ) -> anyhow::Result<Vec<SearchHit>> {
+        let Some(table) = self.open_table().await? else {
+            return Ok(vec![]);
+        };
+
+        let mut query = table.query().select(Select::columns(&[
+            COL_FILE_ID,
+            COL_FILEPATH,
+            COL_START_LINE,
+            COL_END_LINE,
+            COL_EMBEDDING,
+        ]));
+        if let Some(w) = where_clause {
+            query = query.only_if(translate_where_to_struct(w));
+        }
+        let batches: Vec<RecordBatch> = query.execute().await?.try_collect().await?;
+
+        // Best chunk per file_id.
+        let mut best: std::collections::HashMap<String, SearchHit> =
+            std::collections::HashMap::new();
+        for batch in &batches {
+            let file_ids = str_col(batch, COL_FILE_ID)?;
+            let filepaths = str_col(batch, COL_FILEPATH)?;
+            let start_lines = i32_col(batch, COL_START_LINE)?;
+            let end_lines = i32_col(batch, COL_END_LINE)?;
+            let embeddings = batch
+                .column_by_name(COL_EMBEDDING)
+                .ok_or_else(|| anyhow::anyhow!("missing embedding column"))?
+                .as_any()
+                .downcast_ref::<FixedSizeListArray>()
+                .ok_or_else(|| anyhow::anyhow!("expected FixedSizeListArray for embedding"))?;
+            for i in 0..batch.num_rows() {
+                let emb = embeddings.value(i);
+                let floats = emb
+                    .as_any()
+                    .downcast_ref::<Float32Array>()
+                    .ok_or_else(|| anyhow::anyhow!("expected Float32Array in embedding"))?;
+                let v: Vec<f32> = (0..floats.len()).map(|j| floats.value(j)).collect();
+                let score = cosine_similarity(&query_embedding, &v);
+                let file_id = file_ids.value(i).to_string();
+                let entry = best.entry(file_id).or_insert_with(|| SearchHit {
+                    filename: filepaths.value(i).to_string(),
+                    score: f64::NEG_INFINITY,
+                    start_line: None,
+                    end_line: None,
+                    chunk_text: None,
+                });
+                if score > entry.score {
+                    entry.score = score;
+                    entry.filename = filepaths.value(i).to_string();
+                    entry.start_line = Some(start_lines.value(i));
+                    entry.end_line = Some(end_lines.value(i));
+                }
+            }
+        }
+
+        let mut hits: Vec<SearchHit> = best.into_values().collect();
+        hits.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        hits.truncate(limit);
+        Ok(hits)
+    }
+}
+
+/// Cosine similarity between two equal-length vectors. Returns 0 for a
+/// zero-norm input.
+fn cosine_similarity(a: &[f32], b: &[f32]) -> f64 {
+    let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
+    let na: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let nb: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if na == 0.0 || nb == 0.0 {
+        0.0
+    } else {
+        (dot / (na * nb)) as f64
+    }
+}
+
+/// Minimal `--where` translator for the wave-1 throwaway search: prefix bare
+/// frontmatter field references with `data.` so they resolve against the
+/// denormalized table's `data` Struct column (the `files_v` view that used to
+/// promote them to top level is gone). Identifier chains whose first segment
+/// is a reserved top-level column, or that are SQL keywords/functions, are
+/// left untouched. Full alias / internal-prefix handling is wave 2.
+fn translate_where_to_struct(clause: &str) -> String {
+    use regex::Regex;
+    // Reserved top-level columns of the denormalized table.
+    const RESERVED: &[&str] = &[
+        "chunk_id",
+        "file_id",
+        "chunk_index",
+        "start_line",
+        "end_line",
+        "embedding",
+        "filepath",
+        "content_hash",
+        "data",
+        "built_at",
+    ];
+    // SQL keywords / functions that look like identifiers but aren't columns.
+    const KEYWORDS: &[&str] = &[
+        "AND",
+        "OR",
+        "NOT",
+        "IN",
+        "IS",
+        "NULL",
+        "LIKE",
+        "BETWEEN",
+        "TRUE",
+        "FALSE",
+        "DATE",
+        "TIMESTAMP",
+        "EXTRACT",
+        "DATE_PART",
+        "FROM",
+        "ARRAY_HAS",
+        "ARRAY_HAS_ANY",
+        "ARRAY_HAS_ALL",
+    ];
+
+    // Split off single-quoted string literals so we never rewrite inside them.
+    let lit = Regex::new(r"'(?:[^']|'')*'").expect("valid literal regex");
+    let ident = Regex::new(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*")
+        .expect("valid ident regex");
+
+    let mut out = String::with_capacity(clause.len());
+    let mut last = 0;
+    for m in lit.find_iter(clause) {
+        // Rewrite the non-literal segment before this string literal.
+        out.push_str(&rewrite_idents(
+            &clause[last..m.start()],
+            &ident,
+            RESERVED,
+            KEYWORDS,
+        ));
+        // Copy the literal verbatim.
+        out.push_str(m.as_str());
+        last = m.end();
+    }
+    out.push_str(&rewrite_idents(&clause[last..], &ident, RESERVED, KEYWORDS));
+    out
+}
+
+fn rewrite_idents(
+    segment: &str,
+    ident: &regex::Regex,
+    reserved: &[&str],
+    keywords: &[&str],
+) -> String {
+    ident
+        .replace_all(segment, |caps: &regex::Captures| {
+            let chain = &caps[0];
+            let first = chain.split('.').next().unwrap_or(chain);
+            let is_reserved = reserved.contains(&first);
+            let is_keyword = keywords.iter().any(|k| k.eq_ignore_ascii_case(chain));
+            if is_reserved || is_keyword {
+                chain.to_string()
+            } else {
+                format!("data.{chain}")
+            }
+        })
+        .into_owned()
+}
+
+/// Downcast a named column to `StringArray`.
+fn str_col<'a>(batch: &'a RecordBatch, name: &str) -> anyhow::Result<&'a StringArray> {
+    batch
+        .column_by_name(name)
+        .ok_or_else(|| anyhow::anyhow!("missing column {name}"))?
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .ok_or_else(|| anyhow::anyhow!("expected StringArray for {name}"))
+}
+
+/// Downcast a named column to `Int32Array`.
+fn i32_col<'a>(batch: &'a RecordBatch, name: &str) -> anyhow::Result<&'a Int32Array> {
+    batch
+        .column_by_name(name)
+        .ok_or_else(|| anyhow::anyhow!("missing column {name}"))?
+        .as_any()
+        .downcast_ref::<Int32Array>()
+        .ok_or_else(|| anyhow::anyhow!("expected Int32Array for {name}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -402,10 +841,10 @@ mod tests {
         }
     }
 
-    #[test]
-    fn write_and_read_metadata() {
+    #[tokio::test]
+    async fn write_and_read_metadata() {
         let tmp = tempfile::tempdir().unwrap();
-        let backend = Backend::parquet(tmp.path());
+        let backend = Backend::lance(tmp.path());
 
         backend
             .write_index(
@@ -414,16 +853,17 @@ mod tests {
                 &test_chunks(),
                 test_metadata(),
             )
+            .await
             .unwrap();
 
-        let meta = backend.read_metadata().unwrap();
+        let meta = backend.read_metadata().await.unwrap();
         assert_eq!(meta, Some(test_metadata()));
     }
 
-    #[test]
-    fn write_and_stats() {
+    #[tokio::test]
+    async fn write_and_stats() {
         let tmp = tempfile::tempdir().unwrap();
-        let backend = Backend::parquet(tmp.path());
+        let backend = Backend::lance(tmp.path());
 
         backend
             .write_index(
@@ -432,17 +872,18 @@ mod tests {
                 &test_chunks(),
                 test_metadata(),
             )
+            .await
             .unwrap();
 
-        let stats = backend.stats().unwrap().unwrap();
+        let stats = backend.stats().await.unwrap().unwrap();
         assert_eq!(stats.files_indexed, 2);
         assert_eq!(stats.chunks, 2);
     }
 
-    #[test]
-    fn exists_false_then_true() {
+    #[tokio::test]
+    async fn exists_false_then_true() {
         let tmp = tempfile::tempdir().unwrap();
-        let backend = Backend::parquet(tmp.path());
+        let backend = Backend::lance(tmp.path());
 
         assert!(!backend.exists());
 
@@ -453,15 +894,16 @@ mod tests {
                 &test_chunks(),
                 test_metadata(),
             )
+            .await
             .unwrap();
 
         assert!(backend.exists());
     }
 
-    #[test]
-    fn clean_removes_index() {
+    #[tokio::test]
+    async fn clean_removes_index() {
         let tmp = tempfile::tempdir().unwrap();
-        let backend = Backend::parquet(tmp.path());
+        let backend = Backend::lance(tmp.path());
 
         backend
             .write_index(
@@ -470,20 +912,21 @@ mod tests {
                 &test_chunks(),
                 test_metadata(),
             )
+            .await
             .unwrap();
         assert!(backend.exists());
 
-        backend.clean().unwrap();
+        backend.clean().await.unwrap();
         assert!(!backend.exists());
         assert!(!tmp.path().join(".mdvs").exists());
     }
 
-    #[test]
-    fn embedding_dimension_correct() {
+    #[tokio::test]
+    async fn embedding_dimension_correct() {
         let tmp = tempfile::tempdir().unwrap();
-        let backend = Backend::parquet(tmp.path());
+        let backend = Backend::lance(tmp.path());
 
-        assert_eq!(backend.embedding_dimension().unwrap(), None);
+        assert_eq!(backend.embedding_dimension().await.unwrap(), None);
 
         backend
             .write_index(
@@ -492,15 +935,16 @@ mod tests {
                 &test_chunks(),
                 test_metadata(),
             )
+            .await
             .unwrap();
 
-        assert_eq!(backend.embedding_dimension().unwrap(), Some(4));
+        assert_eq!(backend.embedding_dimension().await.unwrap(), Some(4));
     }
 
     #[tokio::test]
     async fn search_returns_hits() {
         let tmp = tempfile::tempdir().unwrap();
-        let backend = Backend::parquet(tmp.path());
+        let backend = Backend::lance(tmp.path());
 
         backend
             .write_index(
@@ -509,6 +953,7 @@ mod tests {
                 &test_chunks(),
                 test_metadata(),
             )
+            .await
             .unwrap();
 
         // Query vector close to rust.md's embedding
@@ -528,5 +973,26 @@ mod tests {
         assert!(hits[0].score > hits[1].score);
         assert_eq!(hits[0].start_line, Some(1));
         assert_eq!(hits[0].end_line, Some(4));
+    }
+
+    #[test]
+    fn translate_where_prefixes_frontmatter_fields() {
+        // bare frontmatter field gets data. prefix; keyword/literal untouched
+        assert_eq!(
+            translate_where_to_struct("draft = false"),
+            "data.draft = false"
+        );
+        // dotted leaf
+        assert_eq!(
+            translate_where_to_struct("calibration.baseline.wavelength > 800"),
+            "data.calibration.baseline.wavelength > 800"
+        );
+        // reserved top-level column left alone
+        assert_eq!(translate_where_to_struct("file_id = 'x'"), "file_id = 'x'");
+        // already data-qualified left alone; string literal untouched
+        assert_eq!(
+            translate_where_to_struct("data.tags = 'sci-fi' AND rating > 3"),
+            "data.tags = 'sci-fi' AND data.rating > 3"
+        );
     }
 }

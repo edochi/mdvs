@@ -60,7 +60,7 @@ pub struct IndexInfo {
 
 /// Read config, scan files, and read index metadata.
 #[instrument(name = "info", skip_all)]
-pub fn run(path: &Path, _verbose: bool) -> CommandResult {
+pub async fn run(path: &Path, _verbose: bool) -> CommandResult {
     let start = Instant::now();
     let mut steps = Vec::new();
 
@@ -129,7 +129,7 @@ pub fn run(path: &Path, _verbose: bool) -> CommandResult {
 
     // 3. Read index — calls Backend methods directly
     let index_start = Instant::now();
-    let backend = Backend::parquet(path);
+    let backend = Backend::lance(path);
     let index_data = if !backend.exists() {
         steps.push(StepEntry::ok(
             Outcome::ReadIndex(ReadIndexOutcome {
@@ -141,8 +141,8 @@ pub fn run(path: &Path, _verbose: bool) -> CommandResult {
         ));
         None
     } else {
-        let build_meta = backend.read_metadata().ok().flatten();
-        let idx_stats = backend.stats().ok().flatten();
+        let build_meta = backend.read_metadata().await.ok().flatten();
+        let idx_stats = backend.stats().await.ok().flatten();
         match (build_meta, idx_stats) {
             (Some(metadata), Some(stats)) => {
                 steps.push(StepEntry::ok(
@@ -337,12 +337,12 @@ mod tests {
         assert!(!crate::step::has_failed(&output));
     }
 
-    #[test]
-    fn info_no_index() {
+    #[tokio::test]
+    async fn info_no_index() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
         write_config(tmp.path());
-        let step = run(tmp.path(), false);
+        let step = run(tmp.path(), false).await;
         assert!(!crate::step::has_failed(&step));
         let result = unwrap_info(&step);
         assert_eq!(result.scan_glob, "**");
@@ -358,7 +358,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
         init_and_build(tmp.path()).await;
-        let step = run(tmp.path(), false);
+        let step = run(tmp.path(), false).await;
         assert!(!crate::step::has_failed(&step));
         let result = unwrap_info(&step);
         assert_eq!(result.files_on_disk, 2);
@@ -378,7 +378,7 @@ mod tests {
         let mut config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
         config.chunking.as_mut().unwrap().max_chunk_size = 512;
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
-        let step = run(tmp.path(), false);
+        let step = run(tmp.path(), false).await;
         assert!(!crate::step::has_failed(&step));
         let result = unwrap_info(&step);
         assert!(result.index.is_some());
@@ -388,8 +388,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn info_hints_for_special_char_field_names() {
+    #[tokio::test]
+    async fn info_hints_for_special_char_field_names() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(
             tmp.path().join("note.md"),
@@ -424,7 +424,7 @@ mod tests {
             search: None,
         };
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
-        let step = run(tmp.path(), false);
+        let step = run(tmp.path(), false).await;
         assert!(!crate::step::has_failed(&step));
         let result = unwrap_info(&step);
         assert_eq!(result.fields.len(), 1);

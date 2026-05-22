@@ -372,7 +372,7 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
         Command::Clean { path } => {
-            let result = mdvs::cmd::clean::run(&path);
+            let result = mdvs::cmd::clean::run(&path).await;
             let failed = mdvs::step::has_failed(&result);
             let verbose = cli.verbose || failed;
             let output_str = match (&cli.output, verbose) {
@@ -399,7 +399,7 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
         Command::Info { path } => {
-            let result = mdvs::cmd::info::run(&path, cli.verbose);
+            let result = mdvs::cmd::info::run(&path, cli.verbose).await;
             let failed = mdvs::step::has_failed(&result);
             let verbose = cli.verbose || failed;
             let output_str = match (&cli.output, verbose) {

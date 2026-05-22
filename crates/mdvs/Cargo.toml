@@ -18,7 +18,7 @@ clap = { version = "4", features = ["derive"] }
 # Async (required by DataFusion)
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
-# Query engine (re-exports arrow 57 + parquet 57)
+# Query engine (re-exports arrow 58 + parquet 58). Removed in TODO-0016 wave 2.
 datafusion = { version = "53", default-features = false, features = [
     "parquet",
     "sql",
@@ -28,6 +28,13 @@ datafusion = { version = "53", default-features = false, features = [
     "regex_expressions",
     "recursive_protection",
 ] }
+
+# Embedded vector DB (storage + search). TODO-0016. Pins arrow 58, which
+# unifies with datafusion 53's arrow.
+lancedb = "0.29"
+
+# Stream combinators for collecting LanceDB query result streams.
+futures = "0.3"
 
 # Error handling
 anyhow = "1"

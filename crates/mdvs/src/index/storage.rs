@@ -473,6 +473,119 @@ pub fn build_chunks_batch(chunks: &[ChunkRow], dimension: i32) -> anyhow::Result
     .map_err(|e| anyhow::anyhow!("failed to build chunks RecordBatch: {e}"))
 }
 
+/// Build a single **denormalized** Arrow `RecordBatch` for the Lance index
+/// (TODO-0016). One row per chunk, with the parent file's metadata
+/// (`filepath`, `content_hash`, `data` Struct, `built_at`) duplicated inline.
+/// This is the LanceBackend analogue of `build_files_batch` +
+/// `build_chunks_batch`, but joined — LanceDB is single-table.
+///
+/// Column order: chunk_id, file_id, chunk_index, start_line, end_line,
+/// embedding, filepath, content_hash, data, built_at. (`chunk_text` is added
+/// in wave 2 when the FTS index needs it.)
+pub fn build_index_batch(
+    schema_fields: &[(String, FieldType)],
+    files: &[FileRow],
+    chunks: &[ChunkRow],
+) -> anyhow::Result<RecordBatch> {
+    let file_by_id: HashMap<&str, &FileRow> =
+        files.iter().map(|f| (f.file_id.as_str(), f)).collect();
+
+    // Resolve each chunk's parent file once, erroring on a dangling FK.
+    let parents: Vec<&FileRow> = chunks
+        .iter()
+        .map(|c| {
+            file_by_id.get(c.file_id.as_str()).copied().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "chunk {} references unknown file_id {}",
+                    c.chunk_id,
+                    c.file_id
+                )
+            })
+        })
+        .collect::<anyhow::Result<_>>()?;
+
+    // chunk-level columns
+    let chunk_id_arr: StringArray = chunks.iter().map(|c| Some(c.chunk_id.as_str())).collect();
+    let file_id_arr: StringArray = chunks.iter().map(|c| Some(c.file_id.as_str())).collect();
+    let chunk_index_arr: Int32Array = chunks.iter().map(|c| Some(c.chunk_index)).collect();
+    let start_line_arr: Int32Array = chunks.iter().map(|c| Some(c.start_line)).collect();
+    let end_line_arr: Int32Array = chunks.iter().map(|c| Some(c.end_line)).collect();
+
+    let dimension = chunks
+        .first()
+        .map(|c| c.embedding.len() as i32)
+        .unwrap_or(0);
+    let flat_values: Vec<f32> = chunks
+        .iter()
+        .flat_map(|c| c.embedding.iter().copied())
+        .collect();
+    let embedding_arr = FixedSizeListArray::new(
+        Arc::new(Field::new("item", DataType::Float32, false)),
+        dimension,
+        Arc::new(Float32Array::from(flat_values)),
+        None,
+    );
+
+    // file-level columns, expanded to chunk cardinality
+    let filepath_arr: StringArray = parents.iter().map(|f| Some(f.filename.as_str())).collect();
+    let content_hash_arr: StringArray = parents
+        .iter()
+        .map(|f| Some(f.content_hash.as_str()))
+        .collect();
+    let built_at_arr: TimestampMicrosecondArray = parents
+        .iter()
+        .map(|f| Some(f.built_at))
+        .collect::<TimestampMicrosecondArray>()
+        .with_timezone("UTC");
+
+    // data Struct, one (possibly null) frontmatter Value per chunk's file
+    let storage_ft = transpose_to_storage_type(schema_fields);
+    let data_values: Vec<Option<&Value>> = parents.iter().map(|f| f.frontmatter.as_ref()).collect();
+    let data_arr = build_array(&data_values, &storage_ft);
+    let data_struct_type: DataType = (&storage_ft).into();
+
+    let schema = Schema::new(vec![
+        Field::new(COL_CHUNK_ID, DataType::Utf8, false),
+        Field::new(COL_FILE_ID, DataType::Utf8, false),
+        Field::new(COL_CHUNK_INDEX, DataType::Int32, false),
+        Field::new(COL_START_LINE, DataType::Int32, false),
+        Field::new(COL_END_LINE, DataType::Int32, false),
+        Field::new(
+            COL_EMBEDDING,
+            DataType::FixedSizeList(
+                Arc::new(Field::new("item", DataType::Float32, false)),
+                dimension,
+            ),
+            false,
+        ),
+        Field::new(COL_FILEPATH, DataType::Utf8, false),
+        Field::new(COL_CONTENT_HASH, DataType::Utf8, false),
+        Field::new(COL_DATA, data_struct_type, true),
+        Field::new(
+            COL_BUILT_AT,
+            DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
+            false,
+        ),
+    ]);
+
+    RecordBatch::try_new(
+        Arc::new(schema),
+        vec![
+            Arc::new(chunk_id_arr),
+            Arc::new(file_id_arr),
+            Arc::new(chunk_index_arr),
+            Arc::new(start_line_arr),
+            Arc::new(end_line_arr),
+            Arc::new(embedding_arr),
+            Arc::new(filepath_arr),
+            Arc::new(content_hash_arr),
+            data_arr,
+            Arc::new(built_at_arr),
+        ],
+    )
+    .map_err(|e| anyhow::anyhow!("failed to build denormalized index RecordBatch: {e}"))
+}
+
 // ============================================================================
 // Parquet I/O
 // ============================================================================
