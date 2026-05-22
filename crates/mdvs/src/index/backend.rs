@@ -423,6 +423,11 @@ impl LanceBackend {
         internal_prefix: &str,
         aliases: &std::collections::HashMap<String, String>,
     ) -> anyhow::Result<Vec<SearchHit>> {
+        // `--limit 0` means no results; LanceDB rejects a zero `k`, so short-
+        // circuit rather than surface a cryptic "k must be positive" error.
+        if limit == 0 {
+            return Ok(vec![]);
+        }
         let Some(table) = self.open_table().await? else {
             return Ok(vec![]);
         };
@@ -439,7 +444,7 @@ impl LanceBackend {
             }
             None => None,
         };
-        let k = limit * OVER_FETCH_FACTOR;
+        let k = limit.saturating_mul(OVER_FETCH_FACTOR);
         let fts = || FullTextSearchQuery::new(query_text.to_string());
 
         // Project only the columns we need. Critically, this excludes the

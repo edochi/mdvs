@@ -1044,6 +1044,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn integration_limit_zero_is_empty_not_error() {
+        // `--limit 0` must return zero hits gracefully across all modes
+        // (LanceDB rejects a zero `k` internally).
+        let tmp = tempfile::tempdir().unwrap();
+        create_rich_vault(tmp.path());
+        init_and_build(tmp.path()).await;
+        for mode in [
+            SearchMode::Hybrid,
+            SearchMode::Fulltext,
+            SearchMode::Semantic,
+        ] {
+            let result = run(tmp.path(), "content", 0, None, mode, true, true, false).await;
+            assert!(
+                !crate::step::has_failed(&result),
+                "{mode:?} limit 0 should not fail"
+            );
+            assert!(unwrap_search(&result).hits.is_empty());
+        }
+    }
+
+    #[tokio::test]
     async fn integration_collision_surfaces_error() {
         // A frontmatter field named like an internal column, with no aliasing,
         // must surface the translator's collision error rather than silently
