@@ -14,14 +14,7 @@ use arrow::array::{
 use arrow::buffer::{NullBuffer, OffsetBuffer};
 use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use arrow::record_batch::RecordBatch;
-use datafusion::parquet::arrow::ArrowWriter;
-use datafusion::parquet::arrow::ProjectionMask;
-use datafusion::parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
-use datafusion::parquet::basic::Compression;
-use datafusion::parquet::file::properties::WriterProperties;
 use serde_json::Value;
-use std::fs::File;
-use std::path::Path;
 use std::sync::Arc;
 
 /// File ID column in files.parquet.
@@ -47,29 +40,6 @@ pub const COL_END_LINE: &str = "end_line";
 pub const COL_CHUNK_TEXT: &str = "chunk_text";
 /// Embedding vector column in chunks.parquet.
 pub const COL_EMBEDDING: &str = "embedding";
-
-/// Names of internal columns in files.parquet that are exposed in the search view
-/// and could collide with frontmatter fields. Used by search-time collision detection.
-/// (`data` is excluded — its children are promoted, but the column itself is not exposed.)
-pub const FILES_INTERNAL_COLUMNS: &[&str] =
-    &[COL_FILE_ID, COL_FILEPATH, COL_CONTENT_HASH, COL_BUILT_AT];
-
-/// Resolve the view name for an internal column: alias > prefix > raw name.
-///
-/// Used by both search view creation (collision detection) and SQL query building.
-pub fn resolve_view_name(
-    col: &str,
-    internal_prefix: &str,
-    aliases: &HashMap<String, String>,
-) -> String {
-    if let Some(alias) = aliases.get(col) {
-        alias.clone()
-    } else if !internal_prefix.is_empty() {
-        format!("{internal_prefix}{col}")
-    } else {
-        col.to_string()
-    }
-}
 
 /// Compute a deterministic hex-encoded hash of the given content using xxh3.
 pub fn content_hash(content: &str) -> String {
@@ -426,67 +396,13 @@ fn insert_at_segments(map: &mut BTreeMap<String, FieldType>, segments: &[&str], 
     }
 }
 
-/// Build an Arrow `RecordBatch` for `chunks.parquet` from chunk rows.
-///
-/// Embeddings are stored as a `FixedSizeList<Float32>` with the given `dimension`.
-pub fn build_chunks_batch(chunks: &[ChunkRow], dimension: i32) -> anyhow::Result<RecordBatch> {
-    let chunk_id_arr: StringArray = chunks.iter().map(|c| Some(c.chunk_id.as_str())).collect();
-    let file_id_arr: StringArray = chunks.iter().map(|c| Some(c.file_id.as_str())).collect();
-    let chunk_index_arr: Int32Array = chunks.iter().map(|c| Some(c.chunk_index)).collect();
-    let start_line_arr: Int32Array = chunks.iter().map(|c| Some(c.start_line)).collect();
-    let end_line_arr: Int32Array = chunks.iter().map(|c| Some(c.end_line)).collect();
-
-    let flat_values: Vec<f32> = chunks
-        .iter()
-        .flat_map(|c| c.embedding.iter().copied())
-        .collect();
-    let values_arr = Float32Array::from(flat_values);
-    let embedding_arr = FixedSizeListArray::new(
-        Arc::new(Field::new("item", DataType::Float32, false)),
-        dimension,
-        Arc::new(values_arr),
-        None,
-    );
-
-    let schema = Schema::new(vec![
-        Field::new(COL_CHUNK_ID, DataType::Utf8, false),
-        Field::new(COL_FILE_ID, DataType::Utf8, false),
-        Field::new(COL_CHUNK_INDEX, DataType::Int32, false),
-        Field::new(COL_START_LINE, DataType::Int32, false),
-        Field::new(COL_END_LINE, DataType::Int32, false),
-        Field::new(
-            COL_EMBEDDING,
-            DataType::FixedSizeList(
-                Arc::new(Field::new("item", DataType::Float32, false)),
-                dimension,
-            ),
-            false,
-        ),
-    ]);
-
-    RecordBatch::try_new(
-        Arc::new(schema),
-        vec![
-            Arc::new(chunk_id_arr),
-            Arc::new(file_id_arr),
-            Arc::new(chunk_index_arr),
-            Arc::new(start_line_arr),
-            Arc::new(end_line_arr),
-            Arc::new(embedding_arr),
-        ],
-    )
-    .map_err(|e| anyhow::anyhow!("failed to build chunks RecordBatch: {e}"))
-}
-
 /// Build a single **denormalized** Arrow `RecordBatch` for the Lance index
 /// (TODO-0016). One row per chunk, with the parent file's metadata
 /// (`filepath`, `content_hash`, `data` Struct, `built_at`) duplicated inline.
-/// This is the LanceBackend analogue of `build_files_batch` +
-/// `build_chunks_batch`, but joined — LanceDB is single-table.
+/// LanceDB is single-table, so file and chunk rows are joined here.
 ///
 /// Column order: chunk_id, file_id, chunk_index, start_line, end_line,
-/// embedding, filepath, content_hash, data, built_at. (`chunk_text` is added
-/// in wave 2 when the FTS index needs it.)
+/// chunk_text, embedding, filepath, content_hash, data, built_at.
 pub fn build_index_batch(
     schema_fields: &[(String, FieldType)],
     files: &[FileRow],
@@ -595,57 +511,6 @@ pub fn build_index_batch(
 }
 
 // ============================================================================
-// Parquet I/O
-// ============================================================================
-
-fn writer_props() -> WriterProperties {
-    WriterProperties::builder()
-        .set_compression(Compression::SNAPPY)
-        .build()
-}
-
-/// Write a single `RecordBatch` to a Snappy-compressed Parquet file.
-pub fn write_parquet(path: &Path, batch: &RecordBatch) -> anyhow::Result<()> {
-    let file = File::create(path)?;
-    let mut writer = ArrowWriter::try_new(file, batch.schema(), Some(writer_props()))?;
-    writer.write(batch)?;
-    writer.close()?;
-    Ok(())
-}
-
-/// Read all `RecordBatch`es from a Parquet file.
-pub fn read_parquet(path: &Path) -> anyhow::Result<Vec<RecordBatch>> {
-    let file = File::open(path)?;
-    let reader = ParquetRecordBatchReaderBuilder::try_new(file)?.build()?;
-    let batches: Vec<RecordBatch> = reader.collect::<Result<Vec<_>, _>>()?;
-    Ok(batches)
-}
-
-/// Write a `RecordBatch` to Parquet, attaching key-value metadata to the Arrow schema.
-pub fn write_parquet_with_metadata(
-    path: &Path,
-    batch: &RecordBatch,
-    metadata: HashMap<String, String>,
-) -> anyhow::Result<()> {
-    let schema = (*batch.schema()).clone().with_metadata(metadata);
-    let batch = batch.clone().with_schema(Arc::new(schema))?;
-    let file = File::create(path)?;
-    let mut writer = ArrowWriter::try_new(file, batch.schema(), Some(writer_props()))?;
-    writer.write(&batch)?;
-    writer.close()?;
-    Ok(())
-}
-
-/// Read `BuildMetadata` from a Parquet file's schema-level key-value metadata.
-/// Returns `Ok(None)` if the file exists but contains no mdvs metadata keys.
-pub fn read_build_metadata(path: &Path) -> anyhow::Result<Option<BuildMetadata>> {
-    let file = File::open(path)?;
-    let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
-    let schema = builder.schema();
-    Ok(BuildMetadata::from_hash_map(schema.metadata()))
-}
-
-// ============================================================================
 // Incremental build readers
 // ============================================================================
 
@@ -658,101 +523,6 @@ pub struct FileIndexEntry {
     pub filename: String,
     /// xxh3 hash of the markdown body, used to detect content changes.
     pub content_hash: String,
-}
-
-/// Read file_id, filename, content_hash from files.parquet using column projection.
-/// Skips the data Struct column (column 2) and built_at (column 4).
-pub fn read_file_index(path: &Path) -> anyhow::Result<Vec<FileIndexEntry>> {
-    let file = File::open(path)?;
-    let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
-    let mask = ProjectionMask::roots(builder.parquet_schema(), [0, 1, 3]);
-    let reader = builder.with_projection(mask).build()?;
-
-    let mut entries = Vec::new();
-    for batch in reader {
-        let batch = batch?;
-        let file_ids = batch
-            .column(0)
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .ok_or_else(|| anyhow::anyhow!("expected StringArray for file_id"))?;
-        let filenames = batch
-            .column(1)
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .ok_or_else(|| anyhow::anyhow!("expected StringArray for filename"))?;
-        let hashes = batch
-            .column(2)
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .ok_or_else(|| anyhow::anyhow!("expected StringArray for content_hash"))?;
-        for i in 0..batch.num_rows() {
-            entries.push(FileIndexEntry {
-                file_id: file_ids.value(i).to_string(),
-                filename: filenames.value(i).to_string(),
-                content_hash: hashes.value(i).to_string(),
-            });
-        }
-    }
-    Ok(entries)
-}
-
-/// Deserialize all rows from chunks.parquet back into ChunkRow structs.
-pub fn read_chunk_rows(path: &Path) -> anyhow::Result<Vec<ChunkRow>> {
-    let batches = read_parquet(path)?;
-    let mut rows = Vec::new();
-    for batch in &batches {
-        let chunk_ids = batch
-            .column(0)
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .ok_or_else(|| anyhow::anyhow!("expected StringArray for chunk_id"))?;
-        let file_ids = batch
-            .column(1)
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .ok_or_else(|| anyhow::anyhow!("expected StringArray for file_id"))?;
-        let chunk_indices = batch
-            .column(2)
-            .as_any()
-            .downcast_ref::<Int32Array>()
-            .ok_or_else(|| anyhow::anyhow!("expected Int32Array for chunk_index"))?;
-        let start_lines = batch
-            .column(3)
-            .as_any()
-            .downcast_ref::<Int32Array>()
-            .ok_or_else(|| anyhow::anyhow!("expected Int32Array for start_line"))?;
-        let end_lines = batch
-            .column(4)
-            .as_any()
-            .downcast_ref::<Int32Array>()
-            .ok_or_else(|| anyhow::anyhow!("expected Int32Array for end_line"))?;
-        let embeddings = batch
-            .column(5)
-            .as_any()
-            .downcast_ref::<FixedSizeListArray>()
-            .ok_or_else(|| anyhow::anyhow!("expected FixedSizeListArray for embedding"))?;
-
-        for i in 0..batch.num_rows() {
-            let emb = embeddings.value(i);
-            let floats = emb
-                .as_any()
-                .downcast_ref::<Float32Array>()
-                .ok_or_else(|| anyhow::anyhow!("expected Float32Array in embedding"))?;
-            let embedding: Vec<f32> = (0..floats.len()).map(|j| floats.value(j)).collect();
-
-            rows.push(ChunkRow {
-                chunk_id: chunk_ids.value(i).to_string(),
-                file_id: file_ids.value(i).to_string(),
-                chunk_index: chunk_indices.value(i),
-                start_line: start_lines.value(i),
-                end_line: end_lines.value(i),
-                chunk_text: String::new(),
-                embedding,
-            });
-        }
-    }
-    Ok(rows)
 }
 
 #[cfg(test)]
@@ -913,7 +683,7 @@ mod tests {
     }
 
     #[test]
-    fn files_parquet_roundtrip() {
+    fn data_struct_multi_file() {
         let schema_fields = vec![
             ("title".into(), FieldType::String),
             ("tags".into(), FieldType::Array(Box::new(FieldType::String))),
@@ -947,18 +717,10 @@ mod tests {
         ];
 
         let batch = build_files_batch(&schema_fields, &files).unwrap();
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("files.parquet");
-
-        write_parquet(&path, &batch).unwrap();
-        let batches = read_parquet(&path).unwrap();
-
-        assert_eq!(batches.len(), 1);
-        let read_batch = &batches[0];
-        assert_eq!(read_batch.num_rows(), 3);
+        assert_eq!(batch.num_rows(), 3);
 
         // Verify data column
-        let data = read_batch
+        let data = batch
             .column(2)
             .as_any()
             .downcast_ref::<StructArray>()
@@ -1136,453 +898,6 @@ mod tests {
     }
 
     #[test]
-    fn chunks_parquet_roundtrip() {
-        let dimension = 4;
-        let chunks = vec![
-            ChunkRow {
-                chunk_id: "c1".into(),
-                file_id: "id-1".into(),
-                chunk_index: 0,
-                start_line: 1,
-                end_line: 5,
-                chunk_text: String::new(),
-                embedding: vec![0.1, 0.2, 0.3, 0.4],
-            },
-            ChunkRow {
-                chunk_id: "c2".into(),
-                file_id: "id-1".into(),
-                chunk_index: 1,
-                start_line: 7,
-                end_line: 12,
-                chunk_text: String::new(),
-                embedding: vec![0.5, 0.6, 0.7, 0.8],
-            },
-            ChunkRow {
-                chunk_id: "c3".into(),
-                file_id: "id-2".into(),
-                chunk_index: 0,
-                start_line: 1,
-                end_line: 3,
-                chunk_text: String::new(),
-                embedding: vec![0.9, 1.0, 1.1, 1.2],
-            },
-        ];
-
-        let batch = build_chunks_batch(&chunks, dimension).unwrap();
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("chunks.parquet");
-
-        write_parquet(&path, &batch).unwrap();
-        let batches = read_parquet(&path).unwrap();
-
-        assert_eq!(batches.len(), 1);
-        let read_batch = &batches[0];
-        assert_eq!(read_batch.num_rows(), 3);
-
-        let chunk_ids = read_batch
-            .column(0)
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .unwrap();
-        assert_eq!(chunk_ids.value(0), "c1");
-        assert_eq!(chunk_ids.value(2), "c3");
-
-        let embeddings = read_batch
-            .column(5)
-            .as_any()
-            .downcast_ref::<FixedSizeListArray>()
-            .unwrap();
-        let row0_emb = embeddings.value(0);
-        let row0_floats = row0_emb.as_any().downcast_ref::<Float32Array>().unwrap();
-        assert_eq!(row0_floats.len(), 4);
-        assert!((row0_floats.value(0) - 0.1).abs() < f32::EPSILON);
-        assert!((row0_floats.value(3) - 0.4).abs() < f32::EPSILON);
-    }
-
-    #[test]
-    fn streaming_write() {
-        let schema_fields: Vec<(String, FieldType)> = vec![("title".into(), FieldType::String)];
-
-        let batch1 = build_files_batch(
-            &schema_fields,
-            &[FileRow {
-                file_id: "a".into(),
-                filename: "a.md".into(),
-                frontmatter: Some(serde_json::json!({"title": "First"})),
-                content_hash: "h1".into(),
-                built_at: 1_700_000_000_000_000,
-            }],
-        )
-        .unwrap();
-        let batch2 = build_files_batch(
-            &schema_fields,
-            &[FileRow {
-                file_id: "b".into(),
-                filename: "b.md".into(),
-                frontmatter: Some(serde_json::json!({"title": "Second"})),
-                content_hash: "h2".into(),
-                built_at: 1_700_000_000_000_000,
-            }],
-        )
-        .unwrap();
-
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("files_streamed.parquet");
-
-        let file = File::create(&path).unwrap();
-        let mut writer = ArrowWriter::try_new(file, batch1.schema(), Some(writer_props())).unwrap();
-        writer.write(&batch1).unwrap();
-        writer.write(&batch2).unwrap();
-        writer.close().unwrap();
-
-        let batches = read_parquet(&path).unwrap();
-        let total_rows: usize = batches.iter().map(|b| b.num_rows()).sum();
-        assert_eq!(total_rows, 2);
-
-        let first_batch = &batches[0];
-        let filenames = first_batch
-            .column(1)
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .unwrap();
-        assert_eq!(filenames.value(0), "a.md");
-
-        let last_batch = batches.last().unwrap();
-        let filenames = last_batch
-            .column(1)
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .unwrap();
-        assert_eq!(filenames.value(filenames.len() - 1), "b.md");
-    }
-
-    #[test]
-    fn streaming_read() {
-        let schema_fields: Vec<(String, FieldType)> = vec![("title".into(), FieldType::String)];
-
-        let batch1 = build_files_batch(
-            &schema_fields,
-            &[FileRow {
-                file_id: "a".into(),
-                filename: "a.md".into(),
-                frontmatter: Some(serde_json::json!({"title": "First"})),
-                content_hash: "h1".into(),
-                built_at: 1_700_000_000_000_000,
-            }],
-        )
-        .unwrap();
-        let batch2 = build_files_batch(
-            &schema_fields,
-            &[FileRow {
-                file_id: "b".into(),
-                filename: "b.md".into(),
-                frontmatter: Some(serde_json::json!({"title": "Second"})),
-                content_hash: "h2".into(),
-                built_at: 1_700_000_000_000_000,
-            }],
-        )
-        .unwrap();
-
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("files_stream_read.parquet");
-
-        let file = File::create(&path).unwrap();
-        let mut writer = ArrowWriter::try_new(file, batch1.schema(), Some(writer_props())).unwrap();
-        writer.write(&batch1).unwrap();
-        writer.write(&batch2).unwrap();
-        writer.close().unwrap();
-
-        let file = File::open(&path).unwrap();
-        let reader = ParquetRecordBatchReaderBuilder::try_new(file)
-            .unwrap()
-            .with_batch_size(1)
-            .build()
-            .unwrap();
-
-        let mut row_count = 0;
-        for batch in reader {
-            let batch = batch.unwrap();
-            row_count += batch.num_rows();
-        }
-        assert_eq!(row_count, 2);
-    }
-
-    #[test]
-    fn column_projection() {
-        let schema_fields = vec![
-            ("title".into(), FieldType::String),
-            ("tags".into(), FieldType::Array(Box::new(FieldType::String))),
-            ("draft".into(), FieldType::Boolean),
-        ];
-
-        let files = vec![
-            FileRow {
-                file_id: "id-1".into(),
-                filename: "blog/post1.md".into(),
-                frontmatter: Some(serde_json::json!({
-                    "title": "Hello", "tags": ["rust", "arrow"], "draft": false
-                })),
-                content_hash: "hash1".into(),
-                built_at: 1_700_000_000_000_000,
-            },
-            FileRow {
-                file_id: "id-2".into(),
-                filename: "blog/post2.md".into(),
-                frontmatter: Some(serde_json::json!({"title": "World"})),
-                content_hash: "hash2".into(),
-                built_at: 1_700_000_000_000_000,
-            },
-        ];
-
-        let batch = build_files_batch(&schema_fields, &files).unwrap();
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("files_proj.parquet");
-
-        write_parquet(&path, &batch).unwrap();
-
-        let file = File::open(&path).unwrap();
-        let builder = ParquetRecordBatchReaderBuilder::try_new(file).unwrap();
-
-        // Read only filename and content_hash (columns 1 and 3)
-        let mask =
-            datafusion::parquet::arrow::ProjectionMask::roots(builder.parquet_schema(), [1, 3]);
-        let reader = builder.with_projection(mask).build().unwrap();
-
-        let batches: Vec<RecordBatch> = reader.map(|r| r.unwrap()).collect();
-        let batch = &batches[0];
-        assert_eq!(batch.num_columns(), 2);
-        assert_eq!(batch.schema().field(0).name(), "filepath");
-        assert_eq!(batch.schema().field(1).name(), "content_hash");
-
-        let filenames = batch
-            .column(0)
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .unwrap();
-        assert_eq!(filenames.value(0), "blog/post1.md");
-    }
-
-    #[test]
-    fn file_size_reasonable() {
-        let schema_fields = vec![("title".into(), FieldType::String)];
-
-        let files = vec![FileRow {
-            file_id: "id-1".into(),
-            filename: "a.md".into(),
-            frontmatter: Some(serde_json::json!({"title": "Hello"})),
-            content_hash: "hash1".into(),
-            built_at: 1_700_000_000_000_000,
-        }];
-
-        let batch = build_files_batch(&schema_fields, &files).unwrap();
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("files_size.parquet");
-
-        write_parquet(&path, &batch).unwrap();
-
-        let size = std::fs::metadata(&path).unwrap().len();
-        assert!(size > 0);
-        assert!(size < 10_000);
-    }
-
-    #[test]
-    fn build_metadata_roundtrip() {
-        let schema_fields: Vec<(String, FieldType)> = vec![("title".into(), FieldType::String)];
-        let files = vec![FileRow {
-            file_id: "id-1".into(),
-            filename: "a.md".into(),
-            frontmatter: Some(serde_json::json!({"title": "Hello"})),
-            content_hash: "hash1".into(),
-            built_at: 1_700_000_000_000_000,
-        }];
-
-        let batch = build_files_batch(&schema_fields, &files).unwrap();
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("files.parquet");
-
-        let meta = BuildMetadata {
-            embedding_model: EmbeddingModelConfig {
-                provider: "model2vec".into(),
-                name: "minishlab/potion-base-8M".into(),
-                revision: Some("abc123".into()),
-            },
-            chunking: ChunkingConfig {
-                max_chunk_size: 1024,
-            },
-            glob: "**".into(),
-            built_at: "2026-03-02T12:00:00+00:00".into(),
-            schema_hash: "test".into(),
-        };
-
-        write_parquet_with_metadata(&path, &batch, meta.to_hash_map()).unwrap();
-
-        let read_meta = read_build_metadata(&path).unwrap();
-        assert_eq!(read_meta, Some(meta));
-    }
-
-    #[test]
-    fn build_metadata_no_revision() {
-        let schema_fields: Vec<(String, FieldType)> = vec![("title".into(), FieldType::String)];
-        let files = vec![FileRow {
-            file_id: "id-1".into(),
-            filename: "a.md".into(),
-            frontmatter: Some(serde_json::json!({"title": "Hello"})),
-            content_hash: "hash1".into(),
-            built_at: 1_700_000_000_000_000,
-        }];
-
-        let batch = build_files_batch(&schema_fields, &files).unwrap();
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("files.parquet");
-
-        let meta = BuildMetadata {
-            embedding_model: EmbeddingModelConfig {
-                provider: "model2vec".into(),
-                name: "minishlab/potion-base-8M".into(),
-                revision: None,
-            },
-            chunking: ChunkingConfig {
-                max_chunk_size: 512,
-            },
-            glob: "blog/**".into(),
-            built_at: "2026-03-02T12:00:00+00:00".into(),
-            schema_hash: "test".into(),
-        };
-
-        write_parquet_with_metadata(&path, &batch, meta.to_hash_map()).unwrap();
-
-        let read_meta = read_build_metadata(&path).unwrap();
-        assert_eq!(read_meta, Some(meta));
-    }
-
-    #[test]
-    fn read_metadata_missing() {
-        let schema_fields: Vec<(String, FieldType)> = vec![("title".into(), FieldType::String)];
-        let files = vec![FileRow {
-            file_id: "id-1".into(),
-            filename: "a.md".into(),
-            frontmatter: Some(serde_json::json!({"title": "Hello"})),
-            content_hash: "hash1".into(),
-            built_at: 1_700_000_000_000_000,
-        }];
-
-        let batch = build_files_batch(&schema_fields, &files).unwrap();
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("files.parquet");
-
-        // Write without metadata
-        write_parquet(&path, &batch).unwrap();
-
-        let read_meta = read_build_metadata(&path).unwrap();
-        assert_eq!(read_meta, None);
-    }
-
-    #[test]
-    fn read_file_index_roundtrip() {
-        let schema_fields = vec![
-            ("title".into(), FieldType::String),
-            ("tags".into(), FieldType::Array(Box::new(FieldType::String))),
-        ];
-        let files = vec![
-            FileRow {
-                file_id: "f1".into(),
-                filename: "blog/post1.md".into(),
-                frontmatter: Some(serde_json::json!({"title": "Hello", "tags": ["rust"]})),
-                content_hash: "abc123".into(),
-                built_at: 1_700_000_000_000_000,
-            },
-            FileRow {
-                file_id: "f2".into(),
-                filename: "blog/post2.md".into(),
-                frontmatter: Some(serde_json::json!({"title": "World"})),
-                content_hash: "def456".into(),
-                built_at: 1_700_000_000_000_000,
-            },
-            FileRow {
-                file_id: "f3".into(),
-                filename: "notes/bare.md".into(),
-                frontmatter: None,
-                content_hash: "ghi789".into(),
-                built_at: 1_700_000_000_000_000,
-            },
-        ];
-
-        let batch = build_files_batch(&schema_fields, &files).unwrap();
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("files.parquet");
-        write_parquet(&path, &batch).unwrap();
-
-        let index = read_file_index(&path).unwrap();
-        assert_eq!(index.len(), 3);
-
-        assert_eq!(index[0].file_id, "f1");
-        assert_eq!(index[0].filename, "blog/post1.md");
-        assert_eq!(index[0].content_hash, "abc123");
-
-        assert_eq!(index[1].file_id, "f2");
-        assert_eq!(index[1].filename, "blog/post2.md");
-        assert_eq!(index[1].content_hash, "def456");
-
-        assert_eq!(index[2].file_id, "f3");
-        assert_eq!(index[2].filename, "notes/bare.md");
-        assert_eq!(index[2].content_hash, "ghi789");
-    }
-
-    #[test]
-    fn read_chunk_rows_roundtrip() {
-        let original = vec![
-            ChunkRow {
-                chunk_id: "c1".into(),
-                file_id: "f1".into(),
-                chunk_index: 0,
-                start_line: 1,
-                end_line: 5,
-                chunk_text: String::new(),
-                embedding: vec![0.1, 0.2, 0.3, 0.4],
-            },
-            ChunkRow {
-                chunk_id: "c2".into(),
-                file_id: "f1".into(),
-                chunk_index: 1,
-                start_line: 7,
-                end_line: 12,
-                chunk_text: String::new(),
-                embedding: vec![0.5, 0.6, 0.7, 0.8],
-            },
-            ChunkRow {
-                chunk_id: "c3".into(),
-                file_id: "f2".into(),
-                chunk_index: 0,
-                start_line: 1,
-                end_line: 3,
-                chunk_text: String::new(),
-                embedding: vec![0.9, 1.0, 1.1, 1.2],
-            },
-        ];
-
-        let batch = build_chunks_batch(&original, 4).unwrap();
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("chunks.parquet");
-        write_parquet(&path, &batch).unwrap();
-
-        let rows = read_chunk_rows(&path).unwrap();
-        assert_eq!(rows.len(), 3);
-
-        assert_eq!(rows[0].chunk_id, "c1");
-        assert_eq!(rows[0].file_id, "f1");
-        assert_eq!(rows[0].chunk_index, 0);
-        assert_eq!(rows[0].start_line, 1);
-        assert_eq!(rows[0].end_line, 5);
-        assert_eq!(rows[0].embedding.len(), 4);
-        assert!((rows[0].embedding[0] - 0.1).abs() < f32::EPSILON);
-        assert!((rows[0].embedding[3] - 0.4).abs() < f32::EPSILON);
-
-        assert_eq!(rows[2].chunk_id, "c3");
-        assert_eq!(rows[2].file_id, "f2");
-        assert!((rows[2].embedding[0] - 0.9).abs() < f32::EPSILON);
-    }
-
-    #[test]
     fn nested_object_roundtrip() {
         use std::collections::BTreeMap;
 
@@ -1600,12 +915,7 @@ mod tests {
         }];
 
         let batch = build_files_batch(&schema_fields, &files).unwrap();
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("files.parquet");
-        write_parquet(&path, &batch).unwrap();
-
-        let batches = read_parquet(&path).unwrap();
-        assert_eq!(batches[0].num_rows(), 1);
+        assert_eq!(batch.num_rows(), 1);
     }
 
     #[test]
@@ -1620,12 +930,7 @@ mod tests {
         }];
 
         let batch = build_files_batch(&schema_fields, &files).unwrap();
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("files.parquet");
-        write_parquet(&path, &batch).unwrap();
-
-        let batches = read_parquet(&path).unwrap();
-        let data_col = batches[0]
+        let data_col = batch
             .column_by_name("data")
             .unwrap()
             .as_any()
@@ -1823,12 +1128,7 @@ mod tests {
         }];
 
         let batch = build_files_batch(&schema_fields, &files).unwrap();
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("files.parquet");
-        write_parquet(&path, &batch).unwrap();
-
-        let batches = read_parquet(&path).unwrap();
-        assert_eq!(batches[0].num_rows(), 1);
+        assert_eq!(batch.num_rows(), 1);
     }
 
     // ===== Date type (TODO-0007 Wave 1) — Arrow Date32 storage =====
@@ -1926,7 +1226,7 @@ mod tests {
     }
 
     #[test]
-    fn date_round_trips_through_parquet() {
+    fn date_stored_as_days_since_epoch() {
         let schema_fields = vec![("birthday".into(), FieldType::Date)];
         let files = vec![FileRow {
             file_id: "id-1".into(),
@@ -1936,12 +1236,7 @@ mod tests {
             built_at: 1_700_000_000_000_000,
         }];
         let batch = build_files_batch(&schema_fields, &files).unwrap();
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("files.parquet");
-        write_parquet(&path, &batch).unwrap();
-
-        let batches = read_parquet(&path).unwrap();
-        let data = batches[0]
+        let data = batch
             .column_by_name(COL_DATA)
             .unwrap()
             .as_any()
@@ -2060,7 +1355,7 @@ mod tests {
     }
 
     #[test]
-    fn datetime_round_trips_through_parquet() {
+    fn datetime_stored_as_millis_since_epoch() {
         let schema_fields = vec![("synced_at".into(), FieldType::DateTime)];
         let files = vec![FileRow {
             file_id: "id-1".into(),
@@ -2070,12 +1365,7 @@ mod tests {
             built_at: 1_700_000_000_000_000,
         }];
         let batch = build_files_batch(&schema_fields, &files).unwrap();
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("files.parquet");
-        write_parquet(&path, &batch).unwrap();
-
-        let batches = read_parquet(&path).unwrap();
-        let data = batches[0]
+        let data = batch
             .column_by_name(COL_DATA)
             .unwrap()
             .as_any()

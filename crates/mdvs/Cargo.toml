@@ -18,17 +18,6 @@ clap = { version = "4", features = ["derive"] }
 # Async (required by DataFusion)
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
-# Query engine (re-exports arrow 58 + parquet 58). Removed in TODO-0016 wave 2.
-datafusion = { version = "53", default-features = false, features = [
-    "parquet",
-    "sql",
-    "nested_expressions",
-    "string_expressions",
-    "datetime_expressions",
-    "regex_expressions",
-    "recursive_protection",
-] }
-
 # Embedded vector DB (storage + search). TODO-0016. Pins arrow 58.
 lancedb = "0.29"
 
