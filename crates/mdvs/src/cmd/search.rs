@@ -1023,6 +1023,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn integration_hybrid_zero_results_is_empty_not_error() {
+        // Regression: a hybrid query whose --where matches nothing returns an
+        // empty batch with no projected columns; the reader must yield zero
+        // hits, not "missing column file_id".
+        let tmp = tempfile::tempdir().unwrap();
+        create_rich_vault(tmp.path());
+        init_and_build(tmp.path()).await;
+        for mode in [
+            SearchMode::Hybrid,
+            SearchMode::Fulltext,
+            SearchMode::Semantic,
+        ] {
+            let hits = search_files(tmp.path(), "content", mode, Some("rating > 1000")).await;
+            assert!(
+                hits.is_empty(),
+                "{mode:?} zero-match should be empty: {hits:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn integration_collision_surfaces_error() {
         // A frontmatter field named like an internal column, with no aliasing,
         // must surface the translator's collision error rather than silently

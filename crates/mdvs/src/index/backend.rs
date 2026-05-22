@@ -507,6 +507,11 @@ impl LanceBackend {
         let mut best: std::collections::HashMap<String, SearchHit> =
             std::collections::HashMap::new();
         for batch in &batches {
+            // A zero-result hybrid query returns an empty batch whose schema
+            // omits the projected columns; skip it rather than fail the lookup.
+            if batch.num_rows() == 0 {
+                continue;
+            }
             let file_ids = str_col(batch, COL_FILE_ID)?;
             let filepaths = str_col(batch, COL_FILEPATH)?;
             let start_lines = i32_col(batch, COL_START_LINE)?;
@@ -569,6 +574,9 @@ const RESERVED_COLS: &[&str] = &[
 ];
 
 /// SQL keywords / functions that look like identifiers but aren't columns.
+/// `DATE`/`TIMESTAMP` are intentionally absent: they're keywords only when
+/// introducing a literal (`date '...'`), which is handled contextually, so a
+/// plain frontmatter field named `date` still resolves correctly.
 const SQL_KEYWORDS: &[&str] = &[
     "AND",
     "OR",
@@ -580,8 +588,6 @@ const SQL_KEYWORDS: &[&str] = &[
     "BETWEEN",
     "TRUE",
     "FALSE",
-    "DATE",
-    "TIMESTAMP",
     "EXTRACT",
     "DATE_PART",
     "FROM",
@@ -612,7 +618,12 @@ fn translate_where_to_struct(
         .collect();
     let has_aliasing = !internal_prefix.is_empty() || !aliases.is_empty();
 
-    let lit = Regex::new(r"'(?:[^']|'')*'").expect("valid literal regex");
+    // A string literal, optionally preceded by a `date`/`timestamp` keyword so
+    // the whole `date '...'` literal is protected as one unit (otherwise a
+    // frontmatter field named `date` and the `date` literal keyword are
+    // indistinguishable once the literal is split off).
+    let lit =
+        Regex::new(r"(?i)(?:\b(?:date|timestamp)\s+)?'(?:[^']|'')*'").expect("valid literal regex");
     let ident = Regex::new(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*")
         .expect("valid ident regex");
 
@@ -1082,6 +1093,27 @@ mod tests {
         assert_eq!(
             xlate("published >= date '2024-01-01'", &["published"]),
             "data.published >= date '2024-01-01'"
+        );
+    }
+
+    #[test]
+    fn translate_where_date_as_field_name() {
+        // A frontmatter field literally named `date` must be prefixed, while
+        // the `date '...'` literal keyword on the right is left alone.
+        assert_eq!(
+            xlate("date >= date '2032-01-01'", &["date"]),
+            "data.date >= date '2032-01-01'"
+        );
+    }
+
+    #[test]
+    fn translate_where_timestamp_as_field_name() {
+        assert_eq!(
+            xlate(
+                "timestamp < timestamp '2024-01-01T00:00:00Z'",
+                &["timestamp"]
+            ),
+            "data.timestamp < timestamp '2024-01-01T00:00:00Z'"
         );
     }
 
