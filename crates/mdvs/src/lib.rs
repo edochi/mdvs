@@ -23,8 +23,6 @@ pub mod preprocess;
 pub mod render;
 /// Configuration file types (`mdvs.toml`) and shared data structures.
 pub mod schema;
-/// DataFusion-based search context with cosine similarity UDF.
-pub mod search;
 /// Step tree types for the unified command output architecture.
 pub mod step;
 /// Table rendering helpers (compact and record styles via `tabled`).

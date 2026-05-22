@@ -163,12 +163,14 @@ async fn embed_file(
     chunks
         .iter()
         .zip(embeddings)
-        .map(|(chunk, embedding)| ChunkRow {
+        .zip(plain_texts)
+        .map(|((chunk, embedding), chunk_text)| ChunkRow {
             chunk_id: uuid::Uuid::new_v4().to_string(),
             file_id: file_id.to_string(),
             chunk_index: chunk.chunk_index as i32,
             start_line: (chunk.start_line + file.body_line_offset) as i32,
             end_line: (chunk.end_line + file.body_line_offset) as i32,
+            chunk_text,
             embedding,
         })
         .collect()
@@ -1080,6 +1082,7 @@ mod tests {
             chunk_index: 0,
             start_line: 1,
             end_line: 1,
+            chunk_text: String::new(),
             embedding: vec![0.1, 0.2], // dim=2
         }];
         backend

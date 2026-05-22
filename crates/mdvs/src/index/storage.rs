@@ -6,14 +6,14 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use xxhash_rust::xxh3::xxh3_64;
 
-use datafusion::arrow::array::{
+use arrow::array::{
     ArrayRef, BooleanArray, Date32Array, FixedSizeListArray, Float32Array, Float64Array,
     Int32Array, Int64Array, ListArray, StringArray, StructArray, TimestampMicrosecondArray,
     TimestampMillisecondArray,
 };
-use datafusion::arrow::buffer::{NullBuffer, OffsetBuffer};
-use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
-use datafusion::arrow::record_batch::RecordBatch;
+use arrow::buffer::{NullBuffer, OffsetBuffer};
+use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+use arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::ArrowWriter;
 use datafusion::parquet::arrow::ProjectionMask;
 use datafusion::parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
@@ -43,6 +43,8 @@ pub const COL_CHUNK_INDEX: &str = "chunk_index";
 pub const COL_START_LINE: &str = "start_line";
 /// End line column in chunks.parquet.
 pub const COL_END_LINE: &str = "end_line";
+/// Plain-text column (BM25 full-text index + result snippet).
+pub const COL_CHUNK_TEXT: &str = "chunk_text";
 /// Embedding vector column in chunks.parquet.
 pub const COL_EMBEDDING: &str = "embedding";
 
@@ -100,6 +102,9 @@ pub struct ChunkRow {
     pub start_line: i32,
     /// Last line of this chunk in the source file (1-based, inclusive).
     pub end_line: i32,
+    /// Plain text of the chunk (what was embedded). Persisted for the BM25
+    /// full-text index and returned as the search result snippet.
+    pub chunk_text: String,
     /// Dense embedding vector for this chunk.
     pub embedding: Vec<f32>,
 }
@@ -510,6 +515,7 @@ pub fn build_index_batch(
     let chunk_index_arr: Int32Array = chunks.iter().map(|c| Some(c.chunk_index)).collect();
     let start_line_arr: Int32Array = chunks.iter().map(|c| Some(c.start_line)).collect();
     let end_line_arr: Int32Array = chunks.iter().map(|c| Some(c.end_line)).collect();
+    let chunk_text_arr: StringArray = chunks.iter().map(|c| Some(c.chunk_text.as_str())).collect();
 
     let dimension = chunks
         .first()
@@ -550,6 +556,7 @@ pub fn build_index_batch(
         Field::new(COL_CHUNK_INDEX, DataType::Int32, false),
         Field::new(COL_START_LINE, DataType::Int32, false),
         Field::new(COL_END_LINE, DataType::Int32, false),
+        Field::new(COL_CHUNK_TEXT, DataType::Utf8, false),
         Field::new(
             COL_EMBEDDING,
             DataType::FixedSizeList(
@@ -576,6 +583,7 @@ pub fn build_index_batch(
             Arc::new(chunk_index_arr),
             Arc::new(start_line_arr),
             Arc::new(end_line_arr),
+            Arc::new(chunk_text_arr),
             Arc::new(embedding_arr),
             Arc::new(filepath_arr),
             Arc::new(content_hash_arr),
@@ -739,6 +747,7 @@ pub fn read_chunk_rows(path: &Path) -> anyhow::Result<Vec<ChunkRow>> {
                 chunk_index: chunk_indices.value(i),
                 start_line: start_lines.value(i),
                 end_line: end_lines.value(i),
+                chunk_text: String::new(),
                 embedding,
             });
         }
@@ -749,7 +758,7 @@ pub fn read_chunk_rows(path: &Path) -> anyhow::Result<Vec<ChunkRow>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datafusion::arrow::array::Array;
+    use arrow::array::Array;
 
     // ------------------------------------------------------------------------
     // TODO-0097 step 5: dotted-name leaves → nested Arrow Struct columns
@@ -1136,6 +1145,7 @@ mod tests {
                 chunk_index: 0,
                 start_line: 1,
                 end_line: 5,
+                chunk_text: String::new(),
                 embedding: vec![0.1, 0.2, 0.3, 0.4],
             },
             ChunkRow {
@@ -1144,6 +1154,7 @@ mod tests {
                 chunk_index: 1,
                 start_line: 7,
                 end_line: 12,
+                chunk_text: String::new(),
                 embedding: vec![0.5, 0.6, 0.7, 0.8],
             },
             ChunkRow {
@@ -1152,6 +1163,7 @@ mod tests {
                 chunk_index: 0,
                 start_line: 1,
                 end_line: 3,
+                chunk_text: String::new(),
                 embedding: vec![0.9, 1.0, 1.1, 1.2],
             },
         ];
@@ -1525,6 +1537,7 @@ mod tests {
                 chunk_index: 0,
                 start_line: 1,
                 end_line: 5,
+                chunk_text: String::new(),
                 embedding: vec![0.1, 0.2, 0.3, 0.4],
             },
             ChunkRow {
@@ -1533,6 +1546,7 @@ mod tests {
                 chunk_index: 1,
                 start_line: 7,
                 end_line: 12,
+                chunk_text: String::new(),
                 embedding: vec![0.5, 0.6, 0.7, 0.8],
             },
             ChunkRow {
@@ -1541,6 +1555,7 @@ mod tests {
                 chunk_index: 0,
                 start_line: 1,
                 end_line: 3,
+                chunk_text: String::new(),
                 embedding: vec![0.9, 1.0, 1.1, 1.2],
             },
         ];
@@ -1614,13 +1629,13 @@ mod tests {
             .column_by_name("data")
             .unwrap()
             .as_any()
-            .downcast_ref::<datafusion::arrow::array::StructArray>()
+            .downcast_ref::<arrow::array::StructArray>()
             .unwrap();
         let titles = data_col
             .column_by_name("title")
             .unwrap()
             .as_any()
-            .downcast_ref::<datafusion::arrow::array::StringArray>()
+            .downcast_ref::<arrow::array::StringArray>()
             .unwrap();
         assert_eq!(titles.value(0), "こんにちは 🦀 Émojis");
     }

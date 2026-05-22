@@ -1,4 +1,4 @@
-use datafusion::arrow::datatypes::{DataType, Field, Fields};
+use arrow::datatypes::{DataType, Field, Fields};
 use regex::Regex;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -167,7 +167,7 @@ impl From<&FieldType> for DataType {
             FieldType::String => DataType::Utf8,
             FieldType::Date => DataType::Date32,
             FieldType::DateTime => DataType::Timestamp(
-                datafusion::arrow::datatypes::TimeUnit::Millisecond,
+                arrow::datatypes::TimeUnit::Millisecond,
                 Some(Arc::from("UTC")),
             ),
             FieldType::Array(inner) => {
@@ -361,7 +361,7 @@ mod tests {
         let dt: DataType = (&FieldType::DateTime).into();
         match dt {
             DataType::Timestamp(unit, ref tz) => {
-                assert_eq!(unit, datafusion::arrow::datatypes::TimeUnit::Millisecond);
+                assert_eq!(unit, arrow::datatypes::TimeUnit::Millisecond);
                 assert_eq!(tz.as_deref(), Some("UTC"));
             }
             other => panic!("expected Timestamp(ms, UTC), got {other:?}"),

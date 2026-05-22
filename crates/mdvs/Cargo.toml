@@ -29,9 +29,12 @@ datafusion = { version = "53", default-features = false, features = [
     "recursive_protection",
 ] }
 
-# Embedded vector DB (storage + search). TODO-0016. Pins arrow 58, which
-# unifies with datafusion 53's arrow.
+# Embedded vector DB (storage + search). TODO-0016. Pins arrow 58.
 lancedb = "0.29"
+
+# Arrow in-memory columnar format (RecordBatch construction). Version
+# matches lancedb's arrow.
+arrow = "58"
 
 # Stream combinators for collecting LanceDB query result streams.
 futures = "0.3"

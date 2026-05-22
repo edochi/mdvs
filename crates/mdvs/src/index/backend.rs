@@ -1,17 +1,15 @@
 use crate::discover::field_type::FieldType;
 use crate::index::storage::{
-    BuildMetadata, COL_CHUNK_ID, COL_CHUNK_INDEX, COL_CONTENT_HASH, COL_EMBEDDING, COL_END_LINE,
-    COL_FILE_ID, COL_FILEPATH, COL_START_LINE, ChunkRow, FileIndexEntry, FileRow,
-    build_chunks_batch, build_files_batch, build_index_batch, read_build_metadata, read_chunk_rows,
-    read_file_index, read_parquet, resolve_view_name, write_parquet, write_parquet_with_metadata,
+    BuildMetadata, COL_CHUNK_ID, COL_CHUNK_INDEX, COL_CHUNK_TEXT, COL_CONTENT_HASH, COL_EMBEDDING,
+    COL_END_LINE, COL_FILE_ID, COL_FILEPATH, COL_START_LINE, ChunkRow, FileIndexEntry, FileRow,
+    build_index_batch,
 };
-use crate::search::SearchContext;
 use anyhow::Context;
-use datafusion::arrow::array::{
-    Array, FixedSizeListArray, Float32Array, Float64Array, Int32Array, RecordBatch,
-    RecordBatchIterator, RecordBatchReader, StringArray, StringViewArray,
+use arrow::array::{
+    Array, FixedSizeListArray, Float32Array, Int32Array, RecordBatch, RecordBatchIterator,
+    RecordBatchReader, StringArray,
 };
-use datafusion::arrow::datatypes::DataType;
+use arrow::datatypes::DataType;
 use futures::TryStreamExt;
 use lancedb::database::CreateTableMode;
 use lancedb::query::{ExecutableQuery, QueryBase, Select};
@@ -48,22 +46,14 @@ pub struct IndexStats {
     pub chunks: usize,
 }
 
+/// Index backend. Single implementation (`LanceBackend`); kept as an enum
+/// for the test seam and the project's enum-dispatch convention.
 pub(crate) enum Backend {
-    /// Parquet + DataFusion backend. Dormant during TODO-0016 wave 1
-    /// (kept compiling as a comparison baseline); deleted in wave 2.
-    Parquet(ParquetBackend),
-    /// Lance + LanceDB backend (TODO-0016). The active backend.
+    /// Lance + LanceDB backend (TODO-0016).
     Lance(LanceBackend),
 }
 
 impl Backend {
-    #[allow(dead_code)]
-    pub(crate) fn parquet(root: &Path) -> Self {
-        Backend::Parquet(ParquetBackend {
-            root: root.to_path_buf(),
-        })
-    }
-
     pub(crate) fn lance(root: &Path) -> Self {
         Backend::Lance(LanceBackend {
             root: root.to_path_buf(),
@@ -79,7 +69,6 @@ impl Backend {
         metadata: BuildMetadata,
     ) -> anyhow::Result<()> {
         match self {
-            Backend::Parquet(b) => b.write_index(schema_fields, files, chunks, metadata),
             Backend::Lance(b) => b.write_index(schema_fields, files, chunks, metadata).await,
         }
     }
@@ -87,7 +76,6 @@ impl Backend {
     #[instrument(name = "read_metadata", skip_all, level = "debug")]
     pub async fn read_metadata(&self) -> anyhow::Result<Option<BuildMetadata>> {
         match self {
-            Backend::Parquet(b) => b.read_metadata(),
             Backend::Lance(b) => b.read_metadata().await,
         }
     }
@@ -95,7 +83,6 @@ impl Backend {
     #[instrument(name = "read_file_index", skip_all, level = "debug")]
     pub async fn read_file_index(&self) -> anyhow::Result<Vec<FileIndexEntry>> {
         match self {
-            Backend::Parquet(b) => b.read_file_index(),
             Backend::Lance(b) => b.read_file_index().await,
         }
     }
@@ -103,7 +90,6 @@ impl Backend {
     #[instrument(name = "read_chunk_rows", skip_all, level = "debug")]
     pub async fn read_chunk_rows(&self) -> anyhow::Result<Vec<ChunkRow>> {
         match self {
-            Backend::Parquet(b) => b.read_chunk_rows(),
             Backend::Lance(b) => b.read_chunk_rows().await,
         }
     }
@@ -111,7 +97,6 @@ impl Backend {
     #[instrument(name = "embedding_dimension", skip_all, level = "debug")]
     pub async fn embedding_dimension(&self) -> anyhow::Result<Option<i32>> {
         match self {
-            Backend::Parquet(b) => b.embedding_dimension(),
             Backend::Lance(b) => b.embedding_dimension().await,
         }
     }
@@ -126,16 +111,6 @@ impl Backend {
         aliases: &std::collections::HashMap<String, String>,
     ) -> anyhow::Result<Vec<SearchHit>> {
         match self {
-            Backend::Parquet(b) => {
-                b.search(
-                    query_embedding,
-                    where_clause,
-                    limit,
-                    internal_prefix,
-                    aliases,
-                )
-                .await
-            }
             Backend::Lance(b) => {
                 b.search(
                     query_embedding,
@@ -152,14 +127,12 @@ impl Backend {
     #[instrument(name = "stats", skip_all, level = "debug")]
     pub async fn stats(&self) -> anyhow::Result<Option<IndexStats>> {
         match self {
-            Backend::Parquet(b) => b.stats(),
             Backend::Lance(b) => b.stats().await,
         }
     }
 
     pub fn exists(&self) -> bool {
         match self {
-            Backend::Parquet(b) => b.exists(),
             Backend::Lance(b) => b.exists(),
         }
     }
@@ -167,214 +140,11 @@ impl Backend {
     #[instrument(name = "clean_index", skip_all)]
     pub async fn clean(&self) -> anyhow::Result<()> {
         match self {
-            Backend::Parquet(b) => b.clean(),
             Backend::Lance(b) => b.clean(),
         }
     }
 }
 
-pub(crate) struct ParquetBackend {
-    root: PathBuf,
-}
-
-impl ParquetBackend {
-    fn mdvs_dir(&self) -> PathBuf {
-        self.root.join(".mdvs")
-    }
-
-    fn files_parquet(&self) -> PathBuf {
-        self.mdvs_dir().join("files.parquet")
-    }
-
-    fn chunks_parquet(&self) -> PathBuf {
-        self.mdvs_dir().join("chunks.parquet")
-    }
-
-    fn write_index(
-        &self,
-        schema_fields: &[(String, FieldType)],
-        files: &[FileRow],
-        chunks: &[ChunkRow],
-        metadata: BuildMetadata,
-    ) -> anyhow::Result<()> {
-        std::fs::create_dir_all(self.mdvs_dir())?;
-
-        let files_batch = build_files_batch(schema_fields, files)?;
-        write_parquet_with_metadata(&self.files_parquet(), &files_batch, metadata.to_hash_map())?;
-
-        let dimension = chunks
-            .first()
-            .map(|c| c.embedding.len() as i32)
-            .unwrap_or(0);
-        let chunks_batch = build_chunks_batch(chunks, dimension)?;
-        write_parquet(&self.chunks_parquet(), &chunks_batch)?;
-
-        Ok(())
-    }
-
-    fn read_metadata(&self) -> anyhow::Result<Option<BuildMetadata>> {
-        if !self.files_parquet().exists() {
-            return Ok(None);
-        }
-        read_build_metadata(&self.files_parquet())
-            .context("reading build metadata from files.parquet")
-    }
-
-    fn read_file_index(&self) -> anyhow::Result<Vec<FileIndexEntry>> {
-        if !self.files_parquet().exists() {
-            return Ok(vec![]);
-        }
-        read_file_index(&self.files_parquet()).context("reading file index from files.parquet")
-    }
-
-    fn read_chunk_rows(&self) -> anyhow::Result<Vec<ChunkRow>> {
-        if !self.chunks_parquet().exists() {
-            return Ok(vec![]);
-        }
-        read_chunk_rows(&self.chunks_parquet()).context("reading chunk rows from chunks.parquet")
-    }
-
-    fn embedding_dimension(&self) -> anyhow::Result<Option<i32>> {
-        if !self.chunks_parquet().exists() {
-            return Ok(None);
-        }
-        let batches = read_parquet(&self.chunks_parquet())?;
-        if let Some(batch) = batches.first()
-            && let Ok(field) = batch.schema().field_with_name(COL_EMBEDDING)
-            && let DataType::FixedSizeList(_, dim) = field.data_type()
-        {
-            return Ok(Some(*dim));
-        }
-        Ok(None)
-    }
-
-    async fn search(
-        &self,
-        query_embedding: Vec<f32>,
-        where_clause: Option<&str>,
-        limit: usize,
-        internal_prefix: &str,
-        aliases: &std::collections::HashMap<String, String>,
-    ) -> anyhow::Result<Vec<SearchHit>> {
-        let sc = SearchContext::new(
-            &self.files_parquet(),
-            &self.chunks_parquet(),
-            query_embedding,
-            internal_prefix,
-            aliases,
-        )
-        .await?;
-
-        let where_part = match where_clause {
-            Some(w) => format!("AND {w}"),
-            None => String::new(),
-        };
-
-        // Resolve view names for internal columns used in the SQL JOIN.
-        // Chunks table uses raw parquet names; files_v uses aliased names.
-        let view_file_id = resolve_view_name(COL_FILE_ID, internal_prefix, aliases);
-        let view_filepath = resolve_view_name(COL_FILEPATH, internal_prefix, aliases);
-
-        let sql = format!(
-            "SELECT f.\"{view_filepath}\", sub.score, sub.{sl_col}, sub.{el_col}
-             FROM (
-                 SELECT c.{c_fid},
-                        cosine_similarity(c.{emb_col}) AS score,
-                        c.{sl_col},
-                        c.{el_col},
-                        ROW_NUMBER() OVER (
-                            PARTITION BY c.{c_fid}
-                            ORDER BY cosine_similarity(c.{emb_col}) DESC
-                        ) AS rn
-                 FROM chunks c
-             ) sub
-             JOIN files_v f ON sub.{c_fid} = f.\"{view_file_id}\"
-             WHERE sub.rn = 1
-             {where_part}
-             ORDER BY sub.score DESC
-             LIMIT {limit}",
-            emb_col = COL_EMBEDDING,
-            c_fid = COL_FILE_ID,
-            sl_col = COL_START_LINE,
-            el_col = COL_END_LINE,
-        );
-
-        let batches = sc.query(&sql).await?;
-
-        let mut hits = Vec::new();
-        for batch in &batches {
-            let filenames = batch
-                .column(0)
-                .as_any()
-                .downcast_ref::<StringViewArray>()
-                .ok_or_else(|| anyhow::anyhow!("unexpected type for filename column"))?;
-            let scores = batch
-                .column(1)
-                .as_any()
-                .downcast_ref::<Float64Array>()
-                .ok_or_else(|| anyhow::anyhow!("unexpected type for score column"))?;
-            let start_lines = batch
-                .column(2)
-                .as_any()
-                .downcast_ref::<Int32Array>()
-                .ok_or_else(|| anyhow::anyhow!("unexpected type for start_line column"))?;
-            let end_lines = batch
-                .column(3)
-                .as_any()
-                .downcast_ref::<Int32Array>()
-                .ok_or_else(|| anyhow::anyhow!("unexpected type for end_line column"))?;
-
-            for i in 0..batch.num_rows() {
-                hits.push(SearchHit {
-                    filename: filenames.value(i).to_string(),
-                    score: scores.value(i),
-                    start_line: if start_lines.is_null(i) {
-                        None
-                    } else {
-                        Some(start_lines.value(i))
-                    },
-                    end_line: if end_lines.is_null(i) {
-                        None
-                    } else {
-                        Some(end_lines.value(i))
-                    },
-                    chunk_text: None,
-                });
-            }
-        }
-
-        Ok(hits)
-    }
-
-    fn stats(&self) -> anyhow::Result<Option<IndexStats>> {
-        if !self.exists() {
-            return Ok(None);
-        }
-        let file_batches = read_parquet(&self.files_parquet())?;
-        let chunk_batches = read_parquet(&self.chunks_parquet())?;
-        let files_indexed: usize = file_batches.iter().map(|b| b.num_rows()).sum();
-        let chunks: usize = chunk_batches.iter().map(|b| b.num_rows()).sum();
-        Ok(Some(IndexStats {
-            files_indexed,
-            chunks,
-        }))
-    }
-
-    fn exists(&self) -> bool {
-        self.files_parquet().exists() && self.chunks_parquet().exists()
-    }
-
-    fn clean(&self) -> anyhow::Result<()> {
-        let dir = self.mdvs_dir();
-        if dir.exists() {
-            std::fs::remove_dir_all(&dir)?;
-        }
-        Ok(())
-    }
-}
-
-/// Lance + LanceDB backend (TODO-0016). One denormalized table at
-/// `.mdvs/index.lance/`: one row per chunk, file metadata duplicated inline.
 pub(crate) struct LanceBackend {
     root: PathBuf,
 }
@@ -498,6 +268,7 @@ impl LanceBackend {
                 COL_CHUNK_INDEX,
                 COL_START_LINE,
                 COL_END_LINE,
+                COL_CHUNK_TEXT,
                 COL_EMBEDDING,
             ]))
             .execute()
@@ -512,6 +283,7 @@ impl LanceBackend {
             let chunk_indices = i32_col(batch, COL_CHUNK_INDEX)?;
             let start_lines = i32_col(batch, COL_START_LINE)?;
             let end_lines = i32_col(batch, COL_END_LINE)?;
+            let chunk_texts = str_col(batch, COL_CHUNK_TEXT)?;
             let embeddings = batch
                 .column_by_name(COL_EMBEDDING)
                 .ok_or_else(|| anyhow::anyhow!("missing embedding column"))?
@@ -531,6 +303,7 @@ impl LanceBackend {
                     chunk_index: chunk_indices.value(i),
                     start_line: start_lines.value(i),
                     end_line: end_lines.value(i),
+                    chunk_text: chunk_texts.value(i).to_string(),
                     embedding,
                 });
             }
@@ -812,6 +585,7 @@ mod tests {
                 chunk_index: 0,
                 start_line: 1,
                 end_line: 4,
+                chunk_text: String::new(),
                 embedding: vec![0.9, 0.1, 0.0, 0.0],
             },
             ChunkRow {
@@ -820,6 +594,7 @@ mod tests {
                 chunk_index: 0,
                 start_line: 1,
                 end_line: 3,
+                chunk_text: String::new(),
                 embedding: vec![0.1, 0.9, 0.0, 0.0],
             },
         ]
