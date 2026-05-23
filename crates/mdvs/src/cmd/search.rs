@@ -1104,6 +1104,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn integration_array_float_filter_errors_not_panics() {
+        // A --where on an Array(Float) field used to panic/hang in lance-encoding
+        // (TODO-0159). The translator now refuses the reference with a clean
+        // error across all modes.
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("notes")).unwrap();
+        fs::write(
+            tmp.path().join("notes/a.md"),
+            "---\ntitle: A\nmeasurement_values: [0.5, 0.6, 0.7]\n---\n# A\nsome body content for chunking and embedding.",
+        )
+        .unwrap();
+        fs::write(
+            tmp.path().join("notes/b.md"),
+            "---\ntitle: B\n---\n# B\nanother document with different content.",
+        )
+        .unwrap();
+        init_and_build(tmp.path()).await;
+
+        for mode in [
+            SearchMode::Hybrid,
+            SearchMode::Fulltext,
+            SearchMode::Semantic,
+        ] {
+            let result = run(
+                tmp.path(),
+                "content",
+                10,
+                Some("measurement_values IS NOT NULL"),
+                mode,
+                true,
+                true,
+                false,
+            )
+            .await;
+            assert!(
+                crate::step::has_failed(&result),
+                "{mode:?} should fail with a clean error"
+            );
+            let dump = format!("{result:?}");
+            assert!(
+                dump.contains("Array(Float)"),
+                "{mode:?} should report the Array(Float) message: {dump}"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn integration_collision_surfaces_error() {
         // A frontmatter field named like an internal column, with no aliasing,
         // must surface the translator's collision error rather than silently

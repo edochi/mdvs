@@ -434,10 +434,13 @@ impl LanceBackend {
 
         let translated = match where_clause {
             Some(w) => {
-                let data_children = data_child_names(table.schema().await?.as_ref());
+                let schema = table.schema().await?;
+                let data_children = data_child_names(schema.as_ref());
+                let float_lists = float_list_child_names(schema.as_ref());
                 Some(translate_where_to_struct(
                     w,
                     &data_children,
+                    &float_lists,
                     internal_prefix,
                     aliases,
                 )?)
@@ -611,6 +614,7 @@ const SQL_KEYWORDS: &[&str] = &[
 fn translate_where_to_struct(
     clause: &str,
     data_children: &std::collections::HashSet<String>,
+    float_list_fields: &std::collections::HashSet<String>,
     internal_prefix: &str,
     aliases: &std::collections::HashMap<String, String>,
 ) -> anyhow::Result<String> {
@@ -665,6 +669,24 @@ fn translate_where_to_struct(
             {
                 out.push_str(stripped);
                 continue;
+            }
+
+            // Reject filters on Array(Float) fields up front — Lance panics on
+            // them (TODO-0159). The referenced field is `first`, or the segment
+            // after `data.` when the user pre-qualified.
+            let fm_name = if first == "data" {
+                chain.split('.').nth(1)
+            } else {
+                Some(first)
+            };
+            if let Some(name) = fm_name
+                && float_list_fields.contains(name)
+            {
+                return Err(anyhow::anyhow!(
+                    "filtering on Array(Float) field '{name}' is not supported in --where \
+                     (a LanceDB decode limitation). Filter on a different field or store the \
+                     values in a parallel scalar field."
+                ));
             }
 
             let is_reserved = RESERVED_COLS.contains(&first);
@@ -741,6 +763,29 @@ fn data_child_names(schema: &arrow::datatypes::Schema) -> std::collections::Hash
     {
         for child in children {
             names.insert(child.name().clone());
+        }
+    }
+    names
+}
+
+/// Top-level `data` Struct children that are lists of floats (`Array(Float)`,
+/// Arrow `List<Float*>`). Filtering on these via `--where` panics inside
+/// lance-encoding 6.0 (TODO-0159), so the translator rejects such references
+/// with a clean error instead of letting the search crash/hang.
+fn float_list_child_names(schema: &arrow::datatypes::Schema) -> std::collections::HashSet<String> {
+    let mut names = std::collections::HashSet::new();
+    if let Ok(field) = schema.field_with_name(crate::index::storage::COL_DATA)
+        && let DataType::Struct(children) = field.data_type()
+    {
+        for child in children {
+            if let DataType::List(item) | DataType::LargeList(item) = child.data_type()
+                && matches!(
+                    item.data_type(),
+                    DataType::Float16 | DataType::Float32 | DataType::Float64
+                )
+            {
+                names.insert(child.name().clone());
+            }
         }
     }
     names
@@ -960,6 +1005,7 @@ mod tests {
         translate_where_to_struct(
             clause,
             &fields(children),
+            &std::collections::HashSet::new(),
             "",
             &std::collections::HashMap::new(),
         )
@@ -990,6 +1036,7 @@ mod tests {
         let err = translate_where_to_struct(
             "file_id = 'x'",
             &fields(&["file_id"]),
+            &std::collections::HashSet::new(),
             "",
             &std::collections::HashMap::new(),
         )
@@ -1004,6 +1051,7 @@ mod tests {
         let out = translate_where_to_struct(
             "file_id = 'x' AND _file_id = 'y'",
             &fields(&["file_id"]),
+            &std::collections::HashSet::new(),
             "_",
             &std::collections::HashMap::new(),
         )
@@ -1283,6 +1331,7 @@ mod tests {
         let out = translate_where_to_struct(
             "file_id = 'x' AND fid = 'y'",
             &fields(&["file_id"]),
+            &std::collections::HashSet::new(),
             "",
             &aliases,
         )
@@ -1298,11 +1347,39 @@ mod tests {
     }
 
     #[test]
+    fn translate_where_array_float_field_is_rejected() {
+        // Filtering on an Array(Float) field would panic inside Lance — we
+        // refuse it up front with a clear message instead.
+        let float_lists: std::collections::HashSet<String> =
+            ["measurement_values".to_string()].into_iter().collect();
+        for clause in [
+            "measurement_values IS NOT NULL",
+            "array_has(measurement_values, 0.5)",
+            "data.measurement_values IS NULL",
+        ] {
+            let err = translate_where_to_struct(
+                clause,
+                &fields(&["measurement_values"]),
+                &float_lists,
+                "",
+                &std::collections::HashMap::new(),
+            )
+            .unwrap_err();
+            assert!(
+                err.to_string()
+                    .contains("Array(Float) field 'measurement_values'"),
+                "clause `{clause}` should produce the Array(Float) error, got: {err}"
+            );
+        }
+    }
+
+    #[test]
     fn translate_where_collision_only_on_matching_reserved_name() {
         // `filepath` frontmatter field collides; `title` does not — mixed clause
         let err = translate_where_to_struct(
             "filepath = 'a' AND title = 'b'",
             &fields(&["filepath", "title"]),
+            &std::collections::HashSet::new(),
             "",
             &std::collections::HashMap::new(),
         )
