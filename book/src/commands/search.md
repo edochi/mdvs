@@ -71,7 +71,7 @@ Array fields (via LanceDB's SQL array functions):
 mdvs search "calibration" --where "array_has(tags, 'biosensor')"
 ```
 
-`--where` clauses that reference `Array(Float)` fields are rejected up front with a clear error — that's a known LanceDB encoding limitation, not an mdvs choice (see TODO-0159).
+`--where` clauses that reference `Array(Float)` fields are rejected up front with a clear error. See the [Search Guide](../search-guide.md) for the full explanation and the workaround.
 
 Field names with spaces need double-quoting:
 

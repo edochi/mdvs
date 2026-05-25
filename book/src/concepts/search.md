@@ -79,6 +79,8 @@ When you run `mdvs search "query" example_kb`, LanceDB does the heavy lifting. T
 - **`fulltext`** — the query is tokenized and scored against the BM25 full-text index on `chunk_text`. No model load needed.
 - **`hybrid`** — both of the above run in parallel and their result lists are combined by LanceDB's Reciprocal Rank Fusion reranker. Default mode because it tolerates queries that are either keyword-y or fuzzy.
 
+For guidance on which mode to reach for, see [Search Modes](./search-modes.md).
+
 After LanceDB returns ranked chunk rows, mdvs deduplicates to the **best chunk per file** (a file with one highly relevant section ranks above a file with uniformly mediocre content) and then trims to `--limit` (default 10). LanceDB is asked for `limit × 3` candidates to make sure dedupe has enough material to work with.
 
 ### Scores

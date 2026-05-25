@@ -4,7 +4,7 @@ The `--where` flag on [search](./commands/search.md) lets you filter results by 
 
 Under the hood, mdvs hands the clause to [LanceDB](https://lancedb.com/)'s SQL filter, which is built on top of DataFusion — so any expression valid in DataFusion's SQL dialect works in `--where`.
 
-> **Limitation.** `--where` clauses that reference an `Array(Float)` field (e.g. `measurement_values`) are rejected up front. This is a known LanceDB encoding panic, not an mdvs choice — see [TODO-0159](https://github.com/edochi/mdvs/blob/main/docs/spec/todos/TODO-0159.md). Filter on a scalar field or a parallel array of strings instead.
+> **Limitation.** `--where` clauses that reference an `Array(Float)` field (e.g. `measurement_values`) are rejected up front, because the underlying search engine can't safely decode them and crashes on read. mdvs catches this before the query runs and returns a clear error. Filter on a scalar field, or store the data as a parallel array of strings, instead.
 
 ## Scalar fields
 

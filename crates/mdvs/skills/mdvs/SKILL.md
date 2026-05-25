@@ -111,7 +111,7 @@ mdvs search "<query>" [path] [--mode <mode>] [--where "<SQL>"] [--limit N] [-v]
 - `--no-build` — skip auto-build, fail if no index exists
 - `--no-update` — skip auto-update before building
 
-`--where` clauses on `Array(Float)` fields are rejected up front (a known LanceDB encoding limitation; see TODO-0159).
+`--where` clauses on `Array(Float)` fields are rejected up front with a clear error. The workaround is to filter on a scalar field, or store the data as a parallel array of strings.
 
 #### `--where` filter examples
 
