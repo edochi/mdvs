@@ -683,9 +683,8 @@ fn translate_where_to_struct(
                 && float_list_fields.contains(name)
             {
                 return Err(anyhow::anyhow!(
-                    "filtering on Array(Float) field '{name}' is not supported in --where \
-                     (a LanceDB decode limitation). Filter on a different field or store the \
-                     values in a parallel scalar field."
+                    "filtering on Array(Float) field '{name}' is not supported in --where. \
+                     Filter on a different field or store the values in a parallel scalar field."
                 ));
             }
 

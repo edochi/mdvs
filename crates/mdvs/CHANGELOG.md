@@ -2,6 +2,48 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## v0.6.0 - 2026-05-25
+#### Features
+- (**cli**) expose --version via clap - (f12bff1) - edoch
+- (**index**) persist chunk_text; collapse Backend to Lance; arrow migration - (f3f9b61) - edoch
+- (**index**) add LanceBackend storage + build (TODO-0016 wave 1) - (cbcd4fb) - edoch
+- (**search**) support scalar functions in --where clauses - (4b09fc9) - edoch
+- (**search**) native LanceDB search with semantic/fulltext/hybrid modes - (6701f8c) - edoch
+#### Bug Fixes
+- (**search**) reject Array(Float) --where to prevent lance-encoding panic/hang - (7446289) - edoch
+- (**search**) handle --limit 0 gracefully - (c9b503e) - edoch
+- (**search**) hybrid zero-results and fields named date/timestamp - (d4e5329) - edoch
+#### Documentation
+- (**assets**) narrate the demo with inline captions and trim trailing exit - (f30f3e6) - edoch
+- (**assets**) rewrite demo to 5-act storyboard with tiny multi-folder kb - (deca8c5) - edoch
+- (**assets**) add scripted asciinema demo - (0ffd62f) - edoch
+- (**readme**) restructure landing — tagline, nav, walkthrough, dedupe intro - (a3072d9) - edoch
+- (**readme**) embed demo gif under the use-case paragraph - (8eaa95e) - edoch
+- (**spec**) TODO-0159 — isolate panic to Arrow Buffer memory layout - (d171928) - edoch
+- (**spec**) record TODO-0159 lance-bump test outcome - (a692dc8) - edoch
+- (**spec**) add TODO-0159 — --where on Array(Float) field panics in lance - (786835a) - edoch
+- (**spec**) add TODO-0158 for quoted/special-char field names in --where - (c911b36) - edoch
+- (**spec**) correct TODO-0016 wave 2 — cosine IVF-PQ, snippet source, collisions - (08ced2a) - edoch
+- (**spec**) refine TODO-0016 wave 1 — async detail, enum-not-trait, deferrals - (647fc1c) - edoch
+- (**spec**) fold lancedb spike findings into TODO-0016 - (b960d7e) - edoch
+- (**spec**) add TODO-0157 for incremental ANN index optimize - (e5bfc97) - edoch
+- (**spec**) rewrite TODO-0016 as Lance + LanceDB full swap with hybrid search - (92bba1a) - edoch
+- add search modes concept page + soften Array(Float) messaging - (36db294) - edoch
+- post-TODO-0016 truth pass + close out TODO-0016 - (5989d98) - edoch
+- add Date and DateTime --where examples to search guide - (318d76e) - edoch
+#### Tests
+- (**search**) exhaustive --where translator + Lance search integration tests - (9975087) - edoch
+#### Continuous Integration
+- install protoc + allow CC0 and lance's unmaintained transitives - (50b796e) - edoch
+#### Refactoring
+- (**index**) remove the dead Parquet/DataFusion stack - (c520b7a) - edoch
+#### Miscellaneous Chores
+- (**scripts**) TODO-0159 reproducer — minimal lancedb code that panics - (7aa67fc) - edoch
+- (**scripts**) side-by-side List<Float64> filter — DataFusion vs Lance - (92ddd34) - edoch
+- (**scripts**) add lancedb de-risking spikes for TODO-0016 - (66331ca) - edoch
+
+- - -
+
 ## v0.5.1 - 2026-05-14
 #### Bug Fixes
 - (**release**) atomic-ish bump — publish before push, idempotent - (2838676) - edoch

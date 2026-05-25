@@ -132,7 +132,7 @@ The tables are identical in both modes — verbose only adds the step lines show
 | Code | Meaning |
 |---|---|
 | `0` | Success (including when no index exists) |
-| `2` | Pipeline error (missing config, parquet read failure) |
+| `2` | Pipeline error (missing config, Lance dataset read failure) |
 
 ## Errors
 

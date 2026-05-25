@@ -142,30 +142,33 @@ Beyond your frontmatter fields, the search index stores bookkeeping columns that
 |---|---|
 | `filepath` | Relative file path (e.g., `blog/post.md`) |
 | `file_id` | Unique identifier for each file |
+| `chunk_text` | The plain-text body of each chunk (useful for `--where "chunk_text LIKE '%foo%'"`) |
 | `content_hash` | Hash of the file body |
 | `built_at` | Timestamp of last build |
 
-By default, these are exposed with their raw names:
+(Other columns — `chunk_id`, `chunk_index`, `start_line`, `end_line`, `embedding` — exist too but are rarely useful in `--where`.)
+
+By default, these are referenced by their raw names:
 
 ```bash
 --where "filepath LIKE 'blog/%'"
 ```
 
-If a frontmatter field name collides with an internal column (e.g., you have a field called `filepath`), search will error and suggest resolutions:
+If a frontmatter field name collides with an internal column name (e.g., you have a field called `filepath`), the search command will error and suggest resolutions:
 
-1. **Set a prefix** to namespace all internal columns:
+1. **Set a prefix** so internal columns are addressed with a leading marker in `--where`:
    ```toml
    [search]
    internal_prefix = "_"
    ```
-   Internal columns become `_filepath`, `_file_id`, etc.
+   Now `_filepath`, `_file_id`, etc. refer to the internal columns in `--where` clauses, leaving the bare `filepath` free to mean your frontmatter field. (The on-disk column names don't change — only how the `--where` translator interprets them.)
 
-2. **Set a per-column alias** to rename just the colliding column:
+2. **Set a per-column alias** to rename just the colliding column in `--where`:
    ```toml
    [search.aliases]
    filepath = "path"
    ```
-   The internal column becomes `path`, your frontmatter `filepath` stays bare.
+   Now `path` refers to the internal `filepath` column, and bare `filepath` refers to your frontmatter field.
 
 3. **Rename the frontmatter field** in your markdown files.
 

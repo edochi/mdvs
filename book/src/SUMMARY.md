@@ -11,6 +11,7 @@
   - [Validation](./concepts/validation.md)
   - [Constraints](./concepts/constraints.md)
   - [Search & Indexing](./concepts/search.md)
+  - [Search Modes](./concepts/search-modes.md)
 
 - [Commands](./commands.md)
   - [init](./commands/init.md)

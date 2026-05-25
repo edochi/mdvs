@@ -63,7 +63,7 @@ refactor(search)!: change result struct shape
 feat: add enum constraints on string fields
 fix(build): track removed chunk counts correctly
 docs: add cocogitto setup guide
-chore(deps): bump datafusion to 53
+chore(deps): bump lancedb to 0.29
 refactor: extract validate() from check command
 ci: add GitHub Actions CI workflow
 test(init): add verbose output tests

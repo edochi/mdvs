@@ -7,9 +7,9 @@ Developer map of the mdvs codebase. For user-facing documentation see the [mdBoo
 mdvs has two layers:
 
 - **Validation layer** (init, update, check) — scans markdown, infers schema, validates frontmatter. No model needed. Operates on `mdvs.toml`.
-- **Search layer** (build, search) — chunks markdown, embeds text, stores in Parquet, queries with cosine similarity. Requires an embedding model. Operates on `.mdvs/`.
+- **Search layer** (build, search) — chunks markdown, embeds text, stores in a single Lance dataset, queries via LanceDB's native search (semantic / fulltext / hybrid). Requires an embedding model. Operates on `.mdvs/`.
 
-`mdvs.toml` is the single source of truth for schema. There is no lock file. Build metadata (model identity, chunk size) is stored in Parquet native key-value metadata.
+`mdvs.toml` is the single source of truth for schema. There is no lock file. Build metadata (model identity, chunk size, schema hash) is stored as Lance table-level key-value metadata.
 
 ```mermaid
 graph LR
@@ -43,10 +43,9 @@ graph LR
     sf --> validate
     sf --> chunk["chunk\n(text-splitter)"]
     chunk --> embed["embed\n(model2vec)"]
-    embed --> pq["Parquet\n(files + chunks)"]
-    pq --> cosine["cosine similarity"]
-    cosine --> df["DataFusion SQL"]
-    df --> hits[SearchHit]
+    embed --> lance["Lance dataset\n(.mdvs/index.lance/)"]
+    lance --> ldb["LanceDB query\n(vector / FTS / hybrid)"]
+    ldb --> hits[SearchHit]
 ```
 
 Pipeline stages with the key type at each boundary:
@@ -60,8 +59,8 @@ Pipeline stages with the key type at each boundary:
 7. **Validation** — translate via `dsl_to_canonical`, compile per-field `jsonschema::Validator`, run Stage 2 preprocessors, validate, map errors → `Vec<FieldViolation>` (`cmd/check.rs`)
 8. **Chunking** — semantic markdown splitting with line ranges → `Chunks` (`index/chunk.rs:20`)
 9. **Embedding** — plain text → dense vector via model2vec → `Vec<f32>` (`index/embed.rs:34`)
-10. **Storage** — write Arrow RecordBatches to Parquet → `files.parquet` + `chunks.parquet` (`index/storage.rs`)
-11. **Search** — embed query, register DataFusion tables, cosine UDF, SQL JOIN/filter → `Vec<SearchHit>` (`index/backend.rs:18`)
+10. **Storage** — build one Arrow RecordBatch per build, hand to `lancedb::create_table` → single `.mdvs/index.lance/` dataset (one row per chunk) (`index/storage.rs`, `index/backend.rs`)
+11. **Search** — `SearchMode`-dispatched LanceDB query (`nearest_to` / `full_text_search` / hybrid + RRF reranker) with `--where` translated to LanceDB's SQL filter; best-chunk-per-file dedupe in Rust → `Vec<SearchHit>` (`index/backend.rs`)
 
 ## Module Tree
 
@@ -74,13 +73,13 @@ src/
 ├── output.rs                           — output types (ViolationKind, FieldViolation, DiscoveredField, ChangedField, FieldHint)
 ├── render.rs                           — format_text() and format_markdown() consuming Vec<Block>
 ├── table.rs                            — tabled helpers (style_compact, style_record, term_width)
-├── search.rs                           — SearchContext, CosineSimilarityUDF, DataFusion view creation
+├── search.rs                           — SearchMode enum, per-mode score column resolution, collision detection
 │
 ├── cmd/
 │   ├── init.rs                         — scan → infer → write config (or import via --from-jsonschema)
 │   ├── check.rs                        — validate frontmatter via jsonschema, ViolationKey grouping
 │   ├── update.rs                       — re-scan, reinfer subcommand, ReinferArgs, categorical flags
-│   ├── build.rs                        — check → classify → embed → write parquets
+│   ├── build.rs                        — check → classify → embed → write Lance dataset
 │   ├── search.rs                       — load model → embed query → execute search
 │   ├── info.rs                         — show config + index status
 │   ├── clean.rs                        — delete .mdvs/
@@ -114,8 +113,8 @@ src/
 ├── index/
 │   ├── chunk.rs                        — Chunk, Chunks::new() (text-splitter + pulldown-cmark)
 │   ├── embed.rs                        — ModelConfig, Embedder (model2vec-rs), cosine_similarity()
-│   ├── storage.rs                      — Parquet I/O, column constants, FileRow, ChunkRow, BuildMetadata
-│   └── backend.rs                      — Backend enum (ParquetBackend), SearchHit, IndexStats
+│   ├── storage.rs                      — Arrow batch construction, column constants, ChunkRow, BuildMetadata
+│   └── backend.rs                      — Backend enum (LanceBackend), --where translator, SearchHit, IndexStats
 │
 └── outcome/
     ├── mod.rs                          — Outcome enum (one variant per step/command)
@@ -168,14 +167,14 @@ src/
 | `Chunks` | `index/chunk.rs:20` | Newtype wrapping `Vec<Chunk>`, created via `::new()` |
 | `ModelConfig` | `index/embed.rs:9` | Resolved model config (enum: Model2Vec variant) |
 | `Embedder` | `index/embed.rs:34` | Loaded model (enum: Model2Vec(StaticModel)) |
-| `FileRow` | `index/storage.rs:75` | Row for files.parquet (file_id, filepath, data, hash, built_at) |
-| `ChunkRow` | `index/storage.rs:89` | Row for chunks.parquet (chunk_id, file_id, index, lines, embedding) |
-| `BuildMetadata` | `index/storage.rs:109` | Build config stored in Parquet metadata |
-| `FileIndexEntry` | `index/storage.rs:432` | Lightweight projected read for incremental classification |
-| `Backend` | `index/backend.rs:41` | Storage backend enum (ParquetBackend variant) |
-| `SearchHit` | `index/backend.rs:18` | Query result: filename, score, chunk lines, text |
-| `SearchContext` | `search.rs:135` | DataFusion session with tables, view, and cosine UDF |
-| `CosineSimilarityUDF` | `search.rs:20` | Custom UDF capturing query vector |
+| `ChunkRow` | `index/storage.rs` | Per-chunk row built from a `Chunk` + its file's `FileRow` data + embedding |
+| `FileRow` | `index/storage.rs` | Per-file frontmatter snapshot (filepath, data Struct, content_hash, built_at) — duplicated onto each of that file's chunk rows |
+| `BuildMetadata` | `index/storage.rs` | Build config stored as Lance table-level kv metadata |
+| `FileIndexEntry` | `index/storage.rs` | Lightweight projected read for incremental classification (file_id, filepath, content_hash) |
+| `Backend` | `index/backend.rs` | Storage backend enum (only `Lance` variant) |
+| `LanceBackend` | `index/backend.rs` | LanceDB connection + `write_index` + `search` (mode-dispatched) + `--where` translator |
+| `SearchMode` | `search.rs` | `Semantic` / `Fulltext` / `Hybrid` (default `Hybrid`) |
+| `SearchHit` | `index/backend.rs` | Query result: filename, score, chunk lines, text |
 
 ### Output & Rendering
 
@@ -197,10 +196,11 @@ src/
 mdvs uses enum-based dispatch instead of trait objects for all runtime polymorphism. Key enums:
 
 - `FieldType` — type system (6 variants)
-- `Backend` — storage backend (1 variant: Parquet; LanceDB planned)
+- `Backend` — storage backend (1 variant: `Lance`)
 - `Embedder` / `ModelConfig` — embedding provider (1 variant: Model2Vec; Ollama planned)
 - `ConstraintKind` — constraint behavior (4 variants: Categories, Range, Length, Pattern)
 - `ValueStage` — Stage 2 preprocessors (2 variants: CoerceToString, WidenIntToFloat; more planned)
+- `SearchMode` — search dispatch (3 variants: Semantic, Fulltext, Hybrid; default Hybrid)
 - `Outcome` — step/command results (~20 variants)
 - `Block` — rendering IR (3 variants)
 
@@ -346,7 +346,7 @@ type = "Float"
 |---|---|---|
 | `mdvs.toml` | Flat list of dotted-name leaves | Per-leaf nullability, per-leaf path-scoping, readable in plain TOML |
 | Canonical JSON Schema (`dsl_to_canonical`) | Nested `properties` tree | Standard JSON Schema; what `jsonschema::Validator` consumes |
-| Arrow `data` Struct column (`storage.rs::build_files_batch`) | Nested Struct mirroring the YAML | DataFusion's SQL dot-access (`WHERE cal.baseline.wave > 800`) works natively |
+| Arrow `data` Struct column (built in `storage.rs`) | Nested Struct mirroring the YAML | LanceDB's SQL dot-access (`WHERE data.calibration.baseline.wavelength > 800`) works natively |
 | Source YAML frontmatter | Naturally nested | Unchanged |
 
 The translator (`dsl_to_canonical`) reconstructs the nested shape from dotted names; `canonical_to_dsl` reverses it. Storage transposes the flat list back into a synthetic `FieldType::Object` tree before building Arrow arrays. Validation navigates frontmatter via dotted paths (`navigate_dotted` in `cmd/check.rs`).
@@ -385,41 +385,44 @@ Every command in `main.rs` follows the same dispatch pattern: call `run()`, chec
 
 Build uses content hashing to avoid re-embedding unchanged files (`cmd/build.rs`):
 
-1. **Hash** — `content_hash()` at `index/storage.rs:70` uses xxh3 on the markdown body (after frontmatter extraction)
-2. **Classify** — compare scanned files against `FileIndexEntry` from existing `files.parquet`:
+1. **Hash** — `content_hash()` in `index/storage.rs` uses xxh3 on the markdown body (after frontmatter extraction)
+2. **Classify** — compare scanned files against `FileIndexEntry` projected from the existing Lance dataset:
    - **New** — no previous entry
    - **Edited** — hash differs
    - **Unchanged** — hash matches
    - **Removed** — in index but not in scan
 3. **Skip model** — if no files need embedding, model loading is skipped entirely
-4. **Merge** — retained chunks from unchanged files are combined with new chunks at write time
+4. **Rebuild** — the Lance table is rewritten with the combined set of retained + new chunks (`CreateTableMode::Overwrite`)
 5. **Force** — `--force` triggers full rebuild. Config changes (model, chunk size, prefix) also require `--force`
 
 ## Storage Layout
 
 ```
 .mdvs/
-  files.parquet     — one row per markdown file
-  chunks.parquet    — one row per chunk
+  index.lance/      — Lance dataset, one row per chunk, plus FTS + (optionally) vector indexes
 ```
 
-**files.parquet** columns: `_file_id` (Utf8), `_filepath` (Utf8), `_data` (Struct — children are frontmatter fields), `_content_hash` (Utf8), `_built_at` (Timestamp). Column constants at `index/storage.rs:26-44`.
+**Chunk row columns**: `chunk_id` (Utf8), `file_id` (Utf8), `chunk_index` (Int32), `start_line` (Int32), `end_line` (Int32), `chunk_text` (Utf8 — persisted so FTS can index it and verbose snippets read it directly), `embedding` (FixedSizeList<Float32, dim>), `filepath` (Utf8), `content_hash` (Utf8), `data` (Struct — children are frontmatter fields), `built_at` (Timestamp). Column constants at `index/storage.rs`.
 
-**chunks.parquet** columns: `_chunk_id` (Utf8), `_file_id` (Utf8), `_chunk_index` (Int32), `_start_line` (Int32), `_end_line` (Int32), `_embedding` (FixedSizeList<Float32>).
+**Indexes inside the dataset**: a BM25 inverted index on `chunk_text` is created at every build. A cosine IVF-PQ vector index on `embedding` is created only above `VECTOR_INDEX_MIN_ROWS = 10_000`; smaller vaults rely on LanceDB's exact flat scan.
 
-**Build metadata** — stored in Parquet native key-value metadata on `files.parquet` (not a separate file). Keys prefixed `mdvs.`. Composed of `EmbeddingModelConfig` + `ChunkingConfig` + `internal_prefix`. Comparisons via `PartialEq` on `BuildMetadata` (`index/storage.rs:109`).
+**Build metadata** — stored as Lance table-level kv metadata. Keys prefixed `mdvs.`. Composed of `EmbeddingModelConfig` + `ChunkingConfig` + `internal_prefix` + `schema_hash` + `built_at` + `glob`. Comparisons via `PartialEq` on `BuildMetadata` (`index/storage.rs`).
 
-**Internal prefix** — all Parquet column names are prefixed with `internal_prefix` (default `_`). Configurable in `[search]`. Changing prefix requires `--force` rebuild.
+**Internal prefix** — kept for forward compatibility but currently a no-op since LanceDB column names match the constants directly. Configurable in `[search]`. Changing prefix requires `--force` rebuild.
 
 ## Search Execution
 
-Search uses DataFusion for SQL query execution (`search.rs`):
+Search dispatches on `SearchMode` (`search.rs`) and delegates to LanceDB (`index/backend.rs`):
 
-1. **Register tables** — `files.parquet` and `chunks.parquet` registered as DataFusion tables
-2. **Create view** — `files_v` view promotes `_data` Struct children to top-level columns (e.g., `_data['title'] AS title`), applies aliases from `[search.aliases]`
-3. **Cosine UDF** — `CosineSimilarityUDF` (`search.rs:20`) captures the query embedding at creation time, operates on `FixedSizeList<Float32>` chunk embeddings
-4. **SQL** — JOINs `files_v` with `chunks`, computes `cosine_similarity(_embedding)`, applies user `--where` clause, groups by file (max chunk score), orders by score DESC, limits results
-5. **Note-level ranking** — results are per-file, scored by the best chunk similarity (not average)
+1. **Translate `--where`** — the clause is rewritten so bare frontmatter field names get a `data.` prefix (`translate_where_to_struct`); scalar SQL function calls are left as-is; `Array(Float)` field references early-error (TODO-0159).
+2. **Build the query** — `lancedb::table.query()` plus:
+   - **Semantic** — `.nearest_to(query_embedding).distance_type(Cosine)`
+   - **Fulltext** — `.full_text_search(FullTextSearchQuery::new(query))`
+   - **Hybrid** — both of the above + `.rerank(RrfReranker::default())`
+   - All modes apply `.only_if(<translated where>)` if a filter was given and `.limit(limit × OVER_FETCH_FACTOR)` where `OVER_FETCH_FACTOR = 3`.
+3. **Consume the stream** — collect chunk rows with their per-mode score column (`_distance` → `1 - d`, `_score`, or `_relevance_score`).
+4. **Best-chunk-per-file dedupe** — runs in Rust after the stream completes; the over-fetch factor compensates for chunks lost to dedupe. Final list is trimmed to `--limit`.
+5. **Verbose snippet** — read directly from the persisted `chunk_text` column on the winning row (no second file read).
 
 ## Config Validation
 
@@ -442,7 +445,9 @@ All invariants bail on first error via `anyhow::bail!()`.
 | Crate | Purpose |
 |-------|---------|
 | `clap` | CLI parsing (derive mode) |
-| `datafusion` | SQL query engine, re-exports `arrow` + `parquet` |
+| `lancedb` + `lance-index` | Storage + native vector / FTS / hybrid search |
+| `arrow` | In-memory columnar format (batches handed to LanceDB) |
+| `futures` | Stream consumption from LanceDB query results |
 | `gray_matter` | YAML frontmatter extraction |
 | `jsonschema` | JSON Schema 2020-12 per-value validator (Wave B engine) |
 | `tomljson` | Workspace crate: lossless TOML↔JSON for schema loading (`.toml` JSON Schemas) |
@@ -454,6 +459,6 @@ All invariants bail on first error via `anyhow::bail!()`.
 | `tabled` | Box-drawing table rendering |
 | `tracing` + `tracing-tree` | Structured stderr logging |
 | `xxhash-rust` | Content hashing (xxh3) for incremental build |
-| `tokio` | Async runtime (required by DataFusion) |
+| `tokio` | Async runtime (required by LanceDB) |
 | `serde` + `toml` + `serde_json` | Serialization (TOML config, JSON frontmatter) |
 | `anyhow` | Error handling |
