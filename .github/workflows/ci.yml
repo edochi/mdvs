@@ -15,6 +15,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+      # `lance-encoding`'s build.rs invokes `prost-build`, which needs `protoc`
+      # on PATH. Ubuntu runners don't ship it by default.
+      - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - uses: Swatinem/rust-cache@v2
       - run: cargo build
       - run: cargo test

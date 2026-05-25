@@ -13,6 +13,9 @@ ignore = [
     # Transitive deps from model2vec-rs — unmaintained but no security issue
     { id = "RUSTSEC-2024-0436", reason = "paste is a transitive dep via tokenizers/parquet, no replacement available" },
     { id = "RUSTSEC-2025-0119", reason = "number_prefix is a transitive dep via indicatif/model2vec-rs" },
+    # Transitive deps from lancedb — unmaintained but no security issue
+    { id = "RUSTSEC-2025-0141", reason = "bincode 1.x is unmaintained; pulled in transitively via lance for legacy serialization" },
+    { id = "RUSTSEC-2021-0153", reason = "encoding is unmaintained; pulled in via lance-tokenizer → lindera dictionaries (CJK encodings)" },
 ]
 
 # -- Licenses ----------------------------------------------------------
@@ -31,6 +34,11 @@ allow = [
     "Zlib",
     "MPL-2.0",
     "CDLA-Permissive-2.0",
+    # CC0 is a public-domain dedication, used by lindera dictionary index
+    # crates (encoding-index-japanese / -korean / -simpchinese / -singlebyte
+    # / -tradchinese) that are pulled in transitively via
+    # lancedb → lance → lance-tokenizer → lindera.
+    "CC0-1.0",
 ]
 confidence-threshold = 0.8
 exceptions = [
