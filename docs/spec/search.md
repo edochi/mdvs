@@ -2,113 +2,86 @@
 
 Deep-dive into the search pipeline. For the module map see [architecture.md](./architecture.md).
 
-Search wires DataFusion, a custom cosine similarity UDF, and a view that promotes frontmatter fields for bare-name SQL access. Key files: `search.rs` (context + UDF), `index/backend.rs` (query execution + result assembly).
+Search delegates to LanceDB. mdvs's role is: translate the query and the optional `--where` clause into a LanceDB query, dispatch on `SearchMode`, deduplicate to the best chunk per file. Key files: `search.rs` (mode enum, score-column resolution), `index/backend.rs` (`LanceBackend::search`, the `--where` translator).
 
-## SearchContext
+## SearchMode
 
-`SearchContext` at `search.rs:135` wraps a DataFusion `SessionContext` with registered tables, a cosine UDF, and a `files_v` view.
+`SearchMode` (`search.rs`):
 
-### Initialization (`SearchContext::new()` at `search.rs:139`)
+| Variant | Score column on result rows | What runs |
+|---|---|---|
+| `Semantic` | `_distance` (mapped to `1 - d`) | `.nearest_to(query_embedding).distance_type(Cosine)` |
+| `Fulltext` | `_score` | `.full_text_search(FullTextSearchQuery::new(query))` |
+| `Hybrid` (default) | `_relevance_score` | both of the above + `.rerank(RrfReranker::default())` |
 
-1. **Register parquet tables** — `files` and `chunks` from `.mdvs/`
-2. **Register UDF** — `CosineSimilarityUDF` capturing the query embedding vector
-3. **Read data Struct schema** — extract child field names from the `data` column in `files` table. These are the frontmatter fields that will be promoted.
-4. **Resolve internal column names** — for each internal column (`file_id`, `filepath`, `content_hash`, `built_at`), apply `resolve_view_name(col, prefix, aliases)`:
-   - If alias exists for this column → use alias
-   - Else if `internal_prefix` is non-empty → use `prefix + col`
-   - Else → use raw column name
-5. **Collision detection** — if any resolved internal name matches a frontmatter field name, bail with an error suggesting prefix or alias resolution
-6. **Create `files_v` view** — SQL view that promotes `data` Struct children to top-level columns:
-   ```sql
-   CREATE VIEW files_v AS
-   SELECT _file_id, _filepath, _content_hash, _built_at, data,
-          data['title'] AS "title",
-          data['status'] AS "status",
-          ...
-   FROM files
-   ```
-   Special character escaping: single quotes doubled in accessor (`data['author''s_note']`), double quotes doubled in alias (`AS "author""s_note"`).
+The CLI flag `--mode {semantic,fulltext,hybrid}` selects the variant; the default is `Hybrid`. `Semantic` and `Hybrid` require the embedding model to be loaded; `Fulltext` does not.
 
-## Cosine Similarity UDF
+## --where translation
 
-`CosineSimilarityUDF` at `search.rs:20` implements DataFusion's `ScalarUDFImpl`:
+`translate_where_to_struct` (`index/backend.rs`) rewrites the user clause so that:
 
-- **Input**: `FixedSizeList<Float32>` (chunk embeddings column)
-- **Output**: `Float64` (similarity score)
-- **Captured state**: query vector (`Vec<f32>`) — fixed at UDF creation, same for all rows
+- Bare frontmatter field names get a `data.` prefix (so `status = 'active'` becomes `data.status = 'active'`).
+- Identifiers immediately followed by `(` are treated as **function calls**, not field names — `lower(status)` is rewritten to `lower(data.status)`, not `data.lower(...)`.
+- Internal columns (`chunk_text`, `start_line`, `end_line`, `embedding`, …) are left bare.
+- **References to `Array(Float)` field names produce an early error** with a clear message, before LanceDB sees the clause. This is the TODO-0159 mitigation — see the upstream draft at `docs/spec/todos/TODO-0159-upstream-draft.md`.
+- Date and timestamp literal keywords (`DATE '...'`, `TIMESTAMP '...'`) are protected from prefix injection by a literal-aware tokenizer.
 
-### Computation (`invoke_with_args()`)
+The translator is schema-aware: it loads the `data` Struct's child names + types from the Lance table schema once per `search()` call, via `float_list_child_names(schema)` for the Array(Float) guard and the full child-name set for prefixing.
 
-For each row in the embeddings column:
-1. If row is null → return NULL
-2. Extract float array from FixedSizeList
-3. Compute: `dot = Σ(embed[j] * query[j])`, `row_norm = √(Σ embed[j]²)`
-4. Query norm precomputed once: `query_norm = √(Σ query[j]²)`
-5. If either norm is 0.0 → return 0.0 (avoids NaN)
-6. Else → return `dot / (query_norm * row_norm)` as f64
+## Query execution (`LanceBackend::search`)
 
-Result range: [-1.0, 1.0] for normalized vectors.
+`index/backend.rs::LanceBackend::search(mode, query, query_embedding, where_clause, limit)`:
 
-## Query Structure
+1. **Open the table** — `conn.open_table("index")`.
+2. **Build the query** — `table.query()` plus the mode-specific clauses listed in the `SearchMode` table above.
+3. **Filter** — `.only_if(<translated where>)` if `where_clause` is `Some`.
+4. **Over-fetch** — `.limit(limit.saturating_mul(OVER_FETCH_FACTOR))` with `OVER_FETCH_FACTOR = 3`. This compensates for chunks that will be dropped by the best-chunk-per-file dedupe step.
+5. **Stream** — `.execute().await?` yields a `RecordBatchStream`; `try_collect()` materialises all batches.
+6. **Limit-zero short circuit** — if the caller asked for `limit == 0` we return `Ok(vec![])` before reaching LanceDB, so the user sees no results instead of a cryptic "k must be positive" error.
 
-Generated SQL in `ParquetBackend::search()` at `index/backend.rs`:
+## Score column resolution
 
-```sql
-SELECT f."_filepath",
-       sub.score,
-       sub.start_line,
-       sub.end_line
-FROM (
-    SELECT c.file_id,
-           cosine_similarity(c.embedding) AS score,
-           c.start_line,
-           c.end_line,
-           ROW_NUMBER() OVER (
-               PARTITION BY c.file_id
-               ORDER BY cosine_similarity(c.embedding) DESC
-           ) AS rn
-    FROM chunks c
-) sub
-JOIN files_v f ON sub.file_id = f."_file_id"
-WHERE sub.rn = 1
-  [AND <user_where_clause>]
-ORDER BY sub.score DESC
-LIMIT <limit>
-```
+Each mode produces a different score column on the result rows. `resolve_score_column(mode)` (`search.rs`) returns the constant column name; for `Semantic` the raw value is `_distance` (smaller = closer), which the result-reader maps to `1.0 - d` so callers see "higher is better" uniformly across modes.
 
-### Key design points
+## Best-chunk-per-file dedupe
 
-**Note-level ranking** — `ROW_NUMBER() OVER (PARTITION BY file_id ORDER BY score DESC)` with `WHERE rn = 1` selects the best chunk per file. Results are per-file, scored by their best chunk — not average. Rationale: a file with one highly relevant paragraph should rank above a file with many mediocre ones.
+Results come back per-chunk. mdvs collapses them in Rust:
 
-**WHERE clause injection** — the user's `--where` clause is appended with `AND` after `sub.rn = 1`. It operates on `files_v` columns, so bare frontmatter field names work (`status = 'draft'`). No sanitization beyond DataFusion's SQL parser — the clause is passed as-is.
+1. Iterate the streamed rows in their LanceDB-returned order (already ranked by the mode's score).
+2. Insert into a `HashMap<file_id, SearchHit>`, keeping the highest-scored chunk per file.
+3. Sort the resulting hits by score descending and truncate to `--limit`.
 
-**Verbose mode** — when verbose, the `cmd/search.rs` command reads the best chunk's text from the source file using `start_line`/`end_line`. This is a separate file read, not from Parquet.
+The over-fetch factor (×3) ensures that even when many of the top-ranked chunks come from a single file, we still have enough candidates from other files to fill the requested limit.
+
+## Verbose snippet
+
+In verbose mode `cmd/search.rs` reads the best chunk's text directly from the `chunk_text` column on the winning row. No second file read is needed — `chunk_text` is persisted on the index for exactly this purpose (and for the FTS index to operate on).
 
 ## Result Assembly
 
-`SearchHit` at `index/backend.rs:18`:
+`SearchHit` (`index/backend.rs`):
 
 ```rust
 pub struct SearchHit {
-    pub filename: String,           // from files_v._filepath
-    pub score: f64,                 // from cosine_similarity()
-    pub start_line: Option<i32>,    // best chunk's start (1-based)
-    pub end_line: Option<i32>,      // best chunk's end (1-based, inclusive)
-    pub chunk_text: Option<String>, // populated later by cmd/search.rs in verbose mode
+    pub filename: String,             // from filepath column
+    pub score: f64,                   // mode-dependent (see SearchMode table)
+    pub start_line: Option<i32>,      // best chunk's start (1-based)
+    pub end_line: Option<i32>,        // best chunk's end (1-based, inclusive)
+    pub chunk_text: Option<String>,   // from the chunk_text column (always populated in verbose mode)
 }
 ```
 
-Assembled by downcasting DataFusion query result columns: StringViewArray (filenames), Float64Array (scores), Int32Array (lines). `chunk_text` is always `None` from the backend — filled by the command layer.
+Assembled by downcasting LanceDB-returned Arrow arrays: `StringArray` for `filepath`/`chunk_text`, `Float64Array` for the score column, `Int32Array` for line ranges.
 
 ## Collision Avoidance
 
-Problem: a frontmatter field named `filepath` collides with the internal `_filepath` column.
+Internal columns (`chunk_id`, `file_id`, `chunk_index`, `start_line`, `end_line`, `chunk_text`, `embedding`, `filepath`, `content_hash`, `built_at`) live at the top level of the schema. Frontmatter fields live under the `data` Struct. The `--where` translator rewrites bare frontmatter names to `data.<name>`, so the *qualified* SQL paths never clash even when a frontmatter field shares its name with an internal column.
 
-Detection: `SearchContext::new()` checks if any resolved internal column name matches a frontmatter field name. Bails with an actionable error message.
+The user-visible question is what a bare reference in `--where` *means*. By default `filepath` in a `--where` clause refers to the internal column. If the user has a frontmatter field also called `filepath`, that's a collision the user has to resolve — the translator detects it and bails with an actionable error.
 
-Resolution (three tiers):
-1. **Prefix** — `[search].internal_prefix = "_"` renames all internal columns: `file_id` → `_file_id`
-2. **Alias** — `[search.aliases].filepath = "file_path"` renames one column
-3. **Rename** — change the frontmatter field name (application-level)
+Resolution at the translator layer uses `[search].internal_prefix` and `[search.aliases]`:
 
-Prefix is applied by default (empty string = no prefix). Aliases take precedence over prefix.
+- **Prefix** — `internal_prefix = "_"` renames the *bare reference* for all internal columns: the user writes `_filepath` to refer to the internal column, and `filepath` stays bare for the frontmatter field (translated to `data.filepath`).
+- **Alias** — `[search.aliases].filepath = "path"` renames the *bare reference* for one internal column: the user writes `path` for the internal column and `filepath` stays bare for the frontmatter field.
+
+These only affect `--where` translation; the actual on-disk column names are always the literal constants from `index/storage.rs`. The translator handles the mapping in `translate_where_to_struct` (`index/backend.rs`).

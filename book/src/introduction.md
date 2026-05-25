@@ -50,7 +50,7 @@ mdvs has two distinct capabilities that work independently:
 
 **Validation** — Scan your files, infer what frontmatter fields exist, which directories they appear in, and what types they have. Write the result to `mdvs.toml`. Then validate files against that schema. No model, no index, nothing to download.
 
-**Search** — Chunk your markdown, embed it with a lightweight local model, store the vectors in Parquet files in `.mdvs/`, and query with natural language. Filter results on any frontmatter field using standard SQL.
+**Search** — Chunk your markdown, embed it with a lightweight local model, store the chunks and vectors in a Lance dataset under `.mdvs/`, and query with natural language. Choose semantic (vector), full-text (BM25), or hybrid (both, reranked) — and filter results on any frontmatter field using standard SQL.
 
 You need validation without search? Run `mdvs init`, customize the fields in `mdvs.toml`, and run `mdvs check`.
 

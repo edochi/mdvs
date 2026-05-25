@@ -220,8 +220,8 @@ No config files to write. No models to download manually. No services to start.
 - **Schema inference** — types (boolean, integer, float, string, RFC 3339 date and datetime, arrays), nested YAML structure exposed as dotted-name leaf fields (`calibration.baseline.wavelength`), path constraints (allowed/required per directory), nullable detection, value preprocessors. All automatic.
 - **Frontmatter validation** — wrong types, disallowed fields, missing required fields, nullability, categories, numeric/length ranges, regex patterns, and unrepresentable frontmatter. Powered by [`jsonschema`](https://crates.io/crates/jsonschema) under the hood — your `mdvs.toml` translates to a real JSON Schema 2020-12 document.
 - **JSON Schema interop** — `mdvs export-jsonschema` translates your config into a JSON Schema document; `mdvs init --from-jsonschema` imports one. Lossless round-trip.
-- **Semantic search** — instant vector search using lightweight [Model2Vec](https://minish.ai/) static embeddings. Default model is ~30MB. No GPU, no API keys.
-- **SQL filtering** — `--where` clauses on any frontmatter field, powered by [DataFusion](https://datafusion.apache.org/). Arrays, nested objects, LIKE, IS NULL — full SQL.
+- **Semantic, full-text, and hybrid search** — instant vector search using lightweight [Model2Vec](https://minish.ai/) static embeddings, full-text BM25 ranking, and hybrid RRF reranking, all backed by [LanceDB](https://lancedb.com/). Pick with `--mode`; default is hybrid. No GPU, no API keys.
+- **SQL filtering** — `--where` clauses on any frontmatter field, backed by LanceDB's native filter. Arrays, nested objects, LIKE, IS NULL — full SQL.
 - **Incremental builds** — only changed files are re-embedded. Unchanged files keep their chunks. If nothing changed, the model isn't even loaded.
 - **Auto pipeline** — `search` auto-builds the index. `build` auto-updates the schema. One command does everything: `mdvs search "query"`.
 - **CI-ready** — `mdvs check` returns exit code 1 on violations. Add it to your pipeline to enforce frontmatter consistency across contributors.

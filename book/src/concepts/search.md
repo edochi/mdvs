@@ -1,6 +1,6 @@
 # Search & Indexing
 
-mdvs builds a search index by chunking your markdown content, embedding it with a local model, and storing everything in Parquet files. Queries are embedded with the same model and ranked by cosine similarity, with optional SQL filtering on frontmatter fields.
+mdvs builds a search index by chunking your markdown content, embedding it with a local model, and storing chunks + vectors + frontmatter in a single [LanceDB](https://lancedb.com/) dataset. Queries are served by LanceDB natively — semantic (vector), full-text (BM25), or hybrid (both, reranked) — with optional SQL filtering on frontmatter fields.
 
 ## Building the index
 
@@ -41,12 +41,20 @@ Any Model2Vec-compatible model on HuggingFace works — set the `name` to its mo
 
 ### Storage
 
-Two Parquet files are written to `.mdvs/`:
+A single Lance dataset is written to `.mdvs/index.lance/` — **one row per chunk**, with everything you need on the same row:
 
-- **`files.parquet`** — one row per file. Contains the filename, all frontmatter fields (in a single Struct column), a content hash, and a build timestamp.
-- **`chunks.parquet`** — one row per chunk. Contains the chunk's position (file, index, line range) and its embedding vector.
+| Column | Purpose |
+|---|---|
+| `chunk_id`, `file_id`, `chunk_index`, `start_line`, `end_line` | Chunk identity and source location |
+| `chunk_text` | The plain-text chunk body — used by the full-text index and shown as the snippet in verbose results |
+| `embedding` | Dense vector for semantic search (`FixedSizeList<Float32>`) |
+| `filepath`, `content_hash`, `built_at` | Per-file metadata (duplicated on each of that file's chunks) |
+| `data` | Frontmatter as an Arrow Struct (nested for dotted-name fields) — this is what `--where` filters query against |
 
-The `files.parquet` holds your frontmatter as structured data — this is what `--where` filters query against. The `chunks.parquet` holds the vectors that similarity search operates on. The two are joined by file ID at query time.
+Inside the dataset, two indexes are built at `mdvs build` time:
+
+- A **full-text BM25 index** on `chunk_text`, always built.
+- A **cosine IVF-PQ vector index** on `embedding`, only built when the index has at least ~10,000 chunks. Smaller vaults use LanceDB's exact flat scan, which is plenty fast at that scale.
 
 ## Incremental builds
 
@@ -59,24 +67,29 @@ Build only re-embeds what changed. Each file's markdown body (excluding frontmat
 | **Unchanged** | Hash matches | Keep existing chunks |
 | **Removed** | In index but not on disk | Drop file and its chunks |
 
-Frontmatter-only changes (adding a tag, fixing a typo in `author`) update `files.parquet` without re-embedding — the body hash hasn't changed, so the vectors are still valid.
+Frontmatter-only changes (adding a tag, fixing a typo in `author`) rewrite the `data` column on every chunk row without re-embedding — the body hash hasn't changed, so the vectors are still valid.
 
 When nothing needs embedding, the model isn't even loaded. A `--force` flag triggers a full rebuild regardless of hashes.
 
 ## How search works
 
-When you run `mdvs search "query" example_kb`:
+When you run `mdvs search "query" example_kb`, LanceDB does the heavy lifting. The shape of the work depends on `--mode` (default `hybrid`):
 
-1. The query text is embedded with the same model used during build
-2. Every chunk's embedding is compared to the query via cosine similarity
-3. For each file, only the **best chunk** score is kept — a file with one highly relevant section ranks above a file with uniformly mediocre content
-4. Results are sorted by score (highest first) and limited by `--limit` (default 10)
+- **`semantic`** — the query is embedded with the same model used during build, and chunks are ranked by cosine similarity against `embedding`. Up to ~10,000 chunks, LanceDB does an exact flat scan; above that, the IVF-PQ vector index narrows the candidate set first.
+- **`fulltext`** — the query is tokenized and scored against the BM25 full-text index on `chunk_text`. No model load needed.
+- **`hybrid`** — both of the above run in parallel and their result lists are combined by LanceDB's Reciprocal Rank Fusion reranker. Default mode because it tolerates queries that are either keyword-y or fuzzy.
 
-This is brute-force search — every chunk is compared. For the typical vault size (hundreds to low thousands of files), this is fast enough. The entire search runs in-process with no external services.
+After LanceDB returns ranked chunk rows, mdvs deduplicates to the **best chunk per file** (a file with one highly relevant section ranks above a file with uniformly mediocre content) and then trims to `--limit` (default 10). LanceDB is asked for `limit × 3` candidates to make sure dedupe has enough material to work with.
 
 ### Scores
 
-The score column in search output is cosine similarity — a value between 0 and 1, where higher means more similar. Scores depend on the model and the content, so there's no universal threshold for "relevant." Compare scores relative to each other within a single query.
+The score column in search output depends on the mode:
+
+- **Semantic** — cosine similarity, a value in roughly `[0, 1]` (higher = more similar).
+- **Fulltext** — BM25 relevance score, unbounded above (higher = better match).
+- **Hybrid** — RRF score, also unbounded above.
+
+Scores depend on the mode, the model, and the content, so there's no universal threshold for "relevant." Compare scores relative to each other within a single query.
 
 ## Filtering with `--where`
 
@@ -86,9 +99,9 @@ Add a SQL filter to narrow results by frontmatter fields:
 mdvs search "calibration" example_kb --where "status = 'active'"
 ```
 
-The `--where` clause filters on frontmatter fields — only files that match the filter are included in the results. The filter and similarity ranking are combined in a single query, so files that don't match are excluded efficiently.
+The `--where` clause filters on frontmatter fields — only chunks whose file matches the filter are included in the results. The filter and similarity ranking are combined in a single LanceDB query, so non-matching rows are excluded efficiently.
 
-You can use any SQL expression that DataFusion supports:
+You can use any SQL expression that LanceDB's filter supports:
 
 ```bash
 --where "draft = false"

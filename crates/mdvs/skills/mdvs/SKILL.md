@@ -33,14 +33,14 @@ A CLI that treats markdown directories as databases: schema inference, frontmatt
 mdvs has two independent layers:
 
 1. **Validation** (`init`, `check`, `update`) — works immediately, no model download, no build step. Reads markdown files and validates frontmatter against `mdvs.toml`.
-2. **Search** (`build`, `search`) — downloads an embedding model, chunks markdown content, and builds a local Parquet index in `.mdvs/`.
+2. **Search** (`build`, `search`) — downloads an embedding model, chunks markdown content, and builds a local LanceDB index in `.mdvs/`.
 
 Validation stands alone. You never need to build an index just to validate.
 
 ## Key files
 
 - **`mdvs.toml`** — the schema config, committed to version control. Source of truth for field types, allowed/required paths, and constraints. Created by `init`, updated by `update`.
-- **`.mdvs/`** — build artifacts (Parquet files, cached model). Gitignored. Recreatable with `mdvs build`. Never edit directly.
+- **`.mdvs/`** — build artifacts (the Lance dataset under `index.lance/` plus a cached model). Gitignored. Recreatable with `mdvs build`. Never edit directly.
 
 ## Command reference
 
@@ -88,7 +88,7 @@ Use `reinfer` when a field's type has changed (e.g., values evolved from integer
 
 ### `mdvs build`
 
-Validates frontmatter (runs `check` internally), then chunks markdown content, generates embeddings, and writes Parquet files to `.mdvs/`.
+Validates frontmatter (runs `check` internally), then chunks markdown content, generates embeddings, and writes the Lance dataset to `.mdvs/`.
 
 - `--force` — full rebuild (ignore incremental cache)
 - Incremental by default — only re-embeds new or edited files
@@ -98,17 +98,20 @@ The first build downloads the embedding model (~30 MB). Subsequent builds reuse 
 
 ### `mdvs search`
 
-Semantic search across the indexed notes. Requires a built index (auto-builds if needed).
+Search across the indexed notes — semantic (vector), full-text (BM25), or hybrid (RRF reranker over both). Requires a built index (auto-builds if needed).
 
 ```bash
-mdvs search "<query>" [path] [--where "<SQL>"] [--limit N] [-v]
+mdvs search "<query>" [path] [--mode <mode>] [--where "<SQL>"] [--limit N] [-v]
 ```
 
+- `--mode` — `semantic`, `fulltext`, or `hybrid` (default: `hybrid`)
 - `--where` — SQL WHERE clause to filter on frontmatter fields
 - `--limit` — max results (default: 10)
 - `-v` — show best matching chunk text per result
 - `--no-build` — skip auto-build, fail if no index exists
 - `--no-update` — skip auto-update before building
+
+`--where` clauses on `Array(Float)` fields are rejected up front (a known LanceDB encoding limitation; see TODO-0159).
 
 #### `--where` filter examples
 

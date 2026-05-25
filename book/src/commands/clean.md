@@ -18,7 +18,7 @@ Global flags (`-o`, `-v`, `--logs`) are described in [Configuration](../configur
 
 ## What it does
 
-`clean` deletes the `.mdvs/` directory, which contains the Parquet files that make up the search index. The `mdvs.toml` configuration file is never touched — you can rebuild the index at any time with [build](./build.md).
+`clean` deletes the `.mdvs/` directory, which contains the Lance dataset that makes up the search index (plus the cached embedding model). The `mdvs.toml` configuration file is never touched — you can rebuild the index at any time with [build](./build.md).
 
 The command is idempotent — running it when `.mdvs/` doesn't exist is a no-op. It also refuses to delete if `.mdvs/` is a symlink, as a safety measure.
 

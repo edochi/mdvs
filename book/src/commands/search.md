@@ -14,6 +14,7 @@ mdvs search <query> [path] [flags]
 |---|---|---|
 | `query` | (required) | Natural language search query |
 | `path` | `.` | Directory containing `mdvs.toml` |
+| `--mode` | `hybrid` | Search mode: `semantic`, `fulltext`, or `hybrid` |
 | `--limit` / `-n` | `10` | Maximum number of results |
 | `--where` | | SQL WHERE clause for filtering on frontmatter fields |
 | `--no-update` | | Skip auto-update |
@@ -25,7 +26,13 @@ Global flags (`-o`, `-v`, `--logs`) are described in [Configuration](../configur
 
 ## What it does
 
-`search` loads the index from `.mdvs/`, embeds the query into a vector using the same model that built the index, and ranks files by [cosine similarity](../concepts/search.md#scores). Each file's score is the **best chunk match** — the highest similarity across all its chunks. Results are sorted descending (higher = more similar).
+`search` loads the Lance index from `.mdvs/`, runs the query through LanceDB, and ranks files by their best-matching chunk. The exact ranking depends on `--mode`:
+
+- **`semantic`** — embed the query with the same model that built the index, cosine-rank chunks against `embedding`.
+- **`fulltext`** — BM25 rank chunks against the persisted `chunk_text` (no model load needed).
+- **`hybrid`** (default) — run both and combine with LanceDB's Reciprocal Rank Fusion reranker.
+
+Each file's score is the **best chunk match** across all its chunks (see [scoring](../concepts/search.md#scores)). Results are sorted descending (higher = better match).
 
 By default, `search` auto-builds the index before querying, which includes auto-updating the schema (see [`[search].auto_build`](../configuration.md#search)). Use `--no-build` to query the existing index as-is, or `--no-update` to build without updating the schema first.
 
@@ -58,11 +65,13 @@ mdvs search "experiment" --where "sample_count > 20"
 mdvs search "experiment" --where "status = 'active' AND priority = 1"
 ```
 
-Array fields (via DataFusion array functions):
+Array fields (via LanceDB's SQL array functions):
 
 ```bash
 mdvs search "calibration" --where "array_has(tags, 'biosensor')"
 ```
+
+`--where` clauses that reference `Array(Float)` fields are rejected up front with a clear error — that's a known LanceDB encoding limitation, not an mdvs choice (see TODO-0159).
 
 Field names with spaces need double-quoting:
 

@@ -227,7 +227,7 @@ Searched "calibration" — 10 hits
 ...
 ```
 
-Results are ranked by semantic similarity — not keyword matching. The `score` is cosine similarity (higher means more similar). The `text` row shows the best-matching chunk from each file.
+By default `mdvs search` runs in **hybrid mode** — it combines a semantic (vector) match with a full-text (BM25) match and reranks the results, so a typo-friendly natural-language query and an exact-keyword query both work. The `score` is a relevance score from the reranker (higher is better). Pass `--mode semantic` or `--mode fulltext` to use one signal alone. The `text` row shows the best-matching chunk from each file.
 
 ### Filtering with `--where`
 

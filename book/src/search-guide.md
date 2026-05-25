@@ -2,7 +2,9 @@
 
 The `--where` flag on [search](./commands/search.md) lets you filter results by frontmatter fields using SQL syntax. The filter is combined with similarity ranking in a single query — files that don't match are excluded before results are returned.
 
-Under the hood, mdvs uses [DataFusion](https://datafusion.apache.org/) as its SQL engine, so any expression valid in DataFusion's SQL dialect works in `--where`.
+Under the hood, mdvs hands the clause to [LanceDB](https://lancedb.com/)'s SQL filter, which is built on top of DataFusion — so any expression valid in DataFusion's SQL dialect works in `--where`.
+
+> **Limitation.** `--where` clauses that reference an `Array(Float)` field (e.g. `measurement_values`) are rejected up front. This is a known LanceDB encoding panic, not an mdvs choice — see [TODO-0159](https://github.com/edochi/mdvs/blob/main/docs/spec/todos/TODO-0159.md). Filter on a scalar field or a parallel array of strings instead.
 
 ## Scalar fields
 
@@ -71,7 +73,7 @@ mdvs search "notes" --where "NOT status = 'archived'"
 
 ## Date and DateTime
 
-Fields typed as `Date` (Arrow `Date32`) and `DateTime` (Arrow `Timestamp(Millisecond, UTC)`) support native date arithmetic, comparisons, and DataFusion's date functions. Auto-inferred from RFC 3339 strings — see [Date and DateTime](./concepts/types.md#date-and-datetime) for the type itself.
+Fields typed as `Date` (Arrow `Date32`) and `DateTime` (Arrow `Timestamp(Millisecond, UTC)`) support native date arithmetic, comparisons, and the usual SQL date functions. Auto-inferred from RFC 3339 strings — see [Date and DateTime](./concepts/types.md#date-and-datetime) for the type itself.
 
 ### Direct comparison
 
@@ -103,7 +105,7 @@ mdvs search "calibration" --where "EXTRACT(YEAR FROM synced_at) = 2024 AND EXTRA
 
 ### Date arithmetic with `INTERVAL`
 
-DataFusion supports adding/subtracting intervals to dates and datetimes.
+The SQL engine supports adding/subtracting intervals to dates and datetimes.
 
 ```bash
 # Joined within the last 2 years (relative to a cutoff date)
@@ -114,7 +116,7 @@ mdvs search "experiment" \
   --where "synced_at < CAST('2024-04-15T00:00:00Z' AS TIMESTAMP) - INTERVAL '7 days'"
 ```
 
-`CAST('...' AS DATE)` and `CAST('...' AS TIMESTAMP)` are usually needed for string literals on the right side of the arithmetic — DataFusion's type inference doesn't always pick the date/timestamp type automatically.
+`CAST('...' AS DATE)` and `CAST('...' AS TIMESTAMP)` are usually needed for string literals on the right side of the arithmetic — the SQL type inference doesn't always pick the date/timestamp type automatically.
 
 ### Date subtraction (days between)
 
