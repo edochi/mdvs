@@ -1,4 +1,4 @@
-use crate::index::backend::Backend;
+use crate::index::backend::{Backend, SearchMode};
 use crate::index::embed::{Embedder, ModelConfig};
 use crate::index::storage::BuildMetadata;
 use crate::outcome::commands::SearchOutcome;
@@ -10,19 +10,7 @@ use crate::schema::config::MdvsToml;
 use crate::step::{CommandResult, ErrorKind, StepEntry};
 use std::path::Path;
 use std::time::Instant;
-use tracing::{instrument, warn};
-
-/// Read lines from a file (1-indexed, inclusive range).
-fn read_lines(path: &Path, start: i32, end: i32) -> Option<String> {
-    let content = std::fs::read_to_string(path).ok()?;
-    let lines: Vec<&str> = content.lines().collect();
-    let start = (start - 1).max(0) as usize;
-    let end = (end as usize).min(lines.len());
-    if start >= end {
-        return None;
-    }
-    Some(lines[start..end].join("\n"))
-}
+use tracing::instrument;
 
 /// Index metadata, used for model mismatch check.
 struct IndexData {
@@ -47,11 +35,13 @@ fn validate_where_clause(w: &str) -> Result<(), String> {
 
 /// Embed a query, search the index, and return ranked results.
 #[instrument(name = "search", skip_all)]
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     path: &Path,
     query: &str,
     limit: usize,
     where_clause: Option<&str>,
+    mode: SearchMode,
     no_update: bool,
     no_build: bool,
     _verbose: bool,
@@ -134,7 +124,7 @@ pub async fn run(
     let index_data = match &config {
         Some(_) => {
             let index_start = Instant::now();
-            let backend = Backend::parquet(path);
+            let backend = Backend::lance(path);
             if !backend.exists() {
                 steps.push(StepEntry::ok(
                     Outcome::ReadIndex(ReadIndexOutcome {
@@ -146,8 +136,8 @@ pub async fn run(
                 ));
                 None
             } else {
-                let build_meta = backend.read_metadata().ok().flatten();
-                let idx_stats = backend.stats().ok().flatten();
+                let build_meta = backend.read_metadata().await.ok().flatten();
+                let idx_stats = backend.stats().await.ok().flatten();
                 match (build_meta, idx_stats) {
                     (Some(metadata), Some(stats)) => {
                         steps.push(StepEntry::ok(
@@ -282,7 +272,7 @@ pub async fn run(
         ));
         return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
     };
-    let backend = Backend::parquet(path);
+    let backend = Backend::lance(path);
     let (prefix, aliases) = match &cfg.search {
         Some(sc) => (sc.internal_prefix.as_str(), &sc.aliases),
         None => ("", &std::collections::HashMap::new()),
@@ -297,7 +287,15 @@ pub async fn run(
 
     let search_start = Instant::now();
     let hits = match backend
-        .search(query_embedding, where_clause, limit, prefix, aliases)
+        .search(
+            query_embedding,
+            query,
+            mode,
+            where_clause,
+            limit,
+            prefix,
+            aliases,
+        )
         .await
     {
         Ok(hits) => {
@@ -317,20 +315,7 @@ pub async fn run(
         }
     };
 
-    // Populate chunk text for each hit
-    let mut hits = hits;
-    for hit in &mut hits {
-        if let (Some(s), Some(e)) = (hit.start_line, hit.end_line) {
-            match read_lines(&path.join(&hit.filename), s, e) {
-                Some(text) => hit.chunk_text = Some(text),
-                None => warn!(
-                    file = %hit.filename,
-                    "could not read chunk text (file may have changed since build)"
-                ),
-            }
-        }
-    }
-
+    // chunk_text is populated by the backend from the persisted column.
     let model_name = emb_config.name.clone();
     CommandResult {
         steps,
@@ -428,7 +413,17 @@ mod tests {
     #[tokio::test]
     async fn missing_config() {
         let tmp = tempfile::tempdir().unwrap();
-        let output = run(tmp.path(), "test query", 10, None, true, true, false).await;
+        let output = run(
+            tmp.path(),
+            "test query",
+            10,
+            None,
+            SearchMode::Hybrid,
+            true,
+            true,
+            false,
+        )
+        .await;
         assert!(crate::step::has_failed(&output));
     }
 
@@ -437,7 +432,17 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         write_config(tmp.path(), "test-model");
 
-        let output = run(tmp.path(), "test query", 10, None, true, true, false).await;
+        let output = run(
+            tmp.path(),
+            "test query",
+            10,
+            None,
+            SearchMode::Hybrid,
+            true,
+            true,
+            false,
+        )
+        .await;
         assert!(crate::step::has_failed(&output));
         let err = unwrap_error(&output);
         assert!(err.message.contains("index not found"));
@@ -449,7 +454,17 @@ mod tests {
         create_test_vault(tmp.path());
         init_and_build(tmp.path()).await;
 
-        let output = run(tmp.path(), "rust programming", 10, None, true, true, false).await;
+        let output = run(
+            tmp.path(),
+            "rust programming",
+            10,
+            None,
+            SearchMode::Hybrid,
+            true,
+            true,
+            false,
+        )
+        .await;
         assert!(
             !crate::step::has_failed(&output),
             "search failed: {:?}",
@@ -471,7 +486,17 @@ mod tests {
         create_test_vault(tmp.path());
         init_and_build(tmp.path()).await;
 
-        let output = run(tmp.path(), "rust programming", 10, None, true, true, true).await;
+        let output = run(
+            tmp.path(),
+            "rust programming",
+            10,
+            None,
+            SearchMode::Hybrid,
+            true,
+            true,
+            true,
+        )
+        .await;
         assert!(!crate::step::has_failed(&output));
         let result = unwrap_search(&output);
         assert!(!result.hits.is_empty());
@@ -485,7 +510,7 @@ mod tests {
         init_and_build(tmp.path()).await;
 
         let config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
-        let backend = Backend::parquet(tmp.path());
+        let backend = Backend::lance(tmp.path());
         let embedding = config.embedding_model.as_ref().unwrap();
         let model_config = ModelConfig::try_from(embedding).unwrap();
         let embedder = Embedder::load(&model_config).unwrap();
@@ -494,6 +519,8 @@ mod tests {
         let hits = backend
             .search(
                 query_embedding,
+                "rust programming",
+                SearchMode::Semantic,
                 None,
                 1,
                 "",
@@ -511,7 +538,7 @@ mod tests {
         init_and_build(tmp.path()).await;
 
         let config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
-        let backend = Backend::parquet(tmp.path());
+        let backend = Backend::lance(tmp.path());
         let embedding = config.embedding_model.as_ref().unwrap();
         let model_config = ModelConfig::try_from(embedding).unwrap();
         let embedder = Embedder::load(&model_config).unwrap();
@@ -520,6 +547,8 @@ mod tests {
         let hits = backend
             .search(
                 query_embedding,
+                "cooking recipes",
+                SearchMode::Semantic,
                 Some("draft = false"),
                 10,
                 "",
@@ -543,7 +572,17 @@ mod tests {
         config.embedding_model.as_mut().unwrap().name = "some-other-model".into();
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
 
-        let output = run(tmp.path(), "test query", 10, None, true, true, false).await;
+        let output = run(
+            tmp.path(),
+            "test query",
+            10,
+            None,
+            SearchMode::Hybrid,
+            true,
+            true,
+            false,
+        )
+        .await;
         assert!(crate::step::has_failed(&output));
         let err = unwrap_error(&output);
         assert!(err.message.contains("model mismatch"));
@@ -560,6 +599,7 @@ mod tests {
             "test",
             10,
             Some("author = 'O'Brien'"),
+            SearchMode::Hybrid,
             true,
             true,
             false,
@@ -576,7 +616,17 @@ mod tests {
         create_test_vault(tmp.path());
         init_and_build(tmp.path()).await;
 
-        let output = run(tmp.path(), "test", 10, Some("x = \"bad"), true, true, false).await;
+        let output = run(
+            tmp.path(),
+            "test",
+            10,
+            Some("x = \"bad"),
+            SearchMode::Hybrid,
+            true,
+            true,
+            false,
+        )
+        .await;
         assert!(crate::step::has_failed(&output));
         let err = unwrap_error(&output);
         assert!(err.message.contains("unmatched double quote"));
@@ -593,6 +643,7 @@ mod tests {
             "test",
             10,
             Some("author's name = O'Brien"),
+            SearchMode::Hybrid,
             true,
             true,
             false,
@@ -612,6 +663,7 @@ mod tests {
             "test",
             10,
             Some("title = 'O''Brien'"),
+            SearchMode::Hybrid,
             true,
             true,
             false,
@@ -653,31 +705,478 @@ mod tests {
         assert!(validate_where_clause("name = 'O''Brien'").is_ok());
     }
 
-    // --- Unit tests for read_lines ---
+    // ========================================================================
+    // Integration tests — real embedder + Lance index (TODO-0016 wave 2).
+    // A richer vault exercises all search modes and --where operator families.
+    // ========================================================================
 
-    #[test]
-    fn read_lines_valid_range() {
-        let tmp = tempfile::tempdir().unwrap();
-        let file = tmp.path().join("test.md");
-        std::fs::write(&file, "line1\nline2\nline3\nline4\n").unwrap();
-        let result = read_lines(&file, 2, 3);
-        assert_eq!(result, Some("line2\nline3".to_string()));
+    /// Six-file vault with varied frontmatter (String/Integer/Boolean/Date/
+    /// Array/nested Float) and distinctive body keywords. `rust.md` has a long
+    /// body so it splits into multiple chunks (dedupe coverage).
+    fn create_rich_vault(dir: &Path) {
+        let blog = dir.join("blog");
+        let notes = dir.join("notes");
+        fs::create_dir_all(&blog).unwrap();
+        fs::create_dir_all(&notes).unwrap();
+
+        let long_body: String = "Rust gives strong guarantees about memory without a \
+            garbage collector. Ownership and borrowing are checked at compile time, so \
+            whole classes of bugs simply cannot happen. "
+            .repeat(20);
+        fs::write(
+            blog.join("rust.md"),
+            format!(
+                "---\ntitle: Rust Programming\nstatus: active\nrating: 5\ndraft: false\n\
+                 published: 2024-01-15\ntags:\n  - rust\n  - systems\n---\n# Rust\n{long_body}"
+            ),
+        )
+        .unwrap();
+
+        fs::write(
+            blog.join("cooking.md"),
+            "---\ntitle: Cooking Pasta\nstatus: archived\nrating: 2\ndraft: true\n\
+             published: 2023-06-15\ntags:\n  - food\n---\n# Cooking\nDelicious pasta recipes for weeknight dinners.",
+        )
+        .unwrap();
+
+        fs::write(
+            notes.join("photonics.md"),
+            "---\ntitle: Photonics Calibration\nstatus: active\nrating: 4\ndraft: false\n\
+             published: 2024-03-10\ntags:\n  - optics\ncalibration:\n  baseline:\n    wavelength: 850.0\n---\n\
+             # Photonics\nThe sensor wavelength drifts over time and requires periodic recalibration of each pixel.",
+        )
+        .unwrap();
+
+        fs::write(
+            notes.join("draftpost.md"),
+            "---\ntitle: Draft Ideas\nstatus: draft\nrating: 3\ndraft: true\n\
+             published: 2024-05-01\ntags:\n  - misc\n---\n# Ideas\nA scratch list of half-formed ideas.",
+        )
+        .unwrap();
+
+        fs::write(
+            notes.join("review.md"),
+            "---\ntitle: Annual Review\nstatus: active\nrating: 4\ndraft: false\n\
+             published: 2024-02-20\ntags:\n  - meta\n---\n# Review\nA look back at the year of work.",
+        )
+        .unwrap();
+
+        fs::write(
+            blog.join("archive.md"),
+            "---\ntitle: Old Archive\nstatus: archived\nrating: 1\ndraft: true\n\
+             published: 2022-11-05\ntags:\n  - old\n---\n# Archive\nLegacy content kept for posterity.",
+        )
+        .unwrap();
     }
 
-    #[test]
-    fn read_lines_out_of_bounds() {
-        let tmp = tempfile::tempdir().unwrap();
-        let file = tmp.path().join("test.md");
-        std::fs::write(&file, "line1\n").unwrap();
-        assert!(read_lines(&file, 10, 20).is_none());
+    /// Build the rich vault once, then return the filenames of the hits for a
+    /// query/mode/where, sorted for stable assertions.
+    async fn search_files(
+        dir: &Path,
+        query: &str,
+        mode: SearchMode,
+        where_clause: Option<&str>,
+    ) -> Vec<String> {
+        let result = run(dir, query, 50, where_clause, mode, true, true, false).await;
+        assert!(
+            !crate::step::has_failed(&result),
+            "search failed: {result:#?}"
+        );
+        let mut files: Vec<String> = unwrap_search(&result)
+            .hits
+            .iter()
+            .map(|h| h.filename.clone())
+            .collect();
+        files.sort();
+        files
     }
 
-    #[test]
-    fn read_lines_single_line() {
+    fn ends_with(files: &[String], suffix: &str) -> bool {
+        files.iter().any(|f| f.ends_with(suffix))
+    }
+
+    #[tokio::test]
+    async fn integration_modes() {
         let tmp = tempfile::tempdir().unwrap();
-        let file = tmp.path().join("test.md");
-        std::fs::write(&file, "only\n").unwrap();
-        let result = read_lines(&file, 1, 1);
-        assert_eq!(result, Some("only".to_string()));
+        create_rich_vault(tmp.path());
+        init_and_build(tmp.path()).await;
+
+        // Semantic: a paraphrase ("memory safety guarantees") should surface the
+        // Rust doc even though those exact words aren't all present.
+        let sem = search_files(
+            tmp.path(),
+            "memory safety guarantees",
+            SearchMode::Semantic,
+            None,
+        )
+        .await;
+        assert!(
+            ends_with(&sem, "rust.md"),
+            "semantic should find rust.md: {sem:?}"
+        );
+
+        // Fulltext: the exact keyword "wavelength" appears only in photonics.md.
+        let ft = search_files(tmp.path(), "wavelength", SearchMode::Fulltext, None).await;
+        assert!(
+            ends_with(&ft, "photonics.md"),
+            "fulltext should find photonics.md: {ft:?}"
+        );
+        assert!(
+            !ends_with(&ft, "rust.md"),
+            "fulltext 'wavelength' should not match rust.md: {ft:?}"
+        );
+
+        // Hybrid (default) returns a non-empty fused ranking.
+        let hy = search_files(tmp.path(), "calibration drift", SearchMode::Hybrid, None).await;
+        assert!(!hy.is_empty(), "hybrid should return results");
+    }
+
+    #[tokio::test]
+    async fn integration_where_operators() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_rich_vault(tmp.path());
+        init_and_build(tmp.path()).await;
+        let q = "content";
+
+        // String equality
+        let active = search_files(
+            tmp.path(),
+            q,
+            SearchMode::Semantic,
+            Some("status = 'active'"),
+        )
+        .await;
+        assert!(
+            active.iter().all(|f| !f.ends_with("cooking.md")),
+            "active filter excludes archived: {active:?}"
+        );
+        assert!(ends_with(&active, "rust.md") && ends_with(&active, "photonics.md"));
+
+        // Integer comparisons
+        let hi = search_files(tmp.path(), q, SearchMode::Semantic, Some("rating >= 4")).await;
+        assert!(
+            !hi.is_empty()
+                && hi
+                    .iter()
+                    .all(|f| !f.ends_with("cooking.md") && !f.ends_with("archive.md"))
+        );
+        let lo = search_files(
+            tmp.path(),
+            q,
+            SearchMode::Semantic,
+            Some("rating BETWEEN 1 AND 2"),
+        )
+        .await;
+        assert!(ends_with(&lo, "cooking.md") && ends_with(&lo, "archive.md"));
+        let in_list = search_files(
+            tmp.path(),
+            q,
+            SearchMode::Semantic,
+            Some("rating IN (1, 5)"),
+        )
+        .await;
+        assert!(ends_with(&in_list, "rust.md") && ends_with(&in_list, "archive.md"));
+
+        // Boolean
+        let published =
+            search_files(tmp.path(), q, SearchMode::Semantic, Some("draft = false")).await;
+        assert!(
+            published
+                .iter()
+                .all(|f| !f.ends_with("cooking.md") && !f.ends_with("draftpost.md"))
+        );
+
+        // Array membership
+        let rusty = search_files(
+            tmp.path(),
+            q,
+            SearchMode::Semantic,
+            Some("array_has(tags, 'rust')"),
+        )
+        .await;
+        assert_eq!(rusty.len(), 1);
+        assert!(ends_with(&rusty, "rust.md"));
+
+        // LIKE on a string field
+        let titled = search_files(
+            tmp.path(),
+            q,
+            SearchMode::Semantic,
+            Some("title LIKE 'Rust%'"),
+        )
+        .await;
+        assert!(ends_with(&titled, "rust.md") && titled.len() == 1);
+
+        // Date literal comparison
+        let recent = search_files(
+            tmp.path(),
+            q,
+            SearchMode::Semantic,
+            Some("published >= date '2024-01-01'"),
+        )
+        .await;
+        assert!(
+            recent
+                .iter()
+                .all(|f| !f.ends_with("cooking.md") && !f.ends_with("archive.md"))
+        );
+
+        // Nested dotted struct access
+        let nested = search_files(
+            tmp.path(),
+            q,
+            SearchMode::Semantic,
+            Some("calibration.baseline.wavelength > 800"),
+        )
+        .await;
+        assert_eq!(nested.len(), 1);
+        assert!(ends_with(&nested, "photonics.md"));
+
+        // AND composition
+        let combo = search_files(
+            tmp.path(),
+            q,
+            SearchMode::Semantic,
+            Some("status = 'active' AND rating >= 5"),
+        )
+        .await;
+        assert_eq!(combo.len(), 1);
+        assert!(ends_with(&combo, "rust.md"));
+
+        // Internal column filter (filepath stays top-level, not data-prefixed)
+        let blog_only = search_files(
+            tmp.path(),
+            q,
+            SearchMode::Semantic,
+            Some("filepath LIKE 'blog/%'"),
+        )
+        .await;
+        assert!(blog_only.iter().all(|f| f.starts_with("blog/")));
+        assert!(!blog_only.is_empty());
+
+        // A filter that matches nothing returns zero hits (not an error)
+        let none = search_files(tmp.path(), q, SearchMode::Semantic, Some("rating > 100")).await;
+        assert!(none.is_empty());
+
+        // Filtering reduces the result set vs. no filter
+        let all = search_files(tmp.path(), q, SearchMode::Semantic, None).await;
+        let filtered = search_files(
+            tmp.path(),
+            q,
+            SearchMode::Semantic,
+            Some("status = 'archived'"),
+        )
+        .await;
+        assert!(filtered.len() < all.len() && !filtered.is_empty());
+    }
+
+    #[tokio::test]
+    async fn integration_dedupe_limit_and_snippet() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_rich_vault(tmp.path());
+        init_and_build(tmp.path()).await;
+
+        // rust.md has a long, multi-chunk body — it must appear at most once.
+        let files = search_files(
+            tmp.path(),
+            "rust ownership borrowing",
+            SearchMode::Semantic,
+            None,
+        )
+        .await;
+        let rust_count = files.iter().filter(|f| f.ends_with("rust.md")).count();
+        assert_eq!(
+            rust_count, 1,
+            "multi-chunk file should be deduped to one hit"
+        );
+
+        // Limit is respected.
+        let result = run(
+            tmp.path(),
+            "content",
+            2,
+            None,
+            SearchMode::Semantic,
+            true,
+            true,
+            false,
+        )
+        .await;
+        assert!(!crate::step::has_failed(&result));
+        assert!(unwrap_search(&result).hits.len() <= 2);
+
+        // The snippet (chunk_text) is populated from the persisted column.
+        let result = run(
+            tmp.path(),
+            "wavelength",
+            1,
+            None,
+            SearchMode::Fulltext,
+            true,
+            true,
+            false,
+        )
+        .await;
+        let hits = &unwrap_search(&result).hits;
+        assert!(!hits.is_empty());
+        assert!(hits[0].chunk_text.as_ref().is_some_and(|t| !t.is_empty()));
+    }
+
+    #[tokio::test]
+    async fn integration_hybrid_zero_results_is_empty_not_error() {
+        // Regression: a hybrid query whose --where matches nothing returns an
+        // empty batch with no projected columns; the reader must yield zero
+        // hits, not "missing column file_id".
+        let tmp = tempfile::tempdir().unwrap();
+        create_rich_vault(tmp.path());
+        init_and_build(tmp.path()).await;
+        for mode in [
+            SearchMode::Hybrid,
+            SearchMode::Fulltext,
+            SearchMode::Semantic,
+        ] {
+            let hits = search_files(tmp.path(), "content", mode, Some("rating > 1000")).await;
+            assert!(
+                hits.is_empty(),
+                "{mode:?} zero-match should be empty: {hits:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn integration_scalar_functions_in_where() {
+        // Scalar functions over frontmatter fields work: the translator leaves
+        // the function name and prefixes only its column arguments.
+        let tmp = tempfile::tempdir().unwrap();
+        create_rich_vault(tmp.path());
+        init_and_build(tmp.path()).await;
+
+        // lower() — case-folded match against the lowercase status values.
+        let lowered = search_files(
+            tmp.path(),
+            "content",
+            SearchMode::Semantic,
+            Some("lower(status) = 'active'"),
+        )
+        .await;
+        assert!(ends_with(&lowered, "rust.md") && ends_with(&lowered, "photonics.md"));
+
+        // length() — titles longer than 6 chars (excludes none of the long ones).
+        let lengthy = search_files(
+            tmp.path(),
+            "content",
+            SearchMode::Semantic,
+            Some("length(title) > 6"),
+        )
+        .await;
+        assert!(!lengthy.is_empty());
+
+        // arithmetic on an integer field
+        let arith = search_files(
+            tmp.path(),
+            "content",
+            SearchMode::Semantic,
+            Some("rating + 1 >= 6"),
+        )
+        .await;
+        assert!(ends_with(&arith, "rust.md"));
+    }
+
+    #[tokio::test]
+    async fn integration_limit_zero_is_empty_not_error() {
+        // `--limit 0` must return zero hits gracefully across all modes
+        // (LanceDB rejects a zero `k` internally).
+        let tmp = tempfile::tempdir().unwrap();
+        create_rich_vault(tmp.path());
+        init_and_build(tmp.path()).await;
+        for mode in [
+            SearchMode::Hybrid,
+            SearchMode::Fulltext,
+            SearchMode::Semantic,
+        ] {
+            let result = run(tmp.path(), "content", 0, None, mode, true, true, false).await;
+            assert!(
+                !crate::step::has_failed(&result),
+                "{mode:?} limit 0 should not fail"
+            );
+            assert!(unwrap_search(&result).hits.is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn integration_array_float_filter_errors_not_panics() {
+        // A --where on an Array(Float) field used to panic/hang in lance-encoding
+        // (TODO-0159). The translator now refuses the reference with a clean
+        // error across all modes.
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("notes")).unwrap();
+        fs::write(
+            tmp.path().join("notes/a.md"),
+            "---\ntitle: A\nmeasurement_values: [0.5, 0.6, 0.7]\n---\n# A\nsome body content for chunking and embedding.",
+        )
+        .unwrap();
+        fs::write(
+            tmp.path().join("notes/b.md"),
+            "---\ntitle: B\n---\n# B\nanother document with different content.",
+        )
+        .unwrap();
+        init_and_build(tmp.path()).await;
+
+        for mode in [
+            SearchMode::Hybrid,
+            SearchMode::Fulltext,
+            SearchMode::Semantic,
+        ] {
+            let result = run(
+                tmp.path(),
+                "content",
+                10,
+                Some("measurement_values IS NOT NULL"),
+                mode,
+                true,
+                true,
+                false,
+            )
+            .await;
+            assert!(
+                crate::step::has_failed(&result),
+                "{mode:?} should fail with a clean error"
+            );
+            let dump = format!("{result:?}");
+            assert!(
+                dump.contains("Array(Float)"),
+                "{mode:?} should report the Array(Float) message: {dump}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn integration_collision_surfaces_error() {
+        // A frontmatter field named like an internal column, with no aliasing,
+        // must surface the translator's collision error rather than silently
+        // shadowing the field.
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(
+            tmp.path().join("note.md"),
+            "---\ntitle: Note\nfile_id: abc\n---\n# Note\nbody text here",
+        )
+        .unwrap();
+        init_and_build(tmp.path()).await;
+
+        let result = run(
+            tmp.path(),
+            "note",
+            10,
+            Some("file_id = 'abc'"),
+            SearchMode::Semantic,
+            true,
+            true,
+            false,
+        )
+        .await;
+        assert!(
+            crate::step::has_failed(&result),
+            "collision should fail the search"
+        );
     }
 }

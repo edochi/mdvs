@@ -18,16 +18,19 @@ clap = { version = "4", features = ["derive"] }
 # Async (required by DataFusion)
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
-# Query engine (re-exports arrow 57 + parquet 57)
-datafusion = { version = "53", default-features = false, features = [
-    "parquet",
-    "sql",
-    "nested_expressions",
-    "string_expressions",
-    "datetime_expressions",
-    "regex_expressions",
-    "recursive_protection",
-] }
+# Embedded vector DB (storage + search). TODO-0016. Pins arrow 58.
+lancedb = "0.29"
+
+# Arrow in-memory columnar format (RecordBatch construction). Version
+# matches lancedb's arrow.
+arrow = "58"
+
+# Full-text search query type (not re-exported from lancedb). Exact pin
+# matches lancedb 0.29's lance-index dependency.
+lance-index = "=6.0.0"
+
+# Stream combinators for collecting LanceDB query result streams.
+futures = "0.3"
 
 # Error handling
 anyhow = "1"

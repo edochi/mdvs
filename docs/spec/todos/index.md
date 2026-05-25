@@ -17,7 +17,7 @@
 | [0013](TODO-0013.md) | Search verifies model against parquet metadata | done | high | 2026-03-02 |
 | [0014](TODO-0014.md) | Build detects manual config changes via parquet metadata | done | high | 2026-03-02 |
 | [0015](TODO-0015.md) | Implement info and clean commands | done | high | 2026-03-02 |
-| [0016](TODO-0016.md) | LanceDB backend via compile-time feature flag | todo | medium | 2026-03-02 |
+| [0016](TODO-0016.md) | Replace Parquet + DataFusion with Lance + LanceDB (full swap, hybrid search) | todo | high | 2026-03-02 |
 | [0017](TODO-0017.md) | Ollama embedding provider | todo | medium | 2026-03-02 |
 | [0018](TODO-0018.md) | Cloud embedding providers (Azure, AWS Bedrock) | todo | low | 2026-03-02 |
 | [0019](TODO-0019.md) | Global --verbose flag | done | medium | 2026-03-02 |
@@ -158,3 +158,6 @@
 | [0154](TODO-0154.md) | Cache overlay validators by signature for path-scoped validation | todo | medium | 2026-05-11 |
 | [0155](TODO-0155.md) | Unify mdvs.toml type syntax with CLI Display (function-style) | done | high | 2026-05-11 |
 | [0156](TODO-0156.md) | Represent Array of structured items without violating Wave C's flattening | todo | low | 2026-05-13 |
+| [0157](TODO-0157.md) | Incremental ANN index optimize instead of full index rebuild | todo | low | 2026-05-22 |
+| [0158](TODO-0158.md) | --where translator does not handle quoted/special-character field names | todo | low | 2026-05-22 |
+| [0159](TODO-0159.md) | --where on an Array(Float) field panics inside lance-encoding (mitigated) | todo | low | 2026-05-22 |

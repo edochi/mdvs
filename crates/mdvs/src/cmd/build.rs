@@ -163,12 +163,14 @@ async fn embed_file(
     chunks
         .iter()
         .zip(embeddings)
-        .map(|(chunk, embedding)| ChunkRow {
+        .zip(plain_texts)
+        .map(|((chunk, embedding), chunk_text)| ChunkRow {
             chunk_id: uuid::Uuid::new_v4().to_string(),
             file_id: file_id.to_string(),
             chunk_index: chunk.chunk_index as i32,
             start_line: (chunk.start_line + file.body_line_offset) as i32,
             end_line: (chunk.end_line + file.body_line_offset) as i32,
+            chunk_text,
             embedding,
         })
         .collect()
@@ -457,8 +459,9 @@ pub(crate) async fn build_core(
             return Err(());
         }
     };
-    let backend = Backend::parquet(path);
-    let config_change_error = detect_config_changes(&backend, embedding, chunking, config, force);
+    let backend = Backend::lance(path);
+    let config_change_error =
+        detect_config_changes(&backend, embedding, chunking, config, force).await;
 
     // 5. Classify
     let full_rebuild = force || !backend.exists();
@@ -471,7 +474,7 @@ pub(crate) async fn build_core(
     let existing_index = if full_rebuild {
         vec![]
     } else {
-        match backend.read_file_index() {
+        match backend.read_file_index().await {
             Ok(idx) => idx,
             Err(e) => {
                 steps.push(StepEntry::err(ErrorKind::Application, e.to_string(), 0));
@@ -482,7 +485,7 @@ pub(crate) async fn build_core(
     let existing_chunks = if full_rebuild {
         vec![]
     } else {
-        match backend.read_chunk_rows() {
+        match backend.read_chunk_rows().await {
             Ok(crs) => crs,
             Err(e) => {
                 steps.push(StepEntry::err(ErrorKind::Application, e.to_string(), 0));
@@ -625,7 +628,7 @@ pub(crate) async fn build_core(
         None
     } else {
         match &embedder {
-            Some(emb) => match backend.embedding_dimension() {
+            Some(emb) => match backend.embedding_dimension().await {
                 Ok(Some(existing_dim)) => {
                     let model_dim = emb.dimension() as i32;
                     if existing_dim != model_dim {
@@ -723,7 +726,10 @@ pub(crate) async fn build_core(
     };
 
     let write_start = Instant::now();
-    match backend.write_index(&schema_fields, &file_rows, &chunk_rows, build_meta) {
+    match backend
+        .write_index(&schema_fields, &file_rows, &chunk_rows, build_meta)
+        .await
+    {
         Ok(()) => {
             steps.push(StepEntry::ok(
                 Outcome::WriteIndex(WriteIndexOutcome {
@@ -865,7 +871,7 @@ pub(crate) fn mutate_config(
 
 /// Detect manual config changes against the existing parquet metadata.
 /// Returns `Some(error_message)` if config changed and --force not given.
-pub(crate) fn detect_config_changes(
+pub(crate) async fn detect_config_changes(
     backend: &Backend,
     embedding: &EmbeddingModelConfig,
     chunking: &ChunkingConfig,
@@ -875,7 +881,7 @@ pub(crate) fn detect_config_changes(
     if force {
         return None;
     }
-    let meta = match backend.read_metadata() {
+    let meta = match backend.read_metadata().await {
         Ok(Some(m)) => m,
         Ok(None) => return None, // first build, no metadata
         Err(e) => return Some(e.to_string()),
@@ -920,12 +926,8 @@ pub(crate) fn detect_config_changes(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::index::storage::{
-        read_build_metadata, read_chunk_rows, read_file_index, read_parquet,
-    };
     use crate::schema::config::MdvsToml;
     use crate::step::StepError;
-    use datafusion::arrow::datatypes::DataType;
     use std::collections::{HashMap, HashSet};
     use std::fs;
 
@@ -1002,35 +1004,22 @@ mod tests {
         );
         assert!(!crate::step::has_failed(&output));
 
-        // Verify Parquet files exist
-        let files_path = tmp.path().join(".mdvs/files.parquet");
-        let chunks_path = tmp.path().join(".mdvs/chunks.parquet");
-        assert!(files_path.exists());
-        assert!(chunks_path.exists());
+        // Verify the Lance index exists
+        assert!(tmp.path().join(".mdvs/index.lance").exists());
 
-        // Verify files.parquet row count
-        let file_batches = read_parquet(&files_path).unwrap();
-        let file_rows: usize = file_batches.iter().map(|b| b.num_rows()).sum();
-        assert_eq!(file_rows, 2); // 2 files with frontmatter
+        let backend = Backend::lance(tmp.path());
 
-        // Verify chunks.parquet has embeddings with correct dimension
-        let chunk_batches = read_parquet(&chunks_path).unwrap();
-        let chunk_rows: usize = chunk_batches.iter().map(|b| b.num_rows()).sum();
-        assert!(chunk_rows > 0);
+        // Verify file count (2 files with frontmatter)
+        let file_index = backend.read_file_index().await.unwrap();
+        assert_eq!(file_index.len(), 2);
 
-        let embedding_field = chunk_batches[0]
-            .schema()
-            .field_with_name("embedding")
-            .unwrap()
-            .clone();
-        if let DataType::FixedSizeList(_, dim) = embedding_field.data_type() {
-            assert!(*dim > 0);
-        } else {
-            panic!("expected FixedSizeList for embedding column");
-        }
+        // Verify chunks exist with a positive embedding dimension
+        let chunk_rows = backend.read_chunk_rows().await.unwrap();
+        assert!(!chunk_rows.is_empty());
+        assert!(backend.embedding_dimension().await.unwrap().unwrap() > 0);
 
-        // Verify build metadata on files.parquet
-        let meta = read_build_metadata(&files_path).unwrap();
+        // Verify build metadata round-trips
+        let meta = backend.read_metadata().await.unwrap();
         assert!(meta.is_some(), "build metadata should be present");
         let meta = meta.unwrap();
         assert_eq!(meta.embedding_model.name, "minishlab/potion-base-8M");
@@ -1040,8 +1029,6 @@ mod tests {
 
     #[tokio::test]
     async fn dimension_mismatch() {
-        use crate::index::storage::{ChunkRow, build_chunks_batch, write_parquet};
-
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
@@ -1062,36 +1049,50 @@ mod tests {
         let output = run(tmp.path(), None, None, None, false, true, false).await;
         assert!(!crate::step::has_failed(&output));
 
-        // Overwrite chunks.parquet with wrong dimension (2 instead of actual)
-        let bad_chunks = vec![ChunkRow {
-            chunk_id: "bad".into(),
-            file_id: "bad".into(),
-            chunk_index: 0,
-            start_line: 1,
-            end_line: 1,
-            embedding: vec![0.1, 0.2], // dim=2
-        }];
-        let bad_batch = build_chunks_batch(&bad_chunks, 2).unwrap();
-        write_parquet(&tmp.path().join(".mdvs/chunks.parquet"), &bad_batch).unwrap();
+        // Overwrite the Lance index with a wrong-dimension (2) embedding,
+        // reusing the existing metadata so only the dimension differs.
+        overwrite_index_with_bad_dimension(tmp.path()).await;
 
-        // Add a new file so model gets loaded (incremental detects new file)
-        fs::write(
-            tmp.path().join("blog/post3.md"),
-            "---\ntitle: New\ntags:\n  - test\ndraft: true\n---\n# New\nNew content.",
-        )
-        .unwrap();
-
-        // Build should fail with dimension mismatch when model loads
+        // Build should fail with dimension mismatch when the model loads
+        // (all real files now read as "new" against the bad index).
         let output = run(tmp.path(), None, None, None, false, true, false).await;
         assert!(crate::step::has_failed(&output));
         let err = unwrap_error(&output);
         assert!(err.message.contains("dimension mismatch"));
     }
 
+    /// Test helper: replace the Lance index with a single chunk whose
+    /// embedding has dimension 2, preserving the existing build metadata.
+    async fn overwrite_index_with_bad_dimension(root: &std::path::Path) {
+        use crate::discover::field_type::FieldType;
+        use crate::index::storage::{ChunkRow, FileRow};
+        let backend = Backend::lance(root);
+        let meta = backend.read_metadata().await.unwrap().unwrap();
+        let schema_fields = vec![("title".to_string(), FieldType::String)];
+        let bad_files = vec![FileRow {
+            file_id: "bad".into(),
+            filename: "bad.md".into(),
+            frontmatter: None,
+            content_hash: "h".into(),
+            built_at: 0,
+        }];
+        let bad_chunks = vec![ChunkRow {
+            chunk_id: "bad".into(),
+            file_id: "bad".into(),
+            chunk_index: 0,
+            start_line: 1,
+            end_line: 1,
+            chunk_text: String::new(),
+            embedding: vec![0.1, 0.2], // dim=2
+        }];
+        backend
+            .write_index(&schema_fields, &bad_files, &bad_chunks, meta)
+            .await
+            .unwrap();
+    }
+
     #[tokio::test]
     async fn dimension_mismatch_with_force_succeeds() {
-        use crate::index::storage::{ChunkRow, build_chunks_batch, write_parquet};
-
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
@@ -1112,17 +1113,8 @@ mod tests {
         let output = run(tmp.path(), None, None, None, false, true, false).await;
         assert!(!crate::step::has_failed(&output));
 
-        // Overwrite chunks.parquet with wrong dimension (2 instead of actual)
-        let bad_chunks = vec![ChunkRow {
-            chunk_id: "bad".into(),
-            file_id: "bad".into(),
-            chunk_index: 0,
-            start_line: 1,
-            end_line: 1,
-            embedding: vec![0.1, 0.2], // dim=2
-        }];
-        let bad_batch = build_chunks_batch(&bad_chunks, 2).unwrap();
-        write_parquet(&tmp.path().join(".mdvs/chunks.parquet"), &bad_batch).unwrap();
+        // Overwrite the Lance index with a wrong-dimension (2) embedding.
+        overwrite_index_with_bad_dimension(tmp.path()).await;
 
         // Build with --force should succeed despite dimension mismatch
         let output = run(tmp.path(), None, None, None, true, true, false).await;
@@ -1177,8 +1169,7 @@ mod tests {
         assert_eq!(config.search.as_ref().unwrap().default_limit, 10);
 
         // Verify index was created
-        assert!(tmp.path().join(".mdvs/files.parquet").exists());
-        assert!(tmp.path().join(".mdvs/chunks.parquet").exists());
+        assert!(tmp.path().join(".mdvs/index.lance").exists());
     }
 
     #[tokio::test]
@@ -1539,22 +1530,22 @@ mod tests {
         );
 
         // Verify index was created
-        assert!(tmp.path().join(".mdvs/files.parquet").exists());
-        assert!(tmp.path().join(".mdvs/chunks.parquet").exists());
+        assert!(tmp.path().join(".mdvs/index.lance").exists());
     }
 
     // ========================================================================
     // Incremental build integration tests
     // ========================================================================
 
-    /// Read file_id→filename map and chunk_id→file_id map from existing parquets.
-    fn read_index_state(dir: &Path) -> (HashMap<String, String>, Vec<(String, String)>) {
-        let file_index = read_file_index(&dir.join(".mdvs/files.parquet")).unwrap();
+    /// Read file_id→filename map and chunk_id→file_id map from the Lance index.
+    async fn read_index_state(dir: &Path) -> (HashMap<String, String>, Vec<(String, String)>) {
+        let backend = Backend::lance(dir);
+        let file_index = backend.read_file_index().await.unwrap();
         let file_map: HashMap<String, String> = file_index
             .iter()
             .map(|e| (e.filename.clone(), e.file_id.clone()))
             .collect();
-        let chunks = read_chunk_rows(&dir.join(".mdvs/chunks.parquet")).unwrap();
+        let chunks = backend.read_chunk_rows().await.unwrap();
         let chunk_pairs: Vec<(String, String)> = chunks
             .iter()
             .map(|c| (c.chunk_id.clone(), c.file_id.clone()))
@@ -1583,13 +1574,13 @@ mod tests {
         let output = run(tmp.path(), None, None, None, false, true, false).await;
         assert!(!crate::step::has_failed(&output));
 
-        let (files_before, chunks_before) = read_index_state(tmp.path());
+        let (files_before, chunks_before) = read_index_state(tmp.path()).await;
 
         // Build again with no changes
         let output = run(tmp.path(), None, None, None, false, true, false).await;
         assert!(!crate::step::has_failed(&output));
 
-        let (files_after, chunks_after) = read_index_state(tmp.path());
+        let (files_after, chunks_after) = read_index_state(tmp.path()).await;
 
         // file_ids preserved
         for (filename, old_id) in &files_before {
@@ -1626,7 +1617,7 @@ mod tests {
         let output = run(tmp.path(), None, None, None, false, true, false).await;
         assert!(!crate::step::has_failed(&output));
 
-        let (files_before, chunks_before) = read_index_state(tmp.path());
+        let (files_before, chunks_before) = read_index_state(tmp.path()).await;
         // Add a new file
         fs::write(
             tmp.path().join("blog/post3.md"),
@@ -1637,7 +1628,7 @@ mod tests {
         let output = run(tmp.path(), None, None, None, false, true, false).await;
         assert!(!crate::step::has_failed(&output));
 
-        let (files_after, chunks_after) = read_index_state(tmp.path());
+        let (files_after, chunks_after) = read_index_state(tmp.path()).await;
 
         // Old file_ids preserved
         for (filename, old_id) in &files_before {
@@ -1681,7 +1672,7 @@ mod tests {
         let output = run(tmp.path(), None, None, None, false, true, false).await;
         assert!(!crate::step::has_failed(&output));
 
-        let (files_before, chunks_before) = read_index_state(tmp.path());
+        let (files_before, chunks_before) = read_index_state(tmp.path()).await;
         let post1_id = files_before["blog/post1.md"].clone();
         let post2_id = files_before["blog/post2.md"].clone();
 
@@ -1706,7 +1697,7 @@ mod tests {
         let output = run(tmp.path(), None, None, None, false, true, false).await;
         assert!(!crate::step::has_failed(&output));
 
-        let (files_after, chunks_after) = read_index_state(tmp.path());
+        let (files_after, chunks_after) = read_index_state(tmp.path()).await;
 
         // file_ids preserved for both files
         assert_eq!(files_after["blog/post1.md"], post1_id);
@@ -1755,7 +1746,7 @@ mod tests {
         let output = run(tmp.path(), None, None, None, false, true, false).await;
         assert!(!crate::step::has_failed(&output));
 
-        let (files_before, _) = read_index_state(tmp.path());
+        let (files_before, _) = read_index_state(tmp.path()).await;
         assert_eq!(files_before.len(), 2);
 
         // Remove post2
@@ -1764,7 +1755,7 @@ mod tests {
         let output = run(tmp.path(), None, None, None, false, true, false).await;
         assert!(!crate::step::has_failed(&output));
 
-        let (files_after, chunks_after) = read_index_state(tmp.path());
+        let (files_after, chunks_after) = read_index_state(tmp.path()).await;
 
         assert_eq!(files_after.len(), 1);
         assert!(files_after.contains_key("blog/post1.md"));
@@ -1796,7 +1787,7 @@ mod tests {
         let output = run(tmp.path(), None, None, None, false, true, false).await;
         assert!(!crate::step::has_failed(&output));
 
-        let (_, chunks_before) = read_index_state(tmp.path());
+        let (_, chunks_before) = read_index_state(tmp.path()).await;
         let old_chunk_ids: HashSet<String> =
             chunks_before.iter().map(|(id, _)| id.clone()).collect();
 
@@ -1809,7 +1800,7 @@ mod tests {
         let output = run(tmp.path(), None, None, None, false, true, false).await;
         assert!(!crate::step::has_failed(&output));
 
-        let (_, chunks_after) = read_index_state(tmp.path());
+        let (_, chunks_after) = read_index_state(tmp.path()).await;
         let new_chunk_ids: HashSet<String> =
             chunks_after.iter().map(|(id, _)| id.clone()).collect();
 
@@ -1838,7 +1829,7 @@ mod tests {
         let output = run(tmp.path(), None, None, None, false, true, false).await;
         assert!(!crate::step::has_failed(&output));
 
-        let (files_before, chunks_before) = read_index_state(tmp.path());
+        let (files_before, chunks_before) = read_index_state(tmp.path()).await;
         let old_file_ids: HashSet<String> = files_before.values().cloned().collect();
         let old_chunk_ids: HashSet<String> =
             chunks_before.iter().map(|(id, _)| id.clone()).collect();
@@ -1847,7 +1838,7 @@ mod tests {
         let output = run(tmp.path(), None, None, None, true, true, false).await;
         assert!(!crate::step::has_failed(&output));
 
-        let (files_after, chunks_after) = read_index_state(tmp.path());
+        let (files_after, chunks_after) = read_index_state(tmp.path()).await;
         let new_file_ids: HashSet<String> = files_after.values().cloned().collect();
         let new_chunk_ids: HashSet<String> =
             chunks_after.iter().map(|(id, _)| id.clone()).collect();
@@ -2037,8 +2028,7 @@ mod tests {
         assert!(!crate::step::has_failed(&build_step));
         let result = unwrap_build(&build_step);
         assert_eq!(result.files_embedded, 9);
-        assert!(tmp.path().join(".mdvs/files.parquet").exists());
-        assert!(tmp.path().join(".mdvs/chunks.parquet").exists());
+        assert!(tmp.path().join(".mdvs/index.lance").exists());
     }
 
     #[tokio::test]
