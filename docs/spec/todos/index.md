@@ -17,7 +17,7 @@
 | [0013](TODO-0013.md) | Search verifies model against parquet metadata | done | high | 2026-03-02 |
 | [0014](TODO-0014.md) | Build detects manual config changes via parquet metadata | done | high | 2026-03-02 |
 | [0015](TODO-0015.md) | Implement info and clean commands | done | high | 2026-03-02 |
-| [0016](TODO-0016.md) | Replace Parquet + DataFusion with Lance + LanceDB (full swap, hybrid search) | todo | high | 2026-03-02 |
+| [0016](TODO-0016.md) | Replace Parquet + DataFusion with Lance + LanceDB (full swap, hybrid search) | done | high | 2026-03-02 |
 | [0017](TODO-0017.md) | Ollama embedding provider | todo | medium | 2026-03-02 |
 | [0018](TODO-0018.md) | Cloud embedding providers (Azure, AWS Bedrock) | todo | low | 2026-03-02 |
 | [0019](TODO-0019.md) | Global --verbose flag | done | medium | 2026-03-02 |

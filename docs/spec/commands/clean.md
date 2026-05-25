@@ -14,6 +14,6 @@ Returns `CleanOutcome` with `removed: bool`, `path`, `files_removed`, `size_byte
 
 ## Key points
 
-- **Destructive** — removes all parquet files and build metadata. Requires a `build` to recreate.
+- **Destructive** — removes the Lance dataset (`index.lance/`), the cached embedding model, and build metadata. Requires a `build` to recreate.
 - **Config preserved** — `mdvs.toml` is not touched. Only `.mdvs/` is deleted.
 - **No confirmation** — deletes immediately. No `--force` required.
