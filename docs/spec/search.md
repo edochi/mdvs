@@ -23,7 +23,7 @@ The CLI flag `--mode {semantic,fulltext,hybrid}` selects the variant; the defaul
 - Bare frontmatter field names get a `data.` prefix (so `status = 'active'` becomes `data.status = 'active'`).
 - Identifiers immediately followed by `(` are treated as **function calls**, not field names — `lower(status)` is rewritten to `lower(data.status)`, not `data.lower(...)`.
 - Internal columns (`chunk_text`, `start_line`, `end_line`, `embedding`, …) are left bare.
-- **References to `Array(Float)` field names produce an early error** with a clear message, before LanceDB sees the clause. This is the TODO-0159 mitigation — see the upstream draft at `docs/spec/todos/TODO-0159-upstream-draft.md`.
+- **References to `Array(Float)` field names produce an early error** with a clear message, before LanceDB sees the clause. This is the TODO-0159 mitigation — see [lancedb#3446](https://github.com/lancedb/lancedb/issues/3446) for the upstream report and [TODO-0159](todos/TODO-0159.md) for the local resolution notes.
 - Date and timestamp literal keywords (`DATE '...'`, `TIMESTAMP '...'`) are protected from prefix injection by a literal-aware tokenizer.
 
 The translator is schema-aware: it loads the `data` Struct's child names + types from the Lance table schema once per `search()` call, via `float_list_child_names(schema)` for the Array(Float) guard and the full child-name set for prefixing.

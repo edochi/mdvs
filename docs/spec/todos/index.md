@@ -160,7 +160,7 @@
 | [0156](TODO-0156.md) | Represent Array of structured items without violating Wave C's flattening | todo | low | 2026-05-13 |
 | [0157](TODO-0157.md) | Incremental ANN index optimize instead of full index rebuild | todo | low | 2026-05-22 |
 | [0158](TODO-0158.md) | --where translator does not handle quoted/special-character field names | todo | low | 2026-05-22 |
-| [0159](TODO-0159.md) | --where on an Array(Float) field panics inside lance-encoding (mitigated) | todo | low | 2026-05-22 |
+| [0159](TODO-0159.md) | --where on an Array(Float) field panics inside lance-encoding (mitigated) | done | low | 2026-05-22 |
 | [0160](TODO-0160.md) | Time-decay weighting for search results | todo | low | 2026-05-25 |
 | [0161](TODO-0161.md) | Polish the asciinema demo — readability, highlighting, persistence | todo | medium | 2026-05-25 |
 | [0162](TODO-0162.md) | Multi-format frontmatter — support TOML and JSON alongside YAML | todo | high | 2026-05-25 |
