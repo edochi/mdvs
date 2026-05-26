@@ -87,7 +87,23 @@ fn parse_via_gray_matter<E: gray_matter::engine::Engine>(
     matter: &Matter<E>,
     raw: &str,
 ) -> Option<(EngineParse, Option<String>)> {
-    let parsed = matter.parse::<Pod>(raw).ok()?;
+    let parsed = match matter.parse::<Pod>(raw) {
+        Ok(p) => p,
+        Err(e) => {
+            // Gray_matter rejected the content inside the delimiters
+            // (e.g. malformed YAML, broken TOML). The file *does* have
+            // a recognized leading delimiter — caller resolved an
+            // engine for it — so this is a real validation error, not
+            // a bare file. Surface it as `FrontmatterUnrepresentable`.
+            return Some((
+                EngineParse {
+                    data: None,
+                    body: raw.to_string(),
+                },
+                Some(format!("invalid frontmatter: {e}")),
+            ));
+        }
+    };
     let (data, error): (Option<Value>, Option<String>) = match parsed.data {
         None => (None, None),
         Some(d) => match d.deserialize::<Value>() {
