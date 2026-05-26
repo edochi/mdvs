@@ -196,7 +196,7 @@ pattern = '^[A-Z]+-\d+[A-Z]?$'
 [[fields.field]]
 name = "firmware_version"
 type = "String"
-allowed = ["people/*"]
+allowed = ["people/*", "reference/protocols/equipment/*"]
 required = []
 nullable = false
 
@@ -341,7 +341,7 @@ categories = ["active", "archived", "completed", "draft", "published"]
 [[fields.field]]
 name = "synced_at"
 type = "DateTime"
-allowed = ["projects/alpha/notes/**"]
+allowed = ["projects/alpha/notes/**", "reference/protocols/equipment/*"]
 required = []
 nullable = false
 

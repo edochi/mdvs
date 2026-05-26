@@ -23,7 +23,7 @@ Designed for Obsidian vaults, Zettelkasten systems, docs-as-code repositories, a
 
 ## Why mdvs?
 
-Markdown files can have a YAML block at the top called **frontmatter** — structured fields that describe the document:
+Markdown files can have a block at the top called **frontmatter** — structured fields that describe the document. mdvs accepts YAML (`---`), TOML (`+++`), or JSON (`{...}`); the format is auto-detected per file, so mixed-format vaults work transparently.
 
 ```markdown
 ---
@@ -217,7 +217,8 @@ No config files to write. No models to download manually. No services to start.
 
 ## Features
 
-- **Schema inference** — types (boolean, integer, float, string, RFC 3339 date and datetime, arrays), nested YAML structure exposed as dotted-name leaf fields (`calibration.baseline.wavelength`), path constraints (allowed/required per directory), nullable detection, value preprocessors. All automatic.
+- **Multi-format frontmatter** — YAML (`---`), TOML (`+++`), or JSON (`{...}`), auto-detected per file. Mix freely within one vault; native TOML `Date` / `DateTime` literals are recognized.
+- **Schema inference** — types (boolean, integer, float, string, RFC 3339 date and datetime, arrays), nested frontmatter structure exposed as dotted-name leaf fields (`calibration.baseline.wavelength`), path constraints (allowed/required per directory), nullable detection, value preprocessors. All automatic.
 - **Frontmatter validation** — wrong types, disallowed fields, missing required fields, nullability, categories, numeric/length ranges, regex patterns, and unrepresentable frontmatter. Powered by [`jsonschema`](https://crates.io/crates/jsonschema) under the hood — your `mdvs.toml` translates to a real JSON Schema 2020-12 document.
 - **JSON Schema interop** — `mdvs export-jsonschema` translates your config into a JSON Schema document; `mdvs init --from-jsonschema` imports one. Lossless round-trip.
 - **Semantic, full-text, and hybrid search** — instant vector search using lightweight [Model2Vec](https://minish.ai/) static embeddings, full-text BM25 ranking, and hybrid RRF reranking, all backed by [LanceDB](https://lancedb.com/). Pick with `--mode`; default is hybrid. No GPU, no API keys.

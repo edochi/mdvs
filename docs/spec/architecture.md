@@ -50,7 +50,7 @@ graph LR
 
 Pipeline stages with the key type at each boundary:
 
-1. **Scan** — walk directory, parse YAML frontmatter via `gray_matter` → `ScannedFiles` (`discover/scan.rs:46`)
+1. **Scan** — walk directory, per-file frontmatter dispatch (YAML / TOML via `gray_matter`; JSON via `serde_json` directly) → `ScannedFiles` (`discover/scan.rs:46`)
 2. **Type inference** — single pass, widen types across files → `FieldTypeInfo` map (`discover/infer/types.rs:12`, widening at `discover/field_type.rs:29`)
 3. **Path inference** — build directory tree, collapse into glob patterns → `FieldPaths` (`discover/infer/paths.rs:12`)
 4. **Constraint inference** — categorical heuristic on distinct values → `Option<Constraints>` (`discover/infer/constraints/mod.rs:13`)
@@ -86,7 +86,7 @@ src/
 │   └── export_jsonschema.rs            — translate mdvs.toml → JSON Schema (json/toml output)
 │
 ├── discover/
-│   ├── scan.rs                         — directory walking, YAML parsing (gray_matter), ScannedFile
+│   ├── scan.rs                         — directory walking, per-file frontmatter dispatch (YAML / TOML / JSON), ScannedFile
 │   ├── field_type.rs                   — FieldType enum, from_widen() symmetric widening
 │   └── infer/
 │       ├── mod.rs                      — InferredField, InferredSchema, orchestrator
@@ -319,7 +319,7 @@ Date and DateTime do **not** support any preprocessor — there's no `parse-loos
 
 ## Dotted-name leaf flattening (Wave C / TODO-0097)
 
-mdvs.toml is **flat**: every `[[fields.field]]` declares one leaf, named by a dotted path. A YAML frontmatter shape like:
+mdvs.toml is **flat**: every `[[fields.field]]` declares one leaf, named by a dotted path. A nested frontmatter shape — shown here as YAML, but the same in TOML tables or JSON objects — like:
 
 ```yaml
 calibration:
@@ -346,8 +346,8 @@ type = "Float"
 |---|---|---|
 | `mdvs.toml` | Flat list of dotted-name leaves | Per-leaf nullability, per-leaf path-scoping, readable in plain TOML |
 | Canonical JSON Schema (`dsl_to_canonical`) | Nested `properties` tree | Standard JSON Schema; what `jsonschema::Validator` consumes |
-| Arrow `data` Struct column (built in `storage.rs`) | Nested Struct mirroring the YAML | LanceDB's SQL dot-access (`WHERE data.calibration.baseline.wavelength > 800`) works natively |
-| Source YAML frontmatter | Naturally nested | Unchanged |
+| Arrow `data` Struct column (built in `storage.rs`) | Nested Struct mirroring the source frontmatter | LanceDB's SQL dot-access (`WHERE data.calibration.baseline.wavelength > 800`) works natively |
+| Source frontmatter (YAML / TOML / JSON) | Naturally nested | Unchanged |
 
 The translator (`dsl_to_canonical`) reconstructs the nested shape from dotted names; `canonical_to_dsl` reverses it. Storage transposes the flat list back into a synthetic `FieldType::Object` tree before building Arrow arrays. Validation navigates frontmatter via dotted paths (`navigate_dotted` in `cmd/check.rs`).
 
@@ -365,9 +365,9 @@ Top-level Object is rejected (invariant 6), and `Array(Object{...})` is rejected
 
 Invariant 8 rejects configs that declare a name as both a leaf and a parent of nested leaves (e.g., `meta` *and* `meta.author`). This catches structural ambiguity at config-load time, before the translator runs.
 
-### Literal-dot YAML keys
+### Literal-dot frontmatter keys
 
-A YAML key like `"foo.bar": "..."` (with a literal dot) conflicts with mdvs's dotted-name convention and is rejected at scan time via `FrontmatterUnrepresentable`. Users with such keys must restructure their frontmatter (or wait for a future Stage 1 field-name preprocessor that could remap them).
+A frontmatter key with a literal dot — `"foo.bar": "..."` in YAML, `"foo.bar" = "..."` in TOML, `"foo.bar": "..."` in JSON — conflicts with mdvs's dotted-name convention and is rejected at scan time via `FrontmatterUnrepresentable`. Users with such keys must restructure their frontmatter (or wait for a future Stage 1 field-name preprocessor that could remap them).
 
 ## Output Pipeline
 
@@ -448,7 +448,7 @@ All invariants bail on first error via `anyhow::bail!()`.
 | `lancedb` + `lance-index` | Storage + native vector / FTS / hybrid search |
 | `arrow` | In-memory columnar format (batches handed to LanceDB) |
 | `futures` | Stream consumption from LanceDB query results |
-| `gray_matter` | YAML frontmatter extraction |
+| `gray_matter` | YAML + TOML frontmatter extraction (JSON parsed natively via `serde_json::Deserializer::byte_offset`) |
 | `jsonschema` | JSON Schema 2020-12 per-value validator (Wave B engine) |
 | `tomljson` | Workspace crate: lossless TOML↔JSON for schema loading (`.toml` JSON Schemas) |
 | `text-splitter` | Semantic markdown chunking |

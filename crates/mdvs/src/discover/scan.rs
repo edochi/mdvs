@@ -1,7 +1,7 @@
-use crate::schema::shared::ScanConfig;
+use crate::schema::shared::{FrontmatterFormat, ScanConfig};
 use anyhow::Context;
 use globset::Glob;
-use gray_matter::engine::YAML;
+use gray_matter::engine::{TOML, YAML};
 use gray_matter::{Matter, Pod};
 use ignore::WalkBuilder;
 use serde_json::Value;
@@ -11,6 +11,162 @@ use tracing::{info, instrument, warn};
 
 const MAX_NESTING_DEPTH: usize = 50;
 const MAX_FIELD_COUNT: usize = 1000;
+
+/// Which gray_matter engine to use for a given file. Internal-only; the
+/// user-facing equivalent is [`FrontmatterFormat`] (which adds `Auto`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FrontmatterEngine {
+    Yaml,
+    Toml,
+    Json,
+}
+
+impl FrontmatterEngine {
+    /// Leading delimiter that identifies this engine. Used in
+    /// `detect_engine` and in forced-mode mismatch error messages.
+    fn delimiter(self) -> &'static str {
+        match self {
+            Self::Yaml => "---",
+            Self::Toml => "+++",
+            Self::Json => "{",
+        }
+    }
+
+    /// Lowercase format name matching `FrontmatterFormat` serde variants.
+    /// Used in forced-mode mismatch error messages.
+    fn format_name(self) -> &'static str {
+        match self {
+            Self::Yaml => "yaml",
+            Self::Toml => "toml",
+            Self::Json => "json",
+        }
+    }
+}
+
+/// Detect the frontmatter engine from the file's first non-empty line.
+/// Returns `None` when the file is bare (no recognized delimiter).
+fn detect_engine(content: &str) -> Option<FrontmatterEngine> {
+    let first = content.lines().find(|l| !l.trim().is_empty())?;
+    let trimmed = first.trim_end();
+    if trimmed == "---" {
+        Some(FrontmatterEngine::Yaml)
+    } else if trimmed == "+++" {
+        Some(FrontmatterEngine::Toml)
+    } else if trimmed.trim_start().starts_with('{') {
+        Some(FrontmatterEngine::Json)
+    } else {
+        None
+    }
+}
+
+/// Map a [`FrontmatterFormat`] to an explicit [`FrontmatterEngine`], or
+/// `None` if the format is `Auto` (caller falls back to `detect_engine`).
+fn forced_engine(format: FrontmatterFormat) -> Option<FrontmatterEngine> {
+    match format {
+        FrontmatterFormat::Auto => None,
+        FrontmatterFormat::Yaml => Some(FrontmatterEngine::Yaml),
+        FrontmatterFormat::Toml => Some(FrontmatterEngine::Toml),
+        FrontmatterFormat::Json => Some(FrontmatterEngine::Json),
+    }
+}
+
+/// Output of a single engine parse, uniform across YAML / TOML / JSON.
+/// `None` means parse failed and the file should fall back to bare-file
+/// handling (mirrors gray_matter's `Err` arm).
+struct EngineParse {
+    data: Option<Value>,
+    body: String,
+}
+
+/// Parse a file's frontmatter + body with gray_matter using the given
+/// `Matter` instance. The `Pod` is converted to `serde_json::Value` and
+/// validated (top-level must be an object, NaN/inf rejected). Returns
+/// `None` when gray_matter itself fails to parse — caller falls back to
+/// bare-file handling for backward compatibility.
+fn parse_via_gray_matter<E: gray_matter::engine::Engine>(
+    matter: &Matter<E>,
+    raw: &str,
+) -> Option<(EngineParse, Option<String>)> {
+    let parsed = match matter.parse::<Pod>(raw) {
+        Ok(p) => p,
+        Err(e) => {
+            // Gray_matter rejected the content inside the delimiters
+            // (e.g. malformed YAML, broken TOML). The file *does* have
+            // a recognized leading delimiter — caller resolved an
+            // engine for it — so this is a real validation error, not
+            // a bare file. Surface it as `FrontmatterUnrepresentable`.
+            return Some((
+                EngineParse {
+                    data: None,
+                    body: raw.to_string(),
+                },
+                Some(format!("invalid frontmatter: {e}")),
+            ));
+        }
+    };
+    let (data, error): (Option<Value>, Option<String>) = match parsed.data {
+        None => (None, None),
+        Some(d) => match d.deserialize::<Value>() {
+            Err(e) => (
+                None,
+                Some(format!("frontmatter not representable as JSON: {e}")),
+            ),
+            Ok(json) => {
+                if json.is_object() {
+                    (Some(json), None)
+                } else {
+                    let kind = json_kind_name(&json);
+                    (
+                        None,
+                        Some(format!("frontmatter must be a key-value map, got {kind}")),
+                    )
+                }
+            }
+        },
+    };
+    Some((
+        EngineParse {
+            data,
+            body: parsed.content,
+        },
+        error,
+    ))
+}
+
+/// Parse JSON frontmatter using `serde_json::Deserializer` directly.
+/// Hugo-style convention: the JSON object itself starts at column 0 with
+/// `{` and ends with the matching `}`; the body follows immediately.
+/// gray_matter's `Matter::<JSON>` wraps JSON in `---` delimiters instead,
+/// which is not the convention users expect — so we bypass it here.
+fn parse_json_native(raw: &str) -> Option<(EngineParse, Option<String>)> {
+    // `StreamDeserializer::byte_offset` tells us where the first JSON
+    // value ends; the body is everything after.
+    let mut iter = serde_json::Deserializer::from_str(raw).into_iter::<Value>();
+    match iter.next() {
+        Some(Ok(json)) => {
+            let consumed = iter.byte_offset();
+            let body = raw[consumed..].to_string();
+            let (data, error) = if json.is_object() {
+                (Some(json), None)
+            } else {
+                let kind = json_kind_name(&json);
+                (
+                    None,
+                    Some(format!("frontmatter must be a key-value map, got {kind}")),
+                )
+            };
+            Some((EngineParse { data, body }, error))
+        }
+        Some(Err(e)) => Some((
+            EngineParse {
+                data: None,
+                body: raw.to_string(),
+            },
+            Some(format!("invalid JSON frontmatter: {e}")),
+        )),
+        None => None,
+    }
+}
 
 /// Human-readable name for a JSON value kind, used in `FrontmatterUnrepresentable`
 /// error messages when the top-level value isn't an object.
@@ -73,7 +229,17 @@ impl ScannedFiles {
         let matcher = Glob::new(&config.glob)
             .context(format!("invalid glob pattern '{}'", config.glob))?
             .compile_matcher();
-        let matter = Matter::<YAML>::new();
+
+        // Pre-build YAML + TOML Matter instances. Matter::new() defaults
+        // delimiter to "---" regardless of engine — TOML must be set
+        // explicitly to "+++" per TODO-0162 step 1 spike findings.
+        // JSON does not use a gray_matter engine: its convention (Hugo,
+        // Astro) is `{...}` where the braces are part of the JSON itself,
+        // not delimiters wrapping it. We parse JSON via serde_json
+        // directly in `parse_json_native`.
+        let yaml_matter = Matter::<YAML>::new();
+        let mut toml_matter = Matter::<TOML>::new();
+        toml_matter.delimiter = "+++".to_string();
 
         let mut files = Vec::new();
 
@@ -128,7 +294,48 @@ impl ScannedFiles {
                     continue;
                 }
             };
-            let Ok(parsed) = matter.parse::<Pod>(&raw) else {
+
+            // Resolve which gray_matter engine to use for this file.
+            // Auto mode probes the leading delimiter; explicit modes
+            // skip the probe but still detect leading delimiters from
+            // *other* engines to surface a clear mismatch error.
+            let detected = detect_engine(&raw);
+            let resolved_engine: Option<FrontmatterEngine> =
+                match forced_engine(config.frontmatter_format) {
+                    None => detected,
+                    Some(forced) => {
+                        // Forced-mode mismatch: file's leading delimiter
+                        // belongs to a different engine. Surface as
+                        // `FrontmatterUnrepresentable` so the user can fix
+                        // the file (or relax the config).
+                        if let Some(actual) = detected
+                            && actual != forced
+                        {
+                            files.push(ScannedFile {
+                                path: rel_path,
+                                data: None,
+                                frontmatter_error: Some(format!(
+                                    "frontmatter format mismatch: configured \
+                                 `{}` (delimiter `{}`) but file starts with \
+                                 `{}` (delimiter for `{}`)",
+                                    forced.format_name(),
+                                    forced.delimiter(),
+                                    actual.delimiter(),
+                                    actual.format_name(),
+                                )),
+                                content: raw.trim().to_string(),
+                                body_line_offset: 0,
+                            });
+                            continue;
+                        }
+                        Some(forced)
+                    }
+                };
+
+            let Some(engine) = resolved_engine else {
+                // Bare file (no recognized leading delimiter, or auto
+                // mode + empty file). Preserve existing behavior:
+                // include or filter based on `include_bare_files`.
                 if !config.include_bare_files {
                     continue;
                 }
@@ -142,36 +349,30 @@ impl ScannedFiles {
                 continue;
             };
 
-            // Convert YAML→JSON, capturing both shape errors (top-level
-            // non-object) and conversion errors (NaN/inf, non-string keys).
-            // Files with errors are *kept* in the scan so check can surface
-            // them as `FrontmatterUnrepresentable` violations — never silently
-            // dropped.
-            let (data, frontmatter_error): (Option<Value>, Option<String>) = match parsed.data {
-                None => (None, None),
-                Some(d) => {
-                    let result: Result<Value, _> = d.deserialize();
-                    match result {
-                        Err(e) => (
-                            None,
-                            Some(format!("frontmatter not representable as JSON: {e}")),
-                        ),
-                        Ok(json) => {
-                            if json.is_object() {
-                                (Some(json), None)
-                            } else {
-                                let kind = json_kind_name(&json);
-                                (
-                                    None,
-                                    Some(format!(
-                                        "frontmatter must be a key-value map, got {kind}"
-                                    )),
-                                )
-                            }
-                        }
-                    }
-                }
+            // Dispatch to the engine-specific parser. YAML + TOML go
+            // through gray_matter; JSON uses serde_json directly because
+            // the `{...}` convention isn't gray_matter's delimiter model.
+            // All three branches return a uniform `(EngineParse, error)`
+            // so the downstream safety + assembly logic is unified.
+            let parsed = match engine {
+                FrontmatterEngine::Yaml => parse_via_gray_matter(&yaml_matter, &raw),
+                FrontmatterEngine::Toml => parse_via_gray_matter(&toml_matter, &raw),
+                FrontmatterEngine::Json => parse_json_native(&raw),
             };
+            let Some((parsed, frontmatter_error)) = parsed else {
+                if !config.include_bare_files {
+                    continue;
+                }
+                files.push(ScannedFile {
+                    path: rel_path,
+                    data: None,
+                    frontmatter_error: None,
+                    content: raw.trim().to_string(),
+                    body_line_offset: 0,
+                });
+                continue;
+            };
+            let data = parsed.data;
 
             // Safety limits on frontmatter complexity
             if let Some(ref val) = data {
@@ -201,7 +402,7 @@ impl ScannedFiles {
                 continue;
             }
 
-            let content = parsed.content.trim().to_string();
+            let content = parsed.body.trim().to_string();
             let body_line_offset = raw.lines().count().saturating_sub(content.lines().count());
 
             files.push(ScannedFile {
@@ -224,6 +425,7 @@ impl ScannedFiles {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schema::shared::FrontmatterFormat;
 
     fn write_file(root: &Path, rel_path: &str, content: &str) {
         let full = root.join(rel_path);
@@ -238,6 +440,7 @@ mod tests {
             glob: glob.into(),
             include_bare_files,
             skip_gitignore: true,
+            frontmatter_format: FrontmatterFormat::Auto,
         }
     }
 
@@ -537,5 +740,233 @@ mod tests {
         let scanned = ScannedFiles::scan(tmp.path(), &scan_config("**", false)).unwrap();
         assert_eq!(scanned.files.len(), 1);
         assert!(scanned.files[0].frontmatter_error.is_some());
+    }
+
+    // ------------------------------------------------------------------------
+    // Multi-format frontmatter (TODO-0162)
+    // ------------------------------------------------------------------------
+
+    fn scan_config_forced(glob: &str, format: FrontmatterFormat) -> ScanConfig {
+        ScanConfig {
+            glob: glob.into(),
+            include_bare_files: false,
+            skip_gitignore: true,
+            frontmatter_format: format,
+        }
+    }
+
+    #[test]
+    fn detect_engine_yaml() {
+        assert_eq!(
+            detect_engine("---\ntitle: x\n---\nbody"),
+            Some(FrontmatterEngine::Yaml)
+        );
+    }
+
+    #[test]
+    fn detect_engine_toml() {
+        assert_eq!(
+            detect_engine("+++\ntitle = \"x\"\n+++\nbody"),
+            Some(FrontmatterEngine::Toml)
+        );
+    }
+
+    #[test]
+    fn detect_engine_json() {
+        assert_eq!(
+            detect_engine("{\n  \"title\": \"x\"\n}\nbody"),
+            Some(FrontmatterEngine::Json)
+        );
+    }
+
+    #[test]
+    fn detect_engine_bare() {
+        assert_eq!(detect_engine("plain markdown, no frontmatter"), None);
+    }
+
+    #[test]
+    fn detect_engine_empty() {
+        assert_eq!(detect_engine(""), None);
+    }
+
+    #[test]
+    fn detect_engine_skips_leading_blank_lines() {
+        // First non-empty line wins. Whitespace-only lines are skipped.
+        assert_eq!(
+            detect_engine("\n\n   \n---\ntitle: x\n---\nbody"),
+            Some(FrontmatterEngine::Yaml)
+        );
+    }
+
+    #[test]
+    fn detect_engine_dashes_with_trailing_whitespace() {
+        // Trailing whitespace on the delimiter line is tolerated.
+        assert_eq!(
+            detect_engine("---  \ntitle: x\n---\nbody"),
+            Some(FrontmatterEngine::Yaml)
+        );
+    }
+
+    #[test]
+    fn scan_parses_toml_frontmatter() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_file(
+            tmp.path(),
+            "note.md",
+            "+++\ntitle = \"TOML Note\"\ncount = 42\ndraft = false\ntags = [\"alpha\", \"beta\"]\n+++\n\nBody content.",
+        );
+        let scanned = ScannedFiles::scan(tmp.path(), &scan_config("**", false)).unwrap();
+        let f = find(&scanned, "note.md");
+        let data = f.data.as_ref().unwrap();
+        assert_eq!(data["title"], "TOML Note");
+        assert_eq!(data["count"], 42);
+        assert_eq!(data["draft"], false);
+        assert_eq!(data["tags"][0], "alpha");
+        assert_eq!(data["tags"][1], "beta");
+        assert_eq!(f.content, "Body content.");
+    }
+
+    #[test]
+    fn scan_parses_toml_native_date() {
+        // Per TODO-0162 step 1 spike: native TOML `Date` and `DateTime`
+        // values come through Pod → serde_json::Value as strings.
+        let tmp = tempfile::tempdir().unwrap();
+        write_file(
+            tmp.path(),
+            "dates.md",
+            "+++\njoined = 2024-03-14\nsynced_at = 2024-03-14T10:25:00Z\n+++\n\nBody.",
+        );
+        let scanned = ScannedFiles::scan(tmp.path(), &scan_config("**", false)).unwrap();
+        let f = find(&scanned, "dates.md");
+        let data = f.data.as_ref().unwrap();
+        assert_eq!(data["joined"], "2024-03-14");
+        assert_eq!(data["synced_at"], "2024-03-14T10:25:00Z");
+    }
+
+    #[test]
+    fn scan_parses_json_frontmatter() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_file(
+            tmp.path(),
+            "note.md",
+            "{\n  \"title\": \"JSON Note\",\n  \"count\": 7,\n  \"draft\": true\n}\n\nBody content.",
+        );
+        let scanned = ScannedFiles::scan(tmp.path(), &scan_config("**", false)).unwrap();
+        let f = find(&scanned, "note.md");
+        let data = f.data.as_ref().unwrap();
+        assert_eq!(data["title"], "JSON Note");
+        assert_eq!(data["count"], 7);
+        assert_eq!(data["draft"], true);
+        assert_eq!(f.content, "Body content.");
+    }
+
+    #[test]
+    fn scan_auto_dispatches_mixed_vault() {
+        // A single vault with one file per format. Auto mode picks the
+        // right engine for each based on the leading delimiter.
+        let tmp = tempfile::tempdir().unwrap();
+        write_file(tmp.path(), "yaml.md", "---\ntitle: yaml\n---\nyaml body");
+        write_file(
+            tmp.path(),
+            "toml.md",
+            "+++\ntitle = \"toml\"\n+++\ntoml body",
+        );
+        write_file(
+            tmp.path(),
+            "json.md",
+            "{\n  \"title\": \"json\"\n}\njson body",
+        );
+        let scanned = ScannedFiles::scan(tmp.path(), &scan_config("**", false)).unwrap();
+        assert_eq!(scanned.files.len(), 3);
+        assert_eq!(
+            find(&scanned, "yaml.md").data.as_ref().unwrap()["title"],
+            "yaml"
+        );
+        assert_eq!(
+            find(&scanned, "toml.md").data.as_ref().unwrap()["title"],
+            "toml"
+        );
+        assert_eq!(
+            find(&scanned, "json.md").data.as_ref().unwrap()["title"],
+            "json"
+        );
+    }
+
+    #[test]
+    fn forced_yaml_rejects_toml_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_file(tmp.path(), "wrong.md", "+++\ntitle = \"x\"\n+++\nbody");
+        let scanned = ScannedFiles::scan(
+            tmp.path(),
+            &scan_config_forced("**", FrontmatterFormat::Yaml),
+        )
+        .unwrap();
+        let f = find(&scanned, "wrong.md");
+        assert!(f.data.is_none());
+        let err = f.frontmatter_error.as_ref().unwrap();
+        assert!(err.contains("yaml"), "got: {err}");
+        assert!(err.contains("toml"), "got: {err}");
+        assert!(err.contains("+++"), "got: {err}");
+    }
+
+    #[test]
+    fn forced_toml_rejects_yaml_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_file(tmp.path(), "wrong.md", "---\ntitle: x\n---\nbody");
+        let scanned = ScannedFiles::scan(
+            tmp.path(),
+            &scan_config_forced("**", FrontmatterFormat::Toml),
+        )
+        .unwrap();
+        let f = find(&scanned, "wrong.md");
+        assert!(f.data.is_none());
+        let err = f.frontmatter_error.as_ref().unwrap();
+        assert!(err.contains("toml"), "got: {err}");
+        assert!(err.contains("yaml"), "got: {err}");
+        assert!(err.contains("---"), "got: {err}");
+    }
+
+    #[test]
+    fn forced_json_rejects_yaml_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_file(tmp.path(), "wrong.md", "---\ntitle: x\n---\nbody");
+        let scanned = ScannedFiles::scan(
+            tmp.path(),
+            &scan_config_forced("**", FrontmatterFormat::Json),
+        )
+        .unwrap();
+        let f = find(&scanned, "wrong.md");
+        assert!(f.data.is_none());
+        let err = f.frontmatter_error.as_ref().unwrap();
+        assert!(err.contains("json"), "got: {err}");
+        assert!(err.contains("yaml"), "got: {err}");
+    }
+
+    #[test]
+    fn forced_toml_accepts_toml_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_file(tmp.path(), "ok.md", "+++\ntitle = \"x\"\n+++\nbody");
+        let scanned = ScannedFiles::scan(
+            tmp.path(),
+            &scan_config_forced("**", FrontmatterFormat::Toml),
+        )
+        .unwrap();
+        let f = find(&scanned, "ok.md");
+        assert_eq!(f.data.as_ref().unwrap()["title"], "x");
+        assert!(f.frontmatter_error.is_none());
+    }
+
+    #[test]
+    fn forced_json_accepts_json_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_file(tmp.path(), "ok.md", "{\n  \"title\": \"x\"\n}\nbody");
+        let scanned = ScannedFiles::scan(
+            tmp.path(),
+            &scan_config_forced("**", FrontmatterFormat::Json),
+        )
+        .unwrap();
+        let f = find(&scanned, "ok.md");
+        assert_eq!(f.data.as_ref().unwrap()["title"], "x");
+        assert!(f.frontmatter_error.is_none());
     }
 }

@@ -2,7 +2,9 @@ use crate::discover::field_type::FieldType;
 use crate::discover::infer::{InferredSchema, infer_constraints};
 use crate::preprocess::ValueStage;
 use crate::schema::constraints::Constraints;
-use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig, FieldTypeSerde, ScanConfig};
+use crate::schema::shared::{
+    ChunkingConfig, EmbeddingModelConfig, FieldTypeSerde, FrontmatterFormat, ScanConfig,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -185,6 +187,7 @@ impl MdvsToml {
                 glob: "**".into(),
                 include_bare_files: false,
                 skip_gitignore: false,
+                frontmatter_format: FrontmatterFormat::Auto,
             },
             update: UpdateConfig::default(),
             check: None,
@@ -596,6 +599,7 @@ mod tests {
                 glob: "**".into(),
                 include_bare_files: false,
                 skip_gitignore: false,
+                frontmatter_format: FrontmatterFormat::Auto,
             },
             update: default_update(),
             check: None,
@@ -631,6 +635,7 @@ mod tests {
                 glob: "**".into(),
                 include_bare_files: false,
                 skip_gitignore: false,
+                frontmatter_format: FrontmatterFormat::Auto,
             },
             update: default_update(),
             check: None,
@@ -791,6 +796,7 @@ default_limit = 10
             glob: "**".into(),
             include_bare_files: false,
             skip_gitignore: false,
+            frontmatter_format: FrontmatterFormat::Auto,
         };
         let toml_doc = MdvsToml::from_inferred(&schema, scan);
 
@@ -827,6 +833,7 @@ default_limit = 10
             glob: "docs/**".into(),
             include_bare_files: true,
             skip_gitignore: false,
+            frontmatter_format: FrontmatterFormat::Auto,
         };
         let toml_doc = MdvsToml::from_inferred(&schema, scan);
         assert_eq!(toml_doc.scan.glob, "docs/**");
@@ -845,6 +852,7 @@ default_limit = 10
             glob: "**".into(),
             include_bare_files: false,
             skip_gitignore: false,
+            frontmatter_format: FrontmatterFormat::Auto,
         };
         let toml_doc = MdvsToml::from_inferred(&schema, scan);
         assert!(toml_doc.embedding_model.is_none());
@@ -874,6 +882,7 @@ default_limit = 10
             glob: "**".into(),
             include_bare_files: false,
             skip_gitignore: false,
+            frontmatter_format: FrontmatterFormat::Auto,
         };
         let mut toml_doc = MdvsToml::from_inferred(&schema, scan);
 
@@ -930,6 +939,7 @@ default_limit = 10
                 glob: "**".into(),
                 include_bare_files: false,
                 skip_gitignore: false,
+                frontmatter_format: FrontmatterFormat::Auto,
             },
             update: UpdateConfig {},
             check: None,

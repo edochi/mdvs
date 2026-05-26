@@ -503,12 +503,13 @@ mod tests {
     #[test]
     fn pipeline_no_preprocess_returns_borrowed() {
         use crate::schema::config::{FieldsConfig, UpdateConfig};
-        use crate::schema::shared::ScanConfig;
+        use crate::schema::shared::{FrontmatterFormat, ScanConfig};
         let toml = MdvsToml {
             scan: ScanConfig {
                 glob: "**".into(),
                 include_bare_files: false,
                 skip_gitignore: false,
+                frontmatter_format: FrontmatterFormat::Auto,
             },
             update: UpdateConfig::default(),
             check: None,
@@ -532,12 +533,13 @@ mod tests {
     #[test]
     fn pipeline_applies_coerce_to_string() {
         use crate::schema::config::{FieldsConfig, UpdateConfig};
-        use crate::schema::shared::ScanConfig;
+        use crate::schema::shared::{FrontmatterFormat, ScanConfig};
         let toml = MdvsToml {
             scan: ScanConfig {
                 glob: "**".into(),
                 include_bare_files: false,
                 skip_gitignore: false,
+                frontmatter_format: FrontmatterFormat::Auto,
             },
             update: UpdateConfig::default(),
             check: None,
@@ -561,12 +563,13 @@ mod tests {
     #[test]
     fn pipeline_applies_widen_int_to_float() {
         use crate::schema::config::{FieldsConfig, UpdateConfig};
-        use crate::schema::shared::ScanConfig;
+        use crate::schema::shared::{FrontmatterFormat, ScanConfig};
         let toml = MdvsToml {
             scan: ScanConfig {
                 glob: "**".into(),
                 include_bare_files: false,
                 skip_gitignore: false,
+                frontmatter_format: FrontmatterFormat::Auto,
             },
             update: UpdateConfig::default(),
             check: None,
@@ -590,12 +593,13 @@ mod tests {
     #[test]
     fn pipeline_array_string_per_element() {
         use crate::schema::config::{FieldsConfig, UpdateConfig};
-        use crate::schema::shared::ScanConfig;
+        use crate::schema::shared::{FrontmatterFormat, ScanConfig};
         let toml = MdvsToml {
             scan: ScanConfig {
                 glob: "**".into(),
                 include_bare_files: false,
                 skip_gitignore: false,
+                frontmatter_format: FrontmatterFormat::Auto,
             },
             update: UpdateConfig::default(),
             check: None,

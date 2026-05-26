@@ -890,7 +890,7 @@ mod tests {
     use super::*;
     use crate::outcome::commands::CheckOutcome;
     use crate::schema::config::{FieldsConfig, TomlField, UpdateConfig};
-    use crate::schema::shared::ScanConfig;
+    use crate::schema::shared::{FrontmatterFormat, ScanConfig};
     use std::fs;
 
     fn unwrap_check(result: &CommandResult) -> &CheckOutcome {
@@ -923,6 +923,7 @@ mod tests {
                 glob: "**".into(),
                 include_bare_files: false,
                 skip_gitignore: false,
+                frontmatter_format: FrontmatterFormat::Auto,
             },
             update: UpdateConfig {},
             check: None,
@@ -1299,6 +1300,7 @@ mod tests {
                 glob: "**".into(),
                 include_bare_files: true,
                 skip_gitignore: false,
+                frontmatter_format: FrontmatterFormat::Auto,
             },
             update: UpdateConfig {},
             check: None,

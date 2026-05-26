@@ -6,7 +6,7 @@ use crate::output::DiscoveredField;
 use crate::schema::config::MdvsToml;
 use crate::schema::json_schema::{canonical_to_dsl, validate_mdvs_schema};
 use crate::schema::load::load_schema;
-use crate::schema::shared::{FieldTypeSerde, ScanConfig};
+use crate::schema::shared::{FieldTypeSerde, FrontmatterFormat, ScanConfig};
 use crate::step::{CommandResult, ErrorKind, StepEntry};
 use std::path::Path;
 use std::time::Instant;
@@ -75,6 +75,7 @@ pub fn run(
         glob: glob.to_string(),
         include_bare_files: !ignore_bare_files,
         skip_gitignore,
+        frontmatter_format: FrontmatterFormat::Auto,
     };
 
     // Schema-driven init: skip scan + infer, load+validate+translate, write.

@@ -239,7 +239,9 @@ mod tests {
     use super::*;
     use crate::outcome::Outcome;
     use crate::schema::config::{FieldsConfig, MdvsToml, SearchConfig, UpdateConfig};
-    use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig, FieldTypeSerde, ScanConfig};
+    use crate::schema::shared::{
+        ChunkingConfig, EmbeddingModelConfig, FieldTypeSerde, FrontmatterFormat, ScanConfig,
+    };
     use crate::step::CommandResult;
     use std::fs;
 
@@ -271,6 +273,7 @@ mod tests {
                 glob: "**".into(),
                 include_bare_files: false,
                 skip_gitignore: false,
+                frontmatter_format: FrontmatterFormat::Auto,
             },
             update: UpdateConfig {},
             check: None,
@@ -401,6 +404,7 @@ mod tests {
                 glob: "**".into(),
                 include_bare_files: false,
                 skip_gitignore: false,
+                frontmatter_format: FrontmatterFormat::Auto,
             },
             update: UpdateConfig {},
             check: None,

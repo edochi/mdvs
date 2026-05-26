@@ -828,7 +828,7 @@ fn walk(node: &Value, location: Location) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::schema::config::{FieldsConfig, TomlField, UpdateConfig};
-    use crate::schema::shared::{FieldTypeSerde, ScanConfig};
+    use crate::schema::shared::{FieldTypeSerde, FrontmatterFormat, ScanConfig};
 
     fn empty_toml() -> MdvsToml {
         MdvsToml {
@@ -836,6 +836,7 @@ mod tests {
                 glob: "**".into(),
                 include_bare_files: false,
                 skip_gitignore: false,
+                frontmatter_format: FrontmatterFormat::Auto,
             },
             update: UpdateConfig::default(),
             check: None,

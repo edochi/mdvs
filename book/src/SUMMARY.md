@@ -23,12 +23,12 @@
   - [clean](./commands/clean.md)
   - [export-jsonschema](./commands/export-jsonschema.md)
 
+- [Recipes](./recipes.md)
+  - [Obsidian](./recipes/obsidian.md)
+  - [Hugo](./recipes/hugo.md)
+  - [CI](./recipes/ci.md)
+
 # Reference
 
 - [Configuration](./configuration.md)
 - [Search Guide](./search-guide.md)
-
-# Recipes
-
-- [Obsidian](./recipes/obsidian.md)
-- [CI](./recipes/ci.md)

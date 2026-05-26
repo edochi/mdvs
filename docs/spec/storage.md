@@ -44,7 +44,7 @@ On-disk column names are always the literal constants above. `[search].internal_
 
 ## The `data` Struct Column
 
-The `data` column is a nested Arrow Struct whose children mirror the YAML's natural shape: a YAML key like `calibration.baseline.wavelength` lands inside a `calibration` Struct child that holds a `baseline` Struct child holding a `wavelength` Float leaf. This shape lets LanceDB's SQL filter handle `data.calibration.baseline.wavelength > 800` natively via struct field access.
+The `data` column is a nested Arrow Struct whose children mirror the source frontmatter's natural shape (YAML mapping, TOML table, or JSON object — all three deserialize to the same JSON shape, which the storage layer transposes into Arrow). A key like `calibration.baseline.wavelength` lands inside a `calibration` Struct child that holds a `baseline` Struct child holding a `wavelength` Float leaf. This lets LanceDB's SQL filter handle `data.calibration.baseline.wavelength > 800` natively via struct field access.
 
 `build_files_batch()` in `index/storage.rs` produces this shape in two steps (post Wave C / TODO-0097):
 
