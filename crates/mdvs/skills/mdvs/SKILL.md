@@ -13,6 +13,8 @@ description: >-
 
 A CLI that treats markdown directories as databases: schema inference, frontmatter validation, and semantic search with SQL filtering. Single binary, no external services.
 
+**Frontmatter formats.** mdvs auto-detects YAML (`---`), TOML (`+++`), and JSON (`{...}`) per file from the leading delimiter, so a single vault can mix all three. The same schema validates them all uniformly. To force a single format vault-wide, set `[scan].frontmatter_format` in `mdvs.toml` to `"yaml"` / `"toml"` / `"json"` (default `"auto"`).
+
 ## When to use which command
 
 | User intent | Command |

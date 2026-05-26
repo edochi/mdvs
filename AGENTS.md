@@ -50,7 +50,7 @@ Cargo workspace with two crates:
 
 mdvs modules, grouped by pipeline stage:
 
-- **`src/discover/`** — `scan.rs` (walk + parse YAML), `field_type.rs` (FieldType enum + widening), `infer/{mod,types,paths,constraints}.rs` (DirectoryTree + GlobMap + InferredSchema, tracks observed_types per field)
+- **`src/discover/`** — `scan.rs` (walk + per-file frontmatter dispatch across YAML / TOML / JSON), `field_type.rs` (FieldType enum + widening), `infer/{mod,types,paths,constraints}.rs` (DirectoryTree + GlobMap + InferredSchema, tracks observed_types per field)
 - **`src/preprocess.rs`** — `ValueStage` enum (Stage 2 preprocessors), `Pipeline`, `infer_value_stages`
 - **`src/schema/`** — `config.rs` (`MdvsToml`), `shared.rs` (common types), `json_schema.rs` (`dsl_to_canonical`, `canonical_to_dsl`, `validate_mdvs_schema`, `compute_schema_hash`), `load.rs` (extension-dispatched schema loader), `constraints/{categories,length,pattern,range}.rs`
 - **`src/index/`** — `chunk.rs` (semantic chunking), `embed.rs` (model2vec embeddings), `storage.rs` (Arrow batch construction, column constants, `BuildMetadata`), `backend.rs` (`LanceBackend`: LanceDB connection, `write_index`, `search` with mode dispatch, `--where` translator)
@@ -59,7 +59,7 @@ mdvs modules, grouped by pipeline stage:
 
 ### Data Pipeline
 
-`.md` files → frontmatter extraction (`gray_matter`) → schema translation (`dsl_to_canonical`) → Stage 2 preprocessors → per-field `jsonschema` validators → semantic chunking (`text-splitter` MarkdownSplitter) → plain text extraction (`pulldown-cmark`) → embeddings (`model2vec-rs`) → Lance storage (single `.mdvs/index.lance/` dataset, one row per chunk) → LanceDB native search (cosine `nearest_to` / BM25 `full_text_search` / RRF hybrid) + LanceDB SQL filter for `--where`
+`.md` files → per-file frontmatter format detection (`---` YAML, `+++` TOML, `{` JSON; `[scan].frontmatter_format` can force one) → frontmatter extraction (YAML + TOML via `gray_matter`; JSON via `serde_json::Deserializer::byte_offset`) → schema translation (`dsl_to_canonical`) → Stage 2 preprocessors → per-field `jsonschema` validators → semantic chunking (`text-splitter` MarkdownSplitter) → plain text extraction (`pulldown-cmark`) → embeddings (`model2vec-rs`) → Lance storage (single `.mdvs/index.lance/` dataset, one row per chunk) → LanceDB native search (cosine `nearest_to` / BM25 `full_text_search` / RRF hybrid) + LanceDB SQL filter for `--where`
 
 ### Key Design Decisions
 
@@ -79,7 +79,8 @@ mdvs modules, grouped by pipeline stage:
 - All text processing in Rust; LanceDB executes the search query (vector ANN / FTS / hybrid + filter)
 - **Enum-based dispatch everywhere** (no `dyn Trait`): `FieldType`, `Backend`, `Embedder`, `ConstraintKind`, `ValueStage`, `SearchMode`, `Outcome`. Exhaustive matches.
 - Config validation on load: **eight invariants** (ignore/field mutual exclusion, valid glob format, required ⊆ allowed, constraints valid for type, preprocess applicability + no duplicates, no top-level Object, dotted-name well-formedness, no leaf-vs-parent shape conflicts)
-- **Dotted-name leaf flattening (Wave C, TODO-0097)**: `[[fields.field]]` names may contain `.` to express nested YAML structure (`calibration.baseline.wavelength`). Top-level Object is rejected at config load; `Array(Object{...})` stays inline. Translator (`dsl_to_canonical`) reconstructs the canonical JSON Schema's nested `properties` tree; `canonical_to_dsl` reverses. Storage transposes the flat toml into a synthetic FieldType::Object before building Arrow Structs, so the `data` column matches the YAML's natural nesting and SQL dot-notation `--where` works natively.
+- **Dotted-name leaf flattening (Wave C, TODO-0097)**: `[[fields.field]]` names may contain `.` to express nested frontmatter structure (`calibration.baseline.wavelength`) regardless of source format (YAML mapping, TOML table, JSON object). Top-level Object is rejected at config load; `Array(Object{...})` stays inline. Translator (`dsl_to_canonical`) reconstructs the canonical JSON Schema's nested `properties` tree; `canonical_to_dsl` reverses. Storage transposes the flat toml into a synthetic FieldType::Object before building Arrow Structs, so the `data` column matches the source frontmatter's natural nesting and SQL dot-notation `--where` works natively.
+- **Multi-format frontmatter (TODO-0162)**: per-file auto-detect from the leading delimiter (`---` YAML, `+++` TOML, `{` JSON). YAML + TOML go through `gray_matter` with engine-specific delimiters; JSON bypasses `gray_matter` and uses `serde_json::Deserializer::into_iter().byte_offset()` to handle the Hugo-style bare-braces convention. Configurable via `[scan].frontmatter_format` (`"auto"` default; `"yaml"`/`"toml"`/`"json"` force one and surface a `FrontmatterUnrepresentable` violation on mismatch).
 
 ### Storage
 
@@ -122,7 +123,7 @@ See `docs/spec/commands/` for detailed specs and `book/src/commands/` for user-f
 | `jsonschema` | JSON Schema 2020-12 per-value validator (Wave B engine) |
 | `tomljson` | Workspace crate: lossless TOML↔JSON for `.toml` schema files |
 | `model2vec-rs` | Static embedding inference (POTION models, no GPU) |
-| `gray_matter` | YAML frontmatter extraction |
+| `gray_matter` | YAML + TOML frontmatter extraction (JSON parsed natively via `serde_json::Deserializer::byte_offset`) |
 | `text-splitter` (markdown) | Semantic chunking |
 | `pulldown-cmark` | Markdown → plain text |
 | `clap` | CLI parsing |

@@ -32,6 +32,8 @@ tags:                                                     # Array(String)
 
 mdvs recognizes these types automatically. When it scans your files, it infers the type of each field from the values it finds — no configuration needed.
 
+> TOML (`+++`) and JSON (`{...}`) frontmatter are also supported, auto-detected per file. This guide uses YAML throughout; see [`[scan].frontmatter_format`](./configuration.md#frontmatter-format) for the format knob and the [Hugo recipe](./recipes/hugo.md) for mixed-format vaults.
+
 ## Directory-aware schema
 
 mdvs infers a three-dimensional schema from your files:

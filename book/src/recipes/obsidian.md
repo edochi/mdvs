@@ -1,6 +1,6 @@
 # Obsidian
 
-mdvs works well with [Obsidian](https://obsidian.md/) vaults — it can validate your YAML frontmatter for consistency and provide semantic search across all your notes. Everything runs locally, no external services needed.
+mdvs works well with [Obsidian](https://obsidian.md/) vaults — it validates your YAML frontmatter for consistency and provides semantic search across all your notes. Everything runs locally, no external services needed. (Obsidian emits YAML; mdvs also handles TOML and JSON if you've imported notes from other tools — see the [Hugo recipe](./hugo.md) for the mixed-format case.)
 
 ## Setup
 

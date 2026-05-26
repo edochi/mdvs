@@ -38,15 +38,43 @@ Controls how markdown files are discovered.
 glob = "**"
 include_bare_files = true
 skip_gitignore = false
+frontmatter_format = "auto"
 ```
 
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `glob` | String | `"**"` | Glob pattern for matching markdown files |
-| `include_bare_files` | Boolean | `true` | Include files without YAML frontmatter |
+| `include_bare_files` | Boolean | `true` | Include files without frontmatter |
 | `skip_gitignore` | Boolean | `false` | Don't read `.gitignore` patterns during scan |
+| `frontmatter_format` | String | `"auto"` | Which frontmatter format(s) to accept — see [Frontmatter format](#frontmatter-format) |
 
 When `include_bare_files` is `true`, files without frontmatter participate in inference (empty field set) and validation (can trigger `MissingRequired`). When `false`, they're excluded from the scan entirely.
+
+### Frontmatter format
+
+mdvs accepts YAML, TOML, and JSON frontmatter. The `frontmatter_format` field takes one of four values:
+
+| Value | Behavior |
+|---|---|
+| `"auto"` (default) | Detect per file from the opening delimiter. See the probe table below. |
+| `"yaml"` | Parse every file as YAML; reject `+++` or `{`-opened files with a clear error. |
+| `"toml"` | Parse every file as TOML; reject `---` or `{`-opened files. |
+| `"json"` | Parse every file as JSON; reject `---` or `+++`-opened files. |
+
+In **auto mode** (the default), mdvs reads the first non-empty line of each file to pick the engine:
+
+| First non-empty line of a file | Format used |
+|---|---|
+| `---` | YAML |
+| `+++` | TOML |
+| starts with `{` | JSON (Hugo convention — the braces are part of the JSON object) |
+| anything else | treated as a bare file (no frontmatter) |
+
+The probe is one line per file. A single vault can mix all three formats freely.
+
+The **forced modes** (`"yaml"` / `"toml"` / `"json"`) skip the probe and assume every scanned file uses that format. Files whose actual leading delimiter belongs to a different format produce a `FrontmatterUnrepresentable` error naming both the configured and detected formats. This is useful for opinionated repos (e.g., a Hugo site committed to TOML that wants `mdvs check` to fail loudly if someone slips in a `---` file).
+
+**Naming note.** `frontmatter_format = "toml"` controls how mdvs parses *frontmatter in `.md` files*. It has nothing to do with `mdvs.toml` itself — `mdvs.toml` is always TOML because it's a config file. Two unrelated uses of "TOML" in the project.
 
 ## `[update]`
 
