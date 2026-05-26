@@ -224,6 +224,7 @@ impl ScannedFiles {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schema::shared::FrontmatterFormat;
 
     fn write_file(root: &Path, rel_path: &str, content: &str) {
         let full = root.join(rel_path);
@@ -238,6 +239,7 @@ mod tests {
             glob: glob.into(),
             include_bare_files,
             skip_gitignore: true,
+            frontmatter_format: FrontmatterFormat::Auto,
         }
     }
 

@@ -309,17 +309,40 @@ impl TryFrom<&FieldTypeSerde> for FieldType {
     }
 }
 
+/// Frontmatter format choice for scanning. `Auto` (the default) detects
+/// per-file from the leading delimiter (`---` → YAML, `+++` → TOML,
+/// `{` → JSON). Setting one of the explicit variants forces every
+/// scanned file to use that format; files with a different delimiter
+/// produce a `FrontmatterUnrepresentable` error.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum FrontmatterFormat {
+    /// Detect per-file from the leading delimiter (default).
+    #[default]
+    Auto,
+    /// `---` delimited YAML frontmatter.
+    Yaml,
+    /// `+++` delimited TOML frontmatter.
+    Toml,
+    /// `{...}` delimited JSON frontmatter.
+    Json,
+}
+
 /// Configuration for file scanning (`[scan]` in `mdvs.toml`).
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ScanConfig {
     /// Glob pattern for matching markdown files.
     pub glob: String,
-    /// Whether to include files without YAML frontmatter.
+    /// Whether to include files without frontmatter.
     pub include_bare_files: bool,
     /// Skip reading `.gitignore` patterns during scan.
     #[serde(default)]
     pub skip_gitignore: bool,
+    /// Frontmatter format. `Auto` detects per-file; explicit variants
+    /// force a single format for the whole vault. See `FrontmatterFormat`.
+    #[serde(default)]
+    pub frontmatter_format: FrontmatterFormat,
 }
 
 /// Embedding model identity (`[embedding_model]` in `mdvs.toml`).

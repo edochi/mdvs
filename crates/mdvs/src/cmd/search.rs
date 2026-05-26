@@ -335,7 +335,7 @@ mod tests {
     use crate::index::embed::{Embedder, ModelConfig};
     use crate::outcome::commands::SearchOutcome;
     use crate::schema::config::{FieldsConfig, MdvsToml, SearchConfig, UpdateConfig};
-    use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig, ScanConfig};
+    use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig, FrontmatterFormat, ScanConfig};
     use crate::step::StepError;
     use std::fs;
 
@@ -374,6 +374,7 @@ mod tests {
                 glob: "**".into(),
                 include_bare_files: false,
                 skip_gitignore: false,
+                frontmatter_format: FrontmatterFormat::Auto,
             },
             update: UpdateConfig {},
             check: None,
