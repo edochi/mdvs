@@ -335,7 +335,9 @@ mod tests {
     use crate::index::embed::{Embedder, ModelConfig};
     use crate::outcome::commands::SearchOutcome;
     use crate::schema::config::{FieldsConfig, MdvsToml, SearchConfig, UpdateConfig};
-    use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig, FrontmatterFormat, ScanConfig};
+    use crate::schema::shared::{
+        ChunkingConfig, EmbeddingModelConfig, FrontmatterFormat, ScanConfig,
+    };
     use crate::step::StepError;
     use std::fs;
 
