@@ -2,6 +2,27 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## v0.6.2 - 2026-05-26
+#### Features
+- (**scan**) TODO-0162 step 3 — engine dispatch + Hugo-style JSON - (11b0bfb) - edoch
+- (**schema**) TODO-0162 step 2 — FrontmatterFormat enum + ScanConfig field - (6de4903) - edoch
+#### Documentation
+- (**example_kb**) TODO-0162 step 6 — multi-format frontmatter dogfood - (dcca36c) - edoch
+- (**spec**) TODO-0162 step 8 — verification + mark done - (2aa54b4) - edoch
+- (**spec**) TODO-0162 — add user-visible behavior section - (2b19b85) - edoch
+- (**spec**) TODO-0162 — flip to in-progress, add work order - (5640c37) - edoch
+- (**spec**) open TODO-0162 — multi-format frontmatter (TOML + JSON) - (f76e7dc) - edoch
+- (**spec**) open TODO-0160 (time decay) and TODO-0161 (demo polish) - (f68b54c) - edoch
+- TODO-0162 step 7 — multi-format frontmatter doc sweep - (0fbfef6) - edoch
+#### Tests
+- (**scan**) TODO-0162 step 5 — integration tests for multi-format frontmatter - (2599319) - edoch
+- (**scan**) TODO-0162 step 4 — fixtures for TOML / JSON / mixed vaults - (3fbc8be) - edoch
+#### Miscellaneous Chores
+- (**scripts**) TODO-0162 step 1 — verify gray_matter TOML Date handling - (881818a) - edoch
+- (**spec**) close TODO-0159 after filing upstream as lancedb#3446 - (1d068da) - edoch
+
+- - -
+
 ## v0.6.1 - 2026-05-25
 #### Bug Fixes
 - (**release**) declare protoc dependency for cargo-dist binary builds - (3f0136a) - edoch
