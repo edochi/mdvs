@@ -1,0 +1,444 @@
+{
+  "corpus_name": "example_kb",
+  "corpus_files": 46,
+  "iterations": 3,
+  "limit": 10,
+  "machine": {
+    "os": "macOS-26.5-arm64-arm-64bit",
+    "python": "3.11.14",
+    "cpu": "arm64"
+  },
+  "started_at": "2026-05-27T22:39:44+0200",
+  "tools": {
+    "mdvs": {
+      "name": "mdvs",
+      "version": "mdvs 0.6.2",
+      "setup": {
+        "wall_s": 0.34,
+        "user_s": 0.16,
+        "sys_s": 0.02,
+        "cpu_pct": 52.941176470588225,
+        "peak_rss_bytes": 130596864,
+        "page_faults": 0,
+        "page_reclaims": 8611,
+        "exit_code": 0,
+        "stdout_bytes": 6288
+      },
+      "index_size_bytes": 245760,
+      "model_size_bytes": 61841296,
+      "queries": [
+        {
+          "kind": "broad_semantic",
+          "query": "calibration baseline",
+          "mode": "semantic",
+          "where_clause": null,
+          "iterations": [
+            {
+              "wall_s": 0.33,
+              "user_s": 0.14,
+              "sys_s": 0.01,
+              "cpu_pct": 45.45454545454546,
+              "peak_rss_bytes": 135397376,
+              "page_faults": 0,
+              "page_reclaims": 8904,
+              "exit_code": 0,
+              "stdout_bytes": 10095
+            },
+            {
+              "wall_s": 0.34,
+              "user_s": 0.14,
+              "sys_s": 0.02,
+              "cpu_pct": 47.05882352941176,
+              "peak_rss_bytes": 135725056,
+              "page_faults": 0,
+              "page_reclaims": 8910,
+              "exit_code": 0,
+              "stdout_bytes": 10095
+            },
+            {
+              "wall_s": 0.35,
+              "user_s": 0.15,
+              "sys_s": 0.02,
+              "cpu_pct": 48.57142857142857,
+              "peak_rss_bytes": 135938048,
+              "page_faults": 0,
+              "page_reclaims": 8926,
+              "exit_code": 0,
+              "stdout_bytes": 10095
+            }
+          ],
+          "output_token_count": 1712,
+          "result_count": 10
+        },
+        {
+          "kind": "narrow_semantic",
+          "query": "wavelet denoising replication",
+          "mode": "semantic",
+          "where_clause": null,
+          "iterations": [
+            {
+              "wall_s": 0.35,
+              "user_s": 0.15,
+              "sys_s": 0.02,
+              "cpu_pct": 48.57142857142857,
+              "peak_rss_bytes": 135577600,
+              "page_faults": 0,
+              "page_reclaims": 8906,
+              "exit_code": 0,
+              "stdout_bytes": 8674
+            },
+            {
+              "wall_s": 0.33,
+              "user_s": 0.14,
+              "sys_s": 0.01,
+              "cpu_pct": 45.45454545454546,
+              "peak_rss_bytes": 135757824,
+              "page_faults": 0,
+              "page_reclaims": 8918,
+              "exit_code": 0,
+              "stdout_bytes": 8674
+            },
+            {
+              "wall_s": 0.35,
+              "user_s": 0.15,
+              "sys_s": 0.02,
+              "cpu_pct": 48.57142857142857,
+              "peak_rss_bytes": 135774208,
+              "page_faults": 0,
+              "page_reclaims": 8912,
+              "exit_code": 0,
+              "stdout_bytes": 8674
+            }
+          ],
+          "output_token_count": 1373,
+          "result_count": 10
+        },
+        {
+          "kind": "exact_phrase",
+          "query": "SPR-A1",
+          "mode": "fulltext",
+          "where_clause": null,
+          "iterations": [
+            {
+              "wall_s": 0.31,
+              "user_s": 0.13,
+              "sys_s": 0.01,
+              "cpu_pct": 45.16129032258065,
+              "peak_rss_bytes": 55541760,
+              "page_faults": 0,
+              "page_reclaims": 4009,
+              "exit_code": 0,
+              "stdout_bytes": 9527
+            },
+            {
+              "wall_s": 0.31,
+              "user_s": 0.13,
+              "sys_s": 0.01,
+              "cpu_pct": 45.16129032258065,
+              "peak_rss_bytes": 55836672,
+              "page_faults": 0,
+              "page_reclaims": 4046,
+              "exit_code": 0,
+              "stdout_bytes": 9527
+            },
+            {
+              "wall_s": 0.31,
+              "user_s": 0.13,
+              "sys_s": 0.01,
+              "cpu_pct": 45.16129032258065,
+              "peak_rss_bytes": 55558144,
+              "page_faults": 0,
+              "page_reclaims": 4027,
+              "exit_code": 0,
+              "stdout_bytes": 9527
+            }
+          ],
+          "output_token_count": 1601,
+          "result_count": 10
+        },
+        {
+          "kind": "metadata_filtered",
+          "query": "calibration",
+          "mode": "hybrid",
+          "where_clause": "status = 'completed'",
+          "iterations": [
+            {
+              "wall_s": 0.35,
+              "user_s": 0.15,
+              "sys_s": 0.02,
+              "cpu_pct": 48.57142857142857,
+              "peak_rss_bytes": 140050432,
+              "page_faults": 0,
+              "page_reclaims": 9175,
+              "exit_code": 0,
+              "stdout_bytes": 5445
+            },
+            {
+              "wall_s": 0.35,
+              "user_s": 0.14,
+              "sys_s": 0.02,
+              "cpu_pct": 45.714285714285715,
+              "peak_rss_bytes": 139935744,
+              "page_faults": 0,
+              "page_reclaims": 9173,
+              "exit_code": 0,
+              "stdout_bytes": 5445
+            },
+            {
+              "wall_s": 0.34,
+              "user_s": 0.15,
+              "sys_s": 0.02,
+              "cpu_pct": 49.99999999999999,
+              "peak_rss_bytes": 140165120,
+              "page_faults": 0,
+              "page_reclaims": 9186,
+              "exit_code": 0,
+              "stdout_bytes": 5445
+            }
+          ],
+          "output_token_count": 974,
+          "result_count": 5
+        },
+        {
+          "kind": "vague_multiword",
+          "query": "what went wrong with the spectrometer",
+          "mode": "hybrid",
+          "where_clause": null,
+          "iterations": [
+            {
+              "wall_s": 0.35,
+              "user_s": 0.15,
+              "sys_s": 0.02,
+              "cpu_pct": 48.57142857142857,
+              "peak_rss_bytes": 137543680,
+              "page_faults": 0,
+              "page_reclaims": 9017,
+              "exit_code": 0,
+              "stdout_bytes": 9183
+            },
+            {
+              "wall_s": 0.36,
+              "user_s": 0.15,
+              "sys_s": 0.02,
+              "cpu_pct": 47.22222222222222,
+              "peak_rss_bytes": 138067968,
+              "page_faults": 0,
+              "page_reclaims": 9056,
+              "exit_code": 0,
+              "stdout_bytes": 9183
+            },
+            {
+              "wall_s": 0.35,
+              "user_s": 0.15,
+              "sys_s": 0.02,
+              "cpu_pct": 48.57142857142857,
+              "peak_rss_bytes": 137347072,
+              "page_faults": 0,
+              "page_reclaims": 9021,
+              "exit_code": 0,
+              "stdout_bytes": 9183
+            }
+          ],
+          "output_token_count": 1518,
+          "result_count": 10
+        }
+      ],
+      "notes": []
+    },
+    "qmd": {
+      "name": "qmd",
+      "version": "qmd 2.5.2",
+      "setup": {
+        "wall_s": 2.82,
+        "user_s": 0.88,
+        "sys_s": 0.18,
+        "cpu_pct": 37.58865248226951,
+        "peak_rss_bytes": 844726272,
+        "page_faults": 169,
+        "page_reclaims": 57427,
+        "exit_code": 0,
+        "stdout_bytes": 206
+      },
+      "index_size_bytes": 3526656,
+      "model_size_bytes": 2255192064,
+      "queries": [
+        {
+          "kind": "broad_semantic",
+          "query": "calibration baseline",
+          "mode": "vsearch",
+          "where_clause": null,
+          "iterations": [
+            {
+              "wall_s": 0.81,
+              "user_s": 0.61,
+              "sys_s": 0.1,
+              "cpu_pct": 87.65432098765432,
+              "peak_rss_bytes": 652591104,
+              "page_faults": 267,
+              "page_reclaims": 45437,
+              "exit_code": 0,
+              "stdout_bytes": 3671
+            },
+            {
+              "wall_s": 0.8,
+              "user_s": 0.61,
+              "sys_s": 0.09,
+              "cpu_pct": 87.49999999999999,
+              "peak_rss_bytes": 651886592,
+              "page_faults": 163,
+              "page_reclaims": 45510,
+              "exit_code": 0,
+              "stdout_bytes": 3671
+            },
+            {
+              "wall_s": 0.8,
+              "user_s": 0.6,
+              "sys_s": 0.1,
+              "cpu_pct": 87.49999999999999,
+              "peak_rss_bytes": 642105344,
+              "page_faults": 163,
+              "page_reclaims": 44868,
+              "exit_code": 0,
+              "stdout_bytes": 3671
+            }
+          ],
+          "output_token_count": 444,
+          "result_count": 10
+        },
+        {
+          "kind": "narrow_semantic",
+          "query": "wavelet denoising replication",
+          "mode": "vsearch",
+          "where_clause": null,
+          "iterations": [
+            {
+              "wall_s": 0.8,
+              "user_s": 0.61,
+              "sys_s": 0.09,
+              "cpu_pct": 87.49999999999999,
+              "peak_rss_bytes": 646152192,
+              "page_faults": 283,
+              "page_reclaims": 45021,
+              "exit_code": 0,
+              "stdout_bytes": 3579
+            },
+            {
+              "wall_s": 0.81,
+              "user_s": 0.61,
+              "sys_s": 0.09,
+              "cpu_pct": 86.41975308641973,
+              "peak_rss_bytes": 645693440,
+              "page_faults": 163,
+              "page_reclaims": 45183,
+              "exit_code": 0,
+              "stdout_bytes": 3579
+            },
+            {
+              "wall_s": 0.8,
+              "user_s": 0.62,
+              "sys_s": 0.09,
+              "cpu_pct": 88.75,
+              "peak_rss_bytes": 656719872,
+              "page_faults": 163,
+              "page_reclaims": 45881,
+              "exit_code": 0,
+              "stdout_bytes": 3579
+            }
+          ],
+          "output_token_count": 467,
+          "result_count": 8
+        },
+        {
+          "kind": "exact_phrase",
+          "query": "SPR-A1",
+          "mode": "search",
+          "where_clause": null,
+          "iterations": [
+            {
+              "wall_s": 0.15,
+              "user_s": 0.13,
+              "sys_s": 0.02,
+              "cpu_pct": 100.0,
+              "peak_rss_bytes": 69763072,
+              "page_faults": 160,
+              "page_reclaims": 8008,
+              "exit_code": 0,
+              "stdout_bytes": 2840
+            },
+            {
+              "wall_s": 0.14,
+              "user_s": 0.13,
+              "sys_s": 0.02,
+              "cpu_pct": 107.14285714285714,
+              "peak_rss_bytes": 69697536,
+              "page_faults": 160,
+              "page_reclaims": 8007,
+              "exit_code": 0,
+              "stdout_bytes": 2840
+            },
+            {
+              "wall_s": 0.16,
+              "user_s": 0.13,
+              "sys_s": 0.01,
+              "cpu_pct": 87.50000000000001,
+              "peak_rss_bytes": 69664768,
+              "page_faults": 160,
+              "page_reclaims": 8009,
+              "exit_code": 0,
+              "stdout_bytes": 2840
+            }
+          ],
+          "output_token_count": 376,
+          "result_count": 7
+        },
+        {
+          "kind": "vague_multiword",
+          "query": "what went wrong with the spectrometer",
+          "mode": "query",
+          "where_clause": null,
+          "iterations": [
+            {
+              "wall_s": 0.9,
+              "user_s": 0.65,
+              "sys_s": 0.12,
+              "cpu_pct": 85.55555555555556,
+              "peak_rss_bytes": 667664384,
+              "page_faults": 278,
+              "page_reclaims": 46451,
+              "exit_code": -6,
+              "stdout_bytes": 4641
+            },
+            {
+              "wall_s": 0.74,
+              "user_s": 0.63,
+              "sys_s": 0.1,
+              "cpu_pct": 98.64864864864865,
+              "peak_rss_bytes": 665976832,
+              "page_faults": 163,
+              "page_reclaims": 46426,
+              "exit_code": -6,
+              "stdout_bytes": 4641
+            },
+            {
+              "wall_s": 0.73,
+              "user_s": 0.64,
+              "sys_s": 0.09,
+              "cpu_pct": 100.0,
+              "peak_rss_bytes": 675119104,
+              "page_faults": 163,
+              "page_reclaims": 46992,
+              "exit_code": -6,
+              "stdout_bytes": 4641
+            }
+          ],
+          "output_token_count": 614,
+          "result_count": 10
+        }
+      ],
+      "notes": [
+        "QMD uses a global ~/.cache/qmd/index.sqlite; index_size_bytes includes any unrelated user collections",
+        "skipped 'metadata_filtered': qmd has no --where equivalent"
+      ]
+    }
+  }
+}
