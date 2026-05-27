@@ -170,3 +170,4 @@
 | [0166](TODO-0166.md) | Benchmark mdvs vs QMD — produce launch-credible numbers | todo | high | 2026-05-27 |
 | [0167](TODO-0167.md) | Skip embedding-model load and query embed when search mode is fulltext | done | medium | 2026-05-27 |
 | [0168](TODO-0168.md) | Compact-snippet output mode for LLM-friendly search results | todo | medium | 2026-05-27 |
+| [0169](TODO-0169.md) | Investigate Lance encoding panic on large markdown corpora | todo | medium | 2026-05-28 |
