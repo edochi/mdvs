@@ -127,7 +127,7 @@ impl Backend {
     #[allow(clippy::too_many_arguments)]
     pub async fn search(
         &self,
-        query_embedding: Vec<f32>,
+        query_embedding: Option<Vec<f32>>,
         query_text: &str,
         mode: SearchMode,
         where_clause: Option<&str>,
@@ -412,10 +412,14 @@ impl LanceBackend {
     /// full-text (BM25 over `chunk_text`), or hybrid (both, fused by LanceDB's
     /// default RRF reranker). Over-fetches `limit * OVER_FETCH_FACTOR`
     /// chunk-level hits, then keeps the best-scoring chunk per `file_id`.
+    ///
+    /// `query_embedding` is required for `Semantic` and `Hybrid`; `Fulltext`
+    /// runs BM25 only and ignores it. Passing `None` for a mode that needs
+    /// the embedding is a programmer error.
     #[allow(clippy::too_many_arguments)]
     async fn search(
         &self,
-        query_embedding: Vec<f32>,
+        query_embedding: Option<Vec<f32>>,
         query_text: &str,
         mode: SearchMode,
         where_clause: Option<&str>,
@@ -466,10 +470,13 @@ impl LanceBackend {
         // each collects its own batches.
         let batches: Vec<RecordBatch> = match mode {
             SearchMode::Semantic => {
+                let embedding = query_embedding.ok_or_else(|| {
+                    anyhow::anyhow!("Semantic search requires query_embedding; got None")
+                })?;
                 let mut q = table
                     .query()
                     .select(projection)
-                    .nearest_to(query_embedding)?
+                    .nearest_to(embedding)?
                     .distance_type(DistanceType::Cosine)
                     .limit(k);
                 if let Some(w) = &translated {
@@ -478,10 +485,13 @@ impl LanceBackend {
                 q.execute().await?.try_collect().await?
             }
             SearchMode::Hybrid => {
+                let embedding = query_embedding.ok_or_else(|| {
+                    anyhow::anyhow!("Hybrid search requires query_embedding; got None")
+                })?;
                 let mut q = table
                     .query()
                     .select(projection)
-                    .nearest_to(query_embedding)?
+                    .nearest_to(embedding)?
                     .distance_type(DistanceType::Cosine)
                     .full_text_search(fts())
                     .limit(k);
@@ -978,7 +988,7 @@ mod tests {
         // Query vector close to rust.md's embedding
         let hits = backend
             .search(
-                vec![1.0, 0.0, 0.0, 0.0],
+                Some(vec![1.0, 0.0, 0.0, 0.0]),
                 "rust",
                 SearchMode::Semantic,
                 None,

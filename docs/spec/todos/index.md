@@ -168,3 +168,4 @@
 | [0164](TODO-0164.md) | Support array-length constraints (min_items / max_items) | todo | medium | 2026-05-27 |
 | [0165](TODO-0165.md) | Survey unused JSON Schema 2020-12 keywords — decide which to adopt | todo | low | 2026-05-27 |
 | [0166](TODO-0166.md) | Benchmark mdvs vs QMD — produce launch-credible numbers | todo | high | 2026-05-27 |
+| [0167](TODO-0167.md) | Skip embedding-model load and query embed when search mode is fulltext | done | medium | 2026-05-27 |
