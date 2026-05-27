@@ -1,6 +1,6 @@
 # mdvs vs QMD — benchmark report
 
-_Generated 2026-05-27 22:58_
+_Generated 2026-05-27 23:26_
 _Corpora: `example_kb`_
 _mdvs 0.6.2 · QMD 2.5.2_
 
@@ -43,7 +43,7 @@ This benchmark measures **latency, footprint, and setup cost** under each tool's
 | Python | `3.11.14` |
 | mdvs version | `mdvs 0.6.2` |
 | qmd version | `qmd 2.5.2` |
-| Iterations per query | 3 (+ 1 warm-up) |
+| Iterations per query | 2 (+ 1 warm-up) |
 | --limit | 10 |
 
 ## Corpus: `example_kb` (46 files)
@@ -52,8 +52,8 @@ This benchmark measures **latency, footprint, and setup cost** under each tool's
 
 | | mdvs `build --force` | QMD `embed -f` |
 |---|---|---|
-| Wall time | 340 ms | 2.82 s |
-| Peak RSS | 125 MB | 806 MB |
+| Wall time | 390 ms | 3.46 s |
+| Peak RSS | 124 MB | 802 MB |
 | Index on disk | 240.0 KB | 3.4 MB |
 | Embedding/reranker models on disk | 59.0 MB | 2.10 GB |
 
@@ -71,11 +71,11 @@ This benchmark measures **latency, footprint, and setup cost** under each tool's
 
 | Kind | mdvs wall | mdvs RSS | mdvs CPU% | QMD mode | QMD wall | QMD RSS | QMD CPU% |
 |---|---|---|---|---|---|---|---|
-| `broad_semantic` | 340 ms | 130 MB | 47% | `vsearch` | 800 ms | 622 MB | 87% |
-| `narrow_semantic` | 350 ms | 129 MB | 49% | `vsearch` | 800 ms | 626 MB | 87% |
-| `exact_phrase` | 310 ms | 53.2 MB | 45% | `search` | 150 ms | 66.5 MB | 100% |
-| `metadata_filtered` | 350 ms | 134 MB | 49% | — | — | — | — |
-| `vague_multiword` | 350 ms | 132 MB | 49% | `query` | 740 ms | 644 MB | 99% |
+| `broad_semantic` | 340 ms | 129 MB | 47% | `vsearch` | 810 ms | 631 MB | 87% |
+| `narrow_semantic` | 335 ms | 130 MB | 45% | `vsearch` | 790 ms | 626 MB | 89% |
+| `exact_phrase` | 315 ms | 53.5 MB | 44% | `search` | 155 ms | 66.7 MB | 97% |
+| `metadata_filtered` | 345 ms | 133 MB | 48% | — | — | — | — |
+| `vague_multiword` | 340 ms | 131 MB | 46% | `query` | 770 ms | 629 MB | 97% |
 
 ### Output token count (snippets for `--limit 10`, `tiktoken` `cl100k_base`)
 
@@ -87,7 +87,7 @@ Token count matters when results are piped into a downstream LLM — fewer token
 | `narrow_semantic` | 10 | 1,373 | 8 | 467 |
 | `exact_phrase` | 10 | 1,601 | 7 | 376 |
 | `metadata_filtered` | 5 | 974 | — | — |
-| `vague_multiword` | 10 | 1,518 | 10 | 614 |
+| `vague_multiword` | 10 | 1,518 | 10 | 611 |
 
 ### Notes
 

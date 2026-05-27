@@ -277,6 +277,22 @@ def qmd_setup(corpus: Path) -> tuple[Measurement, list[str]]:
     m, _ = run_measured([qmd_path(), "embed", "-f"], env=qmd_env())
     return m, removed
 
+def qmd_cleanup() -> None:
+    """Remove our ephemeral benchmark collection from QMD's global index.
+
+    Best-effort: any error is swallowed (we don't want cleanup failures to
+    obscure the benchmark output). Safe to call multiple times — the QMD
+    remove command is idempotent on missing collections."""
+    try:
+        subprocess.run(
+            [qmd_path(), "collection", "remove", QMD_COLLECTION],
+            capture_output=True,
+            env={**os.environ, **qmd_env()},
+            check=False,
+        )
+    except Exception:
+        pass
+
 def qmd_query(query: str, mode: str, limit: int) -> tuple[Measurement, str]:
     """mode is one of 'search', 'vsearch', 'query'."""
     cmd = [qmd_path(), mode, "-n", str(limit), query, "-c", QMD_COLLECTION, "--json"]
@@ -386,40 +402,48 @@ def run_benchmark(corpus: Path, iterations: int, limit: int, tools: list[str]) -
         run.tools["mdvs"] = mdvs
 
     # ---- qmd ----
+    # The QMD index lives at ~/.cache/qmd/index.sqlite globally on the user's
+    # machine. Wrap setup + queries in try/finally so we don't leave our
+    # ephemeral `mdvs_bench` collection behind if the run crashes or the user
+    # interrupts mid-benchmark.
     if "qmd" in tools:
-        console.rule("[bold magenta]qmd setup")
-        qmd = ToolResults(name="qmd", version=qmd_version())
-        qmd.setup, removed = qmd_setup(corpus)
-        if removed:
-            qmd.notes.append(f"removed existing collections for this path: {removed}")
-        qmd.index_size_bytes = qmd_index_size()
-        qmd.model_size_bytes = qmd_model_size()
-        qmd.notes.append(
-            "QMD uses a global ~/.cache/qmd/index.sqlite; index_size_bytes includes any unrelated user collections"
-        )
-        console.print(f"embed: wall={qmd.setup.wall_s:.2f}s rss={qmd.setup.peak_rss_bytes/1e6:.1f}MB")
-        console.print(f"index: {qmd.index_size_bytes/1e6:.2f}MB  models: {qmd.model_size_bytes/1e6:.1f}MB")
+        try:
+            console.rule("[bold magenta]qmd setup")
+            qmd = ToolResults(name="qmd", version=qmd_version())
+            qmd.setup, removed = qmd_setup(corpus)
+            if removed:
+                qmd.notes.append(f"removed existing collections for this path: {removed}")
+            qmd.index_size_bytes = qmd_index_size()
+            qmd.model_size_bytes = qmd_model_size()
+            qmd.notes.append(
+                "QMD uses a global ~/.cache/qmd/index.sqlite; index_size_bytes includes any unrelated user collections"
+            )
+            console.print(f"embed: wall={qmd.setup.wall_s:.2f}s rss={qmd.setup.peak_rss_bytes/1e6:.1f}MB")
+            console.print(f"index: {qmd.index_size_bytes/1e6:.2f}MB  models: {qmd.model_size_bytes/1e6:.1f}MB")
 
-        console.rule("[bold magenta]qmd queries")
-        for kind, query, mdvs_mode, where in QUERIES_EXAMPLE_KB:
-            if where is not None:
-                qmd.notes.append(f"skipped '{kind}': qmd has no --where equivalent")
-                continue
-            qmd_mode = MDVS_TO_QMD_MODE[mdvs_mode]
-            qr = QueryResult(kind=kind, query=query, mode=qmd_mode, where_clause=None)
-            qmd_query(query, qmd_mode, limit)  # warm-up
-            last_stdout = ""
-            for i in range(iterations):
-                m, stdout = qmd_query(query, qmd_mode, limit)
-                qr.iterations.append(m)
-                last_stdout = stdout
-            snippets, count = extract_qmd_snippets(last_stdout)
-            qr.output_token_count = count_tokens("\n".join(snippets))
-            qr.result_count = count
-            qmd.queries.append(qr)
-            wall = statistics.median(m.wall_s for m in qr.iterations)
-            console.print(f"  {kind:18}  {qmd_mode:9}  wall={wall*1000:7.1f}ms  results={count}  tokens={qr.output_token_count}")
-        run.tools["qmd"] = qmd
+            console.rule("[bold magenta]qmd queries")
+            for kind, query, mdvs_mode, where in QUERIES_EXAMPLE_KB:
+                if where is not None:
+                    qmd.notes.append(f"skipped '{kind}': qmd has no --where equivalent")
+                    continue
+                qmd_mode = MDVS_TO_QMD_MODE[mdvs_mode]
+                qr = QueryResult(kind=kind, query=query, mode=qmd_mode, where_clause=None)
+                qmd_query(query, qmd_mode, limit)  # warm-up
+                last_stdout = ""
+                for i in range(iterations):
+                    m, stdout = qmd_query(query, qmd_mode, limit)
+                    qr.iterations.append(m)
+                    last_stdout = stdout
+                snippets, count = extract_qmd_snippets(last_stdout)
+                qr.output_token_count = count_tokens("\n".join(snippets))
+                qr.result_count = count
+                qmd.queries.append(qr)
+                wall = statistics.median(m.wall_s for m in qr.iterations)
+                console.print(f"  {kind:18}  {qmd_mode:9}  wall={wall*1000:7.1f}ms  results={count}  tokens={qr.output_token_count}")
+            run.tools["qmd"] = qmd
+        finally:
+            qmd_cleanup()
+            console.print("[dim]qmd: removed benchmark collection from global index[/dim]")
 
     return run
 
