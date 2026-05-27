@@ -165,3 +165,5 @@
 | [0161](TODO-0161.md) | Polish the asciinema demo — readability, highlighting, persistence | todo | medium | 2026-05-25 |
 | [0162](TODO-0162.md) | Multi-format frontmatter — support TOML and JSON alongside YAML | done | high | 2026-05-25 |
 | [0163](TODO-0163.md) | Expose gray_matter delimiter / engine knobs to let users customize frontmatter parsing | todo | low | 2026-05-26 |
+| [0164](TODO-0164.md) | Support array-length constraints (min_items / max_items) | todo | medium | 2026-05-27 |
+| [0165](TODO-0165.md) | Survey unused JSON Schema 2020-12 keywords — decide which to adopt | todo | low | 2026-05-27 |
