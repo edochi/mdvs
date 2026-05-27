@@ -229,21 +229,28 @@ def _render_latency_table(report: dict) -> str:
     lines = [
         "### Search latency (warm, median of N)",
         "",
-        "| Kind | mdvs wall | mdvs RSS | mdvs CPU% | QMD mode | QMD wall | QMD RSS | QMD CPU% |",
-        "|---|---|---|---|---|---|---|---|",
+        "mdvs is reported in two configurations:",
+        "",
+        "- **mdvs default** — runs as users typically invoke it; `auto_update` and `auto_build` in `mdvs.toml` cause a scan + frontmatter-validation + build-check pass before every search (~110 ms on this corpus)",
+        "- **mdvs engine-only** — same query with `--no-update --no-build`. Measures the search engine itself without the orchestration overhead. Closer to a like-for-like comparison with QMD, which has no equivalent feature",
+        "",
+        "| Kind | mdvs default | mdvs engine-only | mdvs RSS | mdvs CPU% | QMD mode | QMD wall | QMD RSS | QMD CPU% |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for kind in kinds_in_order:
         mq = mdvs_by_kind.get(kind)
         qq = qmd_by_kind.get(kind)
         row = [f"`{kind}`"]
         if mq:
+            engine = mq.get("iterations_engine_only") or []
             row.extend([
                 fmt_seconds(median_wall(mq["iterations"])),
+                fmt_seconds(median_wall(engine)) if engine else "—",
                 fmt_bytes(max_rss(mq["iterations"])),
                 fmt_pct(median_cpu(mq["iterations"])),
             ])
         else:
-            row.extend(["—", "—", "—"])
+            row.extend(["—", "—", "—", "—"])
         if qq:
             row.extend([
                 f"`{qq['mode']}`",

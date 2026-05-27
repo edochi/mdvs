@@ -1,6 +1,6 @@
 # mdvs vs QMD — benchmark report
 
-_Generated 2026-05-27 23:26_
+_Generated 2026-05-27 23:39_
 _Corpora: `example_kb`_
 _mdvs 0.6.2 · QMD 2.5.2_
 
@@ -43,7 +43,7 @@ This benchmark measures **latency, footprint, and setup cost** under each tool's
 | Python | `3.11.14` |
 | mdvs version | `mdvs 0.6.2` |
 | qmd version | `qmd 2.5.2` |
-| Iterations per query | 2 (+ 1 warm-up) |
+| Iterations per query | 3 (+ 1 warm-up) |
 | --limit | 10 |
 
 ## Corpus: `example_kb` (46 files)
@@ -52,8 +52,8 @@ This benchmark measures **latency, footprint, and setup cost** under each tool's
 
 | | mdvs `build --force` | QMD `embed -f` |
 |---|---|---|
-| Wall time | 390 ms | 3.46 s |
-| Peak RSS | 124 MB | 802 MB |
+| Wall time | 370 ms | 3.48 s |
+| Peak RSS | 124 MB | 778 MB |
 | Index on disk | 240.0 KB | 3.4 MB |
 | Embedding/reranker models on disk | 59.0 MB | 2.10 GB |
 
@@ -69,13 +69,18 @@ This benchmark measures **latency, footprint, and setup cost** under each tool's
 
 ### Search latency (warm, median of N)
 
-| Kind | mdvs wall | mdvs RSS | mdvs CPU% | QMD mode | QMD wall | QMD RSS | QMD CPU% |
-|---|---|---|---|---|---|---|---|
-| `broad_semantic` | 340 ms | 129 MB | 47% | `vsearch` | 810 ms | 631 MB | 87% |
-| `narrow_semantic` | 335 ms | 130 MB | 45% | `vsearch` | 790 ms | 626 MB | 89% |
-| `exact_phrase` | 315 ms | 53.5 MB | 44% | `search` | 155 ms | 66.7 MB | 97% |
-| `metadata_filtered` | 345 ms | 133 MB | 48% | — | — | — | — |
-| `vague_multiword` | 340 ms | 131 MB | 46% | `query` | 770 ms | 629 MB | 97% |
+mdvs is reported in two configurations:
+
+- **mdvs default** — runs as users typically invoke it; `auto_update` and `auto_build` in `mdvs.toml` cause a scan + frontmatter-validation + build-check pass before every search (~110 ms on this corpus)
+- **mdvs engine-only** — same query with `--no-update --no-build`. Measures the search engine itself without the orchestration overhead. Closer to a like-for-like comparison with QMD, which has no equivalent feature
+
+| Kind | mdvs default | mdvs engine-only | mdvs RSS | mdvs CPU% | QMD mode | QMD wall | QMD RSS | QMD CPU% |
+|---|---|---|---|---|---|---|---|---|
+| `broad_semantic` | 340 ms | 210 ms | 130 MB | 50% | `vsearch` | 800 ms | 625 MB | 87% |
+| `narrow_semantic` | 330 ms | 220 ms | 130 MB | 49% | `vsearch` | 790 ms | 625 MB | 89% |
+| `exact_phrase` | 310 ms | 190 ms | 53.3 MB | 45% | `search` | 160 ms | 66.4 MB | 94% |
+| `metadata_filtered` | 330 ms | 220 ms | 134 MB | 48% | — | — | — | — |
+| `vague_multiword` | 340 ms | 220 ms | 132 MB | 47% | `query` | 680 ms | 638 MB | 110% |
 
 ### Output token count (snippets for `--limit 10`, `tiktoken` `cl100k_base`)
 
@@ -87,7 +92,7 @@ Token count matters when results are piped into a downstream LLM — fewer token
 | `narrow_semantic` | 10 | 1,373 | 8 | 467 |
 | `exact_phrase` | 10 | 1,601 | 7 | 376 |
 | `metadata_filtered` | 5 | 974 | — | — |
-| `vague_multiword` | 10 | 1,518 | 10 | 611 |
+| `vague_multiword` | 10 | 1,518 | 10 | 608 |
 
 ### Notes
 

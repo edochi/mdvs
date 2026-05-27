@@ -1,26 +1,26 @@
 {
   "corpus_name": "example_kb",
   "corpus_files": 46,
-  "iterations": 2,
+  "iterations": 3,
   "limit": 10,
   "machine": {
     "os": "macOS-26.5-arm64-arm-64bit",
     "python": "3.11.14",
     "cpu": "arm64"
   },
-  "started_at": "2026-05-27T23:20:36+0200",
+  "started_at": "2026-05-27T23:38:33+0200",
   "tools": {
     "mdvs": {
       "name": "mdvs",
       "version": "mdvs 0.6.2",
       "setup": {
-        "wall_s": 0.39,
-        "user_s": 0.15,
+        "wall_s": 0.37,
+        "user_s": 0.16,
         "sys_s": 0.05,
-        "cpu_pct": 51.28205128205129,
+        "cpu_pct": 56.756756756756765,
         "peak_rss_bytes": 130482176,
         "page_faults": 0,
-        "page_reclaims": 8687,
+        "page_reclaims": 8682,
         "exit_code": 0,
         "stdout_bytes": 6288
       },
@@ -34,24 +34,70 @@
           "where_clause": null,
           "iterations": [
             {
-              "wall_s": 0.34,
-              "user_s": 0.14,
+              "wall_s": 0.33,
+              "user_s": 0.15,
               "sys_s": 0.02,
-              "cpu_pct": 47.05882352941176,
-              "peak_rss_bytes": 135708672,
+              "cpu_pct": 51.5151515151515,
+              "peak_rss_bytes": 135806976,
               "page_faults": 0,
-              "page_reclaims": 8907,
+              "page_reclaims": 8915,
               "exit_code": 0,
               "stdout_bytes": 10095
             },
             {
               "wall_s": 0.34,
+              "user_s": 0.15,
+              "sys_s": 0.02,
+              "cpu_pct": 49.99999999999999,
+              "peak_rss_bytes": 135249920,
+              "page_faults": 0,
+              "page_reclaims": 8878,
+              "exit_code": 0,
+              "stdout_bytes": 10095
+            },
+            {
+              "wall_s": 0.36,
               "user_s": 0.14,
               "sys_s": 0.02,
-              "cpu_pct": 47.05882352941176,
+              "cpu_pct": 44.44444444444445,
               "peak_rss_bytes": 135512064,
               "page_faults": 0,
-              "page_reclaims": 8890,
+              "page_reclaims": 8896,
+              "exit_code": 0,
+              "stdout_bytes": 10095
+            }
+          ],
+          "iterations_engine_only": [
+            {
+              "wall_s": 0.2,
+              "user_s": 0.03,
+              "sys_s": 0.01,
+              "cpu_pct": 20.0,
+              "peak_rss_bytes": 124272640,
+              "page_faults": 0,
+              "page_reclaims": 8202,
+              "exit_code": 0,
+              "stdout_bytes": 10095
+            },
+            {
+              "wall_s": 0.22,
+              "user_s": 0.04,
+              "sys_s": 0.01,
+              "cpu_pct": 22.72727272727273,
+              "peak_rss_bytes": 124600320,
+              "page_faults": 0,
+              "page_reclaims": 8220,
+              "exit_code": 0,
+              "stdout_bytes": 10095
+            },
+            {
+              "wall_s": 0.21,
+              "user_s": 0.03,
+              "sys_s": 0.01,
+              "cpu_pct": 19.04761904761905,
+              "peak_rss_bytes": 124141568,
+              "page_faults": 0,
+              "page_reclaims": 8192,
               "exit_code": 0,
               "stdout_bytes": 10095
             }
@@ -66,24 +112,70 @@
           "where_clause": null,
           "iterations": [
             {
-              "wall_s": 0.34,
-              "user_s": 0.13,
-              "sys_s": 0.01,
-              "cpu_pct": 41.1764705882353,
-              "peak_rss_bytes": 135708672,
+              "wall_s": 0.33,
+              "user_s": 0.15,
+              "sys_s": 0.02,
+              "cpu_pct": 51.5151515151515,
+              "peak_rss_bytes": 135823360,
               "page_faults": 0,
-              "page_reclaims": 8912,
+              "page_reclaims": 8916,
               "exit_code": 0,
               "stdout_bytes": 8674
             },
             {
-              "wall_s": 0.33,
-              "user_s": 0.14,
+              "wall_s": 0.35,
+              "user_s": 0.15,
               "sys_s": 0.02,
-              "cpu_pct": 48.484848484848484,
-              "peak_rss_bytes": 135823360,
+              "cpu_pct": 48.57142857142857,
+              "peak_rss_bytes": 135282688,
               "page_faults": 0,
-              "page_reclaims": 8910,
+              "page_reclaims": 8885,
+              "exit_code": 0,
+              "stdout_bytes": 8674
+            },
+            {
+              "wall_s": 0.32,
+              "user_s": 0.13,
+              "sys_s": 0.01,
+              "cpu_pct": 43.75000000000001,
+              "peak_rss_bytes": 135430144,
+              "page_faults": 0,
+              "page_reclaims": 8894,
+              "exit_code": 0,
+              "stdout_bytes": 8674
+            }
+          ],
+          "iterations_engine_only": [
+            {
+              "wall_s": 0.22,
+              "user_s": 0.04,
+              "sys_s": 0.01,
+              "cpu_pct": 22.72727272727273,
+              "peak_rss_bytes": 124764160,
+              "page_faults": 0,
+              "page_reclaims": 8228,
+              "exit_code": 0,
+              "stdout_bytes": 8674
+            },
+            {
+              "wall_s": 0.22,
+              "user_s": 0.04,
+              "sys_s": 0.02,
+              "cpu_pct": 27.27272727272727,
+              "peak_rss_bytes": 124272640,
+              "page_faults": 0,
+              "page_reclaims": 8200,
+              "exit_code": 0,
+              "stdout_bytes": 8674
+            },
+            {
+              "wall_s": 0.23,
+              "user_s": 0.04,
+              "sys_s": 0.02,
+              "cpu_pct": 26.08695652173913,
+              "peak_rss_bytes": 124960768,
+              "page_faults": 0,
+              "page_reclaims": 8241,
               "exit_code": 0,
               "stdout_bytes": 8674
             }
@@ -102,9 +194,20 @@
               "user_s": 0.13,
               "sys_s": 0.01,
               "cpu_pct": 45.16129032258065,
-              "peak_rss_bytes": 55918592,
+              "peak_rss_bytes": 55869440,
               "page_faults": 0,
-              "page_reclaims": 4044,
+              "page_reclaims": 4033,
+              "exit_code": 0,
+              "stdout_bytes": 9527
+            },
+            {
+              "wall_s": 0.31,
+              "user_s": 0.13,
+              "sys_s": 0.01,
+              "cpu_pct": 45.16129032258065,
+              "peak_rss_bytes": 55705600,
+              "page_faults": 0,
+              "page_reclaims": 4018,
               "exit_code": 0,
               "stdout_bytes": 9527
             },
@@ -113,9 +216,44 @@
               "user_s": 0.13,
               "sys_s": 0.01,
               "cpu_pct": 43.75000000000001,
-              "peak_rss_bytes": 56131584,
+              "peak_rss_bytes": 55705600,
               "page_faults": 0,
-              "page_reclaims": 4044,
+              "page_reclaims": 4026,
+              "exit_code": 0,
+              "stdout_bytes": 9527
+            }
+          ],
+          "iterations_engine_only": [
+            {
+              "wall_s": 0.19,
+              "user_s": 0.01,
+              "sys_s": 0.0,
+              "cpu_pct": 5.263157894736842,
+              "peak_rss_bytes": 44515328,
+              "page_faults": 18,
+              "page_reclaims": 3314,
+              "exit_code": 0,
+              "stdout_bytes": 9527
+            },
+            {
+              "wall_s": 0.19,
+              "user_s": 0.02,
+              "sys_s": 0.01,
+              "cpu_pct": 15.789473684210526,
+              "peak_rss_bytes": 44646400,
+              "page_faults": 0,
+              "page_reclaims": 3337,
+              "exit_code": 0,
+              "stdout_bytes": 9527
+            },
+            {
+              "wall_s": 0.19,
+              "user_s": 0.02,
+              "sys_s": 0.01,
+              "cpu_pct": 15.789473684210526,
+              "peak_rss_bytes": 44417024,
+              "page_faults": 0,
+              "page_reclaims": 3327,
               "exit_code": 0,
               "stdout_bytes": 9527
             }
@@ -130,24 +268,70 @@
           "where_clause": "status = 'completed'",
           "iterations": [
             {
-              "wall_s": 0.35,
+              "wall_s": 0.33,
               "user_s": 0.15,
               "sys_s": 0.02,
-              "cpu_pct": 48.57142857142857,
-              "peak_rss_bytes": 139804672,
+              "cpu_pct": 51.5151515151515,
+              "peak_rss_bytes": 140165120,
               "page_faults": 0,
-              "page_reclaims": 9170,
+              "page_reclaims": 9171,
               "exit_code": 0,
               "stdout_bytes": 5445
             },
             {
-              "wall_s": 0.34,
+              "wall_s": 0.35,
               "user_s": 0.14,
               "sys_s": 0.02,
-              "cpu_pct": 47.05882352941176,
-              "peak_rss_bytes": 139624448,
+              "cpu_pct": 45.714285714285715,
+              "peak_rss_bytes": 139935744,
               "page_faults": 0,
-              "page_reclaims": 9147,
+              "page_reclaims": 9167,
+              "exit_code": 0,
+              "stdout_bytes": 5445
+            },
+            {
+              "wall_s": 0.33,
+              "user_s": 0.14,
+              "sys_s": 0.02,
+              "cpu_pct": 48.484848484848484,
+              "peak_rss_bytes": 140328960,
+              "page_faults": 0,
+              "page_reclaims": 9181,
+              "exit_code": 0,
+              "stdout_bytes": 5445
+            }
+          ],
+          "iterations_engine_only": [
+            {
+              "wall_s": 0.22,
+              "user_s": 0.04,
+              "sys_s": 0.01,
+              "cpu_pct": 22.72727272727273,
+              "peak_rss_bytes": 130940928,
+              "page_faults": 0,
+              "page_reclaims": 8606,
+              "exit_code": 0,
+              "stdout_bytes": 5445
+            },
+            {
+              "wall_s": 0.22,
+              "user_s": 0.04,
+              "sys_s": 0.01,
+              "cpu_pct": 22.72727272727273,
+              "peak_rss_bytes": 130924544,
+              "page_faults": 0,
+              "page_reclaims": 8608,
+              "exit_code": 0,
+              "stdout_bytes": 5445
+            },
+            {
+              "wall_s": 0.22,
+              "user_s": 0.04,
+              "sys_s": 0.01,
+              "cpu_pct": 22.72727272727273,
+              "peak_rss_bytes": 130957312,
+              "page_faults": 0,
+              "page_reclaims": 8608,
               "exit_code": 0,
               "stdout_bytes": 5445
             }
@@ -162,24 +346,70 @@
           "where_clause": null,
           "iterations": [
             {
-              "wall_s": 0.34,
-              "user_s": 0.14,
+              "wall_s": 0.33,
+              "user_s": 0.15,
               "sys_s": 0.02,
-              "cpu_pct": 47.05882352941176,
-              "peak_rss_bytes": 137265152,
+              "cpu_pct": 51.5151515151515,
+              "peak_rss_bytes": 137248768,
               "page_faults": 0,
-              "page_reclaims": 9010,
+              "page_reclaims": 8997,
+              "exit_code": 0,
+              "stdout_bytes": 9183
+            },
+            {
+              "wall_s": 0.36,
+              "user_s": 0.15,
+              "sys_s": 0.02,
+              "cpu_pct": 47.22222222222222,
+              "peak_rss_bytes": 138264576,
+              "page_faults": 0,
+              "page_reclaims": 9065,
               "exit_code": 0,
               "stdout_bytes": 9183
             },
             {
               "wall_s": 0.34,
               "user_s": 0.14,
-              "sys_s": 0.01,
-              "cpu_pct": 44.117647058823536,
-              "peak_rss_bytes": 137576448,
+              "sys_s": 0.02,
+              "cpu_pct": 47.05882352941176,
+              "peak_rss_bytes": 137150464,
               "page_faults": 0,
-              "page_reclaims": 9017,
+              "page_reclaims": 8994,
+              "exit_code": 0,
+              "stdout_bytes": 9183
+            }
+          ],
+          "iterations_engine_only": [
+            {
+              "wall_s": 0.23,
+              "user_s": 0.04,
+              "sys_s": 0.01,
+              "cpu_pct": 21.73913043478261,
+              "peak_rss_bytes": 128204800,
+              "page_faults": 0,
+              "page_reclaims": 8442,
+              "exit_code": 0,
+              "stdout_bytes": 9183
+            },
+            {
+              "wall_s": 0.22,
+              "user_s": 0.04,
+              "sys_s": 0.01,
+              "cpu_pct": 22.72727272727273,
+              "peak_rss_bytes": 128778240,
+              "page_faults": 0,
+              "page_reclaims": 8476,
+              "exit_code": 0,
+              "stdout_bytes": 9183
+            },
+            {
+              "wall_s": 0.22,
+              "user_s": 0.04,
+              "sys_s": 0.01,
+              "cpu_pct": 22.72727272727273,
+              "peak_rss_bytes": 128679936,
+              "page_faults": 0,
+              "page_reclaims": 8471,
               "exit_code": 0,
               "stdout_bytes": 9183
             }
@@ -194,17 +424,17 @@
       "name": "qmd",
       "version": "qmd 2.5.2",
       "setup": {
-        "wall_s": 3.46,
-        "user_s": 0.94,
-        "sys_s": 0.22,
-        "cpu_pct": 33.52601156069364,
-        "peak_rss_bytes": 840777728,
-        "page_faults": 20842,
-        "page_reclaims": 36748,
+        "wall_s": 3.48,
+        "user_s": 0.98,
+        "sys_s": 0.24,
+        "cpu_pct": 35.05747126436782,
+        "peak_rss_bytes": 815923200,
+        "page_faults": 20780,
+        "page_reclaims": 37580,
         "exit_code": 0,
         "stdout_bytes": 206
       },
-      "index_size_bytes": 3559424,
+      "index_size_bytes": 3616768,
       "model_size_bytes": 2255192064,
       "queries": [
         {
@@ -214,28 +444,40 @@
           "where_clause": null,
           "iterations": [
             {
-              "wall_s": 0.82,
-              "user_s": 0.61,
-              "sys_s": 0.1,
-              "cpu_pct": 86.58536585365853,
-              "peak_rss_bytes": 662126592,
-              "page_faults": 626,
-              "page_reclaims": 45613,
+              "wall_s": 0.79,
+              "user_s": 0.6,
+              "sys_s": 0.09,
+              "cpu_pct": 87.34177215189872,
+              "peak_rss_bytes": 655687680,
+              "page_faults": 264,
+              "page_reclaims": 45695,
               "exit_code": 0,
               "stdout_bytes": 3671
             },
             {
               "wall_s": 0.8,
               "user_s": 0.61,
-              "sys_s": 0.09,
-              "cpu_pct": 87.49999999999999,
-              "peak_rss_bytes": 644071424,
+              "sys_s": 0.08,
+              "cpu_pct": 86.25,
+              "peak_rss_bytes": 645840896,
               "page_faults": 163,
-              "page_reclaims": 45017,
+              "page_reclaims": 45110,
+              "exit_code": 0,
+              "stdout_bytes": 3671
+            },
+            {
+              "wall_s": 0.8,
+              "user_s": 0.62,
+              "sys_s": 0.09,
+              "cpu_pct": 88.75,
+              "peak_rss_bytes": 655097856,
+              "page_faults": 163,
+              "page_reclaims": 45776,
               "exit_code": 0,
               "stdout_bytes": 3671
             }
           ],
+          "iterations_engine_only": null,
           "output_token_count": 444,
           "result_count": 10
         },
@@ -246,13 +488,24 @@
           "where_clause": null,
           "iterations": [
             {
-              "wall_s": 0.79,
-              "user_s": 0.61,
+              "wall_s": 0.8,
+              "user_s": 0.62,
               "sys_s": 0.09,
+              "cpu_pct": 88.75,
+              "peak_rss_bytes": 646119424,
+              "page_faults": 248,
+              "page_reclaims": 45035,
+              "exit_code": 0,
+              "stdout_bytes": 3579
+            },
+            {
+              "wall_s": 0.79,
+              "user_s": 0.62,
+              "sys_s": 0.08,
               "cpu_pct": 88.60759493670885,
-              "peak_rss_bytes": 645840896,
-              "page_faults": 170,
-              "page_reclaims": 45129,
+              "peak_rss_bytes": 655294464,
+              "page_faults": 163,
+              "page_reclaims": 45782,
               "exit_code": 0,
               "stdout_bytes": 3579
             },
@@ -261,13 +514,14 @@
               "user_s": 0.61,
               "sys_s": 0.09,
               "cpu_pct": 88.60759493670885,
-              "peak_rss_bytes": 656424960,
+              "peak_rss_bytes": 655441920,
               "page_faults": 163,
-              "page_reclaims": 45898,
+              "page_reclaims": 45773,
               "exit_code": 0,
               "stdout_bytes": 3579
             }
           ],
+          "iterations_engine_only": null,
           "output_token_count": 467,
           "result_count": 8
         },
@@ -282,9 +536,9 @@
               "user_s": 0.13,
               "sys_s": 0.02,
               "cpu_pct": 93.75,
-              "peak_rss_bytes": 69369856,
+              "peak_rss_bytes": 69550080,
               "page_faults": 160,
-              "page_reclaims": 7995,
+              "page_reclaims": 8003,
               "exit_code": 0,
               "stdout_bytes": 2840
             },
@@ -293,13 +547,25 @@
               "user_s": 0.13,
               "sys_s": 0.02,
               "cpu_pct": 100.0,
-              "peak_rss_bytes": 69926912,
+              "peak_rss_bytes": 69615616,
               "page_faults": 160,
-              "page_reclaims": 8036,
+              "page_reclaims": 8000,
+              "exit_code": 0,
+              "stdout_bytes": 2840
+            },
+            {
+              "wall_s": 0.16,
+              "user_s": 0.13,
+              "sys_s": 0.02,
+              "cpu_pct": 93.75,
+              "peak_rss_bytes": 69566464,
+              "page_faults": 160,
+              "page_reclaims": 8009,
               "exit_code": 0,
               "stdout_bytes": 2840
             }
           ],
+          "iterations_engine_only": null,
           "output_token_count": 376,
           "result_count": 7
         },
@@ -310,29 +576,41 @@
           "where_clause": null,
           "iterations": [
             {
-              "wall_s": 0.87,
-              "user_s": 0.63,
-              "sys_s": 0.12,
-              "cpu_pct": 86.20689655172414,
-              "peak_rss_bytes": 649117696,
-              "page_faults": 406,
-              "page_reclaims": 45618,
+              "wall_s": 0.89,
+              "user_s": 0.68,
+              "sys_s": 0.13,
+              "cpu_pct": 91.01123595505618,
+              "peak_rss_bytes": 655163392,
+              "page_faults": 1035,
+              "page_reclaims": 45094,
               "exit_code": -6,
               "stdout_bytes": 4674
             },
             {
-              "wall_s": 0.67,
-              "user_s": 0.61,
+              "wall_s": 0.68,
+              "user_s": 0.64,
               "sys_s": 0.11,
-              "cpu_pct": 107.46268656716418,
-              "peak_rss_bytes": 659324928,
-              "page_faults": 174,
-              "page_reclaims": 46133,
+              "cpu_pct": 110.29411764705881,
+              "peak_rss_bytes": 669515776,
+              "page_faults": 167,
+              "page_reclaims": 46623,
+              "exit_code": -6,
+              "stdout_bytes": 4674
+            },
+            {
+              "wall_s": 0.68,
+              "user_s": 0.65,
+              "sys_s": 0.1,
+              "cpu_pct": 110.29411764705881,
+              "peak_rss_bytes": 658161664,
+              "page_faults": 163,
+              "page_reclaims": 45825,
               "exit_code": -6,
               "stdout_bytes": 4674
             }
           ],
-          "output_token_count": 611,
+          "iterations_engine_only": null,
+          "output_token_count": 608,
           "result_count": 10
         }
       ],

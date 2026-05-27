@@ -85,6 +85,10 @@ class QueryResult:
     mode: str
     where_clause: str | None
     iterations: list[Measurement] = field(default_factory=list)
+    # mdvs only: supplementary timings with `--no-update --no-build` so the
+    # report can separate "search engine speed" from "default config including
+    # auto-update + auto-build overhead". Empty/None for QMD (no equivalent).
+    iterations_engine_only: list[Measurement] | None = None
     output_token_count: int | None = None
     result_count: int | None = None
 
@@ -187,7 +191,7 @@ def mdvs_setup(corpus: Path) -> Measurement:
     return m
 
 def mdvs_query(corpus: Path, query: str, mode: str, where: str | None,
-               limit: int) -> tuple[Measurement, str]:
+               limit: int, engine_only: bool = False) -> tuple[Measurement, str]:
     cmd = [
         str(MDVS_BIN), "search", query, str(corpus),
         "--mode", mode,
@@ -196,6 +200,11 @@ def mdvs_query(corpus: Path, query: str, mode: str, where: str | None,
     ]
     if where:
         cmd.extend(["--where", where])
+    if engine_only:
+        # Skip the auto-update + auto-build orchestration that fires before
+        # every search by default (~110 ms overhead per query on example_kb).
+        # Measures the search engine itself, not the orchestration cost.
+        cmd.extend(["--no-update", "--no-build"])
     return run_measured(cmd)
 
 def mdvs_index_size(corpus: Path) -> int:
@@ -386,19 +395,34 @@ def run_benchmark(corpus: Path, iterations: int, limit: int, tools: list[str]) -
         console.rule("[bold cyan]mdvs queries")
         for kind, query, mode, where in QUERIES_EXAMPLE_KB:
             qr = QueryResult(kind=kind, query=query, mode=mode, where_clause=where)
-            # First a throwaway run to warm the cache (so iteration 1 isn't artificially cold)
-            mdvs_query(corpus, query, mode, where, limit)
+            qr.iterations_engine_only = []
+
+            # Warm up under each configuration so the timed iterations are
+            # measuring steady state, not the first invocation
+            mdvs_query(corpus, query, mode, where, limit, engine_only=False)
+            mdvs_query(corpus, query, mode, where, limit, engine_only=True)
+
             last_stdout = ""
-            for i in range(iterations):
-                m, stdout = mdvs_query(corpus, query, mode, where, limit)
+            for _ in range(iterations):
+                m, stdout = mdvs_query(corpus, query, mode, where, limit, engine_only=False)
                 qr.iterations.append(m)
                 last_stdout = stdout
+            for _ in range(iterations):
+                m, _ = mdvs_query(corpus, query, mode, where, limit, engine_only=True)
+                qr.iterations_engine_only.append(m)
+
             snippets, count = extract_mdvs_snippets(last_stdout)
             qr.output_token_count = count_tokens("\n".join(snippets))
             qr.result_count = count
             mdvs.queries.append(qr)
-            wall = statistics.median(m.wall_s for m in qr.iterations)
-            console.print(f"  {kind:18}  {mode:9}  wall={wall*1000:7.1f}ms  results={count}  tokens={qr.output_token_count}")
+            wall_default = statistics.median(m.wall_s for m in qr.iterations)
+            wall_engine = statistics.median(m.wall_s for m in qr.iterations_engine_only)
+            console.print(
+                f"  {kind:18}  {mode:9}"
+                f"  default={wall_default * 1000:6.1f}ms"
+                f"  engine={wall_engine * 1000:6.1f}ms"
+                f"  results={count}  tokens={qr.output_token_count}"
+            )
         run.tools["mdvs"] = mdvs
 
     # ---- qmd ----
@@ -456,11 +480,10 @@ def render_summary(run: BenchmarkRun) -> None:
     table = Table(show_header=True)
     table.add_column("kind")
     table.add_column("mdvs mode")
-    table.add_column("mdvs wall")
-    table.add_column("mdvs RSS")
+    table.add_column("mdvs default")
+    table.add_column("mdvs engine")
     table.add_column("qmd mode")
     table.add_column("qmd wall")
-    table.add_column("qmd RSS")
 
     mdvs = run.tools.get("mdvs")
     qmd = run.tools.get("qmd")
@@ -472,17 +495,24 @@ def render_summary(run: BenchmarkRun) -> None:
         qq = qmd_by_kind.get(kind)
         row = [kind]
         if mq:
-            wall = statistics.median(m.wall_s for m in mq.iterations) * 1000
-            rss = max(m.peak_rss_bytes for m in mq.iterations) / 1e6
-            row.extend([mq.mode, f"{wall:.1f}ms", f"{rss:.0f}MB"])
+            default_wall = statistics.median(m.wall_s for m in mq.iterations) * 1000
+            engine_wall = (
+                statistics.median(m.wall_s for m in mq.iterations_engine_only) * 1000
+                if mq.iterations_engine_only
+                else None
+            )
+            row.extend([
+                mq.mode,
+                f"{default_wall:.1f}ms",
+                f"{engine_wall:.1f}ms" if engine_wall is not None else "—",
+            ])
         else:
             row.extend(["-", "-", "-"])
         if qq:
             wall = statistics.median(m.wall_s for m in qq.iterations) * 1000
-            rss = max(m.peak_rss_bytes for m in qq.iterations) / 1e6
-            row.extend([qq.mode, f"{wall:.1f}ms", f"{rss:.0f}MB"])
+            row.extend([qq.mode, f"{wall:.1f}ms"])
         else:
-            row.extend(["-", "-", "-"])
+            row.extend(["-", "-"])
         table.add_row(*row)
     console.print(table)
 
