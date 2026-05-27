@@ -1,7 +1,7 @@
 # mdvs vs QMD — benchmark report
 
-_Generated 2026-05-27 23:39_
-_Corpora: `example_kb`_
+_Generated 2026-05-28 00:45_
+_Corpora: `example_kb`, `tasks`_
 _mdvs 0.6.2 · QMD 2.5.2_
 
 This report characterises how mdvs and QMD compare on warm/steady-state search latency, peak memory, build time, and output footprint. See [TODO-0166](../spec/todos/TODO-0166.md) for the framing and decisions behind what's measured (and what's deliberately not).
@@ -93,6 +93,59 @@ Token count matters when results are piped into a downstream LLM — fewer token
 | `exact_phrase` | 10 | 1,601 | 7 | 376 |
 | `metadata_filtered` | 5 | 974 | — | — |
 | `vague_multiword` | 10 | 1,518 | 10 | 608 |
+
+### Notes
+
+- _qmd_: QMD uses a global ~/.cache/qmd/index.sqlite; index_size_bytes includes any unrelated user collections
+- _qmd_: skipped 'metadata_filtered': qmd has no --where equivalent
+
+## Corpus: `tasks` (222 files)
+
+### Setup (one-time build cost)
+
+| | mdvs `build --force` | QMD `embed -f` |
+|---|---|---|
+| Wall time | 670 ms | 75.46 s |
+| Peak RSS | 149 MB | 929 MB |
+| Index on disk | 4.1 MB | 7.8 MB |
+| Embedding/reranker models on disk | 59.0 MB | 2.10 GB |
+
+### Queries
+
+| Kind | Query | mdvs mode | `--where` clause |
+|---|---|---|---|
+| `broad_semantic` | _"deploying applications to kubernetes"_ | `semantic` | — |
+| `narrow_semantic` | _"rolling update strategy"_ | `semantic` | — |
+| `exact_phrase` | _"kubectl apply"_ | `fulltext` | — |
+| `metadata_filtered` | _"minikube"_ | `hybrid` | `content_type = 'tutorial'` |
+| `vague_multiword` | _"how do I expose my service to the internet"_ | `hybrid` | — |
+
+### Search latency (warm, median of N)
+
+mdvs is reported in two configurations:
+
+- **mdvs default** — runs as users typically invoke it; `auto_update` and `auto_build` in `mdvs.toml` cause a scan + frontmatter-validation + build-check pass before every search (~110 ms on this corpus)
+- **mdvs engine-only** — same query with `--no-update --no-build`. Measures the search engine itself without the orchestration overhead. Closer to a like-for-like comparison with QMD, which has no equivalent feature
+
+| Kind | mdvs default | mdvs engine-only | mdvs RSS | mdvs CPU% | QMD mode | QMD wall | QMD RSS | QMD CPU% |
+|---|---|---|---|---|---|---|---|---|
+| `broad_semantic` | 530 ms | 220 ms | 152 MB | 66% | `vsearch` | 810 ms | 617 MB | 86% |
+| `narrow_semantic` | 530 ms | 220 ms | 151 MB | 66% | `vsearch` | 800 ms | 630 MB | 87% |
+| `exact_phrase` | 540 ms | 190 ms | 149 MB | 67% | `search` | 160 ms | 69.9 MB | 94% |
+| `metadata_filtered` | 530 ms | 230 ms | 158 MB | 66% | — | — | — | — |
+| `vague_multiword` | 520 ms | 230 ms | 156 MB | 67% | `query` | 860 ms | 648 MB | 94% |
+
+### Output token count (snippets for `--limit 10`, `tiktoken` `cl100k_base`)
+
+Token count matters when results are piped into a downstream LLM — fewer tokens = less context spent.
+
+| Kind | mdvs result count | mdvs tokens | QMD result count | QMD tokens |
+|---|---|---|---|---|
+| `broad_semantic` | 10 | 957 | 10 | 546 |
+| `narrow_semantic` | 10 | 1,005 | 10 | 541 |
+| `exact_phrase` | 10 | 1,041 | 10 | 435 |
+| `metadata_filtered` | 5 | 861 | — | — |
+| `vague_multiword` | 10 | 1,209 | 10 | 597 |
 
 ### Notes
 

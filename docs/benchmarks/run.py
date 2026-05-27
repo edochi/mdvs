@@ -52,15 +52,25 @@ TIME_BIN = "/usr/bin/time"
 DEFAULT_ITERATIONS = 3
 DEFAULT_LIMIT = 10
 
-# Five queries per the TODO. Crafted for example_kb (Prismatiq research lab).
-# Each entry: (kind, query, mode_for_mdvs, where_clause_or_None).
-QUERIES_EXAMPLE_KB = [
-    ("broad_semantic",   "calibration baseline",                  "semantic",  None),
-    ("narrow_semantic",  "wavelet denoising replication",         "semantic",  None),
-    ("exact_phrase",     "SPR-A1",                                "fulltext",  None),
-    ("metadata_filtered","calibration",                           "hybrid",    "status = 'completed'"),
-    ("vague_multiword",  "what went wrong with the spectrometer", "hybrid",    None),
-]
+# Five queries per the TODO. Each entry: (kind, query, mdvs_mode, where_clause).
+# Per-corpus query sets so different corpora can use queries that fit their
+# domain. Selection via --query-set on the CLI.
+QUERY_SETS: dict[str, list[tuple[str, str, str, str | None]]] = {
+    "example_kb": [
+        ("broad_semantic",   "calibration baseline",                  "semantic",  None),
+        ("narrow_semantic",  "wavelet denoising replication",         "semantic",  None),
+        ("exact_phrase",     "SPR-A1",                                "fulltext",  None),
+        ("metadata_filtered","calibration",                           "hybrid",    "status = 'completed'"),
+        ("vague_multiword",  "what went wrong with the spectrometer", "hybrid",    None),
+    ],
+    "kubernetes": [
+        ("broad_semantic",   "deploying applications to kubernetes",          "semantic",  None),
+        ("narrow_semantic",  "rolling update strategy",                       "semantic",  None),
+        ("exact_phrase",     "kubectl apply",                                 "fulltext",  None),
+        ("metadata_filtered","minikube",                                      "hybrid",    "content_type = 'tutorial'"),
+        ("vague_multiword",  "how do I expose my service to the internet",   "hybrid",    None),
+    ],
+}
 
 # ---------------------------------------------------------------------------
 # Data shapes
@@ -365,7 +375,13 @@ def _du_bytes(path: Path) -> int:
 # Main run loop
 # ---------------------------------------------------------------------------
 
-def run_benchmark(corpus: Path, iterations: int, limit: int, tools: list[str]) -> BenchmarkRun:
+def run_benchmark(
+    corpus: Path,
+    iterations: int,
+    limit: int,
+    tools: list[str],
+    queries: list[tuple[str, str, str, str | None]],
+) -> BenchmarkRun:
     md = corpus / "*.md"
     file_count = len(list(corpus.rglob("*.md")))
     machine = {
@@ -393,7 +409,7 @@ def run_benchmark(corpus: Path, iterations: int, limit: int, tools: list[str]) -
         console.print(f"index: {mdvs.index_size_bytes/1e6:.2f}MB  model: {mdvs.model_size_bytes/1e6:.1f}MB")
 
         console.rule("[bold cyan]mdvs queries")
-        for kind, query, mode, where in QUERIES_EXAMPLE_KB:
+        for kind, query, mode, where in queries:
             qr = QueryResult(kind=kind, query=query, mode=mode, where_clause=where)
             qr.iterations_engine_only = []
 
@@ -446,7 +462,7 @@ def run_benchmark(corpus: Path, iterations: int, limit: int, tools: list[str]) -
             console.print(f"index: {qmd.index_size_bytes/1e6:.2f}MB  models: {qmd.model_size_bytes/1e6:.1f}MB")
 
             console.rule("[bold magenta]qmd queries")
-            for kind, query, mdvs_mode, where in QUERIES_EXAMPLE_KB:
+            for kind, query, mdvs_mode, where in queries:
                 if where is not None:
                     qmd.notes.append(f"skipped '{kind}': qmd has no --where equivalent")
                     continue
@@ -475,7 +491,7 @@ def run_benchmark(corpus: Path, iterations: int, limit: int, tools: list[str]) -
 # Summary table
 # ---------------------------------------------------------------------------
 
-def render_summary(run: BenchmarkRun) -> None:
+def render_summary(run: BenchmarkRun, queries: list[tuple[str, str, str, str | None]]) -> None:
     console.rule("[bold green]Summary (median across iterations)")
     table = Table(show_header=True)
     table.add_column("kind")
@@ -490,7 +506,7 @@ def render_summary(run: BenchmarkRun) -> None:
     mdvs_by_kind = {q.kind: q for q in (mdvs.queries if mdvs else [])}
     qmd_by_kind = {q.kind: q for q in (qmd.queries if qmd else [])}
 
-    for kind, _, _, _ in QUERIES_EXAMPLE_KB:
+    for kind, _, _, _ in queries:
         mq = mdvs_by_kind.get(kind)
         qq = qmd_by_kind.get(kind)
         row = [kind]
@@ -528,6 +544,9 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
     parser.add_argument("--tools", default="mdvs,qmd",
                         help="Comma-separated subset of {mdvs,qmd}")
+    parser.add_argument("--query-set", required=True,
+                        choices=sorted(QUERY_SETS.keys()),
+                        help="Which query set to use (defined in QUERY_SETS)")
     args = parser.parse_args()
 
     if not MDVS_BIN.exists():
@@ -538,8 +557,10 @@ def main() -> None:
     if not corpus.is_dir():
         sys.exit(f"corpus not found or not a directory: {corpus}")
 
-    run = run_benchmark(corpus, args.iterations, args.limit, tools)
-    render_summary(run)
+    queries = QUERY_SETS[args.query_set]
+
+    run = run_benchmark(corpus, args.iterations, args.limit, tools, queries)
+    render_summary(run, queries)
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(_serialize(run), indent=2))
