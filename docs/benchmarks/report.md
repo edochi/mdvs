@@ -1,7 +1,7 @@
 # mdvs vs QMD — benchmark report
 
-_Generated 2026-05-28 00:45_
-_Corpora: `example_kb`, `tasks`_
+_Generated 2026-05-28 10:46_
+_Corpora: `example_kb`, `docs`_
 _mdvs 0.6.2 · QMD 2.5.2_
 
 This report characterises how mdvs and QMD compare on warm/steady-state search latency, peak memory, build time, and output footprint. See [TODO-0166](../spec/todos/TODO-0166.md) for the framing and decisions behind what's measured (and what's deliberately not).
@@ -48,13 +48,22 @@ This benchmark measures **latency, footprint, and setup cost** under each tool's
 
 ## Corpus: `example_kb` (46 files)
 
-### Setup (one-time build cost)
+### Setup (full from-scratch build, both phases timed)
 
-| | mdvs `build --force` | QMD `embed -f` |
+Both tools are set up fresh each run. The two phases are timed separately:
+
+- **prepare** — mdvs `init` (schema inference) / QMD `collection add` (scan + chunk + metadata)
+- **index** — mdvs `build --force` (scan + chunk + validate + embed) / QMD `embed -f` (vectors)
+
+(mdvs bundles scan/chunk/validate into `build`; QMD splits them into `collection add`. The **total** is the comparable figure — raw files to a queryable index.)
+
+| | mdvs | QMD |
 |---|---|---|
-| Wall time | 370 ms | 3.48 s |
-| Peak RSS | 124 MB | 778 MB |
-| Index on disk | 240.0 KB | 3.4 MB |
+| Prepare (init / collection add) | 360 ms | 410 ms |
+| Index (build / embed) | 630 ms | 5.25 s |
+| **Total setup** | 990 ms | 5.66 s |
+| Index peak RSS | 126 MB | 815 MB |
+| Index on disk | 232.0 KB | 7.8 MB |
 | Embedding/reranker models on disk | 59.0 MB | 2.10 GB |
 
 ### Queries
@@ -76,11 +85,11 @@ mdvs is reported in two configurations:
 
 | Kind | mdvs default | mdvs engine-only | mdvs RSS | mdvs CPU% | QMD mode | QMD wall | QMD RSS | QMD CPU% |
 |---|---|---|---|---|---|---|---|---|
-| `broad_semantic` | 340 ms | 210 ms | 130 MB | 50% | `vsearch` | 800 ms | 625 MB | 87% |
-| `narrow_semantic` | 330 ms | 220 ms | 130 MB | 49% | `vsearch` | 790 ms | 625 MB | 89% |
-| `exact_phrase` | 310 ms | 190 ms | 53.3 MB | 45% | `search` | 160 ms | 66.4 MB | 94% |
-| `metadata_filtered` | 330 ms | 220 ms | 134 MB | 48% | — | — | — | — |
-| `vague_multiword` | 340 ms | 220 ms | 132 MB | 47% | `query` | 680 ms | 638 MB | 110% |
+| `broad_semantic` | 660 ms | 410 ms | 131 MB | 48% | `vsearch` | 1.58 s | 625 MB | 93% |
+| `narrow_semantic` | 660 ms | 400 ms | 131 MB | 48% | `vsearch` | 1.47 s | 625 MB | 80% |
+| `exact_phrase` | 610 ms | 370 ms | 53.8 MB | 44% | `search` | 270 ms | 67.0 MB | 104% |
+| `metadata_filtered` | 650 ms | 410 ms | 135 MB | 49% | — | — | — | — |
+| `vague_multiword` | 660 ms | 410 ms | 133 MB | 49% | `query` | 1.60 s | 638 MB | 108% |
 
 ### Output token count (snippets for `--limit 10`, `tiktoken` `cl100k_base`)
 
@@ -92,22 +101,31 @@ Token count matters when results are piped into a downstream LLM — fewer token
 | `narrow_semantic` | 10 | 1,373 | 8 | 467 |
 | `exact_phrase` | 10 | 1,601 | 7 | 376 |
 | `metadata_filtered` | 5 | 974 | — | — |
-| `vague_multiword` | 10 | 1,518 | 10 | 608 |
+| `vague_multiword` | 10 | 1,518 | 10 | 571 |
 
 ### Notes
 
 - _qmd_: QMD uses a global ~/.cache/qmd/index.sqlite; index_size_bytes includes any unrelated user collections
 - _qmd_: skipped 'metadata_filtered': qmd has no --where equivalent
 
-## Corpus: `tasks` (222 files)
+## Corpus: `docs` (1669 files)
 
-### Setup (one-time build cost)
+### Setup (full from-scratch build, both phases timed)
 
-| | mdvs `build --force` | QMD `embed -f` |
+Both tools are set up fresh each run. The two phases are timed separately:
+
+- **prepare** — mdvs `init` (schema inference) / QMD `collection add` (scan + chunk + metadata)
+- **index** — mdvs `build --force` (scan + chunk + validate + embed) / QMD `embed -f` (vectors)
+
+(mdvs bundles scan/chunk/validate into `build`; QMD splits them into `collection add`. The **total** is the comparable figure — raw files to a queryable index.)
+
+| | mdvs | QMD |
 |---|---|---|
-| Wall time | 670 ms | 75.46 s |
-| Peak RSS | 149 MB | 929 MB |
-| Index on disk | 4.1 MB | 7.8 MB |
+| Prepare (init / collection add) | 760 ms | 3.24 s |
+| Index (build / embed) | 24.88 s | 1167.13 s |
+| **Total setup** | 25.64 s | 1170.37 s |
+| Index peak RSS | 366 MB | 935 MB |
+| Index on disk | 31.6 MB | 64.6 MB |
 | Embedding/reranker models on disk | 59.0 MB | 2.10 GB |
 
 ### Queries
@@ -129,11 +147,11 @@ mdvs is reported in two configurations:
 
 | Kind | mdvs default | mdvs engine-only | mdvs RSS | mdvs CPU% | QMD mode | QMD wall | QMD RSS | QMD CPU% |
 |---|---|---|---|---|---|---|---|---|
-| `broad_semantic` | 530 ms | 220 ms | 152 MB | 66% | `vsearch` | 810 ms | 617 MB | 86% |
-| `narrow_semantic` | 530 ms | 220 ms | 151 MB | 66% | `vsearch` | 800 ms | 630 MB | 87% |
-| `exact_phrase` | 540 ms | 190 ms | 149 MB | 67% | `search` | 160 ms | 69.9 MB | 94% |
-| `metadata_filtered` | 530 ms | 230 ms | 158 MB | 66% | — | — | — | — |
-| `vague_multiword` | 520 ms | 230 ms | 156 MB | 67% | `query` | 860 ms | 648 MB | 94% |
+| `broad_semantic` | 22.10 s | 590 ms | 392 MB | 171% | `vsearch` | 1.61 s | 634 MB | 99% |
+| `narrow_semantic` | 21.55 s | 560 ms | 391 MB | 176% | `vsearch` | 1.62 s | 629 MB | 102% |
+| `exact_phrase` | 21.07 s | 570 ms | 390 MB | 176% | `search` | 360 ms | 72.5 MB | 103% |
+| `metadata_filtered` | 22.21 s | 550 ms | 393 MB | 174% | — | — | — | — |
+| `vague_multiword` | 21.11 s | 590 ms | 397 MB | 174% | `query` | 1.65 s | 647 MB | 114% |
 
 ### Output token count (snippets for `--limit 10`, `tiktoken` `cl100k_base`)
 
@@ -141,11 +159,11 @@ Token count matters when results are piped into a downstream LLM — fewer token
 
 | Kind | mdvs result count | mdvs tokens | QMD result count | QMD tokens |
 |---|---|---|---|---|
-| `broad_semantic` | 10 | 957 | 10 | 546 |
-| `narrow_semantic` | 10 | 1,005 | 10 | 541 |
-| `exact_phrase` | 10 | 1,041 | 10 | 435 |
-| `metadata_filtered` | 5 | 861 | — | — |
-| `vague_multiword` | 10 | 1,209 | 10 | 597 |
+| `broad_semantic` | 10 | 974 | 10 | 624 |
+| `narrow_semantic` | 9 | 729 | 10 | 604 |
+| `exact_phrase` | 10 | 870 | 10 | 440 |
+| `metadata_filtered` | 10 | 1,013 | — | — |
+| `vague_multiword` | 10 | 1,082 | 10 | 568 |
 
 ### Notes
 

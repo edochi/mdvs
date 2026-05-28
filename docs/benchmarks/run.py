@@ -106,7 +106,12 @@ class QueryResult:
 class ToolResults:
     name: str
     version: str
-    setup: Measurement | None = None
+    # Full setup is timed in two phases, fresh each run, for both tools:
+    #   setup_prepare — mdvs `init` (schema inference) / qmd `collection add`
+    #   setup_index   — mdvs `build` / qmd `embed -f`
+    # Total setup time = setup_prepare.wall_s + setup_index.wall_s.
+    setup_prepare: Measurement | None = None
+    setup_index: Measurement | None = None
     index_size_bytes: int | None = None
     model_size_bytes: int | None = None
     queries: list[QueryResult] = field(default_factory=list)
@@ -192,13 +197,22 @@ def mdvs_version() -> str:
     out = subprocess.run([str(MDVS_BIN), "--version"], capture_output=True, text=True, check=True)
     return out.stdout.strip()
 
-def mdvs_setup(corpus: Path) -> Measurement:
-    """Force-rebuild the mdvs index. Returns the measured build."""
+def mdvs_setup(corpus: Path) -> tuple[Measurement, Measurement]:
+    """Full mdvs setup from scratch, both phases timed. Returns
+    (init_measurement, build_measurement).
+
+    `init` (schema inference → mdvs.toml) is timed and run fresh with --force,
+    parallel to QMD's `collection add`. `build` (scan + chunk + validate +
+    embed → index) is timed, parallel to QMD's `embed -f`. Both fresh each run.
+
+    Note: `init --force` overwrites any committed mdvs.toml (e.g. example_kb's
+    hand-tuned one). The caller restores it via git after the run."""
     mdvs_dir = corpus / ".mdvs"
     if mdvs_dir.exists():
         shutil.rmtree(mdvs_dir)
-    m, _ = run_measured([str(MDVS_BIN), "build", str(corpus), "--force"])
-    return m
+    init_m, _ = run_measured([str(MDVS_BIN), "init", str(corpus), "--force"])
+    build_m, _ = run_measured([str(MDVS_BIN), "build", str(corpus), "--force"])
+    return init_m, build_m
 
 def mdvs_query(corpus: Path, query: str, mode: str, where: str | None,
                limit: int, engine_only: bool = False) -> tuple[Measurement, str]:
@@ -257,16 +271,19 @@ def qmd_version() -> str:
 
 _QMD_CONFLICT_NAME = re.compile(r"^\s*Name:\s+(\S+)", re.MULTILINE)
 
-def qmd_collection_add_with_retry(corpus: Path) -> list[str]:
-    """Add a fresh QMD collection for the corpus. QMD enforces one collection per
-    (path, pattern); its `collection list` hides paths, but the `add` error
-    message names any conflicting collection. Parse it, remove, retry.
+def qmd_collection_prepare(corpus: Path) -> list[str]:
+    """Untimed prep: ensure no collection conflicts with this corpus path, and
+    leave a clean state so the subsequent *timed* `collection add` starts fresh.
 
-    Returns the list of pre-existing collection names we removed."""
+    QMD enforces one collection per (path, pattern) and its `collection list`
+    hides paths, so we probe by attempting an add: on conflict the error names
+    the offender (`Name: <name>`), which we remove and retry. On success we
+    remove our own probe collection so the timed add re-creates it from scratch.
+
+    Returns the list of pre-existing collection names removed (for run notes)."""
     qmd = qmd_path()
     env = {**os.environ, **qmd_env()}
     removed: list[str] = []
-    # First attempt: also remove our canonical name in case it's lingering
     subprocess.run([qmd, "collection", "remove", QMD_COLLECTION],
                    capture_output=True, env=env, check=False)
     for _ in range(3):
@@ -275,9 +292,10 @@ def qmd_collection_add_with_retry(corpus: Path) -> list[str]:
             capture_output=True, text=True, env=env, check=False,
         )
         if result.returncode == 0:
+            # Probe succeeded — remove it so the timed add starts from nothing.
+            subprocess.run([qmd, "collection", "remove", QMD_COLLECTION],
+                           capture_output=True, env=env, check=False)
             return removed
-        # On failure, the conflicting collection's name appears in stderr or stdout
-        # as `Name: <name>`. Parse, remove, retry.
         m = _QMD_CONFLICT_NAME.search(result.stderr + result.stdout)
         if not m:
             sys.stderr.write(result.stderr or result.stdout)
@@ -286,15 +304,23 @@ def qmd_collection_add_with_retry(corpus: Path) -> list[str]:
         subprocess.run([qmd, "collection", "remove", conflict],
                        capture_output=True, env=env, check=False)
         removed.append(conflict)
-    raise RuntimeError("qmd collection add: too many retries")
+    raise RuntimeError("qmd collection prepare: too many retries")
 
-def qmd_setup(corpus: Path) -> tuple[Measurement, list[str]]:
-    """Clean any prior collections for this path, add fresh, embed."""
-    removed = qmd_collection_add_with_retry(corpus)
-    # -f forces re-embedding of every chunk. Without it, content-hashed chunks
-    # would be skipped across remove/add cycles, making build-time meaningless.
-    m, _ = run_measured([qmd_path(), "embed", "-f"], env=qmd_env())
-    return m, removed
+def qmd_setup(corpus: Path) -> tuple[Measurement, Measurement, list[str]]:
+    """Full QMD setup from scratch, both phases timed. Returns
+    (collection_add_measurement, embed_measurement, removed_names).
+
+    `collection add` (scan + chunk + metadata indexing) is timed, parallel to
+    mdvs `init`. `embed -f` (vector generation) is timed, parallel to mdvs
+    `build`. `-f` forces re-embedding every chunk so the build is genuinely
+    from-scratch (content-hashed chunks would otherwise be skipped)."""
+    removed = qmd_collection_prepare(corpus)
+    add_m, _ = run_measured(
+        [qmd_path(), "collection", "add", str(corpus), "--name", QMD_COLLECTION],
+        env=qmd_env(),
+    )
+    embed_m, _ = run_measured([qmd_path(), "embed", "-f"], env=qmd_env())
+    return add_m, embed_m, removed
 
 def qmd_cleanup() -> None:
     """Remove our ephemeral benchmark collection from QMD's global index.
@@ -402,10 +428,14 @@ def run_benchmark(
     if "mdvs" in tools:
         console.rule("[bold cyan]mdvs setup")
         mdvs = ToolResults(name="mdvs", version=mdvs_version())
-        mdvs.setup = mdvs_setup(corpus)
+        mdvs.setup_prepare, mdvs.setup_index = mdvs_setup(corpus)
         mdvs.index_size_bytes = mdvs_index_size(corpus)
         mdvs.model_size_bytes = mdvs_model_size()
-        console.print(f"build: wall={mdvs.setup.wall_s:.2f}s rss={mdvs.setup.peak_rss_bytes/1e6:.1f}MB")
+        total_setup = mdvs.setup_prepare.wall_s + mdvs.setup_index.wall_s
+        console.print(
+            f"init: {mdvs.setup_prepare.wall_s:.2f}s + build: {mdvs.setup_index.wall_s:.2f}s"
+            f"  = total {total_setup:.2f}s"
+        )
         console.print(f"index: {mdvs.index_size_bytes/1e6:.2f}MB  model: {mdvs.model_size_bytes/1e6:.1f}MB")
 
         console.rule("[bold cyan]mdvs queries")
@@ -450,7 +480,7 @@ def run_benchmark(
         try:
             console.rule("[bold magenta]qmd setup")
             qmd = ToolResults(name="qmd", version=qmd_version())
-            qmd.setup, removed = qmd_setup(corpus)
+            qmd.setup_prepare, qmd.setup_index, removed = qmd_setup(corpus)
             if removed:
                 qmd.notes.append(f"removed existing collections for this path: {removed}")
             qmd.index_size_bytes = qmd_index_size()
@@ -458,7 +488,11 @@ def run_benchmark(
             qmd.notes.append(
                 "QMD uses a global ~/.cache/qmd/index.sqlite; index_size_bytes includes any unrelated user collections"
             )
-            console.print(f"embed: wall={qmd.setup.wall_s:.2f}s rss={qmd.setup.peak_rss_bytes/1e6:.1f}MB")
+            qmd_total_setup = qmd.setup_prepare.wall_s + qmd.setup_index.wall_s
+            console.print(
+                f"collection add: {qmd.setup_prepare.wall_s:.2f}s + embed: {qmd.setup_index.wall_s:.2f}s"
+                f"  = total {qmd_total_setup:.2f}s"
+            )
             console.print(f"index: {qmd.index_size_bytes/1e6:.2f}MB  models: {qmd.model_size_bytes/1e6:.1f}MB")
 
             console.rule("[bold magenta]qmd queries")

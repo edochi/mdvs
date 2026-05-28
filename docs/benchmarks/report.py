@@ -166,37 +166,51 @@ def _render_setup_table(report: dict) -> str:
     def row(label: str, mdvs_val: str, qmd_val: str) -> str:
         return f"| {label} | {mdvs_val} | {qmd_val} |"
 
-    def setup_field(t: dict | None, field: str, default: str = "—") -> str:
-        if t is None or t.get("setup") is None:
-            return default
-        return field if False else fmt_seconds(t["setup"]["wall_s"])
+    def phase_wall(t: dict | None, key: str) -> float | None:
+        if t is None or t.get(key) is None:
+            return None
+        return t[key]["wall_s"]
+
+    def total_wall(t: dict | None) -> str:
+        if t is None:
+            return "—"
+        prep = phase_wall(t, "setup_prepare")
+        idx = phase_wall(t, "setup_index")
+        if prep is None and idx is None:
+            return "—"
+        return fmt_seconds((prep or 0.0) + (idx or 0.0))
+
+    def phase(t: dict | None, key: str) -> str:
+        w = phase_wall(t, key)
+        return fmt_seconds(w) if w is not None else "—"
 
     lines = [
-        "### Setup (one-time build cost)",
+        "### Setup (full from-scratch build, both phases timed)",
         "",
-        "| | mdvs `build --force` | QMD `embed -f` |",
+        "Both tools are set up fresh each run. The two phases are timed separately:",
+        "",
+        "- **prepare** — mdvs `init` (schema inference) / QMD `collection add` (scan + chunk + metadata)",
+        "- **index** — mdvs `build --force` (scan + chunk + validate + embed) / QMD `embed -f` (vectors)",
+        "",
+        "(mdvs bundles scan/chunk/validate into `build`; QMD splits them into `collection add`. The **total** is the comparable figure — raw files to a queryable index.)",
+        "",
+        "| | mdvs | QMD |",
         "|---|---|---|",
     ]
-    lines.append(row(
-        "Wall time",
-        fmt_seconds(mdvs["setup"]["wall_s"]) if mdvs and mdvs.get("setup") else "—",
-        fmt_seconds(qmd["setup"]["wall_s"]) if qmd and qmd.get("setup") else "—",
-    ))
-    lines.append(row(
-        "Peak RSS",
-        fmt_bytes(mdvs["setup"]["peak_rss_bytes"]) if mdvs and mdvs.get("setup") else "—",
-        fmt_bytes(qmd["setup"]["peak_rss_bytes"]) if qmd and qmd.get("setup") else "—",
-    ))
-    lines.append(row(
-        "Index on disk",
-        fmt_bytes(mdvs["index_size_bytes"]) if mdvs else "—",
-        fmt_bytes(qmd["index_size_bytes"]) if qmd else "—",
-    ))
-    lines.append(row(
-        "Embedding/reranker models on disk",
-        fmt_bytes(mdvs["model_size_bytes"]) if mdvs else "—",
-        fmt_bytes(qmd["model_size_bytes"]) if qmd else "—",
-    ))
+    lines.append(row("Prepare (init / collection add)",
+                     phase(mdvs, "setup_prepare"), phase(qmd, "setup_prepare")))
+    lines.append(row("Index (build / embed)",
+                     phase(mdvs, "setup_index"), phase(qmd, "setup_index")))
+    lines.append(row("**Total setup**", total_wall(mdvs), total_wall(qmd)))
+    lines.append(row("Index peak RSS",
+                     fmt_bytes(mdvs["setup_index"]["peak_rss_bytes"]) if mdvs and mdvs.get("setup_index") else "—",
+                     fmt_bytes(qmd["setup_index"]["peak_rss_bytes"]) if qmd and qmd.get("setup_index") else "—"))
+    lines.append(row("Index on disk",
+                     fmt_bytes(mdvs["index_size_bytes"]) if mdvs else "—",
+                     fmt_bytes(qmd["index_size_bytes"]) if qmd else "—"))
+    lines.append(row("Embedding/reranker models on disk",
+                     fmt_bytes(mdvs["model_size_bytes"]) if mdvs else "—",
+                     fmt_bytes(qmd["model_size_bytes"]) if qmd else "—"))
     return "\n".join(lines)
 
 def _render_queries_table(report: dict) -> str:
