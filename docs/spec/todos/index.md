@@ -171,3 +171,4 @@
 | [0167](TODO-0167.md) | Skip embedding-model load and query embed when search mode is fulltext | done | medium | 2026-05-27 |
 | [0168](TODO-0168.md) | Compact-snippet output mode for LLM-friendly search results | todo | medium | 2026-05-27 |
 | [0169](TODO-0169.md) | Investigate Lance encoding panic on large markdown corpora | done | medium | 2026-05-28 |
+| [0170](TODO-0170.md) | Incremental check/update via .mdvs/cache.toml so auto-steps stay seamless at scale | todo | high | 2026-05-28 |
