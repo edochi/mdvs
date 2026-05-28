@@ -13,7 +13,9 @@ use arrow::datatypes::DataType;
 use futures::TryStreamExt;
 use lance_index::scalar::FullTextSearchQuery;
 use lancedb::DistanceType;
+use lancedb::connection::LanceFileVersion;
 use lancedb::database::CreateTableMode;
+use lancedb::database::listing::{ListingDatabaseOptions, NewTableConfig};
 use lancedb::index::Index;
 use lancedb::index::vector::IvfPqIndexBuilder;
 use lancedb::query::{ExecutableQuery, QueryBase, Select};
@@ -191,7 +193,22 @@ impl LanceBackend {
             .to_str()
             .ok_or_else(|| anyhow::anyhow!("non-UTF8 path: {}", self.db_dir().display()))?
             .to_string();
+        // Write Lance v2.2 files. The crate default is v2.1, whose miniblock
+        // encoding caps a chunk at 32 KiB (u16 metadata). Sparse nested
+        // frontmatter (many optional fields, mostly null per row) generates
+        // dense rep/def levels that Lance's heuristic mis-routes into
+        // miniblock, overflowing 32 KiB and panicking during build on large
+        // corpora. v2.2 uses u32 metadata (4 GiB cap), sidestepping it. Only
+        // affects newly created tables; reads of either version work.
+        let db_options = ListingDatabaseOptions {
+            new_table_config: NewTableConfig {
+                data_storage_version: Some(LanceFileVersion::V2_2),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
         lancedb::connect(&uri)
+            .database_options(&db_options)
             .execute()
             .await
             .context("connecting to Lance database")
