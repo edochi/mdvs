@@ -12,7 +12,7 @@ use crate::schema::json_schema::{canonical_to_dsl, dsl_to_canonical, validate_md
 use crate::schema::load::load_schema;
 use crate::schema::shared::FieldTypeSerde;
 use crate::step::{CommandResult, ErrorKind, StepEntry};
-use globset::Glob;
+use globset::{Glob, GlobSet, GlobSetBuilder};
 use jsonschema::error::ValidationErrorKind;
 use jsonschema::{ValidationError, Validator};
 use serde::Serialize;
@@ -317,6 +317,17 @@ pub fn validate(
     let ignore_set: HashSet<&str> = config.fields.ignore.iter().map(|s| s.as_str()).collect();
     let validators = FieldValidators::build(config)?;
     let pipeline = Pipeline::for_config(config);
+    // Per-field precomputed metadata (compiled GlobSets for allowed/required,
+    // FieldType conversion) so the inner (field, file) loop avoids tens of
+    // thousands of redundant `Glob::new`/`FieldType::try_from` calls.
+    let field_metas = build_field_metas(config);
+    // Per-file path strings, precomputed so `display().to_string()` doesn't
+    // run inside the inner loop of `check_required_fields`.
+    let file_paths: Vec<String> = scanned
+        .files
+        .iter()
+        .map(|f| f.path.display().to_string())
+        .collect();
 
     let mut violations: HashMap<ViolationKey, Vec<ViolatingFile>> = HashMap::new();
     let mut new_field_paths: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
@@ -324,14 +335,16 @@ pub fn validate(
     check_frontmatter_errors(scanned, &mut violations);
     check_field_values(
         scanned,
+        &file_paths,
         &field_map,
+        &field_metas,
         &ignore_set,
         &validators,
         &pipeline,
         &mut violations,
         &mut new_field_paths,
     );
-    check_required_fields(scanned, config, &mut violations);
+    check_required_fields(scanned, &file_paths, config, &field_metas, &mut violations);
 
     let field_violations = collect_violations(violations);
     let new_fields = collect_new_fields(new_field_paths, verbose);
@@ -379,17 +392,20 @@ fn check_frontmatter_errors(
 /// (type, null-vs-nullable, enum, range, length, pattern, array bounds) are
 /// delegated to a per-field `jsonschema::Validator`. Stage-2 preprocessors
 /// (configured per-field) run before validation.
+#[allow(clippy::too_many_arguments)]
 fn check_field_values(
     scanned: &ScannedFiles,
+    file_paths: &[String],
     field_map: &HashMap<&str, &crate::schema::config::TomlField>,
+    field_metas: &HashMap<String, FieldMeta>,
     ignore_set: &HashSet<&str>,
     validators: &FieldValidators,
     pipeline: &Pipeline,
     violations: &mut HashMap<ViolationKey, Vec<ViolatingFile>>,
     new_field_paths: &mut BTreeMap<String, Vec<PathBuf>>,
 ) {
-    for file in &scanned.files {
-        let file_path_str = file.path.display().to_string();
+    for (file_idx, file) in scanned.files.iter().enumerate() {
+        let file_path_str = file_paths[file_idx].as_str();
 
         let Some(frontmatter) = file.data.as_ref() else {
             continue;
@@ -410,8 +426,13 @@ fn check_field_values(
                 continue;
             };
 
-            // Disallowed: field present at a path not in allowed
-            if !matches_any_glob(&toml_field.allowed, &file_path_str) {
+            let meta = field_metas.get(*field_name);
+
+            // Disallowed: field present at a path not in allowed.
+            // Use the precompiled GlobSet.
+            if let Some(m) = meta
+                && !m.allowed.is_match(file_path_str)
+            {
                 let key = ViolationKey {
                     field: (*field_name).to_string(),
                     kind: ViolationKind::Disallowed,
@@ -428,9 +449,8 @@ fn check_field_values(
             // (reject integers unless widen_int_to_float is opted in)
             // here in Rust, before the preprocessor + jsonschema.
             // See preprocess::strict_subtype_check for the full rule.
-            if let Ok(ft) = crate::discover::field_type::FieldType::try_from(&toml_field.field_type)
-                && let Some(detail) =
-                    crate::preprocess::strict_subtype_check(toml_field, &ft, value)
+            if let Some(ft) = meta.and_then(|m| m.field_type.as_ref())
+                && let Some(detail) = crate::preprocess::strict_subtype_check(toml_field, ft, value)
             {
                 let key = ViolationKey {
                     field: (*field_name).to_string(),
@@ -453,6 +473,11 @@ fn check_field_values(
             let validation_value = preprocessed.as_ref();
 
             if let Some(validator) = validators.get(field_name) {
+                // Fast path: most (field, file) pairs are clean. Skip the
+                // error-collection allocation when the value is valid.
+                if validator.is_valid(validation_value) {
+                    continue;
+                }
                 let errors: Vec<_> = validator.iter_errors(validation_value).collect();
                 let has_type_error = errors
                     .iter()
@@ -505,18 +530,21 @@ fn check_field_values(
 /// as missing — the leaf can't exist when its parent doesn't.
 fn check_required_fields(
     scanned: &ScannedFiles,
+    file_paths: &[String],
     config: &MdvsToml,
+    field_metas: &HashMap<String, FieldMeta>,
     violations: &mut HashMap<ViolationKey, Vec<ViolatingFile>>,
 ) {
     for toml_field in &config.fields.field {
         if toml_field.required.is_empty() {
             continue;
         }
+        let Some(meta) = field_metas.get(toml_field.name.as_str()) else {
+            continue;
+        };
 
-        for file in &scanned.files {
-            let file_path_str = file.path.display().to_string();
-
-            if !matches_any_glob(&toml_field.required, &file_path_str) {
+        for (file_idx, file) in scanned.files.iter().enumerate() {
+            if !meta.required.is_match(file_paths[file_idx].as_str()) {
                 continue;
             }
 
@@ -543,19 +571,32 @@ fn check_required_fields(
 }
 
 /// Convert the violations accumulator into a sorted list of `FieldViolation`.
+///
+/// Fully deterministic: each violation's `files` is sorted by path, and the
+/// outer list is sorted by `(field, kind, rule)`. Without this, the per-
+/// violation `files` vec inherits `HashMap` iteration order and human +
+/// machine comparison of `check` output flaps across runs.
 fn collect_violations(
     violations: HashMap<ViolationKey, Vec<ViolatingFile>>,
 ) -> Vec<FieldViolation> {
     let mut field_violations: Vec<FieldViolation> = violations
         .into_iter()
-        .map(|(key, files)| FieldViolation {
-            field: key.field,
-            kind: key.kind,
-            rule: key.rule,
-            files,
+        .map(|(key, mut files)| {
+            files.sort_by(|a, b| a.path.cmp(&b.path));
+            FieldViolation {
+                field: key.field,
+                kind: key.kind,
+                rule: key.rule,
+                files,
+            }
         })
         .collect();
-    field_violations.sort_by(|a, b| a.field.cmp(&b.field));
+    field_violations.sort_by(|a, b| {
+        a.field
+            .cmp(&b.field)
+            .then_with(|| a.kind.cmp(&b.kind))
+            .then_with(|| a.rule.cmp(&b.rule))
+    });
     field_violations
 }
 
@@ -872,6 +913,10 @@ fn resolve_instance_path<'a>(root: &'a Value, path: &str) -> &'a Value {
     cur
 }
 
+/// Kept for the unit tests that exercise the glob-matching semantics
+/// directly. Production code uses `FieldMeta.allowed` / `FieldMeta.required`
+/// (precompiled `GlobSet`s) instead.
+#[cfg(test)]
 fn matches_any_glob(patterns: &[String], path: &str) -> bool {
     patterns.iter().any(|p| {
         Glob::new(p)
@@ -879,6 +924,55 @@ fn matches_any_glob(patterns: &[String], path: &str) -> bool {
             .map(|g| g.compile_matcher())
             .is_some_and(|m| m.is_match(path))
     })
+}
+
+/// Per-field precomputed metadata, built once per `validate()` call.
+struct FieldMeta {
+    /// Compiled `GlobSet` for `allowed`; matches every path the field is
+    /// permitted at. Empty patterns yield an empty `GlobSet` whose
+    /// `is_match` is always false — same semantics as
+    /// `matches_any_glob(&[], _)`.
+    allowed: GlobSet,
+    /// Compiled `GlobSet` for `required`.
+    required: GlobSet,
+    /// Converted `FieldType`, cached so the per-file loop doesn't re-parse.
+    /// `None` if conversion fails (preserves prior behavior of silently
+    /// skipping strict-Float precheck on malformed declarations).
+    field_type: Option<FieldType>,
+}
+
+/// Build per-field metadata for every declared field. Compiles `GlobSet`s
+/// once (vs. per-call inside `matches_any_glob`) and pre-converts the
+/// `FieldType`.
+fn build_field_metas(config: &MdvsToml) -> HashMap<String, FieldMeta> {
+    let mut out = HashMap::with_capacity(config.fields.field.len());
+    for field in &config.fields.field {
+        out.insert(
+            field.name.clone(),
+            FieldMeta {
+                allowed: build_globset(&field.allowed),
+                required: build_globset(&field.required),
+                field_type: FieldType::try_from(&field.field_type).ok(),
+            },
+        );
+    }
+    out
+}
+
+/// Compile a slice of glob patterns into a `GlobSet`. Patterns that fail
+/// to parse are silently dropped — matching the prior `matches_any_glob`
+/// behavior (`.ok()` ignored bad patterns). If `GlobSet::build` itself
+/// fails (it shouldn't with successfully-parsed `Glob`s), the result is
+/// an empty `GlobSet` (matches nothing) so the field is treated as if it
+/// had no patterns; this is safer than panicking inside `validate`.
+fn build_globset(patterns: &[String]) -> GlobSet {
+    let mut b = GlobSetBuilder::new();
+    for p in patterns {
+        if let Ok(g) = Glob::new(p) {
+            b.add(g);
+        }
+    }
+    b.build().unwrap_or_else(|_| GlobSet::empty())
 }
 
 fn actual_type_name(value: &Value) -> String {

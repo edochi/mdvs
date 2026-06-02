@@ -13,7 +13,9 @@ use arrow::datatypes::DataType;
 use futures::TryStreamExt;
 use lance_index::scalar::FullTextSearchQuery;
 use lancedb::DistanceType;
+use lancedb::connection::LanceFileVersion;
 use lancedb::database::CreateTableMode;
+use lancedb::database::listing::{ListingDatabaseOptions, NewTableConfig};
 use lancedb::index::Index;
 use lancedb::index::vector::IvfPqIndexBuilder;
 use lancedb::query::{ExecutableQuery, QueryBase, Select};
@@ -95,6 +97,40 @@ impl Backend {
         }
     }
 
+    /// Incremental write: delete rows for the given file_ids (changed +
+    /// removed), append rows for the given new chunks, refresh the schema
+    /// metadata, and optimize the indexes. Used when an existing index is
+    /// present and the change set is small — avoids the full-table rewrite
+    /// (`CreateTableMode::Overwrite`) that `write_index` performs.
+    ///
+    /// `file_ids_to_clear` must contain every file_id whose existing rows
+    /// must go (typically: removed files + edited files whose chunks are
+    /// being replaced). It may overlap with file_ids referenced by
+    /// `new_chunks` — those files first have their old rows deleted, then
+    /// their new chunks added.
+    #[instrument(name = "write_index_incremental", skip_all)]
+    pub async fn write_index_incremental(
+        &self,
+        schema_fields: &[(String, FieldType)],
+        file_ids_to_clear: &[String],
+        files: &[FileRow],
+        new_chunks: &[ChunkRow],
+        metadata: BuildMetadata,
+    ) -> anyhow::Result<()> {
+        match self {
+            Backend::Lance(b) => {
+                b.write_index_incremental(
+                    schema_fields,
+                    file_ids_to_clear,
+                    files,
+                    new_chunks,
+                    metadata,
+                )
+                .await
+            }
+        }
+    }
+
     #[instrument(name = "read_metadata", skip_all, level = "debug")]
     pub async fn read_metadata(&self) -> anyhow::Result<Option<BuildMetadata>> {
         match self {
@@ -127,7 +163,7 @@ impl Backend {
     #[allow(clippy::too_many_arguments)]
     pub async fn search(
         &self,
-        query_embedding: Vec<f32>,
+        query_embedding: Option<Vec<f32>>,
         query_text: &str,
         mode: SearchMode,
         where_clause: Option<&str>,
@@ -191,7 +227,22 @@ impl LanceBackend {
             .to_str()
             .ok_or_else(|| anyhow::anyhow!("non-UTF8 path: {}", self.db_dir().display()))?
             .to_string();
+        // Write Lance v2.2 files. The crate default is v2.1, whose miniblock
+        // encoding caps a chunk at 32 KiB (u16 metadata). Sparse nested
+        // frontmatter (many optional fields, mostly null per row) generates
+        // dense rep/def levels that Lance's heuristic mis-routes into
+        // miniblock, overflowing 32 KiB and panicking during build on large
+        // corpora. v2.2 uses u32 metadata (4 GiB cap), sidestepping it. Only
+        // affects newly created tables; reads of either version work.
+        let db_options = ListingDatabaseOptions {
+            new_table_config: NewTableConfig {
+                data_storage_version: Some(LanceFileVersion::V2_2),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
         lancedb::connect(&uri)
+            .database_options(&db_options)
             .execute()
             .await
             .context("connecting to Lance database")
@@ -238,6 +289,78 @@ impl LanceBackend {
             .context("creating Lance index table")?;
 
         self.build_indexes(&table, chunks.len()).await?;
+        Ok(())
+    }
+
+    async fn write_index_incremental(
+        &self,
+        schema_fields: &[(String, FieldType)],
+        file_ids_to_clear: &[String],
+        files: &[FileRow],
+        new_chunks: &[ChunkRow],
+        metadata: BuildMetadata,
+    ) -> anyhow::Result<()> {
+        let conn = self.connect().await?;
+        let table = conn
+            .open_table(LANCE_TABLE)
+            .execute()
+            .await
+            .context("opening Lance index table for incremental write")?;
+
+        // 1. Delete rows for changed + removed files. SQL IN clause.
+        //    file_ids are UUIDs (no quotes/specials), so direct
+        //    interpolation is safe.
+        if !file_ids_to_clear.is_empty() {
+            let in_list = file_ids_to_clear
+                .iter()
+                .map(|id| format!("'{id}'"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let predicate = format!("{COL_FILE_ID} IN ({in_list})");
+            table
+                .delete(&predicate)
+                .await
+                .context("deleting rows for changed/removed files")?;
+        }
+
+        // 2. Append rows for the new chunks. `build_index_batch` joins
+        //    each chunk with its parent file_row to produce the
+        //    denormalized shape the table expects. `files` may include
+        //    file_rows for files with no new chunks — those are simply
+        //    ignored by the join.
+        if !new_chunks.is_empty() {
+            let batch = build_index_batch(schema_fields, files, new_chunks)?;
+            let schema = batch.schema();
+            let reader: Box<dyn RecordBatchReader + Send> =
+                Box::new(RecordBatchIterator::new(vec![Ok(batch)], schema));
+            table
+                .add(reader)
+                .execute()
+                .await
+                .context("appending new chunks")?;
+        }
+
+        // 3. Refresh the schema-level BuildMetadata (`mdvs.*` keys).
+        //    `replace_schema_metadata` lives on `NativeTable` only; the
+        //    local-file backend always returns `Some(_)`.
+        let native = table.as_native().context(
+            "incremental write requires a NativeTable (local file backend); \
+             this should never happen for an existing Lance dataset",
+        )?;
+        native
+            .replace_schema_metadata(metadata.to_hash_map())
+            .await
+            .context("updating schema metadata")?;
+
+        // 4. Optimize: compacts new fragments and updates the FTS +
+        //    vector indexes so the just-added rows participate in
+        //    indexed lookups (until then Lance falls back to scanning
+        //    the un-indexed delta — correct but slower).
+        table
+            .optimize(lancedb::table::OptimizeAction::All)
+            .await
+            .context("optimizing after incremental write")?;
+
         Ok(())
     }
 
@@ -412,10 +535,14 @@ impl LanceBackend {
     /// full-text (BM25 over `chunk_text`), or hybrid (both, fused by LanceDB's
     /// default RRF reranker). Over-fetches `limit * OVER_FETCH_FACTOR`
     /// chunk-level hits, then keeps the best-scoring chunk per `file_id`.
+    ///
+    /// `query_embedding` is required for `Semantic` and `Hybrid`; `Fulltext`
+    /// runs BM25 only and ignores it. Passing `None` for a mode that needs
+    /// the embedding is a programmer error.
     #[allow(clippy::too_many_arguments)]
     async fn search(
         &self,
-        query_embedding: Vec<f32>,
+        query_embedding: Option<Vec<f32>>,
         query_text: &str,
         mode: SearchMode,
         where_clause: Option<&str>,
@@ -466,10 +593,13 @@ impl LanceBackend {
         // each collects its own batches.
         let batches: Vec<RecordBatch> = match mode {
             SearchMode::Semantic => {
+                let embedding = query_embedding.ok_or_else(|| {
+                    anyhow::anyhow!("Semantic search requires query_embedding; got None")
+                })?;
                 let mut q = table
                     .query()
                     .select(projection)
-                    .nearest_to(query_embedding)?
+                    .nearest_to(embedding)?
                     .distance_type(DistanceType::Cosine)
                     .limit(k);
                 if let Some(w) = &translated {
@@ -478,10 +608,13 @@ impl LanceBackend {
                 q.execute().await?.try_collect().await?
             }
             SearchMode::Hybrid => {
+                let embedding = query_embedding.ok_or_else(|| {
+                    anyhow::anyhow!("Hybrid search requires query_embedding; got None")
+                })?;
                 let mut q = table
                     .query()
                     .select(projection)
-                    .nearest_to(query_embedding)?
+                    .nearest_to(embedding)?
                     .distance_type(DistanceType::Cosine)
                     .full_text_search(fts())
                     .limit(k);
@@ -978,7 +1111,7 @@ mod tests {
         // Query vector close to rust.md's embedding
         let hits = backend
             .search(
-                vec![1.0, 0.0, 0.0, 0.0],
+                Some(vec![1.0, 0.0, 0.0, 0.0]),
                 "rust",
                 SearchMode::Semantic,
                 None,

@@ -1,0 +1,645 @@
+{
+  "corpus_name": "docs",
+  "corpus_files": 1669,
+  "iterations": 3,
+  "limit": 10,
+  "machine": {
+    "os": "macOS-26.5-arm64-arm-64bit",
+    "python": "3.11.14",
+    "cpu": "arm64"
+  },
+  "started_at": "2026-06-02T19:31:12+0200",
+  "tools": {
+    "mdvs": {
+      "name": "mdvs",
+      "version": "mdvs 0.6.2",
+      "setup_prepare": {
+        "wall_s": 0.46,
+        "user_s": 0.07,
+        "sys_s": 0.06,
+        "cpu_pct": 28.26086956521739,
+        "peak_rss_bytes": 45400064,
+        "page_faults": 0,
+        "page_reclaims": 3385,
+        "exit_code": 0,
+        "stdout_bytes": 113187
+      },
+      "setup_index": {
+        "wall_s": 2.57,
+        "user_s": 12.2,
+        "sys_s": 1.32,
+        "cpu_pct": 526.0700389105058,
+        "peak_rss_bytes": 372047872,
+        "page_faults": 18,
+        "page_reclaims": 24050,
+        "exit_code": 0,
+        "stdout_bytes": 259823
+      },
+      "index_size_bytes": 33214464,
+      "model_size_bytes": 61841296,
+      "queries": [
+        {
+          "kind": "broad_semantic",
+          "query": "deploying applications to kubernetes",
+          "mode": "semantic",
+          "where_clause": null,
+          "iterations": [
+            {
+              "wall_s": 0.41,
+              "user_s": 0.19,
+              "sys_s": 0.06,
+              "cpu_pct": 60.97560975609756,
+              "peak_rss_bytes": 280592384,
+              "page_faults": 0,
+              "page_reclaims": 18255,
+              "exit_code": 0,
+              "stdout_bytes": 6036
+            },
+            {
+              "wall_s": 0.42,
+              "user_s": 0.18,
+              "sys_s": 0.06,
+              "cpu_pct": 57.14285714285714,
+              "peak_rss_bytes": 279396352,
+              "page_faults": 0,
+              "page_reclaims": 18213,
+              "exit_code": 0,
+              "stdout_bytes": 6036
+            },
+            {
+              "wall_s": 0.45,
+              "user_s": 0.2,
+              "sys_s": 0.07,
+              "cpu_pct": 60.0,
+              "peak_rss_bytes": 277463040,
+              "page_faults": 0,
+              "page_reclaims": 18091,
+              "exit_code": 0,
+              "stdout_bytes": 6036
+            }
+          ],
+          "iterations_engine_only": [
+            {
+              "wall_s": 0.33,
+              "user_s": 0.12,
+              "sys_s": 0.01,
+              "cpu_pct": 39.39393939393939,
+              "peak_rss_bytes": 130564096,
+              "page_faults": 0,
+              "page_reclaims": 8596,
+              "exit_code": 0,
+              "stdout_bytes": 6036
+            },
+            {
+              "wall_s": 0.29,
+              "user_s": 0.11,
+              "sys_s": 0.01,
+              "cpu_pct": 41.37931034482759,
+              "peak_rss_bytes": 129892352,
+              "page_faults": 0,
+              "page_reclaims": 8582,
+              "exit_code": 0,
+              "stdout_bytes": 6036
+            },
+            {
+              "wall_s": 0.3,
+              "user_s": 0.11,
+              "sys_s": 0.01,
+              "cpu_pct": 40.0,
+              "peak_rss_bytes": 129941504,
+              "page_faults": 0,
+              "page_reclaims": 8587,
+              "exit_code": 0,
+              "stdout_bytes": 6036
+            }
+          ],
+          "output_token_count": 806,
+          "result_count": 10
+        },
+        {
+          "kind": "narrow_semantic",
+          "query": "rolling update strategy",
+          "mode": "semantic",
+          "where_clause": null,
+          "iterations": [
+            {
+              "wall_s": 0.43,
+              "user_s": 0.19,
+              "sys_s": 0.07,
+              "cpu_pct": 60.465116279069775,
+              "peak_rss_bytes": 278724608,
+              "page_faults": 0,
+              "page_reclaims": 18164,
+              "exit_code": 0,
+              "stdout_bytes": 5479
+            },
+            {
+              "wall_s": 0.45,
+              "user_s": 0.2,
+              "sys_s": 0.07,
+              "cpu_pct": 60.0,
+              "peak_rss_bytes": 279265280,
+              "page_faults": 0,
+              "page_reclaims": 18198,
+              "exit_code": 0,
+              "stdout_bytes": 5479
+            },
+            {
+              "wall_s": 0.45,
+              "user_s": 0.2,
+              "sys_s": 0.07,
+              "cpu_pct": 60.0,
+              "peak_rss_bytes": 280231936,
+              "page_faults": 0,
+              "page_reclaims": 18259,
+              "exit_code": 0,
+              "stdout_bytes": 5479
+            }
+          ],
+          "iterations_engine_only": [
+            {
+              "wall_s": 0.32,
+              "user_s": 0.11,
+              "sys_s": 0.01,
+              "cpu_pct": 37.5,
+              "peak_rss_bytes": 130285568,
+              "page_faults": 0,
+              "page_reclaims": 8611,
+              "exit_code": 0,
+              "stdout_bytes": 5479
+            },
+            {
+              "wall_s": 0.28,
+              "user_s": 0.1,
+              "sys_s": 0.01,
+              "cpu_pct": 39.285714285714285,
+              "peak_rss_bytes": 129974272,
+              "page_faults": 0,
+              "page_reclaims": 8588,
+              "exit_code": 0,
+              "stdout_bytes": 5479
+            },
+            {
+              "wall_s": 0.29,
+              "user_s": 0.11,
+              "sys_s": 0.01,
+              "cpu_pct": 41.37931034482759,
+              "peak_rss_bytes": 129761280,
+              "page_faults": 0,
+              "page_reclaims": 8569,
+              "exit_code": 0,
+              "stdout_bytes": 5479
+            }
+          ],
+          "output_token_count": 719,
+          "result_count": 9
+        },
+        {
+          "kind": "exact_phrase",
+          "query": "kubectl apply",
+          "mode": "fulltext",
+          "where_clause": null,
+          "iterations": [
+            {
+              "wall_s": 0.43,
+              "user_s": 0.2,
+              "sys_s": 0.07,
+              "cpu_pct": 62.7906976744186,
+              "peak_rss_bytes": 279838720,
+              "page_faults": 0,
+              "page_reclaims": 18164,
+              "exit_code": 0,
+              "stdout_bytes": 6174
+            },
+            {
+              "wall_s": 0.43,
+              "user_s": 0.2,
+              "sys_s": 0.06,
+              "cpu_pct": 60.465116279069775,
+              "peak_rss_bytes": 280477696,
+              "page_faults": 0,
+              "page_reclaims": 18212,
+              "exit_code": 0,
+              "stdout_bytes": 6174
+            },
+            {
+              "wall_s": 0.45,
+              "user_s": 0.2,
+              "sys_s": 0.06,
+              "cpu_pct": 57.777777777777786,
+              "peak_rss_bytes": 278839296,
+              "page_faults": 0,
+              "page_reclaims": 18093,
+              "exit_code": 0,
+              "stdout_bytes": 6174
+            }
+          ],
+          "iterations_engine_only": [
+            {
+              "wall_s": 0.31,
+              "user_s": 0.1,
+              "sys_s": 0.01,
+              "cpu_pct": 35.483870967741936,
+              "peak_rss_bytes": 51052544,
+              "page_faults": 0,
+              "page_reclaims": 3773,
+              "exit_code": 0,
+              "stdout_bytes": 6174
+            },
+            {
+              "wall_s": 0.28,
+              "user_s": 0.1,
+              "sys_s": 0.01,
+              "cpu_pct": 39.285714285714285,
+              "peak_rss_bytes": 51150848,
+              "page_faults": 0,
+              "page_reclaims": 3779,
+              "exit_code": 0,
+              "stdout_bytes": 6174
+            },
+            {
+              "wall_s": 0.28,
+              "user_s": 0.1,
+              "sys_s": 0.01,
+              "cpu_pct": 39.285714285714285,
+              "peak_rss_bytes": 51019776,
+              "page_faults": 0,
+              "page_reclaims": 3769,
+              "exit_code": 0,
+              "stdout_bytes": 6174
+            }
+          ],
+          "output_token_count": 869,
+          "result_count": 10
+        },
+        {
+          "kind": "metadata_filtered",
+          "query": "minikube",
+          "mode": "hybrid",
+          "where_clause": "content_type = 'tutorial'",
+          "iterations": [
+            {
+              "wall_s": 0.42,
+              "user_s": 0.2,
+              "sys_s": 0.06,
+              "cpu_pct": 61.904761904761905,
+              "peak_rss_bytes": 279691264,
+              "page_faults": 0,
+              "page_reclaims": 18629,
+              "exit_code": 0,
+              "stdout_bytes": 7131
+            },
+            {
+              "wall_s": 0.44,
+              "user_s": 0.2,
+              "sys_s": 0.06,
+              "cpu_pct": 59.09090909090909,
+              "peak_rss_bytes": 278790144,
+              "page_faults": 0,
+              "page_reclaims": 18573,
+              "exit_code": 0,
+              "stdout_bytes": 6998
+            },
+            {
+              "wall_s": 0.41,
+              "user_s": 0.18,
+              "sys_s": 0.06,
+              "cpu_pct": 58.536585365853654,
+              "peak_rss_bytes": 279920640,
+              "page_faults": 0,
+              "page_reclaims": 18633,
+              "exit_code": 0,
+              "stdout_bytes": 6998
+            }
+          ],
+          "iterations_engine_only": [
+            {
+              "wall_s": 0.31,
+              "user_s": 0.12,
+              "sys_s": 0.01,
+              "cpu_pct": 41.935483870967744,
+              "peak_rss_bytes": 137068544,
+              "page_faults": 0,
+              "page_reclaims": 9015,
+              "exit_code": 0,
+              "stdout_bytes": 6998
+            },
+            {
+              "wall_s": 0.31,
+              "user_s": 0.12,
+              "sys_s": 0.01,
+              "cpu_pct": 41.935483870967744,
+              "peak_rss_bytes": 137461760,
+              "page_faults": 0,
+              "page_reclaims": 9054,
+              "exit_code": 0,
+              "stdout_bytes": 6998
+            },
+            {
+              "wall_s": 0.31,
+              "user_s": 0.12,
+              "sys_s": 0.02,
+              "cpu_pct": 45.16129032258064,
+              "peak_rss_bytes": 137527296,
+              "page_faults": 0,
+              "page_reclaims": 9044,
+              "exit_code": 0,
+              "stdout_bytes": 6998
+            }
+          ],
+          "output_token_count": 1193,
+          "result_count": 10
+        },
+        {
+          "kind": "vague_multiword",
+          "query": "how do I expose my service to the internet",
+          "mode": "hybrid",
+          "where_clause": null,
+          "iterations": [
+            {
+              "wall_s": 0.43,
+              "user_s": 0.2,
+              "sys_s": 0.06,
+              "cpu_pct": 60.465116279069775,
+              "peak_rss_bytes": 280346624,
+              "page_faults": 0,
+              "page_reclaims": 18522,
+              "exit_code": 0,
+              "stdout_bytes": 7603
+            },
+            {
+              "wall_s": 0.44,
+              "user_s": 0.2,
+              "sys_s": 0.06,
+              "cpu_pct": 59.09090909090909,
+              "peak_rss_bytes": 278102016,
+              "page_faults": 0,
+              "page_reclaims": 18374,
+              "exit_code": 0,
+              "stdout_bytes": 7603
+            },
+            {
+              "wall_s": 0.45,
+              "user_s": 0.21,
+              "sys_s": 0.07,
+              "cpu_pct": 62.22222222222222,
+              "peak_rss_bytes": 279183360,
+              "page_faults": 0,
+              "page_reclaims": 18423,
+              "exit_code": 0,
+              "stdout_bytes": 7603
+            }
+          ],
+          "iterations_engine_only": [
+            {
+              "wall_s": 0.33,
+              "user_s": 0.12,
+              "sys_s": 0.02,
+              "cpu_pct": 42.42424242424242,
+              "peak_rss_bytes": 134447104,
+              "page_faults": 0,
+              "page_reclaims": 8872,
+              "exit_code": 0,
+              "stdout_bytes": 7603
+            },
+            {
+              "wall_s": 0.31,
+              "user_s": 0.12,
+              "sys_s": 0.01,
+              "cpu_pct": 41.935483870967744,
+              "peak_rss_bytes": 134332416,
+              "page_faults": 0,
+              "page_reclaims": 8878,
+              "exit_code": 0,
+              "stdout_bytes": 7603
+            },
+            {
+              "wall_s": 0.3,
+              "user_s": 0.12,
+              "sys_s": 0.01,
+              "cpu_pct": 43.333333333333336,
+              "peak_rss_bytes": 134594560,
+              "page_faults": 0,
+              "page_reclaims": 8892,
+              "exit_code": 0,
+              "stdout_bytes": 7603
+            }
+          ],
+          "output_token_count": 1274,
+          "result_count": 10
+        }
+      ],
+      "notes": []
+    },
+    "qmd": {
+      "name": "qmd",
+      "version": "qmd 2.5.2",
+      "setup_prepare": {
+        "wall_s": 1.66,
+        "user_s": 0.97,
+        "sys_s": 0.39,
+        "cpu_pct": 81.92771084337349,
+        "peak_rss_bytes": 111558656,
+        "page_faults": 162,
+        "page_reclaims": 10579,
+        "exit_code": 0,
+        "stdout_bytes": 308
+      },
+      "setup_index": {
+        "wall_s": 743.11,
+        "user_s": 47.45,
+        "sys_s": 5.61,
+        "cpu_pct": 7.140261872401125,
+        "peak_rss_bytes": 1158250496,
+        "page_faults": 20890,
+        "page_reclaims": 479106,
+        "exit_code": 0,
+        "stdout_bytes": 215
+      },
+      "index_size_bytes": 78721024,
+      "model_size_bytes": 2255192064,
+      "queries": [
+        {
+          "kind": "broad_semantic",
+          "query": "deploying applications to kubernetes",
+          "mode": "vsearch",
+          "where_clause": null,
+          "iterations": [
+            {
+              "wall_s": 0.81,
+              "user_s": 0.63,
+              "sys_s": 0.1,
+              "cpu_pct": 90.12345679012344,
+              "peak_rss_bytes": 659472384,
+              "page_faults": 246,
+              "page_reclaims": 45923,
+              "exit_code": 0,
+              "stdout_bytes": 4793
+            },
+            {
+              "wall_s": 0.8,
+              "user_s": 0.63,
+              "sys_s": 0.11,
+              "cpu_pct": 92.5,
+              "peak_rss_bytes": 659865600,
+              "page_faults": 163,
+              "page_reclaims": 46081,
+              "exit_code": 0,
+              "stdout_bytes": 4793
+            },
+            {
+              "wall_s": 0.8,
+              "user_s": 0.63,
+              "sys_s": 0.1,
+              "cpu_pct": 91.25,
+              "peak_rss_bytes": 660144128,
+              "page_faults": 163,
+              "page_reclaims": 46035,
+              "exit_code": 0,
+              "stdout_bytes": 4793
+            }
+          ],
+          "iterations_engine_only": null,
+          "output_token_count": 624,
+          "result_count": 10
+        },
+        {
+          "kind": "narrow_semantic",
+          "query": "rolling update strategy",
+          "mode": "vsearch",
+          "where_clause": null,
+          "iterations": [
+            {
+              "wall_s": 0.84,
+              "user_s": 0.63,
+              "sys_s": 0.1,
+              "cpu_pct": 86.90476190476191,
+              "peak_rss_bytes": 660897792,
+              "page_faults": 265,
+              "page_reclaims": 46034,
+              "exit_code": 0,
+              "stdout_bytes": 4494
+            },
+            {
+              "wall_s": 0.8,
+              "user_s": 0.64,
+              "sys_s": 0.11,
+              "cpu_pct": 93.75,
+              "peak_rss_bytes": 651067392,
+              "page_faults": 163,
+              "page_reclaims": 45377,
+              "exit_code": 0,
+              "stdout_bytes": 4494
+            },
+            {
+              "wall_s": 0.8,
+              "user_s": 0.64,
+              "sys_s": 0.1,
+              "cpu_pct": 92.5,
+              "peak_rss_bytes": 651001856,
+              "page_faults": 163,
+              "page_reclaims": 45460,
+              "exit_code": 0,
+              "stdout_bytes": 4494
+            }
+          ],
+          "iterations_engine_only": null,
+          "output_token_count": 604,
+          "result_count": 10
+        },
+        {
+          "kind": "exact_phrase",
+          "query": "kubectl apply",
+          "mode": "search",
+          "where_clause": null,
+          "iterations": [
+            {
+              "wall_s": 0.16,
+              "user_s": 0.13,
+              "sys_s": 0.02,
+              "cpu_pct": 93.75,
+              "peak_rss_bytes": 75579392,
+              "page_faults": 160,
+              "page_reclaims": 8427,
+              "exit_code": 0,
+              "stdout_bytes": 3792
+            },
+            {
+              "wall_s": 0.16,
+              "user_s": 0.13,
+              "sys_s": 0.02,
+              "cpu_pct": 93.75,
+              "peak_rss_bytes": 75907072,
+              "page_faults": 160,
+              "page_reclaims": 8433,
+              "exit_code": 0,
+              "stdout_bytes": 3792
+            },
+            {
+              "wall_s": 0.16,
+              "user_s": 0.13,
+              "sys_s": 0.02,
+              "cpu_pct": 93.75,
+              "peak_rss_bytes": 76087296,
+              "page_faults": 160,
+              "page_reclaims": 8437,
+              "exit_code": 0,
+              "stdout_bytes": 3792
+            }
+          ],
+          "iterations_engine_only": null,
+          "output_token_count": 440,
+          "result_count": 10
+        },
+        {
+          "kind": "vague_multiword",
+          "query": "how do I expose my service to the internet",
+          "mode": "query",
+          "where_clause": null,
+          "iterations": [
+            {
+              "wall_s": 1.18,
+              "user_s": 0.7,
+              "sys_s": 0.15,
+              "cpu_pct": 72.03389830508475,
+              "peak_rss_bytes": 667140096,
+              "page_faults": 265,
+              "page_reclaims": 46419,
+              "exit_code": -6,
+              "stdout_bytes": 4347
+            },
+            {
+              "wall_s": 0.78,
+              "user_s": 0.67,
+              "sys_s": 0.12,
+              "cpu_pct": 101.28205128205127,
+              "peak_rss_bytes": 667500544,
+              "page_faults": 182,
+              "page_reclaims": 46433,
+              "exit_code": -6,
+              "stdout_bytes": 4347
+            },
+            {
+              "wall_s": 0.79,
+              "user_s": 0.7,
+              "sys_s": 0.12,
+              "cpu_pct": 103.79746835443038,
+              "peak_rss_bytes": 677216256,
+              "page_faults": 163,
+              "page_reclaims": 47041,
+              "exit_code": -6,
+              "stdout_bytes": 4347
+            }
+          ],
+          "iterations_engine_only": null,
+          "output_token_count": 563,
+          "result_count": 10
+        }
+      ],
+      "notes": [
+        "QMD uses a global ~/.cache/qmd/index.sqlite; index_size_bytes includes any unrelated user collections",
+        "skipped 'metadata_filtered': qmd has no --where equivalent"
+      ]
+    }
+  }
+}

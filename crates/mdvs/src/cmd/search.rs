@@ -209,29 +209,44 @@ pub async fn run(
         ));
         return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
     };
-    let embedder = if let Some(emb) = build_embedder {
-        steps.push(StepEntry::ok(
-            Outcome::LoadModel(LoadModelOutcome {
-                model_name: emb_config.name.clone(),
-                dimension: emb.dimension(),
-            }),
-            0, // already loaded during build
-        ));
-        emb
+
+    // Fulltext mode is BM25-only: the embedding is never read by the backend,
+    // so skip the model load and the query-embedding step entirely.
+    let query_embedding: Option<Vec<f32>> = if mode == SearchMode::Fulltext {
+        None
     } else {
-        let model_start = Instant::now();
-        match ModelConfig::try_from(emb_config) {
-            Ok(mc) => match Embedder::load(&mc) {
-                Ok(emb) => {
-                    steps.push(StepEntry::ok(
-                        Outcome::LoadModel(LoadModelOutcome {
-                            model_name: emb_config.name.clone(),
-                            dimension: emb.dimension(),
-                        }),
-                        model_start.elapsed().as_millis() as u64,
-                    ));
-                    emb
-                }
+        let embedder = if let Some(emb) = build_embedder {
+            steps.push(StepEntry::ok(
+                Outcome::LoadModel(LoadModelOutcome {
+                    model_name: emb_config.name.clone(),
+                    dimension: emb.dimension(),
+                }),
+                0, // already loaded during build
+            ));
+            emb
+        } else {
+            let model_start = Instant::now();
+            match ModelConfig::try_from(emb_config) {
+                Ok(mc) => match Embedder::load(&mc) {
+                    Ok(emb) => {
+                        steps.push(StepEntry::ok(
+                            Outcome::LoadModel(LoadModelOutcome {
+                                model_name: emb_config.name.clone(),
+                                dimension: emb.dimension(),
+                            }),
+                            model_start.elapsed().as_millis() as u64,
+                        ));
+                        emb
+                    }
+                    Err(e) => {
+                        steps.push(StepEntry::err(
+                            ErrorKind::Application,
+                            e.to_string(),
+                            model_start.elapsed().as_millis() as u64,
+                        ));
+                        return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
+                    }
+                },
                 Err(e) => {
                     steps.push(StepEntry::err(
                         ErrorKind::Application,
@@ -240,27 +255,20 @@ pub async fn run(
                     ));
                     return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
                 }
-            },
-            Err(e) => {
-                steps.push(StepEntry::err(
-                    ErrorKind::Application,
-                    e.to_string(),
-                    model_start.elapsed().as_millis() as u64,
-                ));
-                return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
             }
-        }
-    };
+        };
 
-    // 4. Embed query — calls embedder.embed() directly (infallible)
-    let embed_start = Instant::now();
-    let query_embedding = embedder.embed(query).await;
-    steps.push(StepEntry::ok(
-        Outcome::EmbedQuery(EmbedQueryOutcome {
-            query: query.to_string(),
-        }),
-        embed_start.elapsed().as_millis() as u64,
-    ));
+        // 4. Embed query — calls embedder.embed() directly (infallible)
+        let embed_start = Instant::now();
+        let qe = embedder.embed(query).await;
+        steps.push(StepEntry::ok(
+            Outcome::EmbedQuery(EmbedQueryOutcome {
+                query: query.to_string(),
+            }),
+            embed_start.elapsed().as_millis() as u64,
+        ));
+        Some(qe)
+    };
 
     // 5. Execute search — calls backend.search() directly with quote validation.
     // Same invariant as `embedding` above: pre_check guarantees `config` is Some.
@@ -484,6 +492,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn fulltext_skips_model_load_and_embed_query() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_test_vault(tmp.path());
+        init_and_build(tmp.path()).await;
+
+        let output = run(
+            tmp.path(),
+            "rust",
+            10,
+            None,
+            SearchMode::Fulltext,
+            true,
+            true,
+            false,
+        )
+        .await;
+        assert!(
+            !crate::step::has_failed(&output),
+            "search failed: {output:?}"
+        );
+        let result = unwrap_search(&output);
+        assert!(!result.hits.is_empty());
+
+        // BM25 only — model load + query embed steps must NOT appear
+        for step in &output.steps {
+            if let crate::step::StepEntry::Completed(ps) = step {
+                assert!(
+                    !matches!(ps.outcome, Outcome::LoadModel(_)),
+                    "fulltext should not load the embedding model"
+                );
+                assert!(
+                    !matches!(ps.outcome, Outcome::EmbedQuery(_)),
+                    "fulltext should not embed the query"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn end_to_end_verbose() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
@@ -521,7 +568,7 @@ mod tests {
 
         let hits = backend
             .search(
-                query_embedding,
+                Some(query_embedding),
                 "rust programming",
                 SearchMode::Semantic,
                 None,
@@ -549,7 +596,7 @@ mod tests {
 
         let hits = backend
             .search(
-                query_embedding,
+                Some(query_embedding),
                 "cooking recipes",
                 SearchMode::Semantic,
                 Some("draft = false"),

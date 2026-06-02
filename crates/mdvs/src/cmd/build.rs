@@ -52,6 +52,9 @@ struct ClassifyData<'a> {
     chunks_removed: usize,
     /// Per-file chunk counts for removed files (for verbose output).
     removed_details: Vec<BuildFileDetail>,
+    /// file_ids of files that were removed (chunks to delete in the
+    /// incremental write path).
+    removed_file_ids: Vec<String>,
 }
 
 struct FileClassification<'a> {
@@ -279,7 +282,10 @@ pub async fn run(
 /// Returns `BuildOutcome` + optional `Embedder` (for reuse by search) on success.
 /// On failure, pushes error steps and returns `Err(())` — the caller constructs
 /// the failed CommandResult from the steps.
-pub(crate) async fn build_core(
+///
+/// Public for profiling and benchmarking (the per-phase timings in `steps` are
+/// the closest thing to a profile of a real `mdvs build` invocation).
+pub async fn build_core(
     path: &Path,
     config: &mut MdvsToml,
     config_path: &Path,
@@ -528,6 +534,7 @@ pub(crate) async fn build_core(
             removed_count: 0,
             chunks_removed: 0,
             removed_details: vec![],
+            removed_file_ids: vec![],
         }
     } else {
         let classification = classify_files(&scanned, &existing_index);
@@ -580,6 +587,7 @@ pub(crate) async fn build_core(
             removed_count,
             chunks_removed,
             removed_details,
+            removed_file_ids: classification.removed_file_ids.into_iter().collect(),
         }
     };
 
@@ -710,6 +718,7 @@ pub(crate) async fn build_core(
         })
         .collect();
 
+    let retained_chunks_count = classify_data.retained_chunks.len();
     let mut chunk_rows = classify_data.retained_chunks;
     let mut embedded_details = Vec::new();
     if let Some(ed) = embed_data {
@@ -725,27 +734,88 @@ pub(crate) async fn build_core(
         schema_hash: compute_schema_hash(config),
     };
 
-    let write_start = Instant::now();
-    match backend
-        .write_index(&schema_fields, &file_rows, &chunk_rows, build_meta)
-        .await
-    {
-        Ok(()) => {
-            steps.push(StepEntry::ok(
-                Outcome::WriteIndex(WriteIndexOutcome {
-                    files_written: file_rows.len(),
-                    chunks_written: chunk_rows.len(),
-                }),
-                write_start.elapsed().as_millis() as u64,
-            ));
+    // Three write paths:
+    //   - full_rebuild → overwrite the whole table.
+    //   - nothing actually changed → skip the write entirely.
+    //   - otherwise → incremental: delete rows for changed/removed
+    //     files, append new chunks, refresh metadata, optimize.
+    //
+    // The skip check looks at `embedded_details` (not
+    // `classify_data.needs_embedding`) because empty-body files (e.g.
+    // Hugo `_index.md`) are always marked `needs_embedding` — they
+    // have zero rows in the one-row-per-chunk index, so classify can't
+    // see them as unchanged — but they produce zero new chunks at
+    // embed time and the write would be a no-op.
+    let new_chunks_count = embedded_details.iter().map(|d| d.chunks).sum::<usize>();
+    let nothing_to_persist =
+        !classify_data.full_rebuild && classify_data.removed_count == 0 && new_chunks_count == 0;
+
+    if nothing_to_persist {
+        steps.push(StepEntry::skipped());
+    } else if classify_data.full_rebuild {
+        let write_start = Instant::now();
+        match backend
+            .write_index(&schema_fields, &file_rows, &chunk_rows, build_meta)
+            .await
+        {
+            Ok(()) => {
+                steps.push(StepEntry::ok(
+                    Outcome::WriteIndex(WriteIndexOutcome {
+                        files_written: file_rows.len(),
+                        chunks_written: chunk_rows.len(),
+                    }),
+                    write_start.elapsed().as_millis() as u64,
+                ));
+            }
+            Err(e) => {
+                steps.push(StepEntry::err(
+                    ErrorKind::Application,
+                    e.to_string(),
+                    write_start.elapsed().as_millis() as u64,
+                ));
+                return Err(());
+            }
         }
-        Err(e) => {
-            steps.push(StepEntry::err(
-                ErrorKind::Application,
-                e.to_string(),
-                write_start.elapsed().as_millis() as u64,
-            ));
-            return Err(());
+    } else {
+        // Incremental path. Collect new+changed file_ids (which classify
+        // already split out into `needs_embedding`) and the removed
+        // file_ids; their rows are deleted, then the newly embedded
+        // chunks are appended.
+        let file_ids_to_clear: Vec<String> = classify_data
+            .needs_embedding
+            .iter()
+            .map(|fte| fte.file_id.clone())
+            .chain(classify_data.removed_file_ids.iter().cloned())
+            .collect();
+        let new_chunk_slice = &chunk_rows[retained_chunks_count..];
+        let write_start = Instant::now();
+        match backend
+            .write_index_incremental(
+                &schema_fields,
+                &file_ids_to_clear,
+                &file_rows,
+                new_chunk_slice,
+                build_meta,
+            )
+            .await
+        {
+            Ok(()) => {
+                steps.push(StepEntry::ok(
+                    Outcome::WriteIndex(WriteIndexOutcome {
+                        files_written: file_rows.len(),
+                        chunks_written: new_chunk_slice.len(),
+                    }),
+                    write_start.elapsed().as_millis() as u64,
+                ));
+            }
+            Err(e) => {
+                steps.push(StepEntry::err(
+                    ErrorKind::Application,
+                    e.to_string(),
+                    write_start.elapsed().as_millis() as u64,
+                ));
+                return Err(());
+            }
         }
     }
 
@@ -960,6 +1030,140 @@ mod tests {
             "---\ntitle: World\ndraft: true\n---\n# World\nMore text about the world.",
         )
         .unwrap();
+    }
+
+    /// A second build over an unchanged vault must short-circuit the
+    /// write_index step (Skipped, not Completed). The first build is a full
+    /// rebuild and must Complete it.
+    #[tokio::test]
+    async fn second_build_skips_write_index_when_nothing_changed() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_test_vault(tmp.path());
+
+        // init
+        let init_out = crate::cmd::init::run(
+            tmp.path(),
+            "**",
+            false,
+            false,
+            true,  // include bare files
+            false, // skip_gitignore
+            false, // verbose
+            None,
+        );
+        assert!(!crate::step::has_failed(&init_out));
+
+        // first build — full rebuild, must WRITE the index
+        let first = run(tmp.path(), None, None, None, false, true, false).await;
+        assert!(
+            !crate::step::has_failed(&first),
+            "first build failed: {first:#?}"
+        );
+        let wrote_first = first.steps.iter().any(|s| {
+            matches!(
+                s,
+                StepEntry::Completed(c) if matches!(c.outcome, Outcome::WriteIndex(_))
+            )
+        });
+        assert!(
+            wrote_first,
+            "first build should have a Completed WriteIndex step"
+        );
+
+        // second build — nothing changed, must SKIP the index write
+        let second = run(tmp.path(), None, None, None, false, true, false).await;
+        assert!(
+            !crate::step::has_failed(&second),
+            "second build failed: {second:#?}"
+        );
+        let skipped_write = matches!(second.steps.last(), Some(StepEntry::Skipped));
+        let no_completed_write = !second.steps.iter().any(|s| {
+            matches!(
+                s,
+                StepEntry::Completed(c) if matches!(c.outcome, Outcome::WriteIndex(_))
+            )
+        });
+        assert!(
+            skipped_write && no_completed_write,
+            "second build should skip WriteIndex: {second:#?}"
+        );
+
+        // The Lance dataset still exists and is queryable.
+        assert!(tmp.path().join(".mdvs/index.lance").exists());
+        let backend = Backend::lance(tmp.path());
+        let file_index = backend.read_file_index().await.unwrap();
+        assert_eq!(file_index.len(), 2);
+    }
+
+    /// When a new file appears between two builds, the incremental write
+    /// path must persist it: the new file's chunks must be visible in the
+    /// index, unchanged files retain their chunks, and the WriteIndex step
+    /// is Completed (not Skipped).
+    #[tokio::test]
+    async fn third_build_persists_new_file_via_incremental_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_test_vault(tmp.path());
+
+        let init_out =
+            crate::cmd::init::run(tmp.path(), "**", false, false, true, false, false, None);
+        assert!(!crate::step::has_failed(&init_out));
+
+        // First build: full rebuild over 2 files.
+        let first = run(tmp.path(), None, None, None, false, true, false).await;
+        assert!(!crate::step::has_failed(&first));
+        let backend = Backend::lance(tmp.path());
+        let chunks_after_first = backend.read_chunk_rows().await.unwrap().len();
+        assert!(chunks_after_first >= 2);
+
+        // Drop a third file into the vault. Match the schema inferred
+        // from post1/post2 (title + draft + tags) so validation passes.
+        let blog = tmp.path().join("blog");
+        fs::write(
+            blog.join("post3.md"),
+            "---\ntitle: Third\ndraft: false\ntags:\n  - new\n---\n# Third\nFresh body content that should produce a chunk.",
+        )
+        .unwrap();
+
+        // Second build: incremental path. WriteIndex must Complete (not
+        // Skipped), the new file's chunks must be persisted, and the
+        // two unchanged files' chunks must still be present.
+        let second = run(tmp.path(), None, None, None, false, true, false).await;
+        assert!(
+            !crate::step::has_failed(&second),
+            "incremental build failed: {second:#?}"
+        );
+        let wrote = second.steps.iter().any(|s| {
+            matches!(
+                s,
+                StepEntry::Completed(c) if matches!(c.outcome, Outcome::WriteIndex(_))
+            )
+        });
+        assert!(wrote, "incremental build should Complete WriteIndex");
+
+        let file_index = backend.read_file_index().await.unwrap();
+        assert_eq!(file_index.len(), 3, "all three files should be indexed");
+        let chunks_after_second = backend.read_chunk_rows().await.unwrap();
+        assert!(
+            chunks_after_second.len() > chunks_after_first,
+            "second build should add chunks for the new file (was {chunks_after_first}, now {})",
+            chunks_after_second.len()
+        );
+
+        // Verify the third file's chunks are present by file_id.
+        let third_id = file_index
+            .iter()
+            .find(|f| f.filename.ends_with("post3.md"))
+            .expect("post3.md should be in the file index")
+            .file_id
+            .clone();
+        let third_chunks: Vec<_> = chunks_after_second
+            .iter()
+            .filter(|c| c.file_id == third_id)
+            .collect();
+        assert!(
+            !third_chunks.is_empty(),
+            "post3.md should have at least one chunk"
+        );
     }
 
     #[tokio::test]

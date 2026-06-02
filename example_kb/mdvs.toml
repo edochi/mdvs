@@ -2,6 +2,7 @@
 glob = "**"
 include_bare_files = true
 skip_gitignore = false
+frontmatter_format = "auto"
 
 [check]
 auto_update = true
