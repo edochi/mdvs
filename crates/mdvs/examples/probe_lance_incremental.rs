@@ -173,7 +173,51 @@ async fn main() -> anyhow::Result<()> {
         let _ = table.delete(&pred).await?;
         let real_ms = t.elapsed().as_millis();
         let post = table.count_rows(Some(pred)).await?;
-        println!("real delete    : {real_ms} ms (rows matching pre: {pre}, post: {post})");
+        println!("real delete (1 id)  : {real_ms} ms (rows matching pre: {pre}, post: {post})");
+    }
+
+    // Batch delete cost: does `IN (...)` scale with list size?
+    // Pull a chunk of distinct file_ids and time deletes for 1, 10, 50, 200.
+    let id_batches: Vec<RecordBatch> = table
+        .query()
+        .select(Select::columns(&["file_id".to_string()]))
+        .limit(400)
+        .execute()
+        .await?
+        .try_collect()
+        .await?;
+    let mut sample_ids: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for b in &id_batches {
+        let arr = b
+            .column_by_name("file_id")
+            .context("file_id column")?
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .context("file_id is not StringArray")?;
+        for i in 0..arr.len() {
+            let v = arr.value(i).to_string();
+            if seen.insert(v.clone()) {
+                sample_ids.push(v);
+            }
+        }
+    }
+    println!("collected {} distinct file_ids for batch-delete sweep", sample_ids.len());
+    for n in [1usize, 10, 50, 200] {
+        if sample_ids.len() < n {
+            continue;
+        }
+        let slice = &sample_ids[..n];
+        let in_list = slice
+            .iter()
+            .map(|id| format!("'{id}'"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let pred = format!("file_id IN ({in_list})");
+        let t = Instant::now();
+        let _ = table.delete(&pred).await?;
+        let ms = t.elapsed().as_millis();
+        println!("batch delete ({n:>3} ids) : {ms} ms");
     }
     println!();
 
