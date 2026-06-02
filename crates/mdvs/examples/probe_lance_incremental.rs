@@ -202,7 +202,10 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     }
-    println!("collected {} distinct file_ids for batch-delete sweep", sample_ids.len());
+    println!(
+        "collected {} distinct file_ids for batch-delete sweep",
+        sample_ids.len()
+    );
     for n in [1usize, 10, 50, 200] {
         if sample_ids.len() < n {
             continue;
