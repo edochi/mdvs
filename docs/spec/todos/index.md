@@ -174,6 +174,6 @@
 | [0170](TODO-0170.md) | Incremental check cache to keep auto-validation cheap at scale | deferred | low | 2026-05-28 |
 | [0171](TODO-0171.md) | Similarity-edge graph: top-K semantic neighbors per file | todo | medium | 2026-05-30 |
 | [0172](TODO-0172.md) | Cheap wins in check::validate — precompile globs, hoist conversions, fast-path validators | done | high | 2026-05-29 |
-| [0173](TODO-0173.md) | Incremental Lance writes — stop nuking the index on every build | todo | high | 2026-05-29 |
+| [0173](TODO-0173.md) | Incremental Lance writes — stop nuking the index on every build | done | high | 2026-05-29 |
 | [0174](TODO-0174.md) | content_hash should cover frontmatter, not just the parsed body | todo | medium | 2026-05-29 |
 | [0175](TODO-0175.md) | Strip in-code TODO-NNNN references from src/ and examples/ | todo | low | 2026-05-29 |
