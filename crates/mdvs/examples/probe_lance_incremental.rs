@@ -1,12 +1,10 @@
-//! Probe LanceDB's incremental-write surface against a real mdvs index,
-//! to settle the caveats in TODO-0173 before committing to the rewrite.
-//!
+//! Probe LanceDB's incremental-write surface against a real mdvs index.
 //! Always runs against a COPY of the source index in a tempdir, so the
 //! original is never mutated.
 //!
 //!     cargo run --release --example probe_lance_incremental -- <vault-path>
 //!
-//! Caveats probed (TODO-0173):
+//! What it checks:
 //!   1. Schema metadata mutation on a live table (`replace_schema_metadata`,
 //!      `update_config`, `delete_config_keys`).
 //!   2. Row shape — one row per chunk with file-level columns repeated, or

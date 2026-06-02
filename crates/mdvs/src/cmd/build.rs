@@ -728,27 +728,43 @@ pub async fn build_core(
         schema_hash: compute_schema_hash(config),
     };
 
-    let write_start = Instant::now();
-    match backend
-        .write_index(&schema_fields, &file_rows, &chunk_rows, build_meta)
-        .await
-    {
-        Ok(()) => {
-            steps.push(StepEntry::ok(
-                Outcome::WriteIndex(WriteIndexOutcome {
-                    files_written: file_rows.len(),
-                    chunks_written: chunk_rows.len(),
-                }),
-                write_start.elapsed().as_millis() as u64,
-            ));
-        }
-        Err(e) => {
-            steps.push(StepEntry::err(
-                ErrorKind::Application,
-                e.to_string(),
-                write_start.elapsed().as_millis() as u64,
-            ));
-            return Err(());
+    // Skip write_index when the would-be-written index is byte-identical
+    // to what's on disk: not a full rebuild, no files removed, and no
+    // file produced new chunks. The empty-body case (e.g. Hugo
+    // `_index.md`) is why we check `embedded_details` instead of
+    // `classify_data.needs_embedding`: empty-body files always appear
+    // as "new" to classify (they have zero chunks → no rows in the
+    // existing index), then embed produces zero chunks, so persisting
+    // would change nothing.
+    let nothing_to_persist = !classify_data.full_rebuild
+        && classify_data.removed_count == 0
+        && embedded_details.iter().all(|d| d.chunks == 0);
+
+    if nothing_to_persist {
+        steps.push(StepEntry::skipped());
+    } else {
+        let write_start = Instant::now();
+        match backend
+            .write_index(&schema_fields, &file_rows, &chunk_rows, build_meta)
+            .await
+        {
+            Ok(()) => {
+                steps.push(StepEntry::ok(
+                    Outcome::WriteIndex(WriteIndexOutcome {
+                        files_written: file_rows.len(),
+                        chunks_written: chunk_rows.len(),
+                    }),
+                    write_start.elapsed().as_millis() as u64,
+                ));
+            }
+            Err(e) => {
+                steps.push(StepEntry::err(
+                    ErrorKind::Application,
+                    e.to_string(),
+                    write_start.elapsed().as_millis() as u64,
+                ));
+                return Err(());
+            }
         }
     }
 
@@ -963,6 +979,69 @@ mod tests {
             "---\ntitle: World\ndraft: true\n---\n# World\nMore text about the world.",
         )
         .unwrap();
+    }
+
+    /// A second build over an unchanged vault must short-circuit the
+    /// write_index step (Skipped, not Completed). The first build is a full
+    /// rebuild and must Complete it.
+    #[tokio::test]
+    async fn second_build_skips_write_index_when_nothing_changed() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_test_vault(tmp.path());
+
+        // init
+        let init_out = crate::cmd::init::run(
+            tmp.path(),
+            "**",
+            false,
+            false,
+            true,  // include bare files
+            false, // skip_gitignore
+            false, // verbose
+            None,
+        );
+        assert!(!crate::step::has_failed(&init_out));
+
+        // first build — full rebuild, must WRITE the index
+        let first = run(tmp.path(), None, None, None, false, true, false).await;
+        assert!(
+            !crate::step::has_failed(&first),
+            "first build failed: {first:#?}"
+        );
+        let wrote_first = first.steps.iter().any(|s| {
+            matches!(
+                s,
+                StepEntry::Completed(c) if matches!(c.outcome, Outcome::WriteIndex(_))
+            )
+        });
+        assert!(
+            wrote_first,
+            "first build should have a Completed WriteIndex step"
+        );
+
+        // second build — nothing changed, must SKIP the index write
+        let second = run(tmp.path(), None, None, None, false, true, false).await;
+        assert!(
+            !crate::step::has_failed(&second),
+            "second build failed: {second:#?}"
+        );
+        let skipped_write = matches!(second.steps.last(), Some(StepEntry::Skipped));
+        let no_completed_write = !second.steps.iter().any(|s| {
+            matches!(
+                s,
+                StepEntry::Completed(c) if matches!(c.outcome, Outcome::WriteIndex(_))
+            )
+        });
+        assert!(
+            skipped_write && no_completed_write,
+            "second build should skip WriteIndex: {second:#?}"
+        );
+
+        // The Lance dataset still exists and is queryable.
+        assert!(tmp.path().join(".mdvs/index.lance").exists());
+        let backend = Backend::lance(tmp.path());
+        let file_index = backend.read_file_index().await.unwrap();
+        assert_eq!(file_index.len(), 2);
     }
 
     #[tokio::test]
