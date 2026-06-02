@@ -279,7 +279,10 @@ pub async fn run(
 /// Returns `BuildOutcome` + optional `Embedder` (for reuse by search) on success.
 /// On failure, pushes error steps and returns `Err(())` — the caller constructs
 /// the failed CommandResult from the steps.
-pub(crate) async fn build_core(
+///
+/// Public for profiling and benchmarking (the per-phase timings in `steps` are
+/// the closest thing to a profile of a real `mdvs build` invocation).
+pub async fn build_core(
     path: &Path,
     config: &mut MdvsToml,
     config_path: &Path,
