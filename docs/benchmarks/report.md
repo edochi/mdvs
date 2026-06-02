@@ -1,6 +1,6 @@
 # mdvs vs QMD — benchmark report
 
-_Generated 2026-05-28 10:46_
+_Generated 2026-06-02 19:46_
 _Corpora: `example_kb`, `docs`_
 _mdvs 0.6.2 · QMD 2.5.2_
 
@@ -59,11 +59,11 @@ Both tools are set up fresh each run. The two phases are timed separately:
 
 | | mdvs | QMD |
 |---|---|---|
-| Prepare (init / collection add) | 360 ms | 410 ms |
-| Index (build / embed) | 630 ms | 5.25 s |
-| **Total setup** | 990 ms | 5.66 s |
-| Index peak RSS | 126 MB | 815 MB |
-| Index on disk | 232.0 KB | 7.8 MB |
+| Prepare (init / collection add) | 210 ms | 190 ms |
+| Index (build / embed) | 280 ms | 2.81 s |
+| **Total setup** | 490 ms | 3.00 s |
+| Index peak RSS | 125 MB | 821 MB |
+| Index on disk | 232.0 KB | 75.1 MB |
 | Embedding/reranker models on disk | 59.0 MB | 2.10 GB |
 
 ### Queries
@@ -85,11 +85,11 @@ mdvs is reported in two configurations:
 
 | Kind | mdvs default | mdvs engine-only | mdvs RSS | mdvs CPU% | QMD mode | QMD wall | QMD RSS | QMD CPU% |
 |---|---|---|---|---|---|---|---|---|
-| `broad_semantic` | 660 ms | 410 ms | 131 MB | 48% | `vsearch` | 1.58 s | 625 MB | 93% |
-| `narrow_semantic` | 660 ms | 400 ms | 131 MB | 48% | `vsearch` | 1.47 s | 625 MB | 80% |
-| `exact_phrase` | 610 ms | 370 ms | 53.8 MB | 44% | `search` | 270 ms | 67.0 MB | 104% |
-| `metadata_filtered` | 650 ms | 410 ms | 135 MB | 49% | — | — | — | — |
-| `vague_multiword` | 660 ms | 410 ms | 133 MB | 49% | `query` | 1.60 s | 638 MB | 108% |
+| `broad_semantic` | 240 ms | 240 ms | 123 MB | 29% | `vsearch` | 800 ms | 617 MB | 87% |
+| `narrow_semantic` | 240 ms | 240 ms | 123 MB | 25% | `vsearch` | 800 ms | 624 MB | 87% |
+| `exact_phrase` | 220 ms | 210 ms | 47.3 MB | 18% | `search` | 150 ms | 66.6 MB | 100% |
+| `metadata_filtered` | 240 ms | 240 ms | 130 MB | 29% | — | — | — | — |
+| `vague_multiword` | 240 ms | 240 ms | 127 MB | 29% | `query` | 700 ms | 638 MB | 106% |
 
 ### Output token count (snippets for `--limit 10`, `tiktoken` `cl100k_base`)
 
@@ -101,7 +101,7 @@ Token count matters when results are piped into a downstream LLM — fewer token
 | `narrow_semantic` | 10 | 1,373 | 8 | 467 |
 | `exact_phrase` | 10 | 1,601 | 7 | 376 |
 | `metadata_filtered` | 5 | 974 | — | — |
-| `vague_multiword` | 10 | 1,518 | 10 | 571 |
+| `vague_multiword` | 10 | 1,518 | 10 | 607 |
 
 ### Notes
 
@@ -121,11 +121,11 @@ Both tools are set up fresh each run. The two phases are timed separately:
 
 | | mdvs | QMD |
 |---|---|---|
-| Prepare (init / collection add) | 760 ms | 3.24 s |
-| Index (build / embed) | 24.88 s | 1167.13 s |
-| **Total setup** | 25.64 s | 1170.37 s |
-| Index peak RSS | 366 MB | 935 MB |
-| Index on disk | 31.6 MB | 64.6 MB |
+| Prepare (init / collection add) | 460 ms | 1.66 s |
+| Index (build / embed) | 2.57 s | 743.11 s |
+| **Total setup** | 3.03 s | 744.77 s |
+| Index peak RSS | 355 MB | 1.08 GB |
+| Index on disk | 31.7 MB | 75.1 MB |
 | Embedding/reranker models on disk | 59.0 MB | 2.10 GB |
 
 ### Queries
@@ -147,11 +147,11 @@ mdvs is reported in two configurations:
 
 | Kind | mdvs default | mdvs engine-only | mdvs RSS | mdvs CPU% | QMD mode | QMD wall | QMD RSS | QMD CPU% |
 |---|---|---|---|---|---|---|---|---|
-| `broad_semantic` | 22.10 s | 590 ms | 392 MB | 171% | `vsearch` | 1.61 s | 634 MB | 99% |
-| `narrow_semantic` | 21.55 s | 560 ms | 391 MB | 176% | `vsearch` | 1.62 s | 629 MB | 102% |
-| `exact_phrase` | 21.07 s | 570 ms | 390 MB | 176% | `search` | 360 ms | 72.5 MB | 103% |
-| `metadata_filtered` | 22.21 s | 550 ms | 393 MB | 174% | — | — | — | — |
-| `vague_multiword` | 21.11 s | 590 ms | 397 MB | 174% | `query` | 1.65 s | 647 MB | 114% |
+| `broad_semantic` | 420 ms | 300 ms | 268 MB | 60% | `vsearch` | 800 ms | 630 MB | 91% |
+| `narrow_semantic` | 450 ms | 290 ms | 267 MB | 60% | `vsearch` | 800 ms | 630 MB | 92% |
+| `exact_phrase` | 430 ms | 280 ms | 267 MB | 60% | `search` | 160 ms | 72.6 MB | 94% |
+| `metadata_filtered` | 420 ms | 310 ms | 267 MB | 59% | — | — | — | — |
+| `vague_multiword` | 440 ms | 310 ms | 267 MB | 60% | `query` | 790 ms | 646 MB | 101% |
 
 ### Output token count (snippets for `--limit 10`, `tiktoken` `cl100k_base`)
 
@@ -159,11 +159,11 @@ Token count matters when results are piped into a downstream LLM — fewer token
 
 | Kind | mdvs result count | mdvs tokens | QMD result count | QMD tokens |
 |---|---|---|---|---|
-| `broad_semantic` | 10 | 974 | 10 | 624 |
-| `narrow_semantic` | 9 | 729 | 10 | 604 |
-| `exact_phrase` | 10 | 870 | 10 | 440 |
-| `metadata_filtered` | 10 | 1,013 | — | — |
-| `vague_multiword` | 10 | 1,082 | 10 | 568 |
+| `broad_semantic` | 10 | 806 | 10 | 624 |
+| `narrow_semantic` | 9 | 719 | 10 | 604 |
+| `exact_phrase` | 10 | 869 | 10 | 440 |
+| `metadata_filtered` | 10 | 1,193 | — | — |
+| `vague_multiword` | 10 | 1,274 | 10 | 563 |
 
 ### Notes
 

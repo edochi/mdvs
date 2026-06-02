@@ -107,7 +107,7 @@
 | [0103](TODO-0103.md) | Validate config invariants on mdvs.toml load | done | high | 2026-03-14 |
 | [0104](TODO-0104.md) | Redesign internal column naming — move prefix from storage to search view | done | medium | 2026-03-14 |
 | [0105](TODO-0105.md) | Test and write CI recipe for mdvs check | todo | medium | 2026-03-14 |
-| [0106](TODO-0106.md) | Link graph from internal links and wikilinks | todo | low | 2026-03-14 |
+| [0106](TODO-0106.md) | Link graph from internal links and wikilinks | todo | medium | 2026-03-14 |
 | [0107](TODO-0107.md) | Pre-commit hook for mdvs check | todo | medium | 2026-03-14 |
 | [0108](TODO-0108.md) | --set-revision with empty string or "None" should clear the revision | done | low | 2026-03-14 |
 | [0109](TODO-0109.md) | Clean up DataFusion error messages in --where | todo | low | 2026-03-14 |
@@ -171,4 +171,9 @@
 | [0167](TODO-0167.md) | Skip embedding-model load and query embed when search mode is fulltext | done | medium | 2026-05-27 |
 | [0168](TODO-0168.md) | Compact-snippet output mode for LLM-friendly search results | todo | medium | 2026-05-27 |
 | [0169](TODO-0169.md) | Investigate Lance encoding panic on large markdown corpora | done | medium | 2026-05-28 |
-| [0170](TODO-0170.md) | Incremental check/update via .mdvs/cache.toml so auto-steps stay seamless at scale | todo | high | 2026-05-28 |
+| [0170](TODO-0170.md) | Incremental check cache to keep auto-validation cheap at scale | deferred | low | 2026-05-28 |
+| [0171](TODO-0171.md) | Similarity-edge graph: top-K semantic neighbors per file | todo | medium | 2026-05-30 |
+| [0172](TODO-0172.md) | Cheap wins in check::validate — precompile globs, hoist conversions, fast-path validators | done | high | 2026-05-29 |
+| [0173](TODO-0173.md) | Incremental Lance writes — stop nuking the index on every build | done | high | 2026-05-29 |
+| [0174](TODO-0174.md) | content_hash should cover frontmatter, not just the parsed body | todo | medium | 2026-05-29 |
+| [0175](TODO-0175.md) | Strip in-code TODO-NNNN references from src/ and examples/ | todo | low | 2026-05-29 |
