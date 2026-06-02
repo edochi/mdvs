@@ -171,6 +171,6 @@
 | [0167](TODO-0167.md) | Skip embedding-model load and query embed when search mode is fulltext | done | medium | 2026-05-27 |
 | [0168](TODO-0168.md) | Compact-snippet output mode for LLM-friendly search results | todo | medium | 2026-05-27 |
 | [0169](TODO-0169.md) | Investigate Lance encoding panic on large markdown corpora | done | medium | 2026-05-28 |
-| [0170](TODO-0170.md) | Incremental check cache to keep auto-validation cheap at scale | todo | high | 2026-05-28 |
+| [0170](TODO-0170.md) | Incremental check cache to keep auto-validation cheap at scale | deferred | low | 2026-05-28 |
 | [0171](TODO-0171.md) | Similarity-edge graph: top-K semantic neighbors per file | todo | medium | 2026-05-30 |
-| [0172](TODO-0172.md) | Cheap wins in check::validate — precompile globs, hoist conversions, fast-path validators | todo | high | 2026-05-29 |
+| [0172](TODO-0172.md) | Cheap wins in check::validate — precompile globs, hoist conversions, fast-path validators | done | high | 2026-05-29 |

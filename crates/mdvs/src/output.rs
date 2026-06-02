@@ -169,7 +169,11 @@ pub struct RemovedField {
 }
 
 /// Category of a frontmatter validation failure.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+///
+/// `Ord` follows declaration order (`MissingRequired` < `WrongType` < ...);
+/// used to make `collect_violations` output deterministic for test
+/// comparison and human readability.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub enum ViolationKind {
     /// A field marked `required` is absent from the file's frontmatter.
     MissingRequired,
