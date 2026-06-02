@@ -2,6 +2,44 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## v0.7.0 - 2026-06-02
+#### Features
+- (**benchmarks**) time full setup for both tools + full K8s corpus run - (f6238c1) - edoch
+- (**benchmarks**) per-corpus query sets + run on Kubernetes tasks/ subset - (350443c) - edoch
+- (**benchmarks**) measure mdvs both with and without auto-update orchestration - (3d8870a) - edoch
+- (**benchmarks**) add report renderer (JSON → Markdown) - (88a2663) - edoch
+- (**benchmarks**) add benchmark runner + example_kb results - (ff2a91a) - edoch
+- (**examples**) add profile_pipeline harness to time validate pipeline phases - (36a3a60) - edoch
+#### Bug Fixes
+- (**benchmarks**) always clean up QMD's ephemeral benchmark collection - (ec57088) - edoch
+- (**index**) write Lance v2.2 files to avoid 32 KiB miniblock panic - (0638913) - edoch
+#### Performance Improvements
+- (**build**) incremental Lance writes via delete + add + optimize - (e7cc951) - edoch
+- (**build**) skip write_index when nothing actually changed - (a098aeb) - edoch
+- (**check**) precompile globs, hoist conversions, fast-path validators - (9270ab4) - edoch
+- (**search**) skip embedding model load when mode is fulltext - (c45a392) - edoch
+#### Documentation
+- (**benchmarks**) refresh K8s + example_kb numbers post-Phase-B - (42f710a) - edoch
+- (**benchmarks**) refresh K8s + example_kb numbers post-write_index skip - (8e28e78) - edoch
+- (**benchmarks**) refresh K8s + example_kb numbers post-validate-optimization - (f7ca9e3) - edoch
+- (**spec**) mark TODO-0173 done — Phase A + Phase B shipped - (874b0e9) - edoch
+- (**spec**) open TODO-0173 (incremental Lance writes) + TODO-0174 (content_hash scope) - (01dbd72) - edoch
+- (**spec**) refine TODO-0170 cache design + open TODO-0172 for validate cheap wins - (baf21a9) - edoch
+- (**spec**) redesign TODO-0106 for Lance + open TODO-0171 (similarity edges) - (953f98d) - edoch
+- (**spec**) open TODO-0170 — incremental check/update via .mdvs/cache.toml - (86fc01c) - edoch
+- (**spec**) mark TODO-0169 done — Lance v2.2 fix resolves the build panic - (59951fa) - edoch
+- (**spec**) open TODO-0169 — investigate Lance encoding panic on K8s docs - (6084809) - edoch
+- (**spec**) open TODO-0168 — compact-snippet output mode for LLM consumers - (d7a797d) - edoch
+- (**spec**) scope TODO-0166 to warm-only latency, drop cold-start metric - (2a6010f) - edoch
+- (**spec**) open TODO-0166 — benchmark mdvs vs a popular alternative (QMD) - (a52e841) - edoch
+- (**spec**) open TODO-0164 (array length) + TODO-0165 (JSON Schema keyword survey) - (3d42f78) - edoch
+#### Miscellaneous Chores
+- (**example_kb**) write [scan].frontmatter_format explicitly - (b767ae2) - edoch
+#### Style
+- (**examples**) apply rustfmt to probe_lance_incremental - (f069ce4) - edoch
+
+- - -
+
 ## v0.6.2 - 2026-05-26
 #### Features
 - (**scan**) TODO-0162 step 3 — engine dispatch + Hugo-style JSON - (11b0bfb) - edoch
