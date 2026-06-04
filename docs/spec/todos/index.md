@@ -177,3 +177,4 @@
 | [0173](TODO-0173.md) | Incremental Lance writes — stop nuking the index on every build | done | high | 2026-05-29 |
 | [0174](TODO-0174.md) | content_hash should cover frontmatter, not just the parsed body | todo | medium | 2026-05-29 |
 | [0175](TODO-0175.md) | Strip in-code TODO-NNNN references from src/ and examples/ | todo | low | 2026-05-29 |
+| [0176](TODO-0176.md) | Refresh docs for v0.7.0 + sweep pre-existing Parquet→Lance drift | todo | medium | 2026-06-04 |
