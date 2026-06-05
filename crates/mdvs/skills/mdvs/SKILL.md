@@ -27,6 +27,8 @@ A CLI that treats markdown directories as databases: schema inference, frontmatt
 | Search across notes | `mdvs search "<query>" <path>` |
 | Check what's configured and indexed | `mdvs info <path>` |
 | Delete the search index | `mdvs clean <path>` |
+| Emit the canonical JSON Schema of `mdvs.toml` | `mdvs export-jsonschema <path>` |
+| Print this skill file to stdout | `mdvs skill` |
 
 `<path>` defaults to `.` (current directory) for all commands.
 
@@ -53,6 +55,7 @@ Scans markdown files, infers a typed schema from frontmatter, and writes `mdvs.t
 - `--force` — overwrite an existing `mdvs.toml` (deletes `.mdvs/` too)
 - `--dry-run` — show what would be inferred without writing anything
 - `--ignore-bare-files` — exclude files that have no frontmatter
+- `--from-jsonschema PATH` — import the schema from an external JSON Schema 2020-12 document (`.json` or `.toml`) instead of inferring from markdown. Round-trips with `mdvs export-jsonschema`.
 
 Use `init --force` to start over from scratch. Use `update` to incrementally add new fields.
 
@@ -67,6 +70,10 @@ Validates all frontmatter against the schema in `mdvs.toml`. Reports violations:
 - **`OutOfRange`** — numeric value is outside the declared `min`/`max` range
 
 New fields (present in files but not in `mdvs.toml`) are reported separately as informational — they don't cause a non-zero exit code. Run `update` to add them to the schema.
+
+- `--jsonschema PATH` — override the `[fields]` block in `mdvs.toml` for this run with an external JSON Schema. Useful for one-off CI validation against a stricter schema.
+
+Violation output is deterministic: violations are sorted by `(field, kind, rule)` and files within each violation are sorted by `path`.
 
 ### `mdvs update`
 
@@ -96,7 +103,7 @@ Validates frontmatter (runs `check` internally), then chunks markdown content, g
 - Incremental by default — only re-embeds new or edited files
 - Aborts if `check` finds violations
 
-The first build downloads the embedding model (~30 MB). Subsequent builds reuse the cached model.
+The first build downloads the default embedding model `minishlab/potion-base-8M` (~60 MB). Subsequent builds reuse the cached model.
 
 ### `mdvs search`
 
@@ -135,6 +142,17 @@ Shows the current config and index status: scan settings, field definitions, bui
 ### `mdvs clean`
 
 Deletes the `.mdvs/` directory. Does not touch `mdvs.toml`.
+
+### `mdvs export-jsonschema`
+
+Translates the `[fields]` block of `mdvs.toml` into a canonical JSON Schema 2020-12 document. Useful for sharing the schema with other tools, or for round-tripping through `mdvs init --from-jsonschema`.
+
+- `--format json|toml` — output format (default: `json`)
+- `--output-file FILE` — write to a file instead of stdout
+
+### `mdvs skill`
+
+Prints this skill file to stdout. Useful for piping into another agent's context, or for confirming the skill mdvs ships matches what's installed.
 
 ## Output format
 
@@ -194,9 +212,11 @@ mdvs check
 
 - `build` always runs `check` first — if validation fails, the build aborts.
 - `search` auto-runs `update` and `build` if needed (unless `--no-update` or `--no-build`).
-- Field types are inferred automatically: `String`, `Integer`, `Float`, `Boolean`, `Array(T)`, `Object(...)`. Mixed types widen (e.g., `Integer` + `String` becomes `String`).
+- Field types are inferred automatically: `String`, `Integer`, `Float`, `Boolean`, `Date` (`YYYY-MM-DD`), `DateTime` (RFC 3339 with mandatory timezone), `Array(T)`, `Array(Object{k: v, ...})`. Mixed scalar types widen (e.g., `Integer` + `String` becomes `String`).
+- **Nested frontmatter uses dotted-name leaves.** A YAML key like `calibration.baseline.wavelength: 850.0` becomes a `[[fields.field]]` named `"calibration.baseline.wavelength"` of type `Float`. Top-level `Object` is rejected at config load — there are no nested `[[fields.field]]` blocks, only flat dotted names. `Array(Object{...})` is the one inline-Object form that stays. SQL filters use dot notation natively: `--where "calibration.baseline.wavelength > 800"`.
+- **Preprocessors opt into widening.** Each `[[fields.field]]` carries a `preprocess` array. Two built-ins exist: `coerce_to_string` (accepts non-string scalars on a `String` field and stringifies them) and `widen_int_to_float` (accepts integers on a `Float` field). Inference auto-populates these when widening was observed. `preprocess = []` means strict — without the opt-in, a `Float` field rejects integer-backed numbers and a `String` field rejects bools/numbers.
 - Fields with low-cardinality repeated values are automatically detected as categorical (e.g., `status: draft/published/archived`). Out-of-category values are reported as `InvalidCategory` violations.
-- Range constraints (`min`/`max`) on numeric fields are not auto-inferred but can be added manually in `mdvs.toml` or inferred on demand with `update reinfer <field> --with=range`. Categorical and range constraints are mutually exclusive on the same field.
+- Constraint kinds available per type: `categories` (closed-set enum), `min`/`max` (numeric range), `min_length`/`max_length` (string and array length), `pattern` (regex on strings). Categorical is mutually exclusive with everything else. Range / length / pattern are not auto-inferred but can be added manually, or inferred on demand with `update reinfer <field> --with=range`.
 - `init --force` rewrites the entire config from scratch. `update` preserves existing config and only adds new fields. `update reinfer` re-infers specific fields.
 - The model identity is tracked: if you change the model in `mdvs.toml`, `build` and `search` will require `--force` to confirm a full re-embed.
 - `mdvs.toml` is the complete source of truth. There is no lock file.
