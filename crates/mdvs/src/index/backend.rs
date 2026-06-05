@@ -983,6 +983,7 @@ mod tests {
                 provider: "model2vec".into(),
                 name: "test-model".into(),
                 revision: Some("abc123".into()),
+                dim: None,
             },
             chunking: ChunkingConfig {
                 max_chunk_size: 1024,

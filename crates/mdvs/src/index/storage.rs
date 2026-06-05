@@ -127,6 +127,9 @@ impl BuildMetadata {
         if let Some(ref r) = self.embedding_model.revision {
             m.insert("mdvs.revision".into(), r.clone());
         }
+        if let Some(dim) = self.embedding_model.dim {
+            m.insert("mdvs.dim".into(), dim.to_string());
+        }
         m.insert(
             "mdvs.chunk_size".into(),
             self.chunking.max_chunk_size.to_string(),
@@ -150,6 +153,7 @@ impl BuildMetadata {
                     .unwrap_or_else(|| "model2vec".to_string()),
                 name: meta.get("mdvs.model")?.clone(),
                 revision: meta.get("mdvs.revision").cloned(),
+                dim: meta.get("mdvs.dim").and_then(|s| s.parse().ok()),
             },
             chunking: ChunkingConfig {
                 max_chunk_size: meta.get("mdvs.chunk_size")?.parse().ok()?,
@@ -1089,6 +1093,7 @@ mod tests {
                 provider: "model2vec".into(),
                 name: "minishlab/potion-base-8M".into(),
                 revision: None,
+                dim: None,
             },
             chunking: ChunkingConfig {
                 max_chunk_size: 1024,

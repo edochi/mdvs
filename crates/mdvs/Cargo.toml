@@ -11,6 +11,13 @@ keywords = ["markdown", "search", "embeddings", "semantic", "vector"]
 categories = ["command-line-utilities", "text-processing"]
 include = ["src/", "skills/", "CHANGELOG.md", "Cargo.toml", "LICENSE"]
 
+[features]
+# Enables a deterministic mock embedder selectable via
+# `[embedding_model].provider = "mock"`. Off by default so the
+# production binary cannot select it. Enabled in CI for the
+# hermetic fast-lane test suite (TODO-0184).
+testing-mocks = []
+
 [dependencies]
 # CLI
 clap = { version = "4", features = ["derive"] }

@@ -32,14 +32,18 @@ refactor: extract validate() from check command
 ## Build & Verify
 
 ```bash
-cargo build                  # build
-cargo run                    # run mdvs
-cargo test                   # run all tests
-cargo clippy --all-targets   # lint (including test code)
-cargo fmt                    # format
+cargo build                                            # build (production — no mock)
+cargo run                                              # run mdvs
+cargo test                                             # run fast-lane tests (uses MockEmbedder under cfg(test))
+cargo test --features testing-mocks                    # explicit fast lane (what CI runs)
+cargo test --features testing-mocks -- --ignored       # slow lane: real-model tests (local only, needs HF cache)
+cargo clippy --all-targets --features testing-mocks    # lint, mirroring CI flags
+cargo fmt                                              # format
 ```
 
-**Always use `cargo clippy --all-targets`** — plain `cargo clippy` misses warnings in test code. **Always run `cargo fmt` after `cargo clippy`** when verifying changes.
+**Always use `cargo clippy --all-targets --features testing-mocks`** — plain `cargo clippy` misses warnings in test code and the mock feature gate; this matches the CI invocation. **Always run `cargo fmt` after `cargo clippy`** when verifying changes.
+
+The `testing-mocks` feature gates the deterministic `MockEmbedder` (`provider = "mock"` in `mdvs.toml`). It is off in production binaries (`cargo install`); `cargo test` and `cargo clippy` see it via `cfg(test)`. Real-model tests are marked `#[ignore]` so the fast lane stays hermetic — no Hugging Face network calls. See TODO-0184.
 
 ## Architecture
 

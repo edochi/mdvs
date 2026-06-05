@@ -314,9 +314,10 @@ mod tests {
                 min_category_repetition: 3,
             },
             embedding_model: Some(EmbeddingModelConfig {
-                provider: "model2vec".into(),
-                name: "minishlab/potion-base-8M".into(),
+                provider: "mock".into(),
+                name: "mock".into(),
                 revision: None,
+                dim: Some(256),
             }),
             chunking: Some(ChunkingConfig {
                 max_chunk_size: 1024,
@@ -336,8 +337,20 @@ mod tests {
     async fn init_and_build(dir: &Path) {
         let step = crate::cmd::init::run(dir, "**", false, false, true, false, false, None);
         assert!(!crate::step::has_failed(&step));
+        swap_to_mock_embedder(dir);
         let output = crate::cmd::build::run(dir, None, None, None, false, true, false).await;
         assert!(!crate::step::has_failed(&output));
+    }
+
+    fn swap_to_mock_embedder(dir: &Path) {
+        let mut config = MdvsToml::read(&dir.join("mdvs.toml")).unwrap();
+        config.embedding_model = Some(EmbeddingModelConfig {
+            provider: "mock".into(),
+            name: "mock".into(),
+            revision: None,
+            dim: Some(256),
+        });
+        config.write(&dir.join("mdvs.toml")).unwrap();
     }
 
     #[tokio::test]
@@ -367,7 +380,7 @@ mod tests {
         assert_eq!(result.files_on_disk, 2);
         assert!(result.index.is_some());
         let idx = result.index.as_ref().unwrap();
-        assert_eq!(idx.model, "minishlab/potion-base-8M");
+        assert_eq!(idx.model, "mock");
         assert_eq!(idx.files_indexed, 2);
         assert!(idx.chunks > 0);
         assert_eq!(idx.config_status, "match");
