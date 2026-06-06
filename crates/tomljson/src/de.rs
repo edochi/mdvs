@@ -38,24 +38,25 @@ fn walk(v: &Toml, placeholder: &str, path_stack: &mut Vec<String>) -> Result<Jso
 
         Toml::Integer(i) => Ok(Json::Number((*i).into())),
 
-        Toml::Float(f) => {
-            if f.is_nan() {
-                return Err(Error::FloatNotRepresentable {
-                    path: format_path(path_stack),
-                    kind: "NaN",
-                });
-            }
-            if f.is_infinite() {
-                let kind = if *f > 0.0 { "+inf" } else { "-inf" };
-                return Err(Error::FloatNotRepresentable {
+        Toml::Float(f) => match serde_json::Number::from_f64(*f) {
+            Some(n) => Ok(Json::Number(n)),
+            // `Number::from_f64` only rejects NaN / ±Inf — classify the
+            // failure mode for the user-facing error rather than panicking
+            // on a now-impossible-by-construction `expect`.
+            None => {
+                let kind = if f.is_nan() {
+                    "NaN"
+                } else if *f > 0.0 {
+                    "+inf"
+                } else {
+                    "-inf"
+                };
+                Err(Error::FloatNotRepresentable {
                     path: format_path(path_stack),
                     kind,
-                });
+                })
             }
-            Ok(serde_json::Number::from_f64(*f)
-                .map(Json::Number)
-                .expect("finite float must convert"))
-        }
+        },
 
         Toml::Boolean(b) => Ok(Json::Bool(*b)),
 

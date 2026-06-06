@@ -71,10 +71,14 @@ fn assert_encodable(
         // Json::Null is encoded as the placeholder string by `write_inline`.
         Json::Null | Json::Bool(_) => Ok(()),
         Json::Number(n) => {
-            if n.as_i64().is_none() && n.is_u64() {
+            // u64-only numbers (i.e. above `i64::MAX`) cannot be represented
+            // as a TOML signed-64-bit integer. `as_u64().filter(...)` binds
+            // the value in one go — no separate `is_u64()` check to drift
+            // from the conversion.
+            if let Some(value) = n.as_u64().filter(|_| n.as_i64().is_none()) {
                 Err(Error::IntegerOutOfRange {
                     path: format_path(path_stack),
-                    value: n.as_u64().expect("checked is_u64"),
+                    value,
                 })
             } else {
                 Ok(())
@@ -146,8 +150,26 @@ fn write_inline<W: TomlWrite>(w: &mut W, v: &Json, placeholder: &str) -> Result<
                 w.value(i)?;
             } else if let Some(f) = n.as_f64() {
                 w.value(f)?;
+            } else if let Some(value) = n.as_u64() {
+                // u64 above `i64::MAX` with no `f64` representation.
+                // `assert_encodable` should have rejected this upstream;
+                // returning `Err` locally means a future refactor that
+                // bypasses the precheck still surfaces a clean error
+                // instead of panicking. `path` is empty because
+                // `write_inline` doesn't thread a path stack.
+                return Err(Error::IntegerOutOfRange {
+                    path: String::new(),
+                    value,
+                });
             } else {
-                unreachable!("u64 overflow rejected in assert_encodable");
+                // `serde_json::Number` is `i64 | u64 | f64`; one of the
+                // three accessors above must have matched. Surface as the
+                // same recoverable error rather than panicking if the
+                // representation ever grows new variants.
+                return Err(Error::IntegerOutOfRange {
+                    path: String::new(),
+                    value: 0,
+                });
             }
         }
         Json::String(s) => w.value(s.as_str())?,
@@ -205,12 +227,25 @@ fn write_table<W: TomlWrite>(
     // Pass 1: emit inline keys (scalars, non-table-arrays, inline objects).
     // Pass 2: emit sub-tables and arrays-of-tables as their own sections.
     let mut sub_tables: Vec<(&str, &serde_json::Map<String, Json>)> = Vec::new();
-    let mut sub_aots: Vec<(&str, &Vec<Json>)> = Vec::new();
+    // Store the typed maps directly so the array-of-tables emission loop
+    // never has to re-pattern-match each element. `is_array_of_tables`
+    // already proved every element is an Object; encode that proof in the
+    // type instead of trusting it via `unreachable!`.
+    let mut sub_aots: Vec<(&str, Vec<&serde_json::Map<String, Json>>)> = Vec::new();
 
     for (k, v) in obj {
         match v {
             Json::Object(child) => sub_tables.push((k, child)),
-            Json::Array(arr) if is_array_of_tables(arr) => sub_aots.push((k, arr)),
+            Json::Array(arr) if is_array_of_tables(arr) => {
+                let tables: Vec<&serde_json::Map<String, Json>> = arr
+                    .iter()
+                    .filter_map(|item| match item {
+                        Json::Object(t) => Some(t),
+                        _ => None,
+                    })
+                    .collect();
+                sub_aots.push((k, tables));
+            }
             _ => {
                 w.key(k.as_str())?;
                 w.space()?;
@@ -240,12 +275,8 @@ fn write_table<W: TomlWrite>(
     }
 
     // Arrays of tables.
-    for (k, arr) in sub_aots {
-        for item in arr {
-            let table = match item {
-                Json::Object(t) => t,
-                _ => unreachable!("is_array_of_tables guarantees Object"),
-            };
+    for (k, tables) in sub_aots {
+        for table in tables {
             w.newline()?;
             w.open_array_of_tables_header()?;
             for p in path {
