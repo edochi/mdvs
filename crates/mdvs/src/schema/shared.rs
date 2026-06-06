@@ -357,6 +357,11 @@ pub struct EmbeddingModelConfig {
     /// Pinned revision (commit SHA).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub revision: Option<String>,
+    /// Embedding dimension. Only consulted by the `mock` provider
+    /// (defaults to 256 if absent). Ignored for `model2vec`, where
+    /// the dimension is determined by the model.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dim: Option<usize>,
 }
 
 fn default_provider() -> String {
@@ -738,6 +743,7 @@ mod tests {
                 provider: "model2vec".into(),
                 name: "minishlab/potion-base-8M".into(),
                 revision: Some("abc123".into()),
+                dim: None,
             },
         };
         let toml_str = toml::to_string(&w).unwrap();
@@ -756,6 +762,7 @@ mod tests {
                 provider: "model2vec".into(),
                 name: "minishlab/potion-base-8M".into(),
                 revision: None,
+                dim: None,
             },
         };
         let toml_str = toml::to_string(&w).unwrap();

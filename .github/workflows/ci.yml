@@ -20,8 +20,10 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - uses: Swatinem/rust-cache@v2
       - run: cargo build
-      - run: cargo test
-      - run: cargo clippy --all-targets -- -D warnings
+      # Tests run with the mock embedder enabled — hermetic, no Hugging Face
+      # in CI. Real-model tests are gated behind `#[ignore]`; see TODO-0184.
+      - run: cargo test --features testing-mocks
+      - run: cargo clippy --all-targets --features testing-mocks -- -D warnings
       - run: cargo fmt --check
 
   audit:

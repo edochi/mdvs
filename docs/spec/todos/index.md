@@ -185,5 +185,5 @@
 | [0181](TODO-0181.md) | Justify or remove unused abstraction headroom (Stage 1/3 enums, x-mdvs.definitions, dead invariants) | todo | medium | 2026-06-04 |
 | [0182](TODO-0182.md) | Prune stale and useless pages from docs/spec/ | todo | medium | 2026-06-04 |
 | [0183](TODO-0183.md) | Trim CLAUDE.md to project-specific rules | todo | medium | 2026-06-04 |
-| [0184](TODO-0184.md) | Introduce MockEmbedder; keep real-model tests in a separate local-only lane | todo | high | 2026-06-05 |
+| [0184](TODO-0184.md) | Introduce MockEmbedder; keep real-model tests in a separate local-only lane | done | high | 2026-06-05 |
 | [0185](TODO-0185.md) | Refresh crates/mdvs/skills/mdvs/SKILL.md for v0.7.0 surface | done | high | 2026-06-05 |

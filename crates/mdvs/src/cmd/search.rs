@@ -395,9 +395,10 @@ mod tests {
                 min_category_repetition: 3,
             },
             embedding_model: Some(EmbeddingModelConfig {
-                provider: "model2vec".into(),
+                provider: "mock".into(),
                 name: model_name.into(),
                 revision: None,
+                dim: Some(256),
             }),
             chunking: Some(ChunkingConfig {
                 max_chunk_size: 1024,
@@ -417,8 +418,20 @@ mod tests {
     async fn init_and_build(dir: &Path) {
         let step = crate::cmd::init::run(dir, "**", false, false, true, false, false, None);
         assert!(!crate::step::has_failed(&step));
+        swap_to_mock_embedder(dir);
         let output = crate::cmd::build::run(dir, None, None, None, false, true, false).await;
         assert!(!crate::step::has_failed(&output));
+    }
+
+    fn swap_to_mock_embedder(dir: &Path) {
+        let mut config = MdvsToml::read(&dir.join("mdvs.toml")).unwrap();
+        config.embedding_model = Some(EmbeddingModelConfig {
+            provider: "mock".into(),
+            name: "mock".into(),
+            revision: None,
+            dim: Some(256),
+        });
+        config.write(&dir.join("mdvs.toml")).unwrap();
     }
 
     #[tokio::test]

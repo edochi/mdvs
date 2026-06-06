@@ -613,6 +613,7 @@ mod tests {
                 provider: "model2vec".into(),
                 name: "minishlab/potion-base-8M".into(),
                 revision: None,
+                dim: None,
             }),
             chunking: Some(ChunkingConfig {
                 max_chunk_size: 1024,
@@ -679,6 +680,7 @@ mod tests {
                 provider: "model2vec".into(),
                 name: "minishlab/potion-base-8M".into(),
                 revision: Some("abc123".into()),
+                dim: None,
             }),
             chunking: Some(ChunkingConfig {
                 max_chunk_size: 1024,

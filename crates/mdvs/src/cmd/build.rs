@@ -21,6 +21,9 @@ use std::path::Path;
 use std::time::Instant;
 use tracing::instrument;
 
+// Unused under `cfg(any(test, feature = "testing-mocks"))` since the
+// default falls back to the mock embedder in that build flavor.
+#[cfg_attr(any(test, feature = "testing-mocks"), allow(dead_code))]
 const DEFAULT_MODEL: &str = "minishlab/potion-base-8M";
 const DEFAULT_CHUNK_SIZE: usize = 1024;
 
@@ -870,11 +873,25 @@ pub(crate) fn mutate_config(
 
     match config.embedding_model {
         None => {
-            config.embedding_model = Some(EmbeddingModelConfig {
+            // With `--features testing-mocks` (CI fast lane), default to the
+            // deterministic mock embedder so tests that flow through init →
+            // build don't reach for Hugging Face. The feature is off in
+            // production builds, so end users always get model2vec.
+            #[cfg(any(test, feature = "testing-mocks"))]
+            let default = EmbeddingModelConfig {
+                provider: "mock".to_string(),
+                name: set_model.unwrap_or("mock").to_string(),
+                revision: set_revision.and_then(normalize_revision),
+                dim: Some(256),
+            };
+            #[cfg(not(any(test, feature = "testing-mocks")))]
+            let default = EmbeddingModelConfig {
                 provider: "model2vec".to_string(),
                 name: set_model.unwrap_or(DEFAULT_MODEL).to_string(),
                 revision: set_revision.and_then(normalize_revision),
-            });
+                dim: None,
+            };
+            config.embedding_model = Some(default);
             config_changed = true;
         }
         Some(ref mut em) if set_model.is_some() || set_revision.is_some() => {
@@ -1226,7 +1243,7 @@ mod tests {
         let meta = backend.read_metadata().await.unwrap();
         assert!(meta.is_some(), "build metadata should be present");
         let meta = meta.unwrap();
-        assert_eq!(meta.embedding_model.name, "minishlab/potion-base-8M");
+        assert_eq!(meta.embedding_model.name, "mock");
         assert_eq!(meta.chunking.max_chunk_size, DEFAULT_CHUNK_SIZE);
         assert_eq!(meta.glob, "**");
     }
@@ -1362,9 +1379,14 @@ mod tests {
             output
         );
 
-        // Verify sections were written
+        // Verify sections were written. Under the `testing-mocks` feature the
+        // default is the mock embedder; otherwise it's `DEFAULT_MODEL`.
         let config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
-        assert_eq!(config.embedding_model.as_ref().unwrap().name, DEFAULT_MODEL);
+        #[cfg(any(test, feature = "testing-mocks"))]
+        let expected_name = "mock";
+        #[cfg(not(any(test, feature = "testing-mocks")))]
+        let expected_name = DEFAULT_MODEL;
+        assert_eq!(config.embedding_model.as_ref().unwrap().name, expected_name);
         assert!(config.embedding_model.as_ref().unwrap().revision.is_none());
         assert_eq!(
             config.chunking.as_ref().unwrap().max_chunk_size,
@@ -1565,9 +1587,10 @@ mod tests {
                 min_category_repetition: 3,
             },
             embedding_model: Some(EmbeddingModelConfig {
-                provider: "model2vec".into(),
-                name: "minishlab/potion-base-8M".into(),
+                provider: "mock".into(),
+                name: "mock".into(),
                 revision: None,
+                dim: Some(256),
             }),
             chunking: Some(ChunkingConfig {
                 max_chunk_size: 1024,
@@ -1647,9 +1670,10 @@ mod tests {
                 min_category_repetition: 3,
             },
             embedding_model: Some(EmbeddingModelConfig {
-                provider: "model2vec".into(),
-                name: "minishlab/potion-base-8M".into(),
+                provider: "mock".into(),
+                name: "mock".into(),
                 revision: None,
+                dim: Some(256),
             }),
             chunking: Some(ChunkingConfig {
                 max_chunk_size: 1024,
@@ -1710,9 +1734,10 @@ mod tests {
                 min_category_repetition: 3,
             },
             embedding_model: Some(EmbeddingModelConfig {
-                provider: "model2vec".into(),
-                name: "minishlab/potion-base-8M".into(),
+                provider: "mock".into(),
+                name: "mock".into(),
                 revision: None,
+                dim: Some(256),
             }),
             chunking: Some(ChunkingConfig {
                 max_chunk_size: 1024,
