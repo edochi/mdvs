@@ -82,6 +82,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-tree = "0.4"
 xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
 
+# Compile-time-verified regex patterns. Used by the `--where` translator
+# in `index/backend.rs` so a typo in a pattern fails `cargo build`, not at
+# runtime. See TODO-0180.
+lazy-regex = "3"
+
 [dev-dependencies]
 tempfile = "3"
 

@@ -751,8 +751,6 @@ fn translate_where_to_struct(
     internal_prefix: &str,
     aliases: &std::collections::HashMap<String, String>,
 ) -> anyhow::Result<String> {
-    use regex::Regex;
-
     // Reverse alias lookup: alias name -> real internal column.
     let alias_to_internal: std::collections::HashMap<&str, &str> = aliases
         .iter()
@@ -764,10 +762,12 @@ fn translate_where_to_struct(
     // the whole `date '...'` literal is protected as one unit (otherwise a
     // frontmatter field named `date` and the `date` literal keyword are
     // indistinguishable once the literal is split off).
-    let lit =
-        Regex::new(r"(?i)(?:\b(?:date|timestamp)\s+)?'(?:[^']|'')*'").expect("valid literal regex");
-    let ident = Regex::new(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*")
-        .expect("valid ident regex");
+    //
+    // `lazy_regex::regex!` parses these patterns at compile time, so a
+    // syntax error fails `cargo build` and can never reach a user at
+    // runtime.
+    let lit = lazy_regex::regex!(r"(?i)(?:\b(?:date|timestamp)\s+)?'(?:[^']|'')*'");
+    let ident = lazy_regex::regex!(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*");
 
     let rewrite_segment = |segment: &str| -> anyhow::Result<String> {
         let mut out = String::new();

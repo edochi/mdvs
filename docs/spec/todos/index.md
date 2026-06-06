@@ -181,7 +181,7 @@
 | [0177](TODO-0177.md) | Rewrite README around the LLM-curated knowledge base audience | todo | high | 2026-06-04 |
 | [0178](TODO-0178.md) | Build an LLM-curated-KB demo (asciinema + script) | todo | high | 2026-06-04 |
 | [0179](TODO-0179.md) | Module split — no file over ~600 lines in crates/mdvs/src | todo | high | 2026-06-04 |
-| [0180](TODO-0180.md) | Audit non-test code paths for unwrap / panic / expect-without-message | todo | high | 2026-06-04 |
+| [0180](TODO-0180.md) | Audit non-test code paths for unwrap / panic / expect-without-message | done | high | 2026-06-04 |
 | [0181](TODO-0181.md) | Justify or remove unused abstraction headroom (Stage 1/3 enums, x-mdvs.definitions, dead invariants) | todo | medium | 2026-06-04 |
 | [0182](TODO-0182.md) | Prune stale and useless pages from docs/spec/ | todo | medium | 2026-06-04 |
 | [0183](TODO-0183.md) | Trim CLAUDE.md to project-specific rules | todo | medium | 2026-06-04 |
