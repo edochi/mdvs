@@ -184,7 +184,7 @@
 | [0180](TODO-0180.md) | Audit non-test code paths for unwrap / panic / expect-without-message | done | high | 2026-06-04 |
 | [0181](TODO-0181.md) | Justify or remove unused abstraction headroom (Stage 1/3 enums, x-mdvs.definitions, dead invariants) | todo | medium | 2026-06-04 |
 | [0182](TODO-0182.md) | Prune stale and useless pages from docs/spec/ | todo | medium | 2026-06-04 |
-| [0183](TODO-0183.md) | Trim CLAUDE.md to project-specific rules | todo | medium | 2026-06-04 |
+| [0183](TODO-0183.md) | Trim CLAUDE.md to project-specific rules | done | medium | 2026-06-04 |
 | [0184](TODO-0184.md) | Introduce MockEmbedder; keep real-model tests in a separate local-only lane | done | high | 2026-06-05 |
 | [0185](TODO-0185.md) | Refresh crates/mdvs/skills/mdvs/SKILL.md for v0.7.0 surface | done | high | 2026-06-05 |
 | [0186](TODO-0186.md) | mdvs explain — path-scoped schema query for agent callers | todo | high | 2026-06-06 |
