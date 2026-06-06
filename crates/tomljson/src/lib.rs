@@ -1,3 +1,12 @@
+// Regression gate for TODO-0180: catch new panic-emitters in non-test code
+// at PR time. Tests use `.unwrap()` / `.expect()` liberally and are
+// excluded via `cfg(not(test))`. Surviving cases in production code must
+// carry a local `#[allow(...)]` with a justifying comment.
+#![cfg_attr(
+    not(test),
+    warn(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
+
 //! Lossless TOML ↔ JSON translation.
 //!
 //! `tomljson` translates `serde_json::Value` to TOML and back, handling the

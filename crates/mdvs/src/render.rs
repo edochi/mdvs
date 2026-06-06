@@ -73,16 +73,26 @@ fn format_text_block(block: &Block, out: &mut String, indent: usize) {
                     // We insert after the data row that precedes each detail row.
                     let mut panels_inserted = 0;
                     for &row_idx in detail_rows {
-                        let detail_text = &rows[row_idx][0];
-                        if !detail_text.is_empty() {
-                            // Count non-detail rows before this detail row
-                            let data_rows_before =
-                                (0..row_idx).filter(|i| !detail_rows.contains(i)).count();
-                            // Insert position: after the last data row + header + previously inserted panels
-                            let pos = data_rows_before + header_offset + panels_inserted;
-                            table.with(Panel::horizontal(pos, detail_text));
-                            panels_inserted += 1;
-                        }
+                        // `detail_rows` is caller-supplied; in normal use it
+                        // indexes into `rows` and every row has at least one
+                        // column. Skip silently if either invariant fails so
+                        // a future refactor of the caller can't crash table
+                        // rendering — Panel skipping just means no detail
+                        // pane for that row.
+                        let Some(detail_text) = rows
+                            .get(row_idx)
+                            .and_then(|r| r.first())
+                            .filter(|s| !s.is_empty())
+                        else {
+                            continue;
+                        };
+                        // Count non-detail rows before this detail row
+                        let data_rows_before =
+                            (0..row_idx).filter(|i| !detail_rows.contains(i)).count();
+                        // Insert position: after the last data row + header + previously inserted panels
+                        let pos = data_rows_before + header_offset + panels_inserted;
+                        table.with(Panel::horizontal(pos, detail_text));
+                        panels_inserted += 1;
                     }
 
                     table.with(BorderCorrection {});
