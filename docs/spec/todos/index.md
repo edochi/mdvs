@@ -187,3 +187,6 @@
 | [0183](TODO-0183.md) | Trim CLAUDE.md to project-specific rules | todo | medium | 2026-06-04 |
 | [0184](TODO-0184.md) | Introduce MockEmbedder; keep real-model tests in a separate local-only lane | done | high | 2026-06-05 |
 | [0185](TODO-0185.md) | Refresh crates/mdvs/skills/mdvs/SKILL.md for v0.7.0 surface | done | high | 2026-06-05 |
+| [0186](TODO-0186.md) | mdvs explain — path-scoped schema query for agent callers | todo | high | 2026-06-06 |
+| [0187](TODO-0187.md) | Recipe — agent harness hook for auto-check (and optional auto-explain / pre-validate) | todo | medium | 2026-06-06 |
+| [0188](TODO-0188.md) | mdvs check --stdin — in-memory frontmatter validation | todo | medium | 2026-06-06 |
