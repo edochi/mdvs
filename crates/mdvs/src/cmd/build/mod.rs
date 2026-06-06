@@ -1,186 +1,46 @@
+mod classify;
+mod config_mutate;
+mod embed;
+mod write;
+
 use crate::discover::field_type::FieldType;
 use crate::discover::infer::InferredSchema;
-use crate::discover::scan::{ScannedFile, ScannedFiles};
+use crate::discover::scan::ScannedFiles;
 use crate::index::backend::Backend;
-use crate::index::chunk::{Chunks, extract_plain_text};
 use crate::index::embed::{Embedder, ModelConfig};
-use crate::index::storage::{
-    BuildMetadata, ChunkRow, FileIndexEntry, FileRow, compute_schema_hash, content_hash,
-};
+use crate::index::storage::{BuildMetadata, ChunkRow, FileRow, compute_schema_hash, content_hash};
 use crate::outcome::commands::BuildOutcome;
 use crate::outcome::{
     ClassifyOutcome, EmbedFilesOutcome, InferOutcome, LoadModelOutcome, Outcome, ReadConfigOutcome,
     ScanOutcome, ValidateOutcome, WriteConfigOutcome, WriteIndexOutcome,
 };
 use crate::output::BuildFileDetail;
-use crate::schema::config::{BuildConfig, MdvsToml, SearchConfig, TomlField};
-use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig, FieldTypeSerde};
+use crate::schema::config::{MdvsToml, TomlField};
+use crate::schema::shared::FieldTypeSerde;
+// Re-exported for tests' `use super::*;` — tests construct full MdvsToml
+// fixtures and need the shared section types. Production code in this
+// module no longer references them directly (the helpers moved to
+// sibling sub-modules).
+#[cfg(test)]
+#[allow(unused_imports)]
+use crate::schema::config::{BuildConfig, SearchConfig};
+#[cfg(test)]
+#[allow(unused_imports)]
+use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig};
 use crate::step::{CommandResult, ErrorKind, StepEntry};
+#[cfg(test)]
+#[allow(unused_imports)]
+use config_mutate::DEFAULT_CHUNK_SIZE;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::time::Instant;
 use tracing::instrument;
 
-// Unused under `cfg(any(test, feature = "testing-mocks"))` since the
-// default falls back to the mock embedder in that build flavor.
-#[cfg_attr(any(test, feature = "testing-mocks"), allow(dead_code))]
-const DEFAULT_MODEL: &str = "minishlab/potion-base-8M";
-const DEFAULT_CHUNK_SIZE: usize = 1024;
-
-// ============================================================================
-// Classification types + logic (moved from pipeline/classify.rs)
-// ============================================================================
-
-/// A file that needs chunking and embedding.
-struct FileToEmbed<'a> {
-    /// Unique file identifier (preserved for edited files, new UUID for new files).
-    file_id: String,
-    /// Reference to the scanned file data.
-    scanned: &'a ScannedFile,
-}
-
-/// Data produced by classification, carried forward to embed and write_index steps.
-struct ClassifyData<'a> {
-    /// Whether this is a full rebuild.
-    full_rebuild: bool,
-    /// Files that need chunking + embedding (new or edited).
-    needs_embedding: Vec<FileToEmbed<'a>>,
-    /// Maps filename → file_id for ALL current files (new, edited, unchanged).
-    file_id_map: HashMap<String, String>,
-    /// Chunks retained from unchanged files.
-    retained_chunks: Vec<ChunkRow>,
-    /// Number of files removed since previous build.
-    removed_count: usize,
-    /// Number of chunks dropped from removed files.
-    chunks_removed: usize,
-    /// Per-file chunk counts for removed files (for verbose output).
-    removed_details: Vec<BuildFileDetail>,
-    /// file_ids of files that were removed (chunks to delete in the
-    /// incremental write path).
-    removed_file_ids: Vec<String>,
-}
-
-struct FileClassification<'a> {
-    needs_embedding: Vec<FileToEmbed<'a>>,
-    file_id_map: HashMap<String, String>,
-    unchanged_file_ids: HashSet<String>,
-    removed_count: usize,
-    removed_file_ids: HashSet<String>,
-    removed_filenames: Vec<String>,
-}
-
-fn classify_files<'a>(
-    scanned: &'a ScannedFiles,
-    existing_index: &[FileIndexEntry],
-) -> FileClassification<'a> {
-    let existing: HashMap<&str, (&str, &str)> = existing_index
-        .iter()
-        .map(|e| {
-            (
-                e.filename.as_str(),
-                (e.file_id.as_str(), e.content_hash.as_str()),
-            )
-        })
-        .collect();
-
-    let mut needs_embedding = Vec::new();
-    let mut file_id_map = HashMap::new();
-    let mut unchanged_file_ids = HashSet::new();
-    let mut seen_filenames = HashSet::new();
-
-    for file in &scanned.files {
-        let filename = file.path.display().to_string();
-        let hash = content_hash(&file.content);
-
-        if let Some(&(old_id, old_hash)) = existing.get(filename.as_str()) {
-            seen_filenames.insert(filename.clone());
-            if hash == old_hash {
-                file_id_map.insert(filename, old_id.to_string());
-                unchanged_file_ids.insert(old_id.to_string());
-            } else {
-                let file_id = old_id.to_string();
-                file_id_map.insert(filename, file_id.clone());
-                needs_embedding.push(FileToEmbed {
-                    file_id,
-                    scanned: file,
-                });
-            }
-        } else {
-            let file_id = uuid::Uuid::new_v4().to_string();
-            file_id_map.insert(filename, file_id.clone());
-            needs_embedding.push(FileToEmbed {
-                file_id,
-                scanned: file,
-            });
-        }
-    }
-
-    let mut removed_file_ids = HashSet::new();
-    let mut removed_filenames = Vec::new();
-    for entry in existing_index {
-        if !seen_filenames.contains(entry.filename.as_str()) {
-            removed_file_ids.insert(entry.file_id.clone());
-            removed_filenames.push(entry.filename.clone());
-        }
-    }
-    let removed_count = removed_filenames.len();
-
-    FileClassification {
-        needs_embedding,
-        file_id_map,
-        unchanged_file_ids,
-        removed_count,
-        removed_file_ids,
-        removed_filenames,
-    }
-}
-
-// ============================================================================
-// Embed logic (moved from pipeline/embed.rs)
-// ============================================================================
-
-/// Data produced by the embed files step.
-struct EmbedFilesData {
-    /// Chunk rows for newly embedded files.
-    chunk_rows: Vec<ChunkRow>,
-    /// Per-file chunk counts (for verbose output).
-    details: Vec<BuildFileDetail>,
-}
-
-/// Chunk, extract plain text, embed, and produce chunk rows for a single file.
-async fn embed_file(
-    file_id: &str,
-    file: &ScannedFile,
-    max_chunk_size: usize,
-    embedder: &Embedder,
-) -> Vec<ChunkRow> {
-    let chunks = Chunks::new(&file.content, max_chunk_size);
-    let plain_texts: Vec<String> = chunks
-        .iter()
-        .map(|c| extract_plain_text(&c.plain_text))
-        .collect();
-    let text_refs: Vec<&str> = plain_texts.iter().map(|s| s.as_str()).collect();
-    let embeddings = if text_refs.is_empty() {
-        vec![]
-    } else {
-        embedder.embed_batch(&text_refs).await
-    };
-
-    chunks
-        .iter()
-        .zip(embeddings)
-        .zip(plain_texts)
-        .map(|((chunk, embedding), chunk_text)| ChunkRow {
-            chunk_id: uuid::Uuid::new_v4().to_string(),
-            file_id: file_id.to_string(),
-            chunk_index: chunk.chunk_index as i32,
-            start_line: (chunk.start_line + file.body_line_offset) as i32,
-            end_line: (chunk.end_line + file.body_line_offset) as i32,
-            chunk_text,
-            embedding,
-        })
-        .collect()
-}
+use classify::{ClassifyData, FileToEmbed, classify_files};
+use config_mutate::detect_config_changes;
+pub(crate) use config_mutate::mutate_config;
+use embed::{EmbedFilesData, embed_file};
+use write::{WriteOutcome, write_index_step};
 
 // ============================================================================
 // run()
@@ -721,6 +581,17 @@ pub async fn build_core(
         })
         .collect();
 
+    // Pre-build the incremental-write inputs so we can take `retained_chunks`
+    // out of `classify_data` without leaving a borrow conflict.
+    let file_ids_to_clear: Vec<String> = classify_data
+        .needs_embedding
+        .iter()
+        .map(|fte| fte.file_id.clone())
+        .chain(classify_data.removed_file_ids.iter().cloned())
+        .collect();
+    let full_rebuild = classify_data.full_rebuild;
+    let removed_count = classify_data.removed_count;
+
     let retained_chunks_count = classify_data.retained_chunks.len();
     let mut chunk_rows = classify_data.retained_chunks;
     let mut embedded_details = Vec::new();
@@ -737,88 +608,45 @@ pub async fn build_core(
         schema_hash: compute_schema_hash(config),
     };
 
-    // Three write paths:
-    //   - full_rebuild → overwrite the whole table.
-    //   - nothing actually changed → skip the write entirely.
-    //   - otherwise → incremental: delete rows for changed/removed
-    //     files, append new chunks, refresh metadata, optimize.
-    //
-    // The skip check looks at `embedded_details` (not
-    // `classify_data.needs_embedding`) because empty-body files (e.g.
-    // Hugo `_index.md`) are always marked `needs_embedding` — they
-    // have zero rows in the one-row-per-chunk index, so classify can't
-    // see them as unchanged — but they produce zero new chunks at
-    // embed time and the write would be a no-op.
+    // Three write paths (skip / overwrite / incremental) handled by
+    // `write_index_step`. The skip check there looks at `new_chunks_count`
+    // — see its doc-comment for why empty-body files force that distinction.
     let new_chunks_count = embedded_details.iter().map(|d| d.chunks).sum::<usize>();
-    let nothing_to_persist =
-        !classify_data.full_rebuild && classify_data.removed_count == 0 && new_chunks_count == 0;
-
-    if nothing_to_persist {
-        steps.push(StepEntry::skipped());
-    } else if classify_data.full_rebuild {
-        let write_start = Instant::now();
-        match backend
-            .write_index(&schema_fields, &file_rows, &chunk_rows, build_meta)
-            .await
-        {
-            Ok(()) => {
-                steps.push(StepEntry::ok(
-                    Outcome::WriteIndex(WriteIndexOutcome {
-                        files_written: file_rows.len(),
-                        chunks_written: chunk_rows.len(),
-                    }),
-                    write_start.elapsed().as_millis() as u64,
-                ));
-            }
-            Err(e) => {
-                steps.push(StepEntry::err(
-                    ErrorKind::Application,
-                    e.to_string(),
-                    write_start.elapsed().as_millis() as u64,
-                ));
-                return Err(());
-            }
+    let write_start = Instant::now();
+    match write_index_step(
+        &backend,
+        &schema_fields,
+        &file_rows,
+        &chunk_rows,
+        new_chunks_count,
+        full_rebuild,
+        removed_count,
+        &file_ids_to_clear,
+        retained_chunks_count,
+        build_meta,
+    )
+    .await
+    {
+        Ok(WriteOutcome::Skipped) => steps.push(StepEntry::skipped()),
+        Ok(WriteOutcome::Written {
+            files_written,
+            chunks_written,
+        }) => {
+            steps.push(StepEntry::ok(
+                Outcome::WriteIndex(WriteIndexOutcome {
+                    files_written,
+                    chunks_written,
+                }),
+                write_start.elapsed().as_millis() as u64,
+            ));
         }
-    } else {
-        // Incremental path. Collect new+changed file_ids (which classify
-        // already split out into `needs_embedding`) and the removed
-        // file_ids; their rows are deleted, then the newly embedded
-        // chunks are appended.
-        let file_ids_to_clear: Vec<String> = classify_data
-            .needs_embedding
-            .iter()
-            .map(|fte| fte.file_id.clone())
-            .chain(classify_data.removed_file_ids.iter().cloned())
-            .collect();
-        let new_chunk_slice = &chunk_rows[retained_chunks_count..];
-        let write_start = Instant::now();
-        match backend
-            .write_index_incremental(
-                &schema_fields,
-                &file_ids_to_clear,
-                &file_rows,
-                new_chunk_slice,
-                build_meta,
-            )
-            .await
-        {
-            Ok(()) => {
-                steps.push(StepEntry::ok(
-                    Outcome::WriteIndex(WriteIndexOutcome {
-                        files_written: file_rows.len(),
-                        chunks_written: new_chunk_slice.len(),
-                    }),
-                    write_start.elapsed().as_millis() as u64,
-                ));
-            }
-            Err(e) => {
-                steps.push(StepEntry::err(
-                    ErrorKind::Application,
-                    e.to_string(),
-                    write_start.elapsed().as_millis() as u64,
-                ));
-                return Err(());
-            }
+        Err(e) => {
+            steps.push(StepEntry::err(
+                ErrorKind::Application,
+                e.to_string(),
+                write_start.elapsed().as_millis() as u64,
+            ));
+            return Err(());
         }
     }
 
@@ -843,171 +671,6 @@ pub async fn build_core(
     };
 
     Ok((outcome, embedder))
-}
-
-// ============================================================================
-// Helpers
-// ============================================================================
-
-/// Normalize a revision string: empty and "None" are treated as unset.
-fn normalize_revision(s: &str) -> Option<String> {
-    if s.is_empty() || s.eq_ignore_ascii_case("none") {
-        None
-    } else {
-        Some(s.to_string())
-    }
-}
-
-/// Apply config mutations: fill missing build sections, apply --set-* flags.
-/// Returns `Some(error_message)` if a flag requires --force but wasn't given.
-pub(crate) fn mutate_config(
-    config: &mut MdvsToml,
-    path: &Path,
-    set_model: Option<&str>,
-    set_revision: Option<&str>,
-    set_chunk_size: Option<usize>,
-    force: bool,
-) -> Option<String> {
-    let config_path = path.join("mdvs.toml");
-    let mut config_changed = false;
-
-    match config.embedding_model {
-        None => {
-            // With `--features testing-mocks` (CI fast lane), default to the
-            // deterministic mock embedder so tests that flow through init →
-            // build don't reach for Hugging Face. The feature is off in
-            // production builds, so end users always get model2vec.
-            #[cfg(any(test, feature = "testing-mocks"))]
-            let default = EmbeddingModelConfig {
-                provider: "mock".to_string(),
-                name: set_model.unwrap_or("mock").to_string(),
-                revision: set_revision.and_then(normalize_revision),
-                dim: Some(256),
-            };
-            #[cfg(not(any(test, feature = "testing-mocks")))]
-            let default = EmbeddingModelConfig {
-                provider: "model2vec".to_string(),
-                name: set_model.unwrap_or(DEFAULT_MODEL).to_string(),
-                revision: set_revision.and_then(normalize_revision),
-                dim: None,
-            };
-            config.embedding_model = Some(default);
-            config_changed = true;
-        }
-        Some(ref mut em) if set_model.is_some() || set_revision.is_some() => {
-            if !force {
-                return Some(
-                    "--set-model/--set-revision require --force (changes model, triggers full re-embed)"
-                        .to_string(),
-                );
-            }
-            if let Some(m) = set_model {
-                em.name = m.to_string();
-            }
-            if let Some(r) = set_revision {
-                em.revision = normalize_revision(r);
-            }
-            config_changed = true;
-        }
-        Some(_) => {}
-    }
-
-    match config.chunking {
-        None => {
-            config.chunking = Some(ChunkingConfig {
-                max_chunk_size: set_chunk_size.unwrap_or(DEFAULT_CHUNK_SIZE),
-            });
-            config_changed = true;
-        }
-        Some(ref mut ch) => {
-            if let Some(new_size) = set_chunk_size {
-                if !force {
-                    return Some(
-                        "--set-chunk-size requires --force (changes chunking, triggers full re-embed)"
-                            .to_string(),
-                    );
-                }
-                ch.max_chunk_size = new_size;
-                config_changed = true;
-            }
-        }
-    }
-
-    if config.search.is_none() {
-        config.search = Some(SearchConfig {
-            default_limit: 10,
-            auto_update: true,
-            auto_build: true,
-            internal_prefix: String::new(),
-            aliases: std::collections::HashMap::new(),
-        });
-        config_changed = true;
-    }
-
-    if config.build.is_none() {
-        config.build = Some(BuildConfig { auto_update: true });
-        config_changed = true;
-    }
-
-    if config_changed && let Err(e) = config.write(&config_path) {
-        return Some(format!("failed to write config: {e}"));
-    }
-
-    None
-}
-
-/// Detect manual config changes against the existing parquet metadata.
-/// Returns `Some(error_message)` if config changed and --force not given.
-pub(crate) async fn detect_config_changes(
-    backend: &Backend,
-    embedding: &EmbeddingModelConfig,
-    chunking: &ChunkingConfig,
-    config: &MdvsToml,
-    force: bool,
-) -> Option<String> {
-    if force {
-        return None;
-    }
-    let meta = match backend.read_metadata().await {
-        Ok(Some(m)) => m,
-        Ok(None) => return None, // first build, no metadata
-        Err(e) => return Some(e.to_string()),
-    };
-
-    let mut mismatches = Vec::new();
-    if meta.embedding_model != *embedding {
-        mismatches.push(format!(
-            "model: '{}' (rev {:?}) -> '{}' (rev {:?})",
-            meta.embedding_model.name,
-            meta.embedding_model.revision,
-            embedding.name,
-            embedding.revision,
-        ));
-    }
-    if meta.chunking != *chunking {
-        mismatches.push(format!(
-            "chunk_size: {} -> {}",
-            meta.chunking.max_chunk_size, chunking.max_chunk_size,
-        ));
-    }
-    let current_schema_hash = compute_schema_hash(config);
-    if meta.schema_hash != current_schema_hash {
-        // Don't show raw hashes — they're noise. Show the fact that the
-        // schema content changed, the user knows what they edited.
-        mismatches.push(
-            "schema: fields, types, constraints, path-scoping, or preprocessors have changed"
-                .into(),
-        );
-    }
-
-    if mismatches.is_empty() {
-        None
-    } else {
-        Some(format!(
-            "config changed since last build:\n  {}\nUse --force to rebuild with new config",
-            mismatches.join("\n  "),
-        ))
-    }
 }
 
 #[cfg(test)]
@@ -2084,128 +1747,6 @@ mod tests {
             old_chunk_ids.is_disjoint(&new_chunk_ids),
             "force rebuild should generate new chunk_ids"
         );
-    }
-
-    #[test]
-    fn normalize_revision_clears_empty_and_none() {
-        assert_eq!(normalize_revision(""), None);
-        assert_eq!(normalize_revision("None"), None);
-        assert_eq!(normalize_revision("none"), None);
-        assert_eq!(normalize_revision("NONE"), None);
-        assert_eq!(normalize_revision("abc123"), Some("abc123".to_string()));
-        assert_eq!(
-            normalize_revision("abc123def"),
-            Some("abc123def".to_string())
-        );
-    }
-
-    // ========================================================================
-    // classify_files unit tests (moved from pipeline/classify.rs)
-    // ========================================================================
-
-    use crate::discover::scan::ScannedFile;
-
-    fn make_scanned_files(files: Vec<(&str, &str)>) -> ScannedFiles {
-        ScannedFiles {
-            files: files
-                .into_iter()
-                .map(|(path, body)| ScannedFile {
-                    path: std::path::PathBuf::from(path),
-                    data: None,
-                    content: body.to_string(),
-                    body_line_offset: 0,
-                    frontmatter_error: None,
-                })
-                .collect(),
-        }
-    }
-
-    #[test]
-    fn classify_all_new() {
-        let scanned = make_scanned_files(vec![("a.md", "hello"), ("b.md", "world")]);
-        let existing: Vec<FileIndexEntry> = vec![];
-        let c = classify_files(&scanned, &existing);
-
-        assert_eq!(c.needs_embedding.len(), 2);
-        assert_eq!(c.unchanged_file_ids.len(), 0);
-        assert_eq!(c.removed_count, 0);
-        assert_eq!(c.file_id_map.len(), 2);
-    }
-
-    #[test]
-    fn classify_all_unchanged() {
-        let scanned = make_scanned_files(vec![("a.md", "hello"), ("b.md", "world")]);
-        let existing = vec![
-            FileIndexEntry {
-                file_id: "f1".into(),
-                filename: "a.md".into(),
-                content_hash: content_hash("hello"),
-            },
-            FileIndexEntry {
-                file_id: "f2".into(),
-                filename: "b.md".into(),
-                content_hash: content_hash("world"),
-            },
-        ];
-        let c = classify_files(&scanned, &existing);
-
-        assert_eq!(c.needs_embedding.len(), 0);
-        assert_eq!(c.unchanged_file_ids.len(), 2);
-        assert!(c.unchanged_file_ids.contains("f1"));
-        assert!(c.unchanged_file_ids.contains("f2"));
-        assert_eq!(c.removed_count, 0);
-        assert_eq!(c.file_id_map["a.md"], "f1");
-        assert_eq!(c.file_id_map["b.md"], "f2");
-    }
-
-    #[test]
-    fn classify_mixed() {
-        let scanned = make_scanned_files(vec![
-            ("a.md", "same content"),
-            ("b.md", "new body"),
-            ("c.md", "brand new"),
-        ]);
-        let existing = vec![
-            FileIndexEntry {
-                file_id: "f1".into(),
-                filename: "a.md".into(),
-                content_hash: content_hash("same content"),
-            },
-            FileIndexEntry {
-                file_id: "f2".into(),
-                filename: "b.md".into(),
-                content_hash: content_hash("old body"),
-            },
-            FileIndexEntry {
-                file_id: "f3".into(),
-                filename: "d.md".into(),
-                content_hash: content_hash("deleted"),
-            },
-        ];
-        let c = classify_files(&scanned, &existing);
-
-        assert!(c.unchanged_file_ids.contains("f1"));
-        assert_eq!(c.file_id_map["a.md"], "f1");
-
-        assert_eq!(c.needs_embedding.len(), 2);
-        let edited = c
-            .needs_embedding
-            .iter()
-            .find(|f| f.scanned.path.to_str() == Some("b.md"))
-            .unwrap();
-        assert_eq!(edited.file_id, "f2");
-
-        let new = c
-            .needs_embedding
-            .iter()
-            .find(|f| f.scanned.path.to_str() == Some("c.md"))
-            .unwrap();
-        assert_ne!(new.file_id, "f1");
-        assert_ne!(new.file_id, "f2");
-        assert_ne!(new.file_id, "f3");
-
-        assert_eq!(c.removed_count, 1);
-        assert!(!c.file_id_map.contains_key("d.md"));
     }
 
     // ========================================================================
