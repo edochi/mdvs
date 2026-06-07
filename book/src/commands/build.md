@@ -27,14 +27,14 @@ Global flags (`-o`, `-v`, `--logs`) are described in [Configuration](../configur
 
 1. **Read config** — parse `mdvs.toml`. If `[embedding_model]`, `[chunking]`, or `[search]` sections are missing, they're added with defaults and written back.
 
-By default, `build` auto-updates the schema before building (see [`[build].auto_update`](../configuration.md#build)). Use `--no-update` to skip this.
+By default, `build` auto-updates the schema before building (see [`[build].auto_update`](../configuration.md#build)). Use `--no-update` to validate against the committed schema (deterministic CI). The auto chain is cheap on unchanged corpora — no model load, no Lance write.
 
 2. **Scan** — walk the directory and extract frontmatter.
 3. **Validate** — check frontmatter against the schema (same as [check](./check.md)). If violations are found, the build aborts.
-4. **Classify** — compare scanned files against the existing index to determine what needs embedding.
+4. **Classify** — compare scanned files against the existing index to determine what needs embedding, what to retain, and what to drop.
 5. **Load model** — download or load the cached embedding model. Skipped if nothing needs embedding.
 6. **Embed** — chunk and embed new/edited files.
-7. **Write index** — write the Lance dataset at `.mdvs/index.lance/` (one row per chunk) and create indexes inside it: a full-text BM25 index on `chunk_text` (always) and a cosine IVF-PQ vector index on `embedding` (only above 10,000 chunks; smaller vaults rely on LanceDB's exact flat scan).
+7. **Write index** — branches on the change set: **skip** (nothing changed and not a full rebuild), **full overwrite** (first build or `--force`), or **incremental** (delete the rows for new/edited/removed files, append the new chunks, refresh metadata, optimize). The Lance dataset is always at `.mdvs/index.lance/` with one row per chunk; a full-text BM25 index on `chunk_text` is rebuilt with the table; a cosine IVF-PQ vector index on `embedding` is created only above 10,000 chunks (smaller vaults rely on LanceDB's exact flat scan).
 
 See [Search & Indexing](../concepts/search.md) for details on chunking, embedding, and how the index is structured.
 
@@ -51,7 +51,7 @@ Build is incremental by default. It classifies each file by comparing its conten
 
 Content hash covers the **file body only** (after frontmatter extraction). Frontmatter-only changes don't trigger re-embedding — but every chunk row is rewritten with fresh frontmatter from the current scan.
 
-When nothing needs embedding, the model is never loaded.
+When nothing needs embedding, the model is never loaded. When the change set is empty (no new/edited/removed files), the index write itself is also skipped — `mdvs build` on an unchanged corpus does no Lance work at all.
 
 ### Config changes
 
@@ -132,14 +132,14 @@ Build aborted — 6 violation(s) found. Run `mdvs check` for details.
 
 ### Verbose (`-v`)
 
-Verbose output adds pipeline timing lines before the result:
+Verbose output adds pipeline timing lines before the result. Steps that didn't need to run (model load on an unchanged corpus, the index write itself when nothing changed) are silently elided from the text output, but appear as `"status": "skipped"` in `--output json`. A full-rebuild verbose run:
 
 ```
 Read config: example_kb/mdvs.toml (4ms)
 Scan: 43 files (4ms)
 Infer: 37 field(s) (0ms)
 Validate: 43 files — no violations (87ms)
-Classify: 43 files (full rebuild) (0ms)
+Classify: 43 to embed, 0 unchanged, 0 removed (0ms)
 Load model: minishlab/potion-base-8M (24ms)
 Embed: 43 files, 59 chunks (12ms)
 Write index: 43 files, 59 chunks (1ms)

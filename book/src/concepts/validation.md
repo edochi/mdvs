@@ -1,6 +1,6 @@
 # Validation
 
-`mdvs check` validates every file's frontmatter against the schema in `mdvs.toml`. It's read-only, deterministic, and produces no side effects — it just tells you what's wrong.
+`mdvs check` validates every file's frontmatter against the schema in `mdvs.toml`. It's read-only and produces no side effects — it just tells you what's wrong. The output is byte-stable across runs: violations are sorted by `(field, kind, rule)` and the files within each violation are sorted by path, so CI tools that diff `mdvs check` output across runs get a clean comparison regardless of file-walking order.
 
 ## The seven violations
 

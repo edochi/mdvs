@@ -35,8 +35,8 @@ mdvs is useful when you have a markdown corpus with structured frontmatter. Some
 - **Hybrid search.** Vector similarity + BM25 full-text + RRF fusion. SQL `--where` filters on typed frontmatter: `--where "status = 'published' AND date > '2026-05-01'"`.
 - **JSON Schema interop.** `mdvs export-jsonschema` emits a JSON Schema 2020-12 document; `mdvs init --from-jsonschema` imports one.
 - **Runs entirely in-process.** Local files, single binary. No API keys, no vector-DB cluster, no GPU.
-- **Incremental builds.** Only changed files are re-embedded. If nothing changed, the model isn't even loaded.
-- **Auto-pipeline.** `search` auto-builds the index if needed. `build` auto-updates the schema before embedding.
+- **Incremental builds.** Only changed files are re-embedded; the Lance write itself is also incremental (delete + append + optimize, not a full overwrite). If nothing changed, the model isn't loaded and the index isn't rewritten.
+- **Auto-pipeline.** `search` auto-builds the index if needed. `build` auto-updates the schema before embedding. The whole chain is cheap on unchanged corpora — so a bare `mdvs search "query"` does everything in one shot.
 - **Agent-callable and CI-ready.** `--output json` on every command. Deterministic exit codes (`0` = success, `1` = violations, `2` = error).
 
 ## Install

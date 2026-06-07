@@ -71,6 +71,7 @@ Used in `UpdateOutcome.removed`.
 ## Violations
 
 ```rust
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub enum ViolationKind {               // output.rs:173
     MissingRequired,
     WrongType,
@@ -95,6 +96,8 @@ pub struct FieldViolation {            // output.rs:197
 ```
 
 Used in `CheckOutcome.violations` and `ValidateOutcome.violations`.
+
+`PartialOrd, Ord` on `ViolationKind` are deliberate: `collect_violations` sorts the output `Vec<FieldViolation>` by `(field, kind, rule)` (with `files` inner-sorted by path) so `mdvs check` output is byte-stable across runs. The declaration order above is the sort order — adding a variant changes that order; check downstream consumers (diff tooling, golden fixtures) before reordering.
 
 ## New Field
 

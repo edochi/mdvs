@@ -46,7 +46,7 @@ use write::{WriteOutcome, write_index_step};
 // run()
 // ============================================================================
 
-/// Validate frontmatter, chunk, embed, and write Parquet files to `.mdvs/`.
+/// Validate frontmatter, chunk, embed, and write the Lance dataset to `.mdvs/`.
 #[instrument(name = "build", skip_all)]
 pub async fn run(
     path: &Path,
@@ -141,6 +141,11 @@ pub async fn run(
 // ============================================================================
 
 /// Core build pipeline: scan → auto-update → validate → classify → embed → write index.
+///
+/// The final write step dispatches across three paths (in `cmd::build::write`):
+/// **skip** (nothing changed and not a full rebuild), **full overwrite** (first
+/// build or `--force`), or **incremental** (delete the rows for new/edited/removed
+/// files, append the freshly embedded chunks, refresh metadata, optimize).
 ///
 /// Returns `BuildOutcome` + optional `Embedder` (for reuse by search) on success.
 /// On failure, pushes error steps and returns `Err(())` — the caller constructs
@@ -1176,7 +1181,7 @@ mod tests {
         );
         assert!(!crate::step::has_failed(&init_output));
 
-        // Build the index (creates build sections + parquets)
+        // Build the index (creates build sections + Lance dataset)
         let output = run(tmp.path(), None, None, None, false, true, false).await;
         assert!(!crate::step::has_failed(&output));
 
