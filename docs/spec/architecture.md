@@ -59,7 +59,7 @@ Pipeline stages with the key type at each boundary:
 7. **Validation** — translate via `dsl_to_canonical`, compile per-field `jsonschema::Validator`, run Stage 2 preprocessors, validate, map errors → `Vec<FieldViolation>` (`cmd/check.rs`)
 8. **Chunking** — semantic markdown splitting with line ranges → `Chunks` (`index/chunk.rs:20`)
 9. **Embedding** — plain text → dense vector via model2vec → `Vec<f32>` (`index/embed.rs:34`)
-10. **Storage** — build one Arrow RecordBatch per build, hand to `lancedb::create_table` → single `.mdvs/index.lance/` dataset (one row per chunk) (`index/storage.rs`, `index/backend.rs`)
+10. **Storage** — write to the single `.mdvs/index.lance/` dataset via one of three paths in `cmd/build/write.rs::write_index_step`: skip (no delta + not full rebuild), full overwrite (`Backend::write_index` → `create_table(...).mode(Overwrite)`), or incremental (`Backend::write_index_incremental` → delete rows by file_id + append + refresh metadata + optimize). One row per chunk in either persist path. (`index/storage.rs`, `index/backend/`)
 11. **Search** — `SearchMode`-dispatched LanceDB query (`nearest_to` / `full_text_search` / hybrid + RRF reranker) with `--where` translated to LanceDB's SQL filter; best-chunk-per-file dedupe in Rust → `Vec<SearchHit>` (`index/backend.rs`)
 
 ## Module Tree
@@ -116,16 +116,20 @@ src/
 │   ├── storage.rs                      — Arrow batch construction, column constants, ChunkRow, BuildMetadata
 │   └── backend.rs                      — Backend enum (LanceBackend), --where translator, SearchHit, IndexStats
 │
-└── outcome/
-    ├── mod.rs                          — Outcome enum (one variant per step/command)
-    ├── commands/                       — per-command outcomes (InitOutcome, BuildOutcome, etc.)
-    │   ├── init.rs, build.rs, search.rs, check.rs, update.rs, clean.rs, info.rs
-    └── [step outcomes]                 — ScanOutcome, InferOutcome, ValidateOutcome, ClassifyOutcome,
-        ├── scan.rs, infer.rs,            EmbedFilesOutcome, LoadModelOutcome, ReadConfigOutcome,
-        ├── validate.rs, classify.rs,     WriteConfigOutcome, ReadIndexOutcome, WriteIndexOutcome,
-        ├── embed.rs, model.rs,           DeleteIndexOutcome, ExecuteSearchOutcome
-        ├── config.rs, index.rs,
-        └── search.rs
+├── outcome/
+│   ├── mod.rs                          — Outcome enum (one variant per step/command)
+│   ├── commands/                       — per-command outcomes (InitOutcome, BuildOutcome, etc.)
+│   │   ├── init.rs, build.rs, search.rs, check.rs, update.rs, clean.rs, info.rs
+│   └── [step outcomes]                 — ScanOutcome, InferOutcome, ValidateOutcome, ClassifyOutcome,
+│       ├── scan.rs, infer.rs,            EmbedFilesOutcome, LoadModelOutcome, ReadConfigOutcome,
+│       ├── validate.rs, classify.rs,     WriteConfigOutcome, ReadIndexOutcome, WriteIndexOutcome,
+│       ├── embed.rs, model.rs,           DeleteIndexOutcome, ExecuteSearchOutcome
+│       ├── config.rs, index.rs,
+│       └── search.rs
+│
+└── examples/                           — runnable harnesses (`cargo run --release --example <name> -- <path>`)
+    ├── profile_pipeline.rs             — phase-by-phase wall-clock harness; drives `build_core` and reads `StepEntry` timings
+    └── probe_lance_incremental.rs      — exploratory LanceDB probe: copies an index to a tempdir and exercises `delete` / `add` / `replace_schema_metadata` / `optimize`
 ```
 
 ## Key Types
@@ -172,7 +176,7 @@ src/
 | `BuildMetadata` | `index/storage.rs` | Build config stored as Lance table-level kv metadata |
 | `FileIndexEntry` | `index/storage.rs` | Lightweight projected read for incremental classification (file_id, filepath, content_hash) |
 | `Backend` | `index/backend.rs` | Storage backend enum (only `Lance` variant) |
-| `LanceBackend` | `index/backend.rs` | LanceDB connection + `write_index` + `search` (mode-dispatched) + `--where` translator |
+| `LanceBackend` | `index/backend/` | LanceDB connection + `write_index` (full rebuild) + `write_index_incremental` (delete + append + refresh + optimize) + `search` (mode-dispatched) + `--where` translator |
 | `SearchMode` | `search.rs` | `Semantic` / `Fulltext` / `Hybrid` (default `Hybrid`) |
 | `SearchHit` | `index/backend.rs` | Query result: filename, score, chunk lines, text |
 
@@ -185,7 +189,7 @@ src/
 | `Outcome` | `outcome/mod.rs:41` | Enum with one variant per step/command outcome |
 | `Block` | `block.rs:11` | Rendering IR: Line, Table, Section |
 | `Render` | `block.rs:56` | Trait: `render_compact()` / `render_verbose()` → `Vec<Block>` |
-| `ViolationKind` | `output.rs:173` | Enum: WrongType, Disallowed, MissingRequired, NullNotAllowed, InvalidCategory, OutOfRange, FrontmatterUnrepresentable |
+| `ViolationKind` | `output.rs:173` | Enum (derives `PartialOrd, Ord` — declaration order is the sort key): `MissingRequired`, `WrongType`, `Disallowed`, `NullNotAllowed`, `InvalidCategory`, `OutOfRange`, `FrontmatterUnrepresentable` |
 | `FieldViolation` | `output.rs:197` | Grouped violation: field, kind, rule, files |
 | `DiscoveredField` | `output.rs:64` | Inferred field for command output |
 | `ChangedField` | `output.rs:88` | Field with detected changes (type, allowed, required, nullable) |
@@ -214,8 +218,11 @@ Post-Wave-B, runtime validation goes through the `jsonschema` crate. Hand-rolled
 
 1. **Translation** — `dsl_to_canonical(config)` in `schema/json_schema.rs` translates `MdvsToml` into a JSON Schema 2020-12 document. Strict types: `FieldType::String` emits `{"type": "string"}` (no permissive set). `FieldType::Date` and `FieldType::DateTime` emit `{"type": "string", "format": "date"}` and `{"type": "string", "format": "date-time"}`. Path-scoping is carried as `x-mdvs.allowed` / `x-mdvs.required` per property; preprocessor stages as `x-mdvs.preprocess`.
 2. **Gate** — `validate_mdvs_schema(schema)` checks an allow-list of keywords + a hard-reject list for unsupported JSON Schema features (`oneOf`, `$ref`, etc.) with explanatory messages. The `format` keyword is allowed only with values in `ALLOWED_FORMATS = ["date", "date-time"]`; other format strings are rejected with a "use pattern" hint. Run on any schema before it enters the pipeline (`init --from-jsonschema`, `check --jsonschema`).
-3. **Compile** — `validate()` in `cmd/check.rs` builds a per-field `jsonschema::Validator` once per call via `jsonschema::options().should_validate_formats(true).build()`. Format validation is enabled so `date` and `date-time` are checked at runtime, not just annotated. Stage 2 preprocessors are applied before validation; values arrive normalized.
-4. **Validate** — each frontmatter value runs through its field's compiled validator. Errors map via `map_validation_error` (exhaustive match over `ValidationErrorKind`) into mdvs `ViolationKind`s.
+3. **Compile** — `validate()` in `cmd/check/validate.rs` builds per-call:
+   - `FieldValidators::build` — one `jsonschema::Validator` per field via `jsonschema::options().should_validate_formats(true).build()`. Format validation is enabled so `date` and `date-time` are checked at runtime, not just annotated.
+   - `build_field_metas(config)` (in `cmd/check/field_meta.rs`) — per-field `FieldMeta` with compiled `GlobSet`s for `allowed` / `required` (so the inner loop doesn't recompile globs per file) and a cached `FieldType::try_from`.
+   - `Pipeline::for_config` — Stage 2 preprocessors per field, applied before validation so values arrive normalized.
+4. **Validate** — `check_field_values` walks each frontmatter leaf. For each `(field, file)` it: runs `preprocess::strict_subtype_check` (Rust-side), then the Stage 2 pipeline, then `validator.is_valid()` as a fast path — only when that returns false does it iterate `validator.iter_errors()` and map each error via `map_validation_error` (exhaustive match over `ValidationErrorKind`) into an mdvs `ViolationKind`. The path-scoping `Disallowed` check uses the precomputed `FieldMeta::allowed` `GlobSet`. `check_required_fields` similarly uses `FieldMeta::required`. `collect_violations` then sorts the accumulator by `(field, kind, rule)` outer / `path` inner — `Vec<FieldViolation>` output is byte-stable across runs.
 
 ### Error mapping (exhaustive)
 
@@ -383,17 +390,20 @@ Every command in `main.rs` follows the same dispatch pattern: call `run()`, chec
 
 ## Incremental Build
 
-Build uses content hashing to avoid re-embedding unchanged files (`cmd/build.rs`):
+Build uses content hashing to avoid re-embedding unchanged files (`cmd/build/`):
 
-1. **Hash** — `content_hash()` in `index/storage.rs` uses xxh3 on the markdown body (after frontmatter extraction)
-2. **Classify** — compare scanned files against `FileIndexEntry` projected from the existing Lance dataset:
+1. **Hash** — `content_hash()` in `index/storage.rs` uses xxh3 on the markdown body (after frontmatter extraction).
+2. **Classify** — `classify::classify_files` compares scanned files against `FileIndexEntry` projected from the existing Lance dataset and returns a `ClassifyData` with `needs_embedding`, `retained_chunks`, `removed_file_ids`, and the file_id map:
    - **New** — no previous entry
    - **Edited** — hash differs
    - **Unchanged** — hash matches
    - **Removed** — in index but not in scan
-3. **Skip model** — if no files need embedding, model loading is skipped entirely
-4. **Rebuild** — the Lance table is rewritten with the combined set of retained + new chunks (`CreateTableMode::Overwrite`)
-5. **Force** — `--force` triggers full rebuild. Config changes (model, chunk size, prefix) also require `--force`
+3. **Skip model** — if no files need embedding, model loading is skipped entirely.
+4. **Three-way write** — `write::write_index_step` dispatches the persist step:
+   - **Skip** when not a full rebuild AND `removed_count == 0` AND `new_chunks_count == 0`. The skip predicate uses chunk count (not file count) because empty-body files like Hugo `_index.md` are always classified as needing embedding but produce zero chunks. Returns `WriteOutcome::Skipped`, recorded as a `StepEntry::Skipped` (silent in text output, `"status": "skipped"` in JSON).
+   - **Full overwrite** when `full_rebuild` is true (first build or `--force`) — `Backend::write_index` calls `create_table(...).mode(Overwrite)` and rebuilds the FTS + (above 10k chunks) IVF-PQ indexes inside the new table.
+   - **Incremental** otherwise — `Backend::write_index_incremental` deletes the rows for `file_ids_to_clear` (new + edited + removed file_ids), appends the freshly embedded chunk slice, refreshes the schema metadata via `NativeTable::replace_schema_metadata`, and runs `optimize(All)` so the existing FTS + vector indexes incorporate the delta without a full rebuild.
+5. **Force** — `--force` triggers full rebuild (path 2 above) regardless of the delta. Config changes (model, chunk size, prefix) also require `--force`.
 
 ## Storage Layout
 

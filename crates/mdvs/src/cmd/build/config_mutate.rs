@@ -128,7 +128,7 @@ pub(crate) fn mutate_config(
     None
 }
 
-/// Detect manual config changes against the existing parquet metadata.
+/// Detect manual config changes against the existing Lance table-level metadata.
 /// Returns `Some(error_message)` if config changed and --force not given.
 pub(crate) async fn detect_config_changes(
     backend: &Backend,

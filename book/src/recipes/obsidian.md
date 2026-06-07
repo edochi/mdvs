@@ -138,11 +138,11 @@ See the [Search Guide](../search-guide.md) for the full `--where` reference.
 
 ## Tips
 
-- **Incremental builds** — only notes whose body changed since the last build are re-embedded. Frontmatter-only changes (updating tags, status) don't trigger re-embedding. Run `mdvs build` freely — it's fast when nothing changed.
+- **Incremental builds** — only notes whose body changed since the last build are re-embedded. Frontmatter-only changes (updating tags, status) don't trigger re-embedding. Run `mdvs build` freely — on an unchanged vault the index write itself is skipped, so it's effectively a no-op.
 
 - **Alongside Obsidian search** — mdvs search is semantic (finds conceptually related notes), while Obsidian's built-in search is keyword-based. They complement each other.
 
-- **Large vaults** — mdvs has been tested on vaults with 500+ files and 2000+ chunks. A full build from scratch completes in under a second. Subsequent builds are incremental, re-embedding only changed files.
+- **Large vaults** — mdvs has been tested on vaults of over 1,500 files; full build from scratch finishes in single-digit seconds, and incremental builds touching one or two files complete in tens of milliseconds. See [docs/benchmarks/](https://github.com/edochi/mdvs/tree/main/docs/benchmarks) for measured numbers.
 
 - **Ignore noisy fields** — if some frontmatter fields are auto-generated and you don't want to validate them, add them to the `ignore` list in `mdvs.toml`:
   ```toml

@@ -4,17 +4,21 @@ Validate frontmatter against the schema. Read-only — never modifies files or c
 
 ## Pipeline
 
-`cmd/check.rs` → `run()`
+`cmd/check/mod.rs` → `run()` → `pub fn validate()` (in `validate.rs`).
 
 1. **Resolve config** — `resolve_check_config()` reads `mdvs.toml` and, if `--jsonschema PATH` is provided, overrides the `[fields]` section. When no `mdvs.toml` exists but `--jsonschema` is given, synthesizes a default via `MdvsToml::default_with_fields(fields, ignore)` so downstream code sees a normal `MdvsToml`.
 2. **Auto-update** — if `[check].auto_update` is true (default) and no `--jsonschema` override, runs inference + merges any newly-discovered fields into the config. Fields with unrepresentable shapes (`Array(Object{...})`) are partitioned out by `InferredSchema::infer` and surfaced via `emit_dropped_warnings()` to stderr; they are NOT added to the config.
-3. **Scan** — `ScannedFiles::scan(path, &config.scan)` — `ScannedFile.frontmatter_error` carries any YAML→JSON representation failure
-4. **Build validators + pipeline** — `dsl_to_canonical(config)`, compile one `jsonschema::Validator` per field, build the Stage 2 `Pipeline` for each field
+3. **Scan** — `ScannedFiles::scan(path, &config.scan)` — `ScannedFile.frontmatter_error` carries any YAML→JSON representation failure.
+4. **Build validators + field metas + pipeline** — once per `validate()` call:
+   - `FieldValidators::build(config)` compiles one `jsonschema::Validator` per leaf via `dsl_to_canonical` + `extract_leaf_schemas` (keyed by dotted name).
+   - `build_field_metas(config)` precomputes per-field `FieldMeta` (compiled `GlobSet`s for `allowed` / `required`, plus a cached `FieldType::try_from(field.field_type)`). Without this, the inner `(field, file)` loop would call `Glob::new` and `FieldType::try_from` tens of thousands of times.
+   - `Pipeline::for_config(config)` builds the Stage 2 preprocessor pipeline per field.
+   - Per-file path strings are precomputed once so `path.display().to_string()` doesn't run inside the per-required-field inner loop.
 5. **Validate** — for each file:
-   - **Frontmatter errors** — if `frontmatter_error` is set, emit `ViolationKind::FrontmatterUnrepresentable` with sentinel field `<frontmatter>`
-   - **Per-field values** — run the Stage 2 pipeline to normalize, then validate against the field's compiled validator. Translate `ValidationError`s into mdvs violations via `map_validation_error`
-   - **Path-scoping** — `globset`-side check (Rust) for `allowed` / `required` violations
-6. **Collect** — `collect_violations()` groups by field/kind/rule, sorts alphabetically
+   - **Frontmatter errors** — if `frontmatter_error` is set, emit `ViolationKind::FrontmatterUnrepresentable` with sentinel field `<frontmatter>`.
+   - **Per-field values** — `check_field_values` runs the Stage 2 pipeline to normalize, then takes a `validator.is_valid()` fast path: when no errors exist (the common case), only the path-scoping `Disallowed` check fires. Only fields whose validator returned errors go through the full `validator.iter_errors()` + `map_validation_error` path. The strict-Float precheck (`preprocess::strict_subtype_check`) runs before either of the above. Path-scoping uses the precomputed `FieldMeta::allowed` `GlobSet`.
+   - **Required fields** — `check_required_fields` per-field iteration over the precomputed `FieldMeta::required` `GlobSet`.
+6. **Collect** — `collect_violations()` groups by `ViolationKey { field, kind, rule }`. Output sort is byte-stable: outer sort `(field, kind, rule)` where `kind` uses `ViolationKind`'s `Ord` derive (declaration order: `MissingRequired` < `WrongType` < `Disallowed` < `NullNotAllowed` < `InvalidCategory` < `OutOfRange` < `FrontmatterUnrepresentable`); inner sort files within each violation by path. The byte-stability contract matters for CI consumers that diff `mdvs check` output across runs.
 
 Returns `CheckOutcome` with `files_checked`, `violations: Vec<FieldViolation>`, `new_fields: Vec<NewField>`.
 

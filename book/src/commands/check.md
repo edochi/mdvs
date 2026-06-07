@@ -22,7 +22,7 @@ Global flags (`-o`, `-v`, `--logs`) are described in [Configuration](../configur
 
 `check` reads `mdvs.toml`, scans every markdown file, and validates each field value against the declared constraints.
 
-By default, `check` auto-updates the schema before validating (see [`[check].auto_update`](../configuration.md#check)). Use `--no-update` to skip this and validate against the current `mdvs.toml` as-is.
+By default, `check` auto-updates the schema before validating (see [`[check].auto_update`](../configuration.md#check)). Use `--no-update` to skip the update pass and validate against the committed `mdvs.toml` as-is — what you want in CI.
 
 It reports seven kinds of violations:
 
@@ -36,7 +36,7 @@ It reports seven kinds of violations:
 
 Fields not in `mdvs.toml` (and not in the `ignore` list) are reported as **new fields** — these are informational and don't count as violations.
 
-`check` is read-only — it never modifies `mdvs.toml` or any files. See [Validation](../concepts/validation.md) for the full rules, including preprocessor handling and null behavior.
+`check` is read-only — it never modifies `mdvs.toml` or any files. Violations are sorted deterministically by `(field, kind, rule)`, and files within each violation are sorted by path — output is byte-stable across runs regardless of file-walking order. See [Validation](../concepts/validation.md) for the full rules, including preprocessor handling and null behavior.
 
 ### Validate against an external schema
 

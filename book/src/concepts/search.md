@@ -69,7 +69,7 @@ Build only re-embeds what changed. Each file's markdown body (excluding frontmat
 
 Frontmatter-only changes (adding a tag, fixing a typo in `author`) rewrite the `data` column on every chunk row without re-embedding — the body hash hasn't changed, so the vectors are still valid.
 
-When nothing needs embedding, the model isn't even loaded. A `--force` flag triggers a full rebuild regardless of hashes.
+When nothing needs embedding, the model isn't even loaded. When the change set is also empty (no new, edited, or removed files), the index write itself is skipped — `mdvs build` on an unchanged corpus does no Lance work at all. A `--force` flag bypasses both skips and triggers a full overwrite regardless of hashes. The non-force path that does need to persist a change is incremental: the rows for new, edited, and removed files are deleted and the freshly embedded chunks are appended, avoiding a full table rewrite.
 
 ## How search works
 
