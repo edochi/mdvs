@@ -15,6 +15,7 @@ Prerequisites
 -------------
 - ``asciinema`` (3.x) on ``$PATH`` (``cargo install asciinema`` or ``brew
   install asciinema``).
+- ``jq`` on ``$PATH`` (final demo beat pipes ``--output json`` through it).
 - ``uv`` on ``$PATH`` (https://docs.astral.sh/uv/).
 - ``cargo build --release -p mdvs`` (the demo invokes
   ``target/release/mdvs``).
@@ -51,7 +52,7 @@ def reset_demo_kb() -> None:
     for path in (
         DEMO_KB / "mdvs.toml",
         DEMO_KB / ".mdvs",
-        DEMO_KB / "books" / "draft.md",
+        DEMO_KB / "wiki" / "concepts" / "llm-tooling.md",
     ):
         if path.is_dir():
             shutil.rmtree(path)
@@ -66,6 +67,10 @@ def main() -> None:
             "asciinema not on PATH — install it with "
             "`cargo install asciinema` or `brew install asciinema`."
         )
+    if shutil.which("jq") is None:
+        raise SystemExit("jq not on PATH — install it (brew install jq).")
+    if shutil.which("bat") is None:
+        raise SystemExit("bat not on PATH — install it (brew install bat).")
 
     binary = REPO / "target" / "release" / "mdvs"
     if not binary.exists():
@@ -80,6 +85,19 @@ def main() -> None:
     ) as rc:
         rc.write("PS1='$ '\n")
         rc.write(f'export PATH="{binary.parent}:$PATH"\n')
+        # Recording-only alias: viewers see `cat file.md` but get bat's
+        # syntax-highlighted output. The rcfile is temp and removed
+        # below, so this never leaves the recording session.
+        rc.write(
+            "alias cat='bat --color=always --paging=never --style=plain "
+            "--theme=TwoDark'\n"
+        )
+        # `expand_aliases` lets non-interactive bash (which doesn't expand
+        # aliases by default) honour the alias even when sub-acts in this
+        # script run via pexpect. Without it, the alias only fires for
+        # top-level prompt commands — which is what we want, but flip it on
+        # for safety against shell version quirks.
+        rc.write("shopt -s expand_aliases\n")
         rcfile = rc.name
 
     env = os.environ.copy()
@@ -106,15 +124,21 @@ def main() -> None:
         )
         child.expect(PROMPT)
 
-        def run(cmd: str, after: float = 1.0, char_delay: float = 0.045) -> None:
+        def run(cmd: str, after: float = 0.8, char_delay: float = 0.035) -> None:
             for c in cmd:
                 child.send(c)
                 time.sleep(char_delay)
+            # Hold for a beat after the command is fully typed — gives the
+            # viewer time to read the command before the output replaces it.
+            time.sleep(1.0)
             child.send("\r")
             child.expect(PROMPT)
             time.sleep(after)
 
-        def comment(text: str, after: float = 1.2) -> None:
+        def comment(text: str, after: float = 0.4) -> None:
+            # Comments type at a readable cadence — slow enough to be
+            # readable as they appear, faster than commands since they're
+            # scaffolding rather than content.
             for c in f"# {text}":
                 child.send(c)
                 time.sleep(0.025)
@@ -122,42 +146,102 @@ def main() -> None:
             child.expect(PROMPT)
             time.sleep(after)
 
-        run("cd assets/demo_kb", after=0.6)
+        def clear(after: float = 0.3) -> None:
+            """Send Ctrl-L so each section starts on a clean terminal."""
+            child.sendcontrol("l")
+            child.expect(PROMPT)
+            time.sleep(after)
 
-        comment("The knowledge base — six markdown notes:", after=1.0)
-        run("find . -name '*.md' | sort", after=2.5)
+        run("cd assets/demo_kb", after=0.4)
 
-        comment("Each file has YAML frontmatter:", after=1.0)
-        run("cat books/dune.md", after=3.0)
+        # Act 1 — show one file's frontmatter (the structure is implicit in the path).
+        # `cat` is aliased to `bat` in the rcfile so files render with syntax
+        # highlighting; viewers see the familiar `cat` command.
+        comment("A small AI-curated knowledge base. Each entry is typed:")
+        run("cat wiki/concepts/vector-databases.md", after=7.0)
 
-        comment("Scan, infer the typed schema, write mdvs.toml:", after=1.0)
-        run("mdvs init", after=4.5)
+        clear()
 
-        comment("Validate the files against the schema:", after=1.0)
-        run("mdvs check", after=3.0)
+        # Act 2 — schema inference.
+        comment("mdvs infers the schema from the existing files:")
+        run("mdvs init", after=3.0)
 
-        comment("Add a draft with a wrong-type field:", after=1.0)
-        run(
-            "printf -- '---\\ntitle: Draft\\nrating: TBD\\n---\\n' "
-            "> books/draft.md",
-            after=0.6,
+        # Act 2b — surface the categorical inference; it sets up the violation.
+        comment(
+            "It even spotted that confidence is a closed category — "
+            "three valid values:"
         )
-        run("cat books/draft.md", after=2.5)
+        run("grep --color=always -B 1 -A 1 'categories' mdvs.toml", after=5.0)
 
-        comment("check catches the violations:", after=1.0)
-        run("mdvs check", after=4.5)
+        clear()
 
-        comment("Remove the bad file:", after=1.0)
-        run("rm books/draft.md", after=1.0)
-
-        comment("Build the search index (local embeddings):", after=1.0)
-        run("mdvs build", after=4.0)
-
-        comment("Semantic search + SQL filter:", after=1.0)
+        # Act 3 — agent writes a new entry with a hallucinated category value.
+        comment(
+            "An LLM agent drafts a new entry — but invents 'TBD', "
+            "a value not in the schema:"
+        )
         run(
-            "mdvs search 'sci-fi' --limit 2 "
-            "--where \"date_added > '2024-02-01'\"",
-            after=5.0,
+            "printf -- '---\\ntitle: LLM tooling\\ncategory: model\\nconfidence: TBD\\n"
+            "last_reviewed: 2026-06-01\\ntags: [llm, tools]\\n---\\n' "
+            "> wiki/concepts/llm-tooling.md",
+            after=0.3,
+        )
+        run("cat wiki/concepts/llm-tooling.md", after=5.0)
+
+        comment(
+            "check fires — TBD isn't one of the categories mdvs inferred "
+            "(high / low / medium):"
+        )
+        run("mdvs check", after=9.0)
+
+        clear()
+
+        # Act 4 — show the schema-widening resolution. The intuitive fix is
+        # to change the value in the file; the mdvs-distinctive fix is to
+        # widen the schema. We narrate option 1 and execute option 2.
+        comment(
+            "Two ways to fix this. The agent could change the value to one "
+            "of the valid categories."
+        )
+        comment(
+            "Or — if TBD is actually a legitimate state — widen the schema "
+            "by adding it to mdvs.toml:"
+        )
+        run(
+            "sed -i.bak 's/\\[\"high\", \"low\", \"medium\"\\]/"
+            "[\"TBD\", \"high\", \"low\", \"medium\"]/' "
+            "mdvs.toml && rm mdvs.toml.bak",
+            after=0.3,
+        )
+        run("grep --color=always -B 1 -A 1 'categories' mdvs.toml", after=5.0)
+
+        comment("Now check passes — TBD is part of the schema:")
+        run("mdvs check", after=5.0)
+
+        clear()
+
+        # Act 5 — build the search index.
+        comment("Build the search index (local embeddings):")
+        run("mdvs build", after=5.0)
+
+        clear()
+
+        # Act 6 — typed-frontmatter semantic search.
+        comment("Semantic search with a typed --where filter:")
+        run(
+            "mdvs search 'how do agents query a vector store' "
+            "--where \"category = 'infra' AND confidence != 'low'\" --limit 3",
+            after=9.0,
+        )
+
+        clear()
+
+        # Act 7 — agent-callable surface. This is the headline.
+        comment("And the agent-callable surface — JSON out, jq in:")
+        run(
+            "mdvs search 'retrieval pipeline' --limit 4 --output json | "
+            "jq '.hits[] | {file: .filename, score: .score}'",
+            after=9.0,
         )
 
         # Ctrl+D — bash exits on EOF. It still echoes "exit\r\n" because
