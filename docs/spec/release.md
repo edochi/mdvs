@@ -38,7 +38,7 @@ repository = "mdvs"
 - `post_bump_hooks` — auto-pushes the commit and tag after bumping
 - `[changelog]` — generates CHANGELOG.md with GitHub commit/PR links
 
-See `docs/spec/cocogitto.md` for the full guide.
+See the [conventional commits spec](https://www.conventionalcommits.org/) for the syntax.
 
 ### cargo-dist
 
