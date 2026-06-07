@@ -10,25 +10,33 @@ project README.
 
 ## One-time setup
 
-Both prerequisites are user-level CLIs:
+User-level CLIs:
 
 ```sh
 cargo install asciinema       # or: brew install asciinema
+brew install jq bat           # jq for the final demo beat; bat for syntax-highlighted file display
 curl -LsSf https://astral.sh/uv/install.sh | sh   # if you don't have uv
 ```
 
 `uv` handles `pexpect` itself — the dependency is declared inline at the
 top of `demo.py`.
 
+The first `mdvs build` in the demo also downloads the Model2Vec embedding
+model (~60 MB) to the local HuggingFace cache. Run a stray `mdvs build`
+anywhere before recording so the cache is warm — otherwise the model
+download pads the cast by 10-30 seconds.
+
 ## Regenerate the cast
 
 ```sh
 cargo build --release -p mdvs
-./target/release/mdvs build example_kb
+./target/release/mdvs build example_kb   # warms the HF model cache
 uv run assets/demo.py
 ```
 
-The script overwrites `assets/demo.cast` in place.
+The script overwrites `assets/demo.cast` in place and the corresponding
+`assets/demo.gif` should be regenerated next (see the render step
+below).
 
 ## Play it back locally
 
@@ -40,5 +48,9 @@ asciinema play assets/demo.cast
 
 ```sh
 cargo install --git https://github.com/asciinema/agg
-agg assets/demo.cast assets/demo.gif --theme monokai --font-size 16
+agg assets/demo.cast assets/demo.gif --theme github-dark --font-size 16
 ```
+
+agg's `--theme` lists a `custom` value in `--help`, but the version we
+tested errored when passed `custom`. If a later release exposes Tokyo
+Night natively (or wires up `custom`), switch over.
