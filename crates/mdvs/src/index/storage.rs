@@ -17,28 +17,28 @@ use arrow::record_batch::RecordBatch;
 use serde_json::Value;
 use std::sync::Arc;
 
-/// File ID column in files.parquet.
+/// File ID column on each chunk row (duplicated per chunk).
 pub const COL_FILE_ID: &str = "file_id";
-/// File path column in files.parquet (relative to project root).
+/// File path column on each chunk row (relative to project root, duplicated per chunk).
 pub const COL_FILEPATH: &str = "filepath";
-/// Frontmatter Struct column in files.parquet.
+/// Frontmatter Struct column on each chunk row.
 pub const COL_DATA: &str = "data";
-/// Content hash column in files.parquet.
+/// Content hash column on each chunk row.
 pub const COL_CONTENT_HASH: &str = "content_hash";
-/// Build timestamp column in files.parquet.
+/// Build timestamp column on each chunk row.
 pub const COL_BUILT_AT: &str = "built_at";
 
-/// Chunk ID column in chunks.parquet.
+/// Chunk ID column (one Lance row per chunk).
 pub const COL_CHUNK_ID: &str = "chunk_id";
-/// Chunk index column in chunks.parquet.
+/// Chunk index column (zero-based within its parent file).
 pub const COL_CHUNK_INDEX: &str = "chunk_index";
-/// Start line column in chunks.parquet.
+/// Start line column (1-based in source).
 pub const COL_START_LINE: &str = "start_line";
-/// End line column in chunks.parquet.
+/// End line column (1-based, inclusive).
 pub const COL_END_LINE: &str = "end_line";
 /// Plain-text column (BM25 full-text index + result snippet).
 pub const COL_CHUNK_TEXT: &str = "chunk_text";
-/// Embedding vector column in chunks.parquet.
+/// Embedding vector column.
 pub const COL_EMBEDDING: &str = "embedding";
 
 /// Compute a deterministic hex-encoded hash of the given content using xxh3.
@@ -46,21 +46,23 @@ pub fn content_hash(content: &str) -> String {
     format!("{:016x}", xxh3_64(content.as_bytes()))
 }
 
-/// A single file's metadata, ready to be written into `files.parquet`.
+/// Per-file metadata snapshot. Duplicated onto each of that file's chunk rows
+/// when the Lance batch is built (one row per chunk).
 pub struct FileRow {
     /// Unique identifier for this file (UUID).
     pub file_id: String,
     /// Path relative to the project root.
     pub filename: String,
-    /// Parsed YAML frontmatter as JSON, or `None` for bare files.
+    /// Parsed frontmatter as JSON (YAML / TOML / JSON all normalize to the
+    /// same shape), or `None` for bare files.
     pub frontmatter: Option<Value>,
-    /// SipHash of the markdown body (excluding frontmatter).
+    /// xxh3-64 hex of the markdown body (excluding frontmatter).
     pub content_hash: String,
     /// Timestamp when this file was indexed, as microseconds since epoch.
     pub built_at: i64,
 }
 
-/// A single chunk with its embedding, ready to be written into `chunks.parquet`.
+/// A single chunk with its embedding, ready to be written as one row of the Lance dataset.
 pub struct ChunkRow {
     /// Unique identifier for this chunk (UUID).
     pub chunk_id: String,
@@ -79,7 +81,7 @@ pub struct ChunkRow {
     pub embedding: Vec<f32>,
 }
 
-/// Configuration snapshot stored in parquet key-value metadata.
+/// Configuration snapshot stored as Lance table-level key-value metadata.
 ///
 /// Captures the exact settings used for a build so that subsequent builds
 /// and searches can detect config changes.
@@ -96,7 +98,7 @@ pub struct BuildMetadata {
     /// Hash of the canonical JSON Schema derived from `mdvs.toml`. Used to
     /// detect schema changes between builds (any change to fields, types,
     /// constraints, path-scoping, or preprocess arrays invalidates the
-    /// existing parquet data; rebuild required).
+    /// existing dataset; rebuild required).
     pub schema_hash: String,
 }
 
@@ -116,7 +118,7 @@ pub fn compute_schema_hash(config: &MdvsToml) -> String {
 }
 
 impl BuildMetadata {
-    /// Serialize to a `HashMap` suitable for parquet key-value metadata.
+    /// Serialize to a `HashMap` suitable for Lance table-level key-value metadata.
     pub fn to_hash_map(&self) -> HashMap<String, String> {
         let mut m = HashMap::new();
         m.insert(
@@ -140,10 +142,11 @@ impl BuildMetadata {
         m
     }
 
-    /// Deserialize from parquet key-value metadata. Returns `None` if required keys are missing.
-    /// `schema_hash` defaults to empty string for parquets built before step 14 — a pre-step-14
-    /// parquet will always be flagged as "schema changed" on the next build, which is the
-    /// correct conservative behavior.
+    /// Deserialize from Lance table-level key-value metadata. Returns `None`
+    /// if required keys are missing. `schema_hash` defaults to empty string
+    /// for pre-Wave-B builds — those datasets will always be flagged as
+    /// "schema changed" on the next build, which is the correct conservative
+    /// behavior.
     pub fn from_hash_map(meta: &HashMap<String, String>) -> Option<Self> {
         Some(Self {
             embedding_model: EmbeddingModelConfig {
@@ -302,7 +305,9 @@ fn build_array(values: &[Option<&Value>], ft: &FieldType) -> ArrayRef {
 // Batch builders
 // ============================================================================
 
-/// Build an Arrow `RecordBatch` for `files.parquet` from file rows and the inferred schema.
+/// Build the per-file portion of the Arrow `RecordBatch` for the Lance
+/// dataset (one row per file here; the caller fans this out to one row per
+/// chunk by duplicating these values onto each of that file's chunks).
 ///
 /// Frontmatter values are packed into a single `data` Struct column whose
 /// child fields match `schema_fields`.
@@ -1109,7 +1114,7 @@ mod tests {
 
     #[test]
     fn build_metadata_schema_hash_defaults_empty_when_missing() {
-        // A pre-step-14 parquet has no `mdvs.schema_hash` key. Reading it
+        // A pre-Wave-B dataset has no `mdvs.schema_hash` key. Reading it
         // should succeed with an empty hash — the next build will treat
         // the schema as "changed" and require --force, which is correct.
         let mut m = HashMap::new();

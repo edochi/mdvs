@@ -409,6 +409,7 @@ A representative subset from `example_kb/mdvs.toml` (37 fields total, 4 shown):
 glob = "**"
 include_bare_files = true
 skip_gitignore = false
+frontmatter_format = "auto"
 
 [embedding_model]
 provider = "model2vec"

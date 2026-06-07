@@ -61,7 +61,7 @@ mdvs infers types automatically:
 | `title` | String | |
 | `tags` | Array(String) | Array of strings |
 | `status` | String | |
-| `date` | String | No Date type yet — dates are stored as strings |
+| `date` | Date | RFC 3339 `YYYY-MM-DD` strings auto-promote to `Date`; mixed shapes fall back to `String` |
 | `draft` | Boolean | |
 
 ### Inconsistent types
