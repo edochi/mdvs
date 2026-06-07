@@ -2,7 +2,7 @@
 
 Deep-dive into the search pipeline. For the module map see [architecture.md](./architecture.md).
 
-Search delegates to LanceDB. mdvs's role is: translate the query and the optional `--where` clause into a LanceDB query, dispatch on `SearchMode`, deduplicate to the best chunk per file. Key files: `search.rs` (mode enum, score-column resolution), `index/backend.rs` (`LanceBackend::search`, the `--where` translator).
+Search delegates to LanceDB. mdvs's role is: translate the query and the optional `--where` clause into a LanceDB query, dispatch on `SearchMode`, deduplicate to the best chunk per file. Key files: `search.rs` (mode enum, score-column resolution), `index/backend/` (post-TODO-0179 split: `mod.rs` holds the `Backend` enum + `SearchHit`; `search.rs` holds `LanceBackend::search` and the `--where` translator).
 
 ## SearchMode
 
@@ -18,7 +18,7 @@ The CLI flag `--mode {semantic,fulltext,hybrid}` selects the variant; the defaul
 
 ## --where translation
 
-`translate_where_to_struct` (`index/backend.rs`) rewrites the user clause so that:
+`translate_where_to_struct` (`index/backend/search.rs`) rewrites the user clause so that:
 
 - Bare frontmatter field names get a `data.` prefix (so `status = 'active'` becomes `data.status = 'active'`).
 - Identifiers immediately followed by `(` are treated as **function calls**, not field names — `lower(status)` is rewritten to `lower(data.status)`, not `data.lower(...)`.
@@ -30,7 +30,7 @@ The translator is schema-aware: it loads the `data` Struct's child names + types
 
 ## Query execution (`LanceBackend::search`)
 
-`index/backend.rs::LanceBackend::search(mode, query, query_embedding, where_clause, limit)`:
+`index/backend/search.rs::LanceBackend::search(mode, query, query_embedding, where_clause, limit)`:
 
 1. **Open the table** — `conn.open_table("index")`.
 2. **Build the query** — `table.query()` plus the mode-specific clauses listed in the `SearchMode` table above.
@@ -59,7 +59,7 @@ In verbose mode `cmd/search.rs` reads the best chunk's text directly from the `c
 
 ## Result Assembly
 
-`SearchHit` (`index/backend.rs`):
+`SearchHit` (`index/backend/mod.rs`):
 
 ```rust
 pub struct SearchHit {
@@ -84,4 +84,4 @@ Resolution at the translator layer uses `[search].internal_prefix` and `[search.
 - **Prefix** — `internal_prefix = "_"` renames the *bare reference* for all internal columns: the user writes `_filepath` to refer to the internal column, and `filepath` stays bare for the frontmatter field (translated to `data.filepath`).
 - **Alias** — `[search.aliases].filepath = "path"` renames the *bare reference* for one internal column: the user writes `path` for the internal column and `filepath` stays bare for the frontmatter field.
 
-These only affect `--where` translation; the actual on-disk column names are always the literal constants from `index/storage.rs`. The translator handles the mapping in `translate_where_to_struct` (`index/backend.rs`).
+These only affect `--where` translation; the actual on-disk column names are always the literal constants from `index/storage.rs`. The translator handles the mapping in `translate_where_to_struct` (`index/backend/search.rs`).
