@@ -15,8 +15,6 @@
 
 </div>
 
-Designed for Obsidian vaults, Zettelkasten systems, docs-as-code repositories, and personal wikis. Single binary, runs locally, no setup.
-
 <p align="center">
   <img src="assets/demo.gif" alt="mdvs: init, check, validate, build, search" width="800">
 </p>
@@ -86,54 +84,11 @@ Different directories, different fields. mdvs sees this.
 ### Infer
 
 ```bash
-mdvs init notes/
+cd notes/
+mdvs init
 ```
 
-mdvs scans every file, extracts frontmatter, and infers which fields belong where:
-
-```
-Initialized 5 files — 7 field(s)
-
-┌ title ───────────────────┬───────────────────────────────────────────────────┐
-│ type                     │ String                                            │
-├──────────────────────────┼───────────────────────────────────────────────────┤
-│ files                    │ 5 out of 5                                        │
-├──────────────────────────┼───────────────────────────────────────────────────┤
-│ nullable                 │ false                                             │
-├──────────────────────────┼───────────────────────────────────────────────────┤
-│ required                 │ **                                                │
-├──────────────────────────┼───────────────────────────────────────────────────┤
-│ allowed                  │ **                                                │
-└──────────────────────────┴───────────────────────────────────────────────────┘
-
-┌ draft ───────────────────┬───────────────────────────────────────────────────┐
-│ type                     │ Boolean                                           │
-├──────────────────────────┼───────────────────────────────────────────────────┤
-│ files                    │ 2 out of 5                                        │
-├──────────────────────────┼───────────────────────────────────────────────────┤
-│ nullable                 │ false                                             │
-├──────────────────────────┼───────────────────────────────────────────────────┤
-│ required                 │ (none)                                            │
-├──────────────────────────┼───────────────────────────────────────────────────┤
-│ allowed                  │ blog/**                                           │
-└──────────────────────────┴───────────────────────────────────────────────────┘
-
-┌ role ────────────────────┬───────────────────────────────────────────────────┐
-│ type                     │ String                                            │
-├──────────────────────────┼───────────────────────────────────────────────────┤
-│ files                    │ 2 out of 5                                        │
-├──────────────────────────┼───────────────────────────────────────────────────┤
-│ nullable                 │ false                                             │
-├──────────────────────────┼───────────────────────────────────────────────────┤
-│ required                 │ team/**                                           │
-├──────────────────────────┼───────────────────────────────────────────────────┤
-│ allowed                  │ team/**                                           │
-└──────────────────────────┴───────────────────────────────────────────────────┘
-
-...
-```
-
-`draft` belongs in `blog/`. `role` belongs in `team/`. The directory structure is the schema.
+mdvs scans every file, extracts frontmatter, and infers which fields belong where. `draft` is a `Boolean` allowed in `blog/`. `role` is a `String` required in `team/`. `date` is a `Date` (RFC 3339) allowed in `meetings/`. The directory structure is the schema.
 
 ### Validate
 
@@ -149,84 +104,89 @@ notes/
 ```
 
 ```bash
-mdvs check notes/
+mdvs check
 ```
 
 ```
 Checked 7 files — 1 violation(s)
 
-Violations (1):
-┌ role ────────────────────┬───────────────────────────────────────────────────┐
-│ kind                     │ Missing required                                  │
-├──────────────────────────┼───────────────────────────────────────────────────┤
-│ rule                     │ required in ["team/**"]                           │
-├──────────────────────────┼───────────────────────────────────────────────────┤
-│ files                    │ team/charlie.md                                   │
-└──────────────────────────┴───────────────────────────────────────────────────┘
+┌ role ────────────────────┬─────────────────────────────────────────┐
+│ kind                     │ Missing required                        │
+│ rule                     │ required in ["team/**"]                 │
+│ files                    │ team/charlie.md                         │
+└──────────────────────────┴─────────────────────────────────────────┘
 ```
 
 `charlie.md` is missing `role` — but `new-post.md` isn't flagged. mdvs knows `role` belongs in `team/`, not in `blog/`.
 
+This is especially useful when an LLM agent is doing the writing. Over a long session an agent will drift — a misnamed field here, an accidentally-stringified boolean there — and running `mdvs check` after each turn catches the drift before it compounds.
+
 ### Search
 
 ```bash
-mdvs search "how to get in touch" notes/
+mdvs search "how to get in touch"
 ```
 
 ```
 Searched "how to get in touch" — 3 hits
 
-┌──────────────────────────┬───────────────────────────────────────────────────┐
-│ query                    │ how to get in touch                               │
-├──────────────────────────┼───────────────────────────────────────────────────┤
-│ model                    │ minishlab/potion-base-8M                          │
-├──────────────────────────┼───────────────────────────────────────────────────┤
-│ limit                    │ 10                                                │
-└──────────────────────────┴───────────────────────────────────────────────────┘
-
-┌ #1 ──────────────────────┬───────────────────────────────────────────────────┐
-│ file                     │ team/alice.md                                     │
-├──────────────────────────┼───────────────────────────────────────────────────┤
-│ score                    │ 0.612                                             │
-├──────────────────────────┼───────────────────────────────────────────────────┤
-│ lines                    │ 5-8                                               │
-├──────────────────────────┼───────────────────────────────────────────────────┤
-│ text                     │ Alice leads the backend team. Reach her at        │
-│                          │ alice@example.com or on Slack.                    │
-└──────────────────────────┴───────────────────────────────────────────────────┘
-
-...
+┌ #1 ──────────────────────┬─────────────────────────────────────────┐
+│ file                     │ team/alice.md                           │
+│ score                    │ 0.612                                   │
+│ lines                    │ 5-8                                     │
+│ text                     │ Alice leads the backend team. Reach her │
+│                          │ at alice@example.com or on Slack.       │
+└──────────────────────────┴─────────────────────────────────────────┘
 ```
 
 `alice.md` doesn't contain "get in touch" — mdvs finds it by meaning, not keywords. Filter with SQL on frontmatter:
 
 ```bash
-mdvs search "rust" notes/ --where "draft = false"
+mdvs search "rust" --where "draft = false"
+mdvs search "meeting notes" --where "date > '2026-05-01'"
 ```
 
-No config files to write. No models to download manually. No services to start.
+The typed schema is what makes `--where` work. Without it, `tags = 'rust'` would be a fuzzy guess; with it, it's an equality check on a known-typed array column.
 
 > **Try it on your own files:**
 > ```bash
 > cargo install mdvs
-> mdvs init your-notes/
-> mdvs search "your query" your-notes/
+> cd your-notes/
+> mdvs init
+> mdvs search "your query"
 > ```
 >
 > Or explore the repo's [example_kb/](example_kb/) — 43 files across 8 directories with type widening, nullable fields, nested objects, and deliberate edge cases.
 
+## Calling mdvs from an agent
+
+Every command supports `--output json` and returns deterministic exit codes (`0` = success, `1` = violations, `2` = error). No SDK or daemon to manage — a coding agent calls mdvs the way a shell script would.
+
+```bash
+# An agent checks its own writes:
+mdvs check --output json | jq '.violations[] | select(.kind == "MissingRequired")'
+
+# An agent queries by metadata + meaning together:
+mdvs search "incident postmortem" \
+  --where "status = 'published' AND severity = 'high'" \
+  --output json | jq '.hits[].filename'
+
+# An agent exports the schema to feed into a structured-output generator:
+mdvs export-jsonschema --format json
+```
+
 ## Features
 
-- **Multi-format frontmatter** — YAML (`---`), TOML (`+++`), or JSON (`{...}`), auto-detected per file. Mix freely within one vault; native TOML `Date` / `DateTime` literals are recognized.
-- **Schema inference** — types (boolean, integer, float, string, RFC 3339 date and datetime, arrays), nested frontmatter structure exposed as dotted-name leaf fields (`calibration.baseline.wavelength`), path constraints (allowed/required per directory), nullable detection, value preprocessors. All automatic.
-- **Frontmatter validation** — wrong types, disallowed fields, missing required fields, nullability, categories, numeric/length ranges, regex patterns, and unrepresentable frontmatter. Powered by [`jsonschema`](https://crates.io/crates/jsonschema) under the hood — your `mdvs.toml` translates to a real JSON Schema 2020-12 document.
-- **JSON Schema interop** — `mdvs export-jsonschema` translates your config into a JSON Schema document; `mdvs init --from-jsonschema` imports one. Lossless round-trip.
-- **Semantic, full-text, and hybrid search** — instant vector search using lightweight [Model2Vec](https://minish.ai/) static embeddings, full-text BM25 ranking, and hybrid RRF reranking, all backed by [LanceDB](https://lancedb.com/). Pick with `--mode`; default is hybrid. No GPU, no API keys.
-- **SQL filtering** — `--where` clauses on any frontmatter field, backed by LanceDB's native filter. Arrays, nested objects, LIKE, IS NULL — full SQL.
+- **Multi-format frontmatter** — YAML (`---`), TOML (`+++`), or JSON (`{...}`), auto-detected per file. Mix freely within one vault. Native TOML `Date` / `DateTime` literals are recognized.
+- **Schema inference** — types (boolean, integer, float, string, RFC 3339 `Date` and `DateTime`, arrays), nested frontmatter structure exposed as dotted-name leaf fields (`calibration.baseline.wavelength`), path constraints (allowed/required per directory), nullable detection, value preprocessors. All automatic.
+- **Frontmatter validation** — wrong types, disallowed fields, missing required fields, nullability, categories, numeric/length ranges, regex patterns, unrepresentable frontmatter. Powered by [`jsonschema`](https://crates.io/crates/jsonschema); your `mdvs.toml` round-trips losslessly to a JSON Schema 2020-12 document.
+- **JSON Schema interop** — `mdvs export-jsonschema` translates your config into a JSON Schema document; `mdvs init --from-jsonschema` imports one.
+- **Semantic, full-text, and hybrid search** — instant vector search using lightweight [Model2Vec](https://minish.ai/) static embeddings, full-text BM25 ranking, and hybrid RRF reranking, all backed by [LanceDB](https://lancedb.com/). Pick with `--mode`; default is hybrid. No GPU, no API keys, no vector-DB cluster — everything runs in-process.
+- **SQL filtering** — `--where` clauses on any frontmatter field, backed by LanceDB's native filter. Arrays, nested objects, `LIKE`, `IS NULL` — full SQL.
 - **Incremental builds** — only changed files are re-embedded. Unchanged files keep their chunks. If nothing changed, the model isn't even loaded.
 - **Auto pipeline** — `search` auto-builds the index. `build` auto-updates the schema. One command does everything: `mdvs search "query"`.
 - **CI-ready** — `mdvs check` returns exit code 1 on violations. Add it to your pipeline to enforce frontmatter consistency across contributors.
-- **JSON output** — all commands support `--output json` for scripting and CI.
+- **JSON output** — all commands support `--output json` for scripting and agent use.
 
 ## Commands
 
@@ -240,6 +200,7 @@ No config files to write. No models to download manually. No services to start.
 | `info`  | Show config and index status |
 | `clean` | Delete search index |
 | `export-jsonschema` | Translate `mdvs.toml` fields into a JSON Schema 2020-12 document |
+| `skill` | Print the agent skill file to stdout (for harnesses that load it as a tool description) |
 
 ## Documentation
 
