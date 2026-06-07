@@ -2,6 +2,37 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## v0.8.0 - 2026-06-07
+#### Features
+- (**demo**) rewrite asciinema demo around an LLM-curated KB - (3df4474) - edoch
+#### Bug Fixes
+- eliminate panic-emitters in non-test code paths (TODO-0180) - (98dd567) - edoch
+#### Documentation
+- (**readme**) restructure around use cases + capabilities - (895d8d7) - edoch
+- (**skill**) refresh SKILL.md for v0.7.0 surface (TODO-0185) - (4a15a02) - edoch
+- (**spec**) prune stale pages and fix post-0179 drift in search.md - (df873d8) - edoch
+- (**spec**) close TODO-0179 with per-wave outcome - (33180a0) - edoch
+- (**spec**) rescope TODO-0179 — production-LOC metric + 4-wave plan - (21e0a9a) - edoch
+- (**spec**) open 3 TODOs for agent-affordance surface - (1139e03) - edoch
+- (**spec**) open TODO-0184 — MockEmbedder + local-only real-model tests - (737112e) - edoch
+- (**spec**) open 7 pre-amplify TODOs from outside review - (5492efa) - edoch
+- (**spec**) open TODO-0176 — refresh v0.7.0 docs + sweep Parquet→Lance drift - (5272fe1) - edoch
+- sweep pre-v0.7.0 Parquet→Lance drift in crates/mdvs/src/index/ - (4a838eb) - edoch
+- refresh v0.7.0 docs (write paths, validation determinism, framing) - (6c8cd52) - edoch
+- refocus README around agent-curated KBs (TODO-0177) - (a29401a) - edoch
+- trim AGENTS.md to project rules + invariants (TODO-0183) - (c091f2c) - edoch
+#### Tests
+- introduce MockEmbedder for hermetic CI fast lane (TODO-0184) - (ff7b9e1) - edoch
+#### Refactoring
+- (**build**) split cmd/build.rs into sub-modules (TODO-0179 Wave 1) - (a69f127) - edoch
+- (**check**) split cmd/check.rs into sub-modules (TODO-0179 Wave 4) - (f185b4f) - edoch
+- (**index**) split backend.rs into sub-modules (TODO-0179 Wave 3) - (1234087) - edoch
+- (**schema**) split json_schema.rs into sub-modules (TODO-0179 Wave 2) - (6b5dd7b) - edoch
+#### Miscellaneous Chores
+- (**deps**) ignore RUSTSEC-2026-0173 (proc-macro-error2 unmaintained) - (7ab4160) - edoch
+
+- - -
+
 ## v0.7.0 - 2026-06-02
 #### Features
 - (**benchmarks**) time full setup for both tools + full K8s corpus run - (f6238c1) - edoch
