@@ -34,7 +34,7 @@ Global flags (`-o`, `-v`, `--logs`) are described in [Configuration](../configur
 
 Each file's score is the **best chunk match** across all its chunks (see [scoring](../concepts/search.md#scores)). Results are sorted descending (higher = better match).
 
-By default, `search` auto-builds the index before querying, which includes auto-updating the schema (see [`[search].auto_build`](../configuration.md#search)). Use `--no-build` to query the existing index as-is, or `--no-update` to build without updating the schema first.
+By default, `search` auto-builds the index before querying, which includes auto-updating the schema (see [`[search].auto_build`](../configuration.md#search)). The chain is cheap on unchanged corpora — update is fast, classify sees no work, and the Lance write is skipped. Use `--no-build` to query a pre-built index without touching it (deterministic CI search), or `--no-update` to build against the committed schema.
 
 See [Search & Indexing](../concepts/search.md) for details on chunking, embedding, scoring, and model identity.
 

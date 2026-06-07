@@ -80,6 +80,12 @@ impl Backend {
         })
     }
 
+    /// Full-rebuild write: replace the Lance table from scratch via
+    /// `CreateTableMode::Overwrite`. Used on the first build and whenever
+    /// `--force` is passed. For the small-delta case, use
+    /// [`Backend::write_index_incremental`] instead — it avoids the full
+    /// table rewrite by deleting only the changed file_ids and appending
+    /// the newly embedded chunks.
     #[instrument(name = "write_index", skip_all)]
     pub async fn write_index(
         &self,

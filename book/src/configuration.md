@@ -91,9 +91,9 @@ auto_update = true
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `auto_update` | Boolean | `false` | Auto-run update before validating |
+| `auto_update` | Boolean | `true` (written by `init`) | Auto-run update before validating |
 
-When `auto_update` is `true`, `check` runs the update pipeline (scan, infer, write config) before validating. Set to `false` or use `--no-update` for deterministic CI validation against the committed `mdvs.toml`.
+When `auto_update` is `true`, `check` runs the update pipeline (scan, infer, write config) before validating. `init` writes `true` so interactive runs pick up new fields automatically. Set to `false` or pass `--no-update` for **deterministic CI validation** against the committed `mdvs.toml` — the only reason to opt out. The chain is cheap on unchanged corpora, so there's no performance argument either way for local use.
 
 ## `[embedding_model]`
 
@@ -141,9 +141,9 @@ auto_update = true
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `auto_update` | Boolean | `false` | Auto-run update before building |
+| `auto_update` | Boolean | `true` (written by `init`) | Auto-run update before building |
 
-When `auto_update` is `true`, `build` runs the update pipeline before building. Use `--no-update` to skip.
+When `auto_update` is `true`, `build` runs the update pipeline before building. Set to `false` or pass `--no-update` for **deterministic CI builds** against the committed `mdvs.toml` — the only reason to opt out. The chain is cheap on unchanged corpora (no model load, no Lance write when nothing changed).
 
 ## `[search]`
 
@@ -159,8 +159,10 @@ default_limit = 10
 | `default_limit` | Integer | `10` | Maximum results when `--limit` is not specified |
 | `internal_prefix` | String | `""` | Prefix for internal column names in `--where` queries |
 | `aliases` | Map | `{}` | Per-column name overrides for internal columns |
-| `auto_update` | Boolean | `false` | Auto-run update before building (when `auto_build` is true) |
-| `auto_build` | Boolean | `false` | Auto-run build before searching |
+| `auto_update` | Boolean | `true` (written by `init`) | Auto-run update before building (when `auto_build` is true) |
+| `auto_build` | Boolean | `true` (written by `init`) | Auto-run build before searching |
+
+The two `[search]` auto-flags are what makes a bare `mdvs search "query"` a one-shot operation — it'll re-infer, validate, embed, and query in a single command. Set them to `false` (or use `--no-update` / `--no-build` flags) for **deterministic CI search** against an already-built index, or in airgapped environments where the embedding model can't be re-downloaded. Locally there's no performance argument: the auto chain is a no-op when nothing changed.
 
 ### Internal column names
 

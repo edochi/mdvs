@@ -2,7 +2,7 @@
 
 Deep-dive into the Lance storage layer. For the module map see [architecture.md](./architecture.md).
 
-The storage layer bridges validation (TOML config) and search (LanceDB index). Key files: `index/storage.rs` (Arrow batch construction, column constants, `BuildMetadata`, `content_hash`), `index/backend.rs` (`LanceBackend`: connection, `write_index`, `search`, `--where` translator).
+The storage layer bridges validation (TOML config) and search (LanceDB index). Key files: `index/storage.rs` (Arrow batch construction, column constants, `BuildMetadata`, `content_hash`), `index/backend/` (`LanceBackend`: connection, `write_index` for full rebuilds, `write_index_incremental` for the delete+append delta path, `search`, `--where` translator; the directory is split into `mod.rs` + `read.rs` + `search.rs`).
 
 ## One Artifact
 
@@ -98,7 +98,7 @@ Frontmatter-only changes (editing a `status` field) do NOT trigger re-embedding.
 | `mdvs.built_at` | ISO 8601 timestamp |
 | `mdvs.schema_hash` | xxh3-64 hex of `dsl_to_canonical(config)` serialized as canonical JSON |
 
-Stored as table-level key-value metadata on the Lance dataset, written via `LanceBackend::write_index()` (the keys flow through the Arrow `Schema::metadata` map handed to `create_table`) and read via `LanceBackend::read_metadata()`.
+Stored as table-level key-value metadata on the Lance dataset. The full-rebuild path (`LanceBackend::write_index()`) routes the keys through the Arrow `Schema::metadata` map handed to `create_table`; the incremental path (`LanceBackend::write_index_incremental()`) refreshes them on the existing table via `NativeTable::replace_schema_metadata`. Both are read back via `LanceBackend::read_metadata()`.
 
 **Schema hash** detects field-level changes (types, constraints, path-scoping, preprocessors) that don't show up in any of the other keys. Computed via `compute_schema_hash(config)` in `index/storage.rs`. Hashing the post-translation canonical JSON makes it whitespace-insensitive and key-order-insensitive. Pre-Wave-B datasets without this key read as `""` → treated as changed (conservative, requires `--force`).
 
@@ -127,22 +127,27 @@ Classification in `cmd/build.rs` compares scanned files against the index:
 | **Unchanged** | filename in index, hash matches | Skip chunking/embedding, retain existing chunks |
 | **Removed** | in index, not in scan | Drop from output |
 
-### Merge Strategy
+### Write Strategy
 
-1. Read retained chunk rows from the existing Lance dataset, projected to the columns we need; filter to `file_id`s of unchanged files.
-2. Chunk and embed new + edited files.
-3. Combine retained chunks with new chunks into a single Arrow `RecordBatch`.
-4. Write the dataset from scratch via `Connection::create_table(...).mode(CreateTableMode::Overwrite)` — Lance handles the atomic replacement.
-5. Rebuild the FTS (and, above 10k chunks, the vector) index inside the new dataset.
+`cmd/build/write.rs::write_index_step` selects one of three paths based on the classification result:
 
-Model loading is skipped entirely when `needs_embedding == 0` (all files unchanged).
+**Skip** — when the build is not a full rebuild AND no files were removed AND no new chunks were produced. Returns `WriteOutcome::Skipped`; no Lance dataset write happens. The skip predicate uses chunk count (not file count) because empty-body files (e.g. Hugo `_index.md`) are always classified as needing embedding but produce zero chunks.
+
+**Full overwrite** — when `full_rebuild` is true (first build or `--force`). `Backend::write_index` builds one Arrow `RecordBatch` from the retained + new chunks combined and calls `Connection::create_table(...).mode(CreateTableMode::Overwrite)`. The FTS index on `chunk_text` and, above 10k chunks, the IVF-PQ vector index on `embedding` are rebuilt inside the new table.
+
+**Incremental** — when there is a delta to persist but the table already exists. `Backend::write_index_incremental` opens the existing table, `delete("file_id IN (...)")` for `file_ids_to_clear` (= new + edited + removed file_ids), `add(new_chunks_batch)` for the freshly embedded chunks (the slice past `retained_chunks_count`), calls `NativeTable::replace_schema_metadata` to refresh the `BuildMetadata` keys, and runs `optimize(OptimizeAction::All)` so the existing FTS + vector indexes incorporate the delta without a full rebuild. The retained chunks already in the table are left in place — no rewrite.
+
+Model loading is skipped entirely when `needs_embedding == 0` (all files unchanged). The write itself is skipped under the further condition above.
 
 ## Backend Abstraction
 
-`Backend` enum at `index/backend.rs` has a single variant: `Backend::Lance(LanceBackend)`. The enum is kept (rather than collapsing to a struct) for forward compatibility with future remote-backend work and to keep the existing `LanceBackend::method()` call sites stable.
+`Backend` enum at `index/backend/mod.rs` has a single variant: `Backend::Lance(LanceBackend)`. The enum is kept (rather than collapsing to a struct) for forward compatibility with future remote-backend work and to keep the existing `LanceBackend::method()` call sites stable. The directory is split into `mod.rs` (the enum + the public method shells), `read.rs` (read-only projections), and `search.rs` (mode-dispatched query + `--where` translator).
 
 `LanceBackend` derives paths from root:
 - `.mdvs/` — index directory
 - `.mdvs/index.lance/` — Lance dataset (the table is named `index`)
 
-Key methods: `write_index()` (builds the Arrow batch, calls `create_table(...).mode(Overwrite)`, then `build_indexes()`), `read_metadata()` (parses `BuildMetadata` from the Lance table-level kv), `read_file_index()` (lightweight projection for classification), `read_chunk_rows()` (full chunk rows for retained-file pass-through), `search()` (mode-dispatched LanceDB query + best-chunk-per-file dedupe), `index_stats()`, `exists()`.
+Key methods:
+- `write_index()` — full rebuild path: builds the combined Arrow batch and calls `create_table(...).mode(Overwrite)`, then `build_indexes()`. Used on the first build and whenever `--force` is passed.
+- `write_index_incremental()` — delta path: opens the existing table, deletes the rows for `file_ids_to_clear`, appends the new-chunks slice, refreshes the schema metadata via `NativeTable::replace_schema_metadata`, and runs `optimize(All)` so FTS + vector indexes pick up the delta without a full rebuild.
+- `read_metadata()` (parses `BuildMetadata` from the Lance table-level kv), `read_file_index()` (lightweight projection for classification), `read_chunk_rows()` (full chunk rows for retained-file pass-through), `search()` (mode-dispatched LanceDB query + best-chunk-per-file dedupe), `stats()`, `clean()`.
