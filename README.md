@@ -11,7 +11,7 @@
 
 ---
 
-[Key Features](#features) • [Installation](#install) • [Documentation](https://edochi.github.io/mdvs/) • [Example Vault](example_kb/)
+[Why mdvs?](#why-mdvs) • [What it does](#what-it-does) • [Installation](#install) • [Documentation](https://edochi.github.io/mdvs/) • [Example Vault](example_kb/)
 
 </div>
 
@@ -21,23 +21,23 @@
 
 ## Why mdvs?
 
-Markdown files can have a block at the top called **frontmatter** — structured fields that describe the document. mdvs accepts YAML (`---`), TOML (`+++`), or JSON (`{...}`); the format is auto-detected per file, so mixed-format vaults work transparently.
+mdvs is useful when you have a markdown corpus with structured frontmatter. Some common cases:
 
-```markdown
----
-title: Rust Tips
-tags: [rust, programming]
-draft: false
----
+- **Obsidian vaults** — typed-frontmatter notes you want to keep validated and searchable, all local.
+- **Knowledge bases maintained with LLM agents** — mdvs is the typed database the agent reads from (hybrid search with SQL `--where` filters) and validates against (`mdvs check` after each turn). Everything via `--output json`.
+- **Docs-as-code repos** (Hugo, MkDocs, Astro) — frontmatter consistency enforced in CI; JSON Schema export for downstream tools.
 
-# Rust Tips
+## What it does
 
-Your content here...
-```
-
-`title`, `tags`, and `draft` are frontmatter fields. Most tools treat these as flat text or ignore them entirely. mdvs sees structure — your directories, your fields, your types. It infers which fields belong in which directories, validates that they're consistent, and lets you search everything with natural language and SQL.
-
-No config to write. No schema to define. Point it at a directory and it figures it out.
+- **Infers a typed schema from your existing files.** No config to write — point it at a directory and it figures out which fields belong where.
+- **Validates frontmatter.** Catches wrong types, missing required fields, and disallowed locations. Path-scoped rules: `role` can be required in `team/` but not in `blog/`.
+- **Multi-format frontmatter.** YAML (`---`), TOML (`+++`), or JSON (`{...}`), auto-detected per file. Mix freely within one vault.
+- **Hybrid search.** Vector similarity + BM25 full-text + RRF fusion. SQL `--where` filters on typed frontmatter: `--where "status = 'published' AND date > '2026-05-01'"`.
+- **JSON Schema interop.** `mdvs export-jsonschema` emits a JSON Schema 2020-12 document; `mdvs init --from-jsonschema` imports one.
+- **Runs entirely in-process.** Local files, single binary. No API keys, no vector-DB cluster, no GPU.
+- **Incremental builds.** Only changed files are re-embedded. If nothing changed, the model isn't even loaded.
+- **Auto-pipeline.** `search` auto-builds the index if needed. `build` auto-updates the schema before embedding.
+- **Agent-callable and CI-ready.** `--output json` on every command. Deterministic exit codes (`0` = success, `1` = violations, `2` = error).
 
 ## Install
 
@@ -63,7 +63,21 @@ cargo install --path .
 
 ## How it works
 
-mdvs treats your markdown directory as a database — and your directory structure as part of the schema.
+Markdown files can have a block at the top called **frontmatter** — structured fields that describe the document. mdvs accepts YAML (`---`), TOML (`+++`), or JSON (`{...}`); the format is auto-detected per file, so mixed-format vaults work transparently.
+
+```markdown
+---
+title: Rust Tips
+tags: [rust, programming]
+draft: false
+---
+
+# Rust Tips
+
+Your content here...
+```
+
+`title`, `tags`, and `draft` are frontmatter fields. mdvs treats them as a typed database — and your directory structure is part of the schema.
 
 Consider a simple knowledge base:
 
@@ -175,19 +189,6 @@ mdvs search "incident postmortem" \
 mdvs export-jsonschema --format json
 ```
 
-## Features
-
-- **Multi-format frontmatter** — YAML (`---`), TOML (`+++`), or JSON (`{...}`), auto-detected per file. Mix freely within one vault. Native TOML `Date` / `DateTime` literals are recognized.
-- **Schema inference** — types (boolean, integer, float, string, RFC 3339 `Date` and `DateTime`, arrays), nested frontmatter structure exposed as dotted-name leaf fields (`calibration.baseline.wavelength`), path constraints (allowed/required per directory), nullable detection, value preprocessors. All automatic.
-- **Frontmatter validation** — wrong types, disallowed fields, missing required fields, nullability, categories, numeric/length ranges, regex patterns, unrepresentable frontmatter. Powered by [`jsonschema`](https://crates.io/crates/jsonschema); your `mdvs.toml` round-trips losslessly to a JSON Schema 2020-12 document.
-- **JSON Schema interop** — `mdvs export-jsonschema` translates your config into a JSON Schema document; `mdvs init --from-jsonschema` imports one.
-- **Semantic, full-text, and hybrid search** — instant vector search using lightweight [Model2Vec](https://minish.ai/) static embeddings, full-text BM25 ranking, and hybrid RRF reranking, all backed by [LanceDB](https://lancedb.com/). Pick with `--mode`; default is hybrid. No GPU, no API keys, no vector-DB cluster — everything runs in-process.
-- **SQL filtering** — `--where` clauses on any frontmatter field, backed by LanceDB's native filter. Arrays, nested objects, `LIKE`, `IS NULL` — full SQL.
-- **Incremental builds** — only changed files are re-embedded. Unchanged files keep their chunks. If nothing changed, the model isn't even loaded.
-- **Auto pipeline** — `search` auto-builds the index. `build` auto-updates the schema. One command does everything: `mdvs search "query"`.
-- **CI-ready** — `mdvs check` returns exit code 1 on violations. Add it to your pipeline to enforce frontmatter consistency across contributors.
-- **JSON output** — all commands support `--output json` for scripting and agent use.
-
 ## Commands
 
 | Command | Description |
@@ -201,6 +202,16 @@ mdvs export-jsonschema --format json
 | `clean` | Delete search index |
 | `export-jsonschema` | Translate `mdvs.toml` fields into a JSON Schema 2020-12 document |
 | `skill` | Print the agent skill file to stdout (for harnesses that load it as a tool description) |
+
+## Built with
+
+- **Rust** — mdvs is written in Rust; the CLI is a single static binary.
+- **[LanceDB](https://lancedb.com/)** — backs storage and search. Cosine vector search, BM25 full-text, and RRF hybrid all run natively against the Lance dataset.
+- **[Model2Vec](https://minish.ai/)** — static embedding models; the default is `potion-base-8M` (~60 MB, CPU-only, no GPU).
+- **[`jsonschema`](https://crates.io/crates/jsonschema)** — JSON Schema 2020-12 validator. mdvs translates your `mdvs.toml` into a canonical JSON Schema document and validates frontmatter values through per-field validators compiled from it.
+- **[`pulldown-cmark`](https://crates.io/crates/pulldown-cmark)** — markdown parsing; used to extract plain text from each chunk before embedding.
+- **[`text-splitter`](https://crates.io/crates/text-splitter)** — semantic-aware chunker that splits the markdown body along heading and paragraph boundaries.
+- **[`gray_matter`](https://crates.io/crates/gray_matter)** — YAML and TOML frontmatter extraction. JSON frontmatter is parsed natively via `serde_json` to handle Hugo's bare-braces convention.
 
 ## Documentation
 
