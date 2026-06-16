@@ -185,12 +185,27 @@ fn format_text_block(block: &Block, out: &mut String, indent: usize) {
 
 /// Format blocks as markdown (pipe tables, section headers).
 ///
-/// Basic implementation — sufficient for initial use. Full markdown formatting
-/// is tracked in TODO-0101.
+/// Renders `Block::Line` as a paragraph, `Block::Section` as a `##` heading +
+/// children, and `Block::Table` differently per style:
+///
+/// - `KeyValue { title }` — `### title` (when non-empty) plus a 2-column table
+///   with `Field | Value` headers. Used by every Outcome today.
+/// - `Compact` / `Record` — pipe table with the supplied headers if any.
+///   Detail rows from `Record` are rendered as plain rows; mdvs's current
+///   Outcomes don't use these styles.
+///
+/// Cells escape `|`, `\`, and convert embedded newlines to `<br>` so multiline
+/// values (e.g. lists of glob patterns) render correctly in GFM tables.
+///
+/// The output does not end in a trailing newline (call sites use `print!`,
+/// not `println!`).
 pub fn format_markdown(blocks: &[Block]) -> String {
     let mut out = String::new();
     for block in blocks {
         format_markdown_block(block, &mut out);
+    }
+    while out.ends_with('\n') {
+        out.pop();
     }
     out
 }
@@ -201,38 +216,91 @@ fn format_markdown_block(block: &Block, out: &mut String) {
             out.push_str(s);
             out.push('\n');
         }
-        Block::Table { headers, rows, .. } => {
-            if let Some(hdrs) = headers {
-                out.push_str("| ");
-                out.push_str(&hdrs.join(" | "));
-                out.push_str(" |\n");
-                out.push_str("| ");
-                out.push_str(
-                    &hdrs
-                        .iter()
-                        .map(|_| "---".to_string())
-                        .collect::<Vec<_>>()
-                        .join(" | "),
-                );
-                out.push_str(" |\n");
+        Block::Table {
+            headers,
+            rows,
+            style,
+        } => match style {
+            TableStyle::KeyValue { title } => {
+                if !title.is_empty() {
+                    out.push_str("### ");
+                    out.push_str(title);
+                    out.push_str("\n\n");
+                }
+                out.push_str("| Field | Value |\n| --- | --- |\n");
+                for row in rows {
+                    out.push_str("| ");
+                    out.push_str(
+                        &row.iter()
+                            .map(|c| escape_cell(c))
+                            .collect::<Vec<_>>()
+                            .join(" | "),
+                    );
+                    out.push_str(" |\n");
+                }
+                out.push('\n');
             }
-            for row in rows {
-                out.push_str("| ");
-                out.push_str(&row.join(" | "));
-                out.push_str(" |\n");
+            TableStyle::Compact | TableStyle::Record { .. } => {
+                if let Some(hdrs) = headers {
+                    out.push_str("| ");
+                    out.push_str(
+                        &hdrs
+                            .iter()
+                            .map(|h| escape_cell(h))
+                            .collect::<Vec<_>>()
+                            .join(" | "),
+                    );
+                    out.push_str(" |\n");
+                    out.push_str("| ");
+                    out.push_str(
+                        &hdrs
+                            .iter()
+                            .map(|_| "---".to_string())
+                            .collect::<Vec<_>>()
+                            .join(" | "),
+                    );
+                    out.push_str(" |\n");
+                }
+                for row in rows {
+                    out.push_str("| ");
+                    out.push_str(
+                        &row.iter()
+                            .map(|c| escape_cell(c))
+                            .collect::<Vec<_>>()
+                            .join(" | "),
+                    );
+                    out.push_str(" |\n");
+                }
+                out.push('\n');
             }
-            out.push('\n');
-        }
+        },
         Block::Section { label, children } => {
             out.push_str("## ");
             out.push_str(label);
-            out.push('\n');
-            out.push('\n');
+            out.push_str("\n\n");
             for child in children {
                 format_markdown_block(child, out);
             }
         }
     }
+}
+
+/// Escape a cell value for inclusion in a GFM pipe table.
+///
+/// `\` becomes `\\`, `|` becomes `\|`, and newlines become `<br>`. Other
+/// markdown specials (`*`, `_`, etc.) are left as-is — callers that produce
+/// `Block::Table` cells supply plain strings, not pre-formatted markdown.
+fn escape_cell(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '|' => out.push_str("\\|"),
+            '\n' => out.push_str("<br>"),
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -306,7 +374,15 @@ mod tests {
     #[test]
     fn markdown_line() {
         let blocks = vec![Block::Line("hello".into())];
-        assert_eq!(format_markdown(&blocks), "hello\n");
+        assert_eq!(format_markdown(&blocks), "hello");
+    }
+
+    #[test]
+    fn markdown_no_trailing_newline() {
+        let blocks = vec![Block::Line("hello".into()), Block::Line("world".into())];
+        let output = format_markdown(&blocks);
+        assert!(!output.ends_with('\n'));
+        assert!(output.ends_with("world"));
     }
 
     #[test]
@@ -331,5 +407,85 @@ mod tests {
         let output = format_markdown(&blocks);
         assert!(output.contains("## Results"));
         assert!(output.contains("5 hits"));
+    }
+
+    #[test]
+    fn markdown_keyvalue_with_title() {
+        let blocks = vec![Block::Table {
+            headers: None,
+            rows: vec![
+                vec!["type".into(), "Array(String)".into()],
+                vec!["nullable".into(), "false".into()],
+            ],
+            style: TableStyle::KeyValue {
+                title: "action_items".into(),
+            },
+        }];
+        let output = format_markdown(&blocks);
+        assert!(output.contains("### action_items"));
+        assert!(output.contains("| Field | Value |"));
+        assert!(output.contains("| --- | --- |"));
+        assert!(output.contains("| type | Array(String) |"));
+        assert!(output.contains("| nullable | false |"));
+    }
+
+    #[test]
+    fn markdown_keyvalue_without_title() {
+        let blocks = vec![Block::Table {
+            headers: None,
+            rows: vec![vec!["scan glob".into(), "**".into()]],
+            style: TableStyle::KeyValue {
+                title: String::new(),
+            },
+        }];
+        let output = format_markdown(&blocks);
+        assert!(!output.contains("###"));
+        assert!(output.contains("| Field | Value |"));
+        assert!(output.contains("| scan glob | ** |"));
+    }
+
+    #[test]
+    fn markdown_cell_escapes_pipe() {
+        let blocks = vec![Block::Table {
+            headers: None,
+            rows: vec![vec!["pattern".into(), "foo|bar".into()]],
+            style: TableStyle::KeyValue {
+                title: String::new(),
+            },
+        }];
+        let output = format_markdown(&blocks);
+        assert!(output.contains("foo\\|bar"));
+    }
+
+    #[test]
+    fn markdown_cell_converts_newlines_to_br() {
+        let blocks = vec![Block::Table {
+            headers: None,
+            rows: vec![vec!["required".into(), "globs/**\nother/**".into()]],
+            style: TableStyle::KeyValue {
+                title: String::new(),
+            },
+        }];
+        let output = format_markdown(&blocks);
+        assert!(output.contains("globs/**<br>other/**"));
+        // No literal newline mid-row — the row stays on one line.
+        let row_line = output
+            .lines()
+            .find(|l| l.contains("required"))
+            .expect("row");
+        assert!(!row_line.contains('\n'));
+    }
+
+    #[test]
+    fn markdown_cell_escapes_backslash() {
+        let blocks = vec![Block::Table {
+            headers: None,
+            rows: vec![vec!["path".into(), "a\\b".into()]],
+            style: TableStyle::KeyValue {
+                title: String::new(),
+            },
+        }];
+        let output = format_markdown(&blocks);
+        assert!(output.contains("a\\\\b"));
     }
 }

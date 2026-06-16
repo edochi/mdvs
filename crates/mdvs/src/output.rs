@@ -2,12 +2,16 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::PathBuf;
 
-/// Controls whether command output is rendered as plain text or machine-readable JSON.
+/// Controls how command output is rendered.
 #[derive(Clone, clap::ValueEnum)]
 pub enum OutputFormat {
     /// Pretty-printed tables and summaries for terminal display.
     Text,
-    /// Structured JSON for piping into other tools.
+    /// Markdown — GFM-flavoured tables and `##` section headers. Suitable for
+    /// piping into docs, pasting into PR descriptions or issues, and for
+    /// agents reading mdvs output directly into their context.
+    Markdown,
+    /// Structured JSON for piping into other tools (`jq` pipelines, programmatic callers).
     Json,
 }
 

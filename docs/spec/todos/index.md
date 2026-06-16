@@ -102,7 +102,7 @@
 | [0098](TODO-0098.md) | Build --force should handle dimension mismatch without requiring clean | done | medium | 2026-03-13 |
 | [0099](TODO-0099.md) | Redesign auto-update/auto-build pipeline across commands | done | high | 2026-03-13 |
 | [0100](TODO-0100.md) | Redesign text output format for all commands | done | high | 2026-03-13 |
-| [0101](TODO-0101.md) | Add markdown output format, rename text to pretty | todo | medium | 2026-03-13 |
+| [0101](TODO-0101.md) | Add markdown output format, rename text to pretty | in-progress | medium | 2026-03-13 |
 | [0102](TODO-0102.md) | Write and distribute SKILL.md for end-user projects | todo | medium | 2026-03-14 |
 | [0103](TODO-0103.md) | Validate config invariants on mdvs.toml load | done | high | 2026-03-14 |
 | [0104](TODO-0104.md) | Redesign internal column naming — move prefix from storage to search view | done | medium | 2026-03-14 |

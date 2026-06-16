@@ -6,7 +6,7 @@
 use crate::block::{Block, Render};
 use crate::outcome::Outcome;
 use crate::output::OutputFormat;
-use crate::render::format_text;
+use crate::render::{format_markdown, format_text};
 use serde::ser::SerializeMap;
 use serde::{Serialize, Serializer};
 use std::time::Instant;
@@ -173,6 +173,8 @@ impl CommandResult {
         Ok(match (format, verbose) {
             (OutputFormat::Text, true) => format_text(&self.render_verbose()),
             (OutputFormat::Text, false) => format_text(&self.render_compact()),
+            (OutputFormat::Markdown, true) => format_markdown(&self.render_verbose()),
+            (OutputFormat::Markdown, false) => format_markdown(&self.render_compact()),
             (OutputFormat::Json, true) => serde_json::to_string_pretty(self)?,
             (OutputFormat::Json, false) => self.compact_json()?,
         })
@@ -645,6 +647,24 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&out).expect("parse");
         assert!(value.get("steps").is_none());
         assert!(value["removed"].is_boolean());
+    }
+
+    #[test]
+    fn render_markdown_verbose_includes_step_lines() {
+        let out = sample_result()
+            .render(&OutputFormat::Markdown, true)
+            .expect("render");
+        assert!(out.contains("Scan") && out.contains("(10ms)"));
+        assert!(!out.ends_with('\n'));
+    }
+
+    #[test]
+    fn render_markdown_compact_omits_step_lines() {
+        let out = sample_result()
+            .render(&OutputFormat::Markdown, false)
+            .expect("render");
+        assert!(!out.contains("Scan"));
+        assert!(!out.ends_with('\n'));
     }
 
     #[test]
