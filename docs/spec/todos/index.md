@@ -190,3 +190,4 @@
 | [0186](TODO-0186.md) | mdvs explain — path-scoped schema query for agent callers | todo | high | 2026-06-06 |
 | [0187](TODO-0187.md) | Recipe — agent harness hook for auto-check (and optional auto-explain / pre-validate) | todo | medium | 2026-06-06 |
 | [0188](TODO-0188.md) | mdvs check --stdin — in-memory frontmatter validation | todo | medium | 2026-06-06 |
+| [0189](TODO-0189.md) | Collapse main.rs output dispatch into CommandResult::render() | in-progress | medium | 2026-06-16 |
