@@ -1,7 +1,6 @@
 use clap::{Parser, Subcommand};
 use mdvs::output::OutputFormat;
 use mdvs::schema::config::MdvsToml;
-use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 /// Stderr logging level for `--logs`.
@@ -16,8 +15,7 @@ enum LogLevel {
 #[command(name = "mdvs", version, about = "Markdown Validation & Search")]
 struct Cli {
     /// Output format. When omitted, falls back to `mdvs.toml`'s
-    /// `default_output_format`, then to TTY autodetect (`pretty` for a
-    /// terminal, `markdown` when piped).
+    /// `default_output_format`, then to the hard default `pretty`.
     #[arg(short, long, global = true)]
     output: Option<OutputFormat>,
 
@@ -170,19 +168,17 @@ enum UpdateCommand {
 ///
 /// 1. `--output` on the CLI (if provided).
 /// 2. `default_output_format` in the project's `mdvs.toml` (if present and parseable).
-/// 3. TTY autodetect — `pretty` when stdout is a terminal, `markdown` when piped.
+/// 3. Hard fallback: `pretty`.
 ///
 /// A failure to read or parse `mdvs.toml` at step 2 is silent. Config-driven
 /// default is a convenience, not load-bearing — diagnostics for malformed
 /// configs surface through the command itself when it loads the file.
 ///
-/// `is_tty` is passed in (not detected here) so the logic stays pure and
-/// testable; the caller reads `std::io::stdout().is_terminal()` once.
-fn resolve_format(
-    cli_flag: Option<OutputFormat>,
-    project_path: &Path,
-    is_tty: bool,
-) -> OutputFormat {
+/// TTY autodetection was considered and explicitly rejected: same command
+/// should produce same bytes regardless of whether stdout is a terminal, a
+/// pipe, or a captured handle (agents, CI). Projects that prefer a
+/// different default set `default_output_format` in `mdvs.toml`.
+fn resolve_output_format(cli_flag: Option<OutputFormat>, project_path: &Path) -> OutputFormat {
     if let Some(f) = cli_flag {
         return f;
     }
@@ -192,18 +188,7 @@ fn resolve_format(
     {
         return f;
     }
-    if is_tty {
-        OutputFormat::Pretty
-    } else {
-        OutputFormat::Markdown
-    }
-}
-
-/// Wrapper around [`resolve_format`] that detects TTY state from the live
-/// stdout. Use this from `main`; tests should call [`resolve_format`]
-/// directly with explicit `is_tty`.
-fn resolve_output_format(cli_flag: Option<OutputFormat>, project_path: &Path) -> OutputFormat {
-    resolve_format(cli_flag, project_path, std::io::stdout().is_terminal())
+    OutputFormat::Pretty
 }
 
 #[tokio::main]
@@ -437,42 +422,26 @@ min_category_repetition = 3
     }
 
     #[test]
-    fn cli_flag_wins_over_config_and_tty() {
+    fn cli_flag_wins_over_config() {
         let dir = TempDir::new().unwrap();
         write_config_with_default(dir.path(), "json");
-        let resolved = resolve_format(Some(OutputFormat::Pretty), dir.path(), false);
-        assert_eq!(resolved, OutputFormat::Pretty);
+        let resolved = resolve_output_format(Some(OutputFormat::Markdown), dir.path());
+        assert_eq!(resolved, OutputFormat::Markdown);
     }
 
     #[test]
-    fn config_wins_over_tty_autodetect() {
+    fn config_wins_over_hard_default() {
         let dir = TempDir::new().unwrap();
         write_config_with_default(dir.path(), "json");
-        let resolved = resolve_format(None, dir.path(), true);
+        let resolved = resolve_output_format(None, dir.path());
         assert_eq!(resolved, OutputFormat::Json);
     }
 
     #[test]
-    fn tty_autodetect_pretty_when_terminal() {
+    fn missing_mdvs_toml_falls_through_to_pretty() {
         let dir = TempDir::new().unwrap();
-        // No mdvs.toml in dir
-        let resolved = resolve_format(None, dir.path(), true);
+        let resolved = resolve_output_format(None, dir.path());
         assert_eq!(resolved, OutputFormat::Pretty);
-    }
-
-    #[test]
-    fn tty_autodetect_markdown_when_piped() {
-        let dir = TempDir::new().unwrap();
-        let resolved = resolve_format(None, dir.path(), false);
-        assert_eq!(resolved, OutputFormat::Markdown);
-    }
-
-    #[test]
-    fn missing_mdvs_toml_falls_through_silently() {
-        let dir = TempDir::new().unwrap();
-        // No mdvs.toml — should silently fall through to TTY autodetect.
-        let resolved = resolve_format(None, dir.path(), false);
-        assert_eq!(resolved, OutputFormat::Markdown);
     }
 
     #[test]
@@ -481,14 +450,13 @@ min_category_repetition = 3
         fs::write(dir.path().join("mdvs.toml"), "this is not valid toml [[[").unwrap();
         // Parse failure on the config peek should NOT propagate — the command
         // itself will surface the error when it tries to load.
-        let resolved = resolve_format(None, dir.path(), true);
+        let resolved = resolve_output_format(None, dir.path());
         assert_eq!(resolved, OutputFormat::Pretty);
     }
 
     #[test]
-    fn config_without_default_falls_through_to_tty() {
+    fn config_without_default_falls_through_to_pretty() {
         let dir = TempDir::new().unwrap();
-        // Valid mdvs.toml but no default_output_format set.
         let toml = r#"
 [scan]
 glob = "**"
@@ -502,7 +470,7 @@ max_categories = 10
 min_category_repetition = 3
 "#;
         fs::write(dir.path().join("mdvs.toml"), toml).unwrap();
-        let resolved = resolve_format(None, dir.path(), false);
-        assert_eq!(resolved, OutputFormat::Markdown);
+        let resolved = resolve_output_format(None, dir.path());
+        assert_eq!(resolved, OutputFormat::Pretty);
     }
 }

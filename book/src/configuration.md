@@ -23,7 +23,7 @@ These flags apply to all commands:
 
 | Flag | Values | Default | Description |
 |---|---|---|---|
-| `-o`, `--output` | `pretty`, `markdown`, `json` | _auto_ | Output format. See [Output format selection](#output-format-selection) for the resolution chain when `-o` is omitted. |
+| `-o`, `--output` | `pretty`, `markdown`, `json` | `pretty` | Output format. See [Output format selection](#output-format-selection) for the resolution chain when `-o` is omitted. |
 | `-v`, `--verbose` | | | Show detailed output (pipeline steps, expanded records) |
 | `--logs` | `info`, `debug`, `trace` | (none) | Enable diagnostic logging to stderr |
 
@@ -33,7 +33,9 @@ When `--output` / `-o` isn't given, mdvs picks a format using this priority chai
 
 1. **CLI flag** — `--output pretty|markdown|json` always wins when set.
 2. **`default_output_format` in `mdvs.toml`** — a project-level override at the top of the file (`default_output_format = "markdown"`).
-3. **TTY autodetect** — `pretty` (box-drawing tables) when stdout is a terminal, `markdown` (GFM pipe tables) when stdout is piped or redirected.
+3. **Hard fallback** — `pretty`.
+
+Same command → same output. The default does not depend on whether stdout is a terminal, a pipe, or a captured handle. Projects that want a different default (e.g. agent-curated KBs that prefer markdown on every invocation) set `default_output_format` in `mdvs.toml`.
 
 The three formats target different consumers:
 

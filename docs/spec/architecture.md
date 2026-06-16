@@ -386,7 +386,7 @@ Three-stage rendering:
 
 `CommandResult` (`step.rs`) holds `Vec<StepEntry>` (pipeline steps) + `Result<Outcome, StepError>` (final result). Verbose mode renders steps + result; compact renders result only. JSON uses `#[serde(untagged)]` on `Outcome` for flat serialization.
 
-Every command in `main.rs` follows the same dispatch pattern: call `run()`, check `has_failed()`, resolve `OutputFormat` via `resolve_output_format()` (CLI flag > `mdvs.toml`'s `default_output_format` > TTY autodetect), call `result.render()`, print, set exit code.
+Every command in `main.rs` follows the same dispatch pattern: call `run()`, check `has_failed()`, resolve `OutputFormat` via `resolve_output_format()` (CLI flag > `mdvs.toml`'s `default_output_format` > hard default `pretty`), call `result.render()`, print, set exit code.
 
 ## Incremental Build
 
