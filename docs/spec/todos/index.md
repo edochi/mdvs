@@ -102,7 +102,7 @@
 | [0098](TODO-0098.md) | Build --force should handle dimension mismatch without requiring clean | done | medium | 2026-03-13 |
 | [0099](TODO-0099.md) | Redesign auto-update/auto-build pipeline across commands | done | high | 2026-03-13 |
 | [0100](TODO-0100.md) | Redesign text output format for all commands | done | high | 2026-03-13 |
-| [0101](TODO-0101.md) | Add markdown output format, rename text to pretty | in-progress | medium | 2026-03-13 |
+| [0101](TODO-0101.md) | Add markdown output format, rename text to pretty | done | medium | 2026-03-13 |
 | [0102](TODO-0102.md) | Write and distribute SKILL.md for end-user projects | todo | medium | 2026-03-14 |
 | [0103](TODO-0103.md) | Validate config invariants on mdvs.toml load | done | high | 2026-03-14 |
 | [0104](TODO-0104.md) | Redesign internal column naming — move prefix from storage to search view | done | medium | 2026-03-14 |
@@ -190,4 +190,4 @@
 | [0186](TODO-0186.md) | mdvs explain — path-scoped schema query for agent callers | todo | high | 2026-06-06 |
 | [0187](TODO-0187.md) | Recipe — agent harness hook for auto-check (and optional auto-explain / pre-validate) | todo | medium | 2026-06-06 |
 | [0188](TODO-0188.md) | mdvs check --stdin — in-memory frontmatter validation | todo | medium | 2026-06-06 |
-| [0189](TODO-0189.md) | Collapse main.rs output dispatch into CommandResult::render() | in-progress | medium | 2026-06-16 |
+| [0189](TODO-0189.md) | Collapse main.rs output dispatch into CommandResult::render() | done | medium | 2026-06-16 |

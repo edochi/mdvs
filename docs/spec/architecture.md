@@ -71,7 +71,7 @@ src/
 ├── block.rs                            — rendering primitives (Block enum, TableStyle, Render trait)
 ├── step.rs                             — command result types (CommandResult, StepEntry, ErrorKind)
 ├── output.rs                           — output types (ViolationKind, FieldViolation, DiscoveredField, ChangedField, FieldHint)
-├── render.rs                           — format_text() and format_markdown() consuming Vec<Block>
+├── render.rs                           — format_pretty() and format_markdown() consuming Vec<Block>
 ├── table.rs                            — tabled helpers (style_compact, style_record, term_width)
 ├── search.rs                           — SearchMode enum, per-mode score column resolution, collision detection
 │
@@ -382,11 +382,11 @@ Three-stage rendering:
 
 1. **Data** — command produces an `Outcome` struct (in `outcome/commands/`)
 2. **Blocks** — `Render` trait (`block.rs:56`) converts outcome to `Vec<Block>` via `render_compact()` or `render_verbose()`
-3. **Format** — `format_text()` (`render.rs:19`) or `serde_json::to_string_pretty()` produces the final string
+3. **Format** — `CommandResult::render(format, verbose)` (`step.rs`) dispatches to `format_pretty()`, `format_markdown()` (both in `render.rs`), or `serde_json::to_string_pretty()` based on the requested `OutputFormat`.
 
-`CommandResult` (`step.rs:90`) holds `Vec<StepEntry>` (pipeline steps) + `Result<Outcome, StepError>` (final result). Verbose mode renders steps + result; compact renders result only. JSON uses `#[serde(untagged)]` on `Outcome` for flat serialization.
+`CommandResult` (`step.rs`) holds `Vec<StepEntry>` (pipeline steps) + `Result<Outcome, StepError>` (final result). Verbose mode renders steps + result; compact renders result only. JSON uses `#[serde(untagged)]` on `Outcome` for flat serialization.
 
-Every command in `main.rs` follows the same dispatch pattern: call `run()`, check `has_failed()`, choose format, print, set exit code.
+Every command in `main.rs` follows the same dispatch pattern: call `run()`, check `has_failed()`, resolve `OutputFormat` via `resolve_output_format()` (CLI flag > `mdvs.toml`'s `default_output_format` > TTY autodetect), call `result.render()`, print, set exit code.
 
 ## Incremental Build
 
