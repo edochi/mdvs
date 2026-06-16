@@ -1,3 +1,7 @@
+# Override the default output format here. When unset, mdvs uses `pretty`.
+# The `--output` / `-o` flag always wins over this field.
+# default_output_format = "markdown"
+
 [scan]
 glob = "**"
 include_bare_files = true

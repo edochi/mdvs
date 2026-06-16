@@ -5,6 +5,8 @@
 
 use crate::block::{Block, Render};
 use crate::outcome::Outcome;
+use crate::output::OutputFormat;
+use crate::render::{format_markdown, format_pretty};
 use serde::ser::SerializeMap;
 use serde::{Serialize, Serializer};
 use std::time::Instant;
@@ -154,6 +156,34 @@ impl CommandResult {
         match &self.result {
             Ok(outcome) => outcome.render(),
             Err(e) => vec![Block::Line(format!("Error: {}", e.message))],
+        }
+    }
+
+    /// Format the command result as a string in the requested output format.
+    ///
+    /// `verbose` controls whether process step output is included (text) or
+    /// the full step list is serialized (JSON). When `verbose` is false in
+    /// JSON mode, only the final outcome is serialized — falling back to the
+    /// full result when no outcome is available (i.e. on error).
+    pub fn render(
+        &self,
+        format: &OutputFormat,
+        verbose: bool,
+    ) -> Result<String, serde_json::Error> {
+        Ok(match (format, verbose) {
+            (OutputFormat::Pretty, true) => format_pretty(&self.render_verbose()),
+            (OutputFormat::Pretty, false) => format_pretty(&self.render_compact()),
+            (OutputFormat::Markdown, true) => format_markdown(&self.render_verbose()),
+            (OutputFormat::Markdown, false) => format_markdown(&self.render_compact()),
+            (OutputFormat::Json, true) => serde_json::to_string_pretty(self)?,
+            (OutputFormat::Json, false) => self.compact_json()?,
+        })
+    }
+
+    fn compact_json(&self) -> Result<String, serde_json::Error> {
+        match self.result_value() {
+            Some(outcome) => serde_json::to_string_pretty(outcome),
+            None => serde_json::to_string_pretty(self),
         }
     }
 }
@@ -559,5 +589,98 @@ mod tests {
             elapsed_ms: 15,
         };
         assert!(has_violations(&result));
+    }
+
+    fn sample_result() -> CommandResult {
+        CommandResult {
+            steps: vec![StepEntry::ok(
+                Outcome::Scan(crate::outcome::ScanOutcome {
+                    files_found: 5,
+                    glob: "**".into(),
+                }),
+                10,
+            )],
+            result: Ok(Outcome::Clean(CleanOutcome {
+                removed: true,
+                path: PathBuf::from(".mdvs"),
+                files_removed: 1,
+                size_bytes: 100,
+            })),
+            elapsed_ms: 15,
+        }
+    }
+
+    #[test]
+    fn render_pretty_verbose_includes_step_lines() {
+        let out = sample_result()
+            .render(&OutputFormat::Pretty, true)
+            .expect("render");
+        assert!(out.contains("Scan") && out.contains("(10ms)"));
+    }
+
+    #[test]
+    fn render_pretty_compact_omits_step_lines() {
+        let out = sample_result()
+            .render(&OutputFormat::Pretty, false)
+            .expect("render");
+        assert!(!out.contains("Scan"));
+    }
+
+    #[test]
+    fn render_json_verbose_emits_steps_array() {
+        let out = sample_result()
+            .render(&OutputFormat::Json, true)
+            .expect("render");
+        // Callers use `print!` (not `println!`); main expects no trailing newline.
+        assert!(!out.ends_with('\n'));
+        let value: serde_json::Value = serde_json::from_str(&out).expect("parse");
+        assert!(value["steps"].is_array());
+        assert!(value["elapsed_ms"].is_number());
+    }
+
+    #[test]
+    fn render_json_compact_emits_outcome_only_on_success() {
+        let out = sample_result()
+            .render(&OutputFormat::Json, false)
+            .expect("render");
+        assert!(!out.ends_with('\n'));
+        let value: serde_json::Value = serde_json::from_str(&out).expect("parse");
+        assert!(value.get("steps").is_none());
+        assert!(value["removed"].is_boolean());
+    }
+
+    #[test]
+    fn render_markdown_verbose_includes_step_lines() {
+        let out = sample_result()
+            .render(&OutputFormat::Markdown, true)
+            .expect("render");
+        assert!(out.contains("Scan") && out.contains("(10ms)"));
+        assert!(!out.ends_with('\n'));
+    }
+
+    #[test]
+    fn render_markdown_compact_omits_step_lines() {
+        let out = sample_result()
+            .render(&OutputFormat::Markdown, false)
+            .expect("render");
+        assert!(!out.contains("Scan"));
+        assert!(!out.ends_with('\n'));
+    }
+
+    #[test]
+    fn render_json_compact_falls_back_to_full_result_on_error() {
+        let failed = CommandResult {
+            steps: vec![],
+            result: Err(StepError {
+                kind: ErrorKind::User,
+                message: "config not found".into(),
+            }),
+            elapsed_ms: 2,
+        };
+        let out = failed.render(&OutputFormat::Json, false).expect("render");
+        assert!(!out.ends_with('\n'));
+        let value: serde_json::Value = serde_json::from_str(&out).expect("parse");
+        assert_eq!(value["error"]["kind"], "user");
+        assert!(value.get("steps").is_some());
     }
 }

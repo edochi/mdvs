@@ -2,12 +2,20 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::PathBuf;
 
-/// Controls whether command output is rendered as plain text or machine-readable JSON.
-#[derive(Clone, clap::ValueEnum)]
+/// Controls how command output is rendered.
+///
+/// Serialised in `mdvs.toml` (as `default_output_format = "..."`) using the
+/// same lowercase names the CLI accepts (`pretty`, `markdown`, `json`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "lowercase")]
 pub enum OutputFormat {
-    /// Pretty-printed tables and summaries for terminal display.
-    Text,
-    /// Structured JSON for piping into other tools.
+    /// Pretty-printed tables and summaries for terminal display (box-drawing).
+    Pretty,
+    /// Markdown — GFM-flavoured tables and `##` section headers. Suitable for
+    /// piping into docs, pasting into PR descriptions or issues, and for
+    /// agents reading mdvs output directly into their context.
+    Markdown,
+    /// Structured JSON for piping into other tools (`jq` pipelines, programmatic callers).
     Json,
 }
 

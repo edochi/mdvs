@@ -1,5 +1,7 @@
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
+use mdvs::output::OutputFormat;
+use mdvs::schema::config::MdvsToml;
+use std::path::{Path, PathBuf};
 
 /// Stderr logging level for `--logs`.
 #[derive(Clone, clap::ValueEnum)]
@@ -12,9 +14,10 @@ enum LogLevel {
 #[derive(Parser)]
 #[command(name = "mdvs", version, about = "Markdown Validation & Search")]
 struct Cli {
-    /// Output format
-    #[arg(short, long, global = true, default_value = "text")]
-    output: mdvs::output::OutputFormat,
+    /// Output format. When omitted, falls back to `mdvs.toml`'s
+    /// `default_output_format`, then to the hard default `pretty`.
+    #[arg(short, long, global = true)]
+    output: Option<OutputFormat>,
 
     /// Show detailed output
     #[arg(short, long, global = true)]
@@ -161,6 +164,33 @@ enum UpdateCommand {
     Reinfer(mdvs::cmd::update::ReinferArgs),
 }
 
+/// Resolve the effective output format from the priority chain:
+///
+/// 1. `--output` on the CLI (if provided).
+/// 2. `default_output_format` in the project's `mdvs.toml` (if present and parseable).
+/// 3. Hard fallback: `pretty`.
+///
+/// A failure to read or parse `mdvs.toml` at step 2 is silent. Config-driven
+/// default is a convenience, not load-bearing — diagnostics for malformed
+/// configs surface through the command itself when it loads the file.
+///
+/// TTY autodetection was considered and explicitly rejected: same command
+/// should produce same bytes regardless of whether stdout is a terminal, a
+/// pipe, or a captured handle (agents, CI). Projects that prefer a
+/// different default set `default_output_format` in `mdvs.toml`.
+fn resolve_output_format(cli_flag: Option<OutputFormat>, project_path: &Path) -> OutputFormat {
+    if let Some(f) = cli_flag {
+        return f;
+    }
+    let toml_path = project_path.join("mdvs.toml");
+    if let Ok(config) = MdvsToml::read(&toml_path)
+        && let Some(f) = config.default_output_format
+    {
+        return f;
+    }
+    OutputFormat::Pretty
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -204,23 +234,12 @@ async fn main() -> anyhow::Result<()> {
                 skip_gitignore,
                 cli.verbose,
                 schema.as_deref(),
+                cli.output,
             );
             let failed = mdvs::step::has_failed(&result);
             let verbose = cli.verbose || failed;
-            let output_str = match (&cli.output, verbose) {
-                (mdvs::output::OutputFormat::Text, true) => {
-                    mdvs::render::format_text(&result.render_verbose())
-                }
-                (mdvs::output::OutputFormat::Text, false) => {
-                    mdvs::render::format_text(&result.render_compact())
-                }
-                (mdvs::output::OutputFormat::Json, true) => serde_json::to_string_pretty(&result)?,
-                (mdvs::output::OutputFormat::Json, false) => match result.result_value() {
-                    Some(outcome) => serde_json::to_string_pretty(outcome)?,
-                    None => serde_json::to_string_pretty(&result)?,
-                },
-            };
-            print!("{output_str}");
+            let format = resolve_output_format(cli.output, &path);
+            print!("{}", result.render(&format, verbose)?);
             if failed {
                 std::process::exit(2);
             }
@@ -247,20 +266,8 @@ async fn main() -> anyhow::Result<()> {
             let failed = mdvs::step::has_failed(&result);
             let violations = mdvs::step::has_violations(&result);
             let verbose = cli.verbose || failed;
-            let output_str = match (&cli.output, verbose) {
-                (mdvs::output::OutputFormat::Text, true) => {
-                    mdvs::render::format_text(&result.render_verbose())
-                }
-                (mdvs::output::OutputFormat::Text, false) => {
-                    mdvs::render::format_text(&result.render_compact())
-                }
-                (mdvs::output::OutputFormat::Json, true) => serde_json::to_string_pretty(&result)?,
-                (mdvs::output::OutputFormat::Json, false) => match result.result_value() {
-                    Some(outcome) => serde_json::to_string_pretty(outcome)?,
-                    None => serde_json::to_string_pretty(&result)?,
-                },
-            };
-            print!("{output_str}");
+            let format = resolve_output_format(cli.output, &path);
+            print!("{}", result.render(&format, verbose)?);
             if failed {
                 std::process::exit(2);
             }
@@ -291,20 +298,8 @@ async fn main() -> anyhow::Result<()> {
             .await;
             let failed = mdvs::step::has_failed(&result);
             let verbose = cli.verbose || failed;
-            let output_str = match (&cli.output, verbose) {
-                (mdvs::output::OutputFormat::Text, true) => {
-                    mdvs::render::format_text(&result.render_verbose())
-                }
-                (mdvs::output::OutputFormat::Text, false) => {
-                    mdvs::render::format_text(&result.render_compact())
-                }
-                (mdvs::output::OutputFormat::Json, true) => serde_json::to_string_pretty(&result)?,
-                (mdvs::output::OutputFormat::Json, false) => match result.result_value() {
-                    Some(outcome) => serde_json::to_string_pretty(outcome)?,
-                    None => serde_json::to_string_pretty(&result)?,
-                },
-            };
-            print!("{output_str}");
+            let format = resolve_output_format(cli.output, &path);
+            print!("{}", result.render(&format, verbose)?);
             if failed {
                 std::process::exit(2);
             }
@@ -319,20 +314,8 @@ async fn main() -> anyhow::Result<()> {
             let failed = mdvs::step::has_failed(&result);
             let violations = mdvs::step::has_violations(&result);
             let verbose = cli.verbose || failed;
-            let output_str = match (&cli.output, verbose) {
-                (mdvs::output::OutputFormat::Text, true) => {
-                    mdvs::render::format_text(&result.render_verbose())
-                }
-                (mdvs::output::OutputFormat::Text, false) => {
-                    mdvs::render::format_text(&result.render_compact())
-                }
-                (mdvs::output::OutputFormat::Json, true) => serde_json::to_string_pretty(&result)?,
-                (mdvs::output::OutputFormat::Json, false) => match result.result_value() {
-                    Some(outcome) => serde_json::to_string_pretty(outcome)?,
-                    None => serde_json::to_string_pretty(&result)?,
-                },
-            };
-            print!("{output_str}");
+            let format = resolve_output_format(cli.output, &path);
+            print!("{}", result.render(&format, verbose)?);
             if failed {
                 std::process::exit(2);
             }
@@ -357,20 +340,8 @@ async fn main() -> anyhow::Result<()> {
             .await;
             let failed = mdvs::step::has_failed(&result);
             let verbose = cli.verbose || failed;
-            let output_str = match (&cli.output, verbose) {
-                (mdvs::output::OutputFormat::Text, true) => {
-                    mdvs::render::format_text(&result.render_verbose())
-                }
-                (mdvs::output::OutputFormat::Text, false) => {
-                    mdvs::render::format_text(&result.render_compact())
-                }
-                (mdvs::output::OutputFormat::Json, true) => serde_json::to_string_pretty(&result)?,
-                (mdvs::output::OutputFormat::Json, false) => match result.result_value() {
-                    Some(outcome) => serde_json::to_string_pretty(outcome)?,
-                    None => serde_json::to_string_pretty(&result)?,
-                },
-            };
-            print!("{output_str}");
+            let format = resolve_output_format(cli.output, &path);
+            print!("{}", result.render(&format, verbose)?);
             if failed {
                 std::process::exit(2);
             }
@@ -380,20 +351,8 @@ async fn main() -> anyhow::Result<()> {
             let result = mdvs::cmd::clean::run(&path).await;
             let failed = mdvs::step::has_failed(&result);
             let verbose = cli.verbose || failed;
-            let output_str = match (&cli.output, verbose) {
-                (mdvs::output::OutputFormat::Text, true) => {
-                    mdvs::render::format_text(&result.render_verbose())
-                }
-                (mdvs::output::OutputFormat::Text, false) => {
-                    mdvs::render::format_text(&result.render_compact())
-                }
-                (mdvs::output::OutputFormat::Json, true) => serde_json::to_string_pretty(&result)?,
-                (mdvs::output::OutputFormat::Json, false) => match result.result_value() {
-                    Some(outcome) => serde_json::to_string_pretty(outcome)?,
-                    None => serde_json::to_string_pretty(&result)?,
-                },
-            };
-            print!("{output_str}");
+            let format = resolve_output_format(cli.output, &path);
+            print!("{}", result.render(&format, verbose)?);
             if failed {
                 std::process::exit(2);
             }
@@ -407,20 +366,8 @@ async fn main() -> anyhow::Result<()> {
             let result = mdvs::cmd::info::run(&path, cli.verbose).await;
             let failed = mdvs::step::has_failed(&result);
             let verbose = cli.verbose || failed;
-            let output_str = match (&cli.output, verbose) {
-                (mdvs::output::OutputFormat::Text, true) => {
-                    mdvs::render::format_text(&result.render_verbose())
-                }
-                (mdvs::output::OutputFormat::Text, false) => {
-                    mdvs::render::format_text(&result.render_compact())
-                }
-                (mdvs::output::OutputFormat::Json, true) => serde_json::to_string_pretty(&result)?,
-                (mdvs::output::OutputFormat::Json, false) => match result.result_value() {
-                    Some(outcome) => serde_json::to_string_pretty(outcome)?,
-                    None => serde_json::to_string_pretty(&result)?,
-                },
-            };
-            print!("{output_str}");
+            let format = resolve_output_format(cli.output, &path);
+            print!("{}", result.render(&format, verbose)?);
             if failed {
                 std::process::exit(2);
             }
@@ -439,27 +386,92 @@ async fn main() -> anyhow::Result<()> {
             // summary normally.
             if output_file.is_some() || failed {
                 let verbose = cli.verbose || failed;
-                let output_str = match (&cli.output, verbose) {
-                    (mdvs::output::OutputFormat::Text, true) => {
-                        mdvs::render::format_text(&result.render_verbose())
-                    }
-                    (mdvs::output::OutputFormat::Text, false) => {
-                        mdvs::render::format_text(&result.render_compact())
-                    }
-                    (mdvs::output::OutputFormat::Json, true) => {
-                        serde_json::to_string_pretty(&result)?
-                    }
-                    (mdvs::output::OutputFormat::Json, false) => match result.result_value() {
-                        Some(outcome) => serde_json::to_string_pretty(outcome)?,
-                        None => serde_json::to_string_pretty(&result)?,
-                    },
-                };
-                print!("{output_str}");
+                let format = resolve_output_format(cli.output, &path);
+                print!("{}", result.render(&format, verbose)?);
             }
             if failed {
                 std::process::exit(2);
             }
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    fn write_config_with_default(dir: &Path, default: &str) {
+        let toml = format!(
+            r#"default_output_format = "{default}"
+
+[scan]
+glob = "**"
+include_bare_files = false
+skip_gitignore = false
+frontmatter_format = "auto"
+
+[fields]
+ignore = []
+max_categories = 10
+min_category_repetition = 3
+"#
+        );
+        fs::write(dir.join("mdvs.toml"), toml).unwrap();
+    }
+
+    #[test]
+    fn cli_flag_wins_over_config() {
+        let dir = TempDir::new().unwrap();
+        write_config_with_default(dir.path(), "json");
+        let resolved = resolve_output_format(Some(OutputFormat::Markdown), dir.path());
+        assert_eq!(resolved, OutputFormat::Markdown);
+    }
+
+    #[test]
+    fn config_wins_over_hard_default() {
+        let dir = TempDir::new().unwrap();
+        write_config_with_default(dir.path(), "json");
+        let resolved = resolve_output_format(None, dir.path());
+        assert_eq!(resolved, OutputFormat::Json);
+    }
+
+    #[test]
+    fn missing_mdvs_toml_falls_through_to_pretty() {
+        let dir = TempDir::new().unwrap();
+        let resolved = resolve_output_format(None, dir.path());
+        assert_eq!(resolved, OutputFormat::Pretty);
+    }
+
+    #[test]
+    fn malformed_mdvs_toml_falls_through_silently() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("mdvs.toml"), "this is not valid toml [[[").unwrap();
+        // Parse failure on the config peek should NOT propagate — the command
+        // itself will surface the error when it tries to load.
+        let resolved = resolve_output_format(None, dir.path());
+        assert_eq!(resolved, OutputFormat::Pretty);
+    }
+
+    #[test]
+    fn config_without_default_falls_through_to_pretty() {
+        let dir = TempDir::new().unwrap();
+        let toml = r#"
+[scan]
+glob = "**"
+include_bare_files = false
+skip_gitignore = false
+frontmatter_format = "auto"
+
+[fields]
+ignore = []
+max_categories = 10
+min_category_repetition = 3
+"#;
+        fs::write(dir.path().join("mdvs.toml"), toml).unwrap();
+        let resolved = resolve_output_format(None, dir.path());
+        assert_eq!(resolved, OutputFormat::Pretty);
     }
 }

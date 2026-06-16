@@ -62,6 +62,7 @@ mod tests {
 
     fn empty_toml() -> MdvsToml {
         MdvsToml {
+            default_output_format: None,
             scan: ScanConfig {
                 glob: "**".into(),
                 include_bare_files: false,

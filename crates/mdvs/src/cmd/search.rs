@@ -380,6 +380,7 @@ mod tests {
 
     fn write_config(dir: &Path, model_name: &str) {
         let mut config = MdvsToml {
+            default_output_format: None,
             scan: ScanConfig {
                 glob: "**".into(),
                 include_bare_files: false,
@@ -416,7 +417,7 @@ mod tests {
     }
 
     async fn init_and_build(dir: &Path) {
-        let step = crate::cmd::init::run(dir, "**", false, false, true, false, false, None);
+        let step = crate::cmd::init::run(dir, "**", false, false, true, false, false, None, None);
         assert!(!crate::step::has_failed(&step));
         swap_to_mock_embedder(dir);
         let output = crate::cmd::build::run(dir, None, None, None, false, true, false).await;

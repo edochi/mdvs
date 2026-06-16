@@ -355,6 +355,7 @@ mod tests {
 
     fn write_toml(dir: &Path, fields: Vec<TomlField>, ignore: Vec<String>) {
         let mut config = MdvsToml {
+            default_output_format: None,
             scan: ScanConfig {
                 glob: "**".into(),
                 include_bare_files: false,
@@ -732,6 +733,7 @@ mod tests {
         .unwrap();
 
         let mut config = MdvsToml {
+            default_output_format: None,
             scan: ScanConfig {
                 glob: "**".into(),
                 include_bare_files: true,
@@ -1265,8 +1267,17 @@ mod tests {
         }
 
         // Init infers categories on status
-        let init_step =
-            crate::cmd::init::run(tmp.path(), "**", false, false, true, false, false, None);
+        let init_step = crate::cmd::init::run(
+            tmp.path(),
+            "**",
+            false,
+            false,
+            true,
+            false,
+            false,
+            None,
+            None,
+        );
         assert!(!crate::step::has_failed(&init_step));
 
         // Check should pass — inferred categories match actual data
@@ -1299,8 +1310,17 @@ mod tests {
             .unwrap();
         }
 
-        let init_step =
-            crate::cmd::init::run(tmp.path(), "**", false, false, true, false, false, None);
+        let init_step = crate::cmd::init::run(
+            tmp.path(),
+            "**",
+            false,
+            false,
+            true,
+            false,
+            false,
+            None,
+            None,
+        );
         assert!(!crate::step::has_failed(&init_step));
 
         let check_step = run(tmp.path(), true, false, None);
@@ -1339,8 +1359,17 @@ mod tests {
         }
 
         // Init infers categories
-        let init_step =
-            crate::cmd::init::run(tmp.path(), "**", false, false, true, false, false, None);
+        let init_step = crate::cmd::init::run(
+            tmp.path(),
+            "**",
+            false,
+            false,
+            true,
+            false,
+            false,
+            None,
+            None,
+        );
         assert!(!crate::step::has_failed(&init_step));
 
         // Corrupt a file with an out-of-category value

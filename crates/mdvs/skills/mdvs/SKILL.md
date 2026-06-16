@@ -156,9 +156,17 @@ Prints this skill file to stdout. Useful for piping into another agent's context
 
 ## Output format
 
-Use the default text output. It produces clean, readable tables and summaries. Only use `--output json` when you need to extract specific values programmatically (e.g., piping violation counts into another tool).
+Three formats are available; the default is `pretty`.
 
-Use `-v` (verbose) to get detailed per-field or per-file information in both text and JSON modes.
+- `--output pretty` — box-drawing tables for a human-readable terminal. Adapts to terminal width. **This is the default.**
+- `--output markdown` — GFM pipe tables and `##` section headers. **Best choice for agent consumption** — token-efficient and the format LLMs parse most fluently.
+- `--output json` — strict structured JSON. Use this when you need to extract specific values programmatically (e.g. `mdvs check --output json | jq '.violations[]'`).
+
+When `--output` is omitted, mdvs picks the format using this priority chain: CLI flag > `default_output_format` in `mdvs.toml` > hard default (`pretty`). Same command always produces the same output, regardless of whether stdout is a terminal, a pipe, or captured by an agent harness.
+
+**For agent use**: pass `--output markdown` explicitly, or set `default_output_format = "markdown"` in the project's `mdvs.toml` once. The latter is the right choice for KBs co-maintained with an agent — every invocation produces Markdown without needing to remember the flag.
+
+Use `-v` (verbose) to get per-step pipeline output (with timings) in addition to the final result. Available for all three formats.
 
 ## Exit codes
 

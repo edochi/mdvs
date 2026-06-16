@@ -1,7 +1,7 @@
 //! Rendering primitives and the `Render` trait.
 //!
 //! Data types produce `Vec<Block>` via the `Render` trait. Shared formatters
-//! (`format_text`, `format_markdown`) consume blocks and produce formatted
+//! (`format_pretty`, `format_markdown`) consume blocks and produce formatted
 //! output strings. This separation means adding a new output format requires
 //! writing one formatter function, not touching any command or outcome type.
 

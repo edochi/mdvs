@@ -32,6 +32,11 @@ cargo fmt                                              # format
 
 The `testing-mocks` feature gates the deterministic `MockEmbedder` (`provider = "mock"` in `mdvs.toml`). It is off in production binaries (`cargo install`); `cargo test` and `cargo clippy` see it via `cfg(test)`. Real-model tests are marked `#[ignore]` so the fast lane stays hermetic — no Hugging Face network calls. See TODO-0184.
 
+## Markdown conventions
+
+- **No hard-wrap.** Markdown files in this repo are not wrapped at a column limit — write each paragraph on a single line and let the editor soft-wrap. This applies to README, `book/`, `docs/spec/`, TODO files, PR descriptions stored as files, and any other `.md` in the tree.
+- Don't reference scratch or gitignored folders in committed markdown files — keep references in committed docs limited to paths that survive a fresh clone.
+
 ## Architectural Invariants
 
 These survive across refactors; reach for them when in doubt:

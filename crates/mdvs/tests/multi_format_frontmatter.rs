@@ -52,6 +52,7 @@ fn run_init(path: &Path) -> MdvsToml {
         true,  // skip_gitignore
         false, // verbose
         None,  // schema override
+        None,  // default_output_format
     );
     assert!(
         result.result.is_ok(),

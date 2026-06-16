@@ -735,6 +735,7 @@ mod tests {
             false, // skip_gitignore
             false, // verbose
             None,
+            None,
         );
         assert!(!crate::step::has_failed(&init_out));
 
@@ -789,8 +790,17 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
-        let init_out =
-            crate::cmd::init::run(tmp.path(), "**", false, false, true, false, false, None);
+        let init_out = crate::cmd::init::run(
+            tmp.path(),
+            "**",
+            false,
+            false,
+            true,
+            false,
+            false,
+            None,
+            None,
+        );
         assert!(!crate::step::has_failed(&init_out));
 
         // First build: full rebuild over 2 files.
@@ -873,6 +883,7 @@ mod tests {
             false, // skip_gitignore
             false, // verbose
             None,
+            None,
         );
         assert!(!crate::step::has_failed(&output));
 
@@ -930,6 +941,7 @@ mod tests {
             true,
             false, // skip_gitignore
             false, // verbose
+            None,
             None,
         );
         assert!(!crate::step::has_failed(&output));
@@ -995,6 +1007,7 @@ mod tests {
             false, // skip_gitignore
             false, // verbose
             None,
+            None,
         );
         assert!(!crate::step::has_failed(&output));
 
@@ -1030,6 +1043,7 @@ mod tests {
             true,
             false, // skip_gitignore
             false, // verbose
+            None,
             None,
         );
         assert!(!crate::step::has_failed(&output));
@@ -1081,6 +1095,7 @@ mod tests {
             false, // skip_gitignore
             false, // verbose
             None,
+            None,
         );
         assert!(!crate::step::has_failed(&output));
 
@@ -1118,6 +1133,7 @@ mod tests {
             false, // skip_gitignore
             false, // verbose
             None,
+            None,
         );
         assert!(!crate::step::has_failed(&init_output));
 
@@ -1144,6 +1160,7 @@ mod tests {
             true,
             false, // skip_gitignore
             false, // verbose
+            None,
             None,
         );
         assert!(!crate::step::has_failed(&init_output));
@@ -1177,6 +1194,7 @@ mod tests {
             true,
             false, // skip_gitignore
             false, // verbose
+            None,
             None,
         );
         assert!(!crate::step::has_failed(&init_output));
@@ -1220,6 +1238,7 @@ mod tests {
         .unwrap();
 
         let mut config = MdvsToml {
+            default_output_format: None,
             scan: crate::schema::shared::ScanConfig {
                 glob: "**".into(),
                 include_bare_files: false,
@@ -1300,6 +1319,7 @@ mod tests {
         .unwrap();
 
         let mut config = MdvsToml {
+            default_output_format: None,
             scan: crate::schema::shared::ScanConfig {
                 glob: "**".into(),
                 include_bare_files: false,
@@ -1379,6 +1399,7 @@ mod tests {
         .unwrap();
 
         let mut config = MdvsToml {
+            default_output_format: None,
             scan: crate::schema::shared::ScanConfig {
                 glob: "**".into(),
                 include_bare_files: false,
@@ -1467,6 +1488,7 @@ mod tests {
             false, // skip_gitignore
             false, // verbose
             None,
+            None,
         );
         assert!(!crate::step::has_failed(&init_output));
 
@@ -1509,6 +1531,7 @@ mod tests {
             true,
             false, // skip_gitignore
             false, // verbose
+            None,
             None,
         );
         assert!(!crate::step::has_failed(&init_output));
@@ -1564,6 +1587,7 @@ mod tests {
             true,
             false, // skip_gitignore
             false, // verbose
+            None,
             None,
         );
         assert!(!crate::step::has_failed(&init_output));
@@ -1639,6 +1663,7 @@ mod tests {
             false, // skip_gitignore
             false, // verbose
             None,
+            None,
         );
         assert!(!crate::step::has_failed(&init_output));
 
@@ -1679,6 +1704,7 @@ mod tests {
             true,
             false, // skip_gitignore
             false, // verbose
+            None,
             None,
         );
         assert!(!crate::step::has_failed(&init_output));
@@ -1721,6 +1747,7 @@ mod tests {
             true,
             false, // skip_gitignore
             false, // verbose
+            None,
             None,
         );
         assert!(!crate::step::has_failed(&init_output));
@@ -1785,8 +1812,17 @@ mod tests {
         }
 
         // Init with auto-build disabled, then verify categories inferred
-        let init_step =
-            crate::cmd::init::run(tmp.path(), "**", false, false, true, false, false, None);
+        let init_step = crate::cmd::init::run(
+            tmp.path(),
+            "**",
+            false,
+            false,
+            true,
+            false,
+            false,
+            None,
+            None,
+        );
         assert!(!crate::step::has_failed(&init_step));
 
         let toml = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
@@ -1836,8 +1872,17 @@ mod tests {
         }
 
         // Init (infers categories on status)
-        let init_step =
-            crate::cmd::init::run(tmp.path(), "**", false, false, true, false, false, None);
+        let init_step = crate::cmd::init::run(
+            tmp.path(),
+            "**",
+            false,
+            false,
+            true,
+            false,
+            false,
+            None,
+            None,
+        );
         assert!(!crate::step::has_failed(&init_step));
 
         // Corrupt a file with an out-of-category value

@@ -23,9 +23,42 @@ These flags apply to all commands:
 
 | Flag | Values | Default | Description |
 |---|---|---|---|
-| `-o`, `--output` | `text`, `json` | `text` | Output format |
+| `-o`, `--output` | `pretty`, `markdown`, `json` | `pretty` | Output format. See [Output format selection](#output-format-selection) for the resolution chain when `-o` is omitted. |
 | `-v`, `--verbose` | | | Show detailed output (pipeline steps, expanded records) |
 | `--logs` | `info`, `debug`, `trace` | (none) | Enable diagnostic logging to stderr |
+
+### Output format selection
+
+When `--output` / `-o` isn't given, mdvs picks a format using this priority chain:
+
+1. **CLI flag** — `--output pretty|markdown|json` always wins when set.
+2. **`default_output_format` in `mdvs.toml`** — a project-level override at the top of the file (`default_output_format = "markdown"`).
+3. **Hard fallback** — `pretty`.
+
+Same command → same output. The default does not depend on whether stdout is a terminal, a pipe, or a captured handle. Projects that want a different default (e.g. agent-curated KBs that prefer markdown on every invocation) set `default_output_format` in `mdvs.toml`.
+
+The three formats target different consumers:
+
+- **`pretty`** — box-drawing tables for interactive terminal use. Adapts to terminal width.
+- **`markdown`** — GFM pipe tables and `##` section headers. Use this when piping into docs, pasting into a PR description or issue, or when an LLM agent is reading mdvs output into its context — Markdown is the most token-efficient format that LLMs parse fluently.
+- **`json`** — structured JSON for `jq` pipelines or programmatic consumers that want a strict contract.
+
+---
+
+## Top-level fields
+
+### `default_output_format`
+
+Optional. Overrides the hard `pretty` default for this project. Values: `"pretty"`, `"markdown"`, `"json"`. Always loses to an explicit `--output` flag.
+
+```toml
+default_output_format = "markdown"
+
+[scan]
+# ...
+```
+
+Useful for vaults where the same default makes sense for every contributor — for example, an agent-curated KB that should produce Markdown for the agent's context on every invocation without anyone having to remember the flag.
 
 ---
 
