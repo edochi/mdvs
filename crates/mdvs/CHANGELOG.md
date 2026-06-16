@@ -2,6 +2,24 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## v0.8.1 - 2026-06-16
+#### Features
+- (**init**) persist --output to default_output_format in mdvs.toml - (fb1db69) - edoch, *Claude*
+- (**output**) default_output_format + TTY autodetect - (710d0e0) - edoch, *Claude*
+- (**output**) add Markdown variant - (18ad6a0) - edoch, *Claude*
+#### Documentation
+- (**agents**) add no-hard-wrap markdown convention - (030ae85) - edoch, *Claude*
+- (**spec**) flesh out TODO-0101 implementation plan - (ba7234c) - edoch, *Claude*
+- (**spec**) collapse TODO-0101 to single Markdown format, document research - (183b7e9) - edoch, *Claude*
+- drop stale TTY-autodetect mentions from book and example_kb - (f7d912a) - edoch, *Claude*
+- update SKILL, mdbook, and specs for new output formats - (bbff82e) - edoch, *Claude*
+#### Refactoring
+- (**output**) drop TTY autodetect, hard default to pretty - (1222b72) - edoch, *Claude*
+- (**output**) rename Text to Pretty - (b112ff8) - edoch, *Claude*
+- (**output**) collapse main.rs dispatch into CommandResult::render - (5a2c008) - edoch, *Claude*
+
+- - -
+
 ## v0.8.0 - 2026-06-07
 #### Features
 - (**demo**) rewrite asciinema demo around an LLM-curated KB - (3df4474) - edoch
