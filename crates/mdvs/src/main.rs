@@ -13,7 +13,7 @@ enum LogLevel {
 #[command(name = "mdvs", version, about = "Markdown Validation & Search")]
 struct Cli {
     /// Output format
-    #[arg(short, long, global = true, default_value = "text")]
+    #[arg(short, long, global = true, default_value = "pretty")]
     output: mdvs::output::OutputFormat,
 
     /// Show detailed output

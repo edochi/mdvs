@@ -1,8 +1,9 @@
 //! Shared formatters that consume `Vec<Block>` and produce formatted output.
 //!
-//! Two formatters: `format_text` (terminal, box-drawing tables via tabled)
-//! and `format_markdown` (pipe tables, section headers). Adding a new output
-//! format means writing one function here — no command code changes needed.
+//! Two formatters today: `format_pretty` (terminal, box-drawing tables via
+//! tabled) and `format_markdown` (GFM pipe tables, `##` section headers).
+//! Adding a new output format means writing one function here — no command
+//! code changes needed.
 
 use tabled::settings::{
     Modify, Panel,
@@ -15,16 +16,16 @@ use tabled::settings::{
 use crate::block::{Block, TableStyle};
 use crate::table::{Builder, style_compact, term_width};
 
-/// Format blocks as terminal text with box-drawing tables.
-pub fn format_text(blocks: &[Block]) -> String {
+/// Format blocks as terminal-friendly pretty output with box-drawing tables.
+pub fn format_pretty(blocks: &[Block]) -> String {
     let mut out = String::new();
     for block in blocks {
-        format_text_block(block, &mut out, 0);
+        format_pretty_block(block, &mut out, 0);
     }
     out
 }
 
-fn format_text_block(block: &Block, out: &mut String, indent: usize) {
+fn format_pretty_block(block: &Block, out: &mut String, indent: usize) {
     let prefix = " ".repeat(indent);
     match block {
         Block::Line(s) => {
@@ -177,7 +178,7 @@ fn format_text_block(block: &Block, out: &mut String, indent: usize) {
             out.push_str(label);
             out.push_str(":\n");
             for child in children {
-                format_text_block(child, out, indent + 2);
+                format_pretty_block(child, out, indent + 2);
             }
         }
     }
@@ -309,30 +310,30 @@ mod tests {
     use crate::block::Block;
 
     #[test]
-    fn text_empty_blocks() {
-        assert_eq!(format_text(&[]), "");
+    fn pretty_empty_blocks() {
+        assert_eq!(format_pretty(&[]), "");
     }
 
     #[test]
-    fn text_line() {
+    fn pretty_line() {
         let blocks = vec![Block::Line("hello world".into())];
-        assert_eq!(format_text(&blocks), "hello world\n");
+        assert_eq!(format_pretty(&blocks), "hello world\n");
     }
 
     #[test]
-    fn text_multiple_lines() {
+    fn pretty_multiple_lines() {
         let blocks = vec![Block::Line("line 1".into()), Block::Line("line 2".into())];
-        assert_eq!(format_text(&blocks), "line 1\nline 2\n");
+        assert_eq!(format_pretty(&blocks), "line 1\nline 2\n");
     }
 
     #[test]
-    fn text_compact_table() {
+    fn pretty_compact_table() {
         let blocks = vec![Block::Table {
             headers: Some(vec!["name".into(), "type".into()]),
             rows: vec![vec!["title".into(), "String".into()]],
             style: TableStyle::Compact,
         }];
-        let output = format_text(&blocks);
+        let output = format_pretty(&blocks);
         assert!(output.contains("title"));
         assert!(output.contains("String"));
         // Rounded border chars
@@ -340,7 +341,7 @@ mod tests {
     }
 
     #[test]
-    fn text_record_table() {
+    fn pretty_record_table() {
         let blocks = vec![Block::Table {
             headers: None,
             rows: vec![
@@ -355,18 +356,18 @@ mod tests {
                 detail_rows: vec![1],
             },
         }];
-        let output = format_text(&blocks);
+        let output = format_pretty(&blocks);
         assert!(output.contains("title"));
         assert!(output.contains("required"));
     }
 
     #[test]
-    fn text_section() {
+    fn pretty_section() {
         let blocks = vec![Block::Section {
             label: "Auto-build".into(),
             children: vec![Block::Line("Scan: 5 files".into())],
         }];
-        let output = format_text(&blocks);
+        let output = format_pretty(&blocks);
         assert!(output.contains("Auto-build:"));
         assert!(output.contains("  Scan: 5 files"));
     }

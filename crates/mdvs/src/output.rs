@@ -5,8 +5,8 @@ use std::path::PathBuf;
 /// Controls how command output is rendered.
 #[derive(Clone, clap::ValueEnum)]
 pub enum OutputFormat {
-    /// Pretty-printed tables and summaries for terminal display.
-    Text,
+    /// Pretty-printed tables and summaries for terminal display (box-drawing).
+    Pretty,
     /// Markdown — GFM-flavoured tables and `##` section headers. Suitable for
     /// piping into docs, pasting into PR descriptions or issues, and for
     /// agents reading mdvs output directly into their context.

@@ -27,7 +27,7 @@ pub mod outcome;
 pub mod output;
 /// Preprocessor pipeline run before jsonschema validation.
 pub mod preprocess;
-/// Shared formatters (`format_text`, `format_markdown`) that consume `Vec<Block>`.
+/// Shared formatters (`format_pretty`, `format_markdown`) that consume `Vec<Block>`.
 pub mod render;
 /// Configuration file types (`mdvs.toml`) and shared data structures.
 pub mod schema;
