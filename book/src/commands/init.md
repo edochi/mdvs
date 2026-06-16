@@ -22,6 +22,21 @@ mdvs init [path] [flags]
 
 Global flags (`-o`, `-v`, `--logs`) are described in [Configuration](../configuration.md).
 
+### Flags persist to `mdvs.toml`
+
+Any flag passed to `init` that has a corresponding config field is **persisted into the generated `mdvs.toml`** — `init` is the only command where you don't yet have a config file, so flag values become the project's starting state. Persisted today:
+
+| Flag | Field written |
+|---|---|
+| `--glob "<pattern>"` | `[scan].glob` |
+| `--ignore-bare-files` | `[scan].include_bare_files = false` |
+| `--skip-gitignore` | `[scan].skip_gitignore = true` |
+| `-o`, `--output <format>` | top-level `default_output_format` |
+
+So `mdvs --output markdown init .` produces a `mdvs.toml` that starts with `default_output_format = "markdown"` — every subsequent command in that project gets the markdown default without anyone passing `-o` again. Flags that don't map to a config field (`--force`, `--dry-run`, `--from-jsonschema`, `--verbose`, `--logs`) remain one-shot modifiers. When a flag is absent, the corresponding field is omitted from the file (it stays at the global default).
+
+`init --force` overwrites any persisted field with the new flag value.
+
 ## What it does
 
 `init` scans every markdown file, extracts YAML frontmatter, infers a typed schema with path patterns, and writes `mdvs.toml`. It does not build the search index — run [build](./build.md) or [search](./search.md) for that.

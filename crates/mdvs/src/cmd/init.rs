@@ -2,7 +2,7 @@ use crate::discover::infer::InferredSchema;
 use crate::discover::scan::ScannedFiles;
 use crate::outcome::commands::InitOutcome;
 use crate::outcome::{InferOutcome, Outcome, ScanOutcome, WriteConfigOutcome};
-use crate::output::DiscoveredField;
+use crate::output::{DiscoveredField, OutputFormat};
 use crate::schema::config::MdvsToml;
 use crate::schema::json_schema::{canonical_to_dsl, validate_mdvs_schema};
 use crate::schema::load::load_schema;
@@ -19,6 +19,17 @@ use tracing::{info, instrument};
 /// schema file is loaded, validated against the mdvs subset, translated to
 /// DSL fields, and written directly. The `glob`, `ignore_bare_files`, and
 /// `skip_gitignore` parameters still configure the resulting `[scan]` section.
+///
+/// **Flag persistence.** Any flag the user passes to `init` that maps to a
+/// config field is persisted to the generated `mdvs.toml` — that includes
+/// `glob`, `ignore_bare_files`, `skip_gitignore`, and `default_output_format`
+/// (the global `--output` flag). Flags that don't have a config equivalent
+/// (`--force`, `--dry-run`, `--from-jsonschema`, `--verbose`, `--logs`)
+/// remain one-shot modifiers. The rule: if you cared enough to pass a flag
+/// to `init`, you almost certainly want it to be the project default — so
+/// it ends up in the file. When the flag is absent the corresponding field
+/// is left unset (no `default_output_format` line at all), letting the
+/// global default win.
 #[instrument(name = "init", skip_all)]
 #[allow(clippy::too_many_arguments)] // CLI surface; a struct would just defer the same fields
 pub fn run(
@@ -30,6 +41,7 @@ pub fn run(
     skip_gitignore: bool,
     _verbose: bool,
     schema: Option<&Path>,
+    default_output_format: Option<OutputFormat>,
 ) -> CommandResult {
     let start = Instant::now();
     let mut steps = Vec::new();
@@ -86,6 +98,7 @@ pub fn run(
             scan_config,
             schema_path,
             dry_run,
+            default_output_format,
             steps,
             start,
         );
@@ -147,6 +160,7 @@ pub fn run(
     } else {
         let write_start = Instant::now();
         let mut toml_doc = MdvsToml::from_inferred(&schema, scan_config);
+        toml_doc.default_output_format = default_output_format;
         match toml_doc.write(&config_path) {
             Ok(()) => {
                 steps.push(StepEntry::ok(
@@ -181,12 +195,14 @@ pub fn run(
 
 /// Schema-driven init: load the schema, validate it against the mdvs subset,
 /// translate to DSL fields, build the `MdvsToml`, write it.
+#[allow(clippy::too_many_arguments)]
 fn init_from_schema(
     path: &Path,
     config_path: &Path,
     scan_config: ScanConfig,
     schema_path: &Path,
     dry_run: bool,
+    default_output_format: Option<OutputFormat>,
     mut steps: Vec<StepEntry>,
     start: Instant,
 ) -> CommandResult {
@@ -254,6 +270,7 @@ fn init_from_schema(
         let write_start = Instant::now();
         let mut toml_doc = MdvsToml::default_with_fields(import.fields, import.ignore);
         toml_doc.scan = scan_config;
+        toml_doc.default_output_format = default_output_format;
         match toml_doc.write(config_path) {
             Ok(()) => {
                 steps.push(StepEntry::ok(
@@ -321,7 +338,17 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
-        let step = run(tmp.path(), "**", false, false, false, true, false, None);
+        let step = run(
+            tmp.path(),
+            "**",
+            false,
+            false,
+            false,
+            true,
+            false,
+            None,
+            None,
+        );
         assert!(!crate::step::has_failed(&step));
 
         let result = unwrap_init(&step);
@@ -337,7 +364,17 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
-        let step = run(tmp.path(), "**", false, true, false, true, false, None);
+        let step = run(
+            tmp.path(),
+            "**",
+            false,
+            true,
+            false,
+            true,
+            false,
+            None,
+            None,
+        );
         assert!(!crate::step::has_failed(&step));
         let result = unwrap_init(&step);
         assert!(result.dry_run);
@@ -349,10 +386,30 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
-        let step = run(tmp.path(), "**", false, false, false, true, false, None);
+        let step = run(
+            tmp.path(),
+            "**",
+            false,
+            false,
+            false,
+            true,
+            false,
+            None,
+            None,
+        );
         assert!(!crate::step::has_failed(&step));
 
-        let step = run(tmp.path(), "**", false, false, false, true, false, None);
+        let step = run(
+            tmp.path(),
+            "**",
+            false,
+            false,
+            false,
+            true,
+            false,
+            None,
+            None,
+        );
         assert!(crate::step::has_failed(&step));
     }
 
@@ -361,10 +418,30 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
-        let step = run(tmp.path(), "**", false, false, false, true, false, None);
+        let step = run(
+            tmp.path(),
+            "**",
+            false,
+            false,
+            false,
+            true,
+            false,
+            None,
+            None,
+        );
         assert!(!crate::step::has_failed(&step));
 
-        let step = run(tmp.path(), "**", true, false, false, true, false, None);
+        let step = run(
+            tmp.path(),
+            "**",
+            true,
+            false,
+            false,
+            true,
+            false,
+            None,
+            None,
+        );
         assert!(!crate::step::has_failed(&step));
     }
 
@@ -376,10 +453,30 @@ mod tests {
         fs::create_dir_all(tmp.path().join(".mdvs")).unwrap();
         fs::write(tmp.path().join(".mdvs/files.parquet"), "fake").unwrap();
 
-        let step = run(tmp.path(), "**", false, false, false, true, false, None);
+        let step = run(
+            tmp.path(),
+            "**",
+            false,
+            false,
+            false,
+            true,
+            false,
+            None,
+            None,
+        );
         assert!(crate::step::has_failed(&step));
 
-        let step = run(tmp.path(), "**", true, false, false, true, false, None);
+        let step = run(
+            tmp.path(),
+            "**",
+            true,
+            false,
+            false,
+            true,
+            false,
+            None,
+            None,
+        );
         assert!(!crate::step::has_failed(&step));
         assert!(!tmp.path().join(".mdvs").exists());
     }
@@ -398,6 +495,7 @@ mod tests {
             true,
             false,
             None,
+            None,
         );
         assert!(crate::step::has_failed(&step));
     }
@@ -408,7 +506,7 @@ mod tests {
         let file = tmp.path().join("not-a-dir");
         fs::write(&file, "hello").unwrap();
 
-        let step = run(&file, "**", false, false, false, true, false, None);
+        let step = run(&file, "**", false, false, false, true, false, None, None);
         assert!(crate::step::has_failed(&step));
     }
 
@@ -417,7 +515,17 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
 
-        let step = run(tmp.path(), "**", false, false, false, true, false, None);
+        let step = run(
+            tmp.path(),
+            "**",
+            false,
+            false,
+            false,
+            true,
+            false,
+            None,
+            None,
+        );
         assert!(!crate::step::has_failed(&step));
 
         let config = crate::schema::config::MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
@@ -442,7 +550,17 @@ mod tests {
         )
         .unwrap();
 
-        let step = run(tmp.path(), "**", false, false, false, true, false, None);
+        let step = run(
+            tmp.path(),
+            "**",
+            false,
+            false,
+            false,
+            true,
+            false,
+            None,
+            None,
+        );
         assert!(!crate::step::has_failed(&step));
 
         let result = unwrap_init(&step);
@@ -490,6 +608,7 @@ mod tests {
             true,
             false,
             Some(&schema_path),
+            None,
         );
         assert!(!crate::step::has_failed(&step), "step failed: {step:?}");
         let result = unwrap_init(&step);
@@ -520,6 +639,7 @@ mod tests {
             true,
             false,
             Some(&schema_path),
+            None,
         );
         assert!(!crate::step::has_failed(&step));
         assert!(!tmp.path().join("mdvs.toml").exists());
@@ -541,6 +661,7 @@ mod tests {
             true,
             false,
             Some(&schema_path),
+            None,
         );
         assert!(crate::step::has_failed(&step));
     }
@@ -562,6 +683,7 @@ mod tests {
             true,
             false,
             Some(&schema_path),
+            None,
         );
         assert!(crate::step::has_failed(&step));
     }
@@ -583,9 +705,125 @@ mod tests {
             true,
             false,
             Some(&schema_path),
+            None,
         );
         assert!(!crate::step::has_failed(&step));
         let content = fs::read_to_string(tmp.path().join("mdvs.toml")).unwrap();
         assert!(content.contains("name = \"x\""));
+    }
+
+    // --- default_output_format persistence ---
+
+    #[test]
+    fn init_with_explicit_output_flag_persists_default_output_format() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("a.md"), "---\nstatus: draft\n---\nhi").unwrap();
+
+        let step = run(
+            tmp.path(),
+            "**",
+            false,
+            false,
+            false,
+            true,
+            false,
+            None,
+            Some(OutputFormat::Markdown),
+        );
+        assert!(!crate::step::has_failed(&step));
+
+        let toml_path = tmp.path().join("mdvs.toml");
+        let content = fs::read_to_string(&toml_path).unwrap();
+        assert!(
+            content.contains("default_output_format = \"markdown\""),
+            "expected default_output_format = \"markdown\" in mdvs.toml, got:\n{content}"
+        );
+    }
+
+    #[test]
+    fn init_without_output_flag_omits_default_output_format() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("a.md"), "---\nstatus: draft\n---\nhi").unwrap();
+
+        let step = run(
+            tmp.path(),
+            "**",
+            false,
+            false,
+            false,
+            true,
+            false,
+            None,
+            None,
+        );
+        assert!(!crate::step::has_failed(&step));
+
+        let content = fs::read_to_string(tmp.path().join("mdvs.toml")).unwrap();
+        assert!(
+            !content.contains("default_output_format"),
+            "expected no default_output_format line, got:\n{content}"
+        );
+    }
+
+    #[test]
+    fn init_force_overwrites_existing_default_output_format() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("a.md"), "---\nstatus: draft\n---\nhi").unwrap();
+
+        // First init persists markdown
+        let step = run(
+            tmp.path(),
+            "**",
+            false,
+            false,
+            false,
+            true,
+            false,
+            None,
+            Some(OutputFormat::Markdown),
+        );
+        assert!(!crate::step::has_failed(&step));
+
+        // Re-init with --force and a different --output → overwrites
+        let step = run(
+            tmp.path(),
+            "**",
+            true, // force
+            false,
+            false,
+            true,
+            false,
+            None,
+            Some(OutputFormat::Json),
+        );
+        assert!(!crate::step::has_failed(&step));
+
+        let content = fs::read_to_string(tmp.path().join("mdvs.toml")).unwrap();
+        assert!(content.contains("default_output_format = \"json\""));
+        assert!(!content.contains("\"markdown\""));
+    }
+
+    #[test]
+    fn init_from_schema_with_output_flag_persists_default_output_format() {
+        let tmp = tempfile::tempdir().unwrap();
+        let schema_path = write_schema(
+            tmp.path(),
+            r#"{"type": "object", "properties": {"x": {"type": "string"}}, "additionalProperties": true}"#,
+        );
+        let step = run(
+            tmp.path(),
+            "**",
+            false,
+            false,
+            false,
+            true,
+            false,
+            Some(&schema_path),
+            Some(OutputFormat::Json),
+        );
+        assert!(!crate::step::has_failed(&step));
+
+        let content = fs::read_to_string(tmp.path().join("mdvs.toml")).unwrap();
+        assert!(content.contains("default_output_format = \"json\""));
     }
 }

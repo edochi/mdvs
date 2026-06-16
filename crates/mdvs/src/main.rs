@@ -234,6 +234,7 @@ async fn main() -> anyhow::Result<()> {
                 skip_gitignore,
                 cli.verbose,
                 schema.as_deref(),
+                cli.output,
             );
             let failed = mdvs::step::has_failed(&result);
             let verbose = cli.verbose || failed;

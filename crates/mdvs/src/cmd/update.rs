@@ -449,7 +449,7 @@ mod tests {
     }
 
     fn init_no_build(dir: &Path) {
-        let step = crate::cmd::init::run(dir, "**", false, false, true, false, false, None);
+        let step = crate::cmd::init::run(dir, "**", false, false, true, false, false, None, None);
         assert!(!crate::step::has_failed(&step));
     }
 
@@ -655,7 +655,17 @@ mod tests {
         .unwrap();
         fs::write(blog_dir.join("bare.md"), "# No frontmatter\nJust content.").unwrap();
 
-        let step = crate::cmd::init::run(tmp.path(), "**", false, false, true, false, false, None);
+        let step = crate::cmd::init::run(
+            tmp.path(),
+            "**",
+            false,
+            false,
+            true,
+            false,
+            false,
+            None,
+            None,
+        );
         assert!(!crate::step::has_failed(&step));
 
         let toml_before = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
