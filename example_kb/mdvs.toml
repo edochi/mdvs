@@ -1,3 +1,8 @@
+# Override the default output format here. When unset, mdvs picks `pretty`
+# for an interactive terminal and `markdown` when stdout is piped. The
+# `--output` / `-o` flag always wins.
+# default_output_format = "markdown"
+
 [scan]
 glob = "**"
 include_bare_files = true

@@ -269,6 +269,7 @@ mod tests {
 
     fn write_config(dir: &Path) {
         let mut config = MdvsToml {
+            default_output_format: None,
             scan: ScanConfig {
                 glob: "**".into(),
                 include_bare_files: false,
@@ -413,6 +414,7 @@ mod tests {
         )
         .unwrap();
         let mut config = MdvsToml {
+            default_output_format: None,
             scan: ScanConfig {
                 glob: "**".into(),
                 include_bare_files: false,

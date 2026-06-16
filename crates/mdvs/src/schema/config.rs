@@ -1,5 +1,6 @@
 use crate::discover::field_type::FieldType;
 use crate::discover::infer::{InferredSchema, infer_constraints};
+use crate::output::OutputFormat;
 use crate::preprocess::ValueStage;
 use crate::schema::constraints::Constraints;
 use crate::schema::shared::{
@@ -148,6 +149,10 @@ fn is_default_min_category_repetition(v: &usize) -> bool {
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct MdvsToml {
+    /// Default output format when `--output` is not given on the command line.
+    /// Resolution order: CLI flag > this field > TTY autodetect > `pretty`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_output_format: Option<OutputFormat>,
     /// File discovery settings (glob pattern, bare-file handling).
     pub scan: ScanConfig,
     /// Placeholder for future update-specific settings.
@@ -183,6 +188,7 @@ impl MdvsToml {
     /// produced by a fresh `init --suppress-auto-build`.
     pub fn default_with_fields(fields: Vec<TomlField>, ignore: Vec<String>) -> Self {
         MdvsToml {
+            default_output_format: None,
             scan: ScanConfig {
                 glob: "**".into(),
                 include_bare_files: false,
@@ -208,6 +214,7 @@ impl MdvsToml {
     /// Build sections are added by the first `build` run.
     pub fn from_inferred(schema: &InferredSchema, scan: ScanConfig) -> Self {
         MdvsToml {
+            default_output_format: None,
             scan,
             update: UpdateConfig::default(),
             check: Some(CheckConfig { auto_update: true }),
@@ -595,6 +602,7 @@ mod tests {
     /// Helper to build a full MdvsToml with all sections present.
     fn full_toml(fields: Vec<TomlField>) -> MdvsToml {
         MdvsToml {
+            default_output_format: None,
             scan: ScanConfig {
                 glob: "**".into(),
                 include_bare_files: false,
@@ -632,6 +640,7 @@ mod tests {
     #[test]
     fn mdvs_toml_roundtrip() {
         let toml_doc = MdvsToml {
+            default_output_format: None,
             scan: ScanConfig {
                 glob: "**".into(),
                 include_bare_files: false,
@@ -937,6 +946,7 @@ default_limit = 10
     #[test]
     fn validation_only_roundtrip() {
         let doc = MdvsToml {
+            default_output_format: None,
             scan: ScanConfig {
                 glob: "**".into(),
                 include_bare_files: false,

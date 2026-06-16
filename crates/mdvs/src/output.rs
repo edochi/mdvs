@@ -3,7 +3,11 @@ use std::fmt;
 use std::path::PathBuf;
 
 /// Controls how command output is rendered.
-#[derive(Clone, clap::ValueEnum)]
+///
+/// Serialised in `mdvs.toml` (as `default_output_format = "..."`) using the
+/// same lowercase names the CLI accepts (`pretty`, `markdown`, `json`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "lowercase")]
 pub enum OutputFormat {
     /// Pretty-printed tables and summaries for terminal display (box-drawing).
     Pretty,

@@ -1,5 +1,8 @@
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
+use mdvs::output::OutputFormat;
+use mdvs::schema::config::MdvsToml;
+use std::io::IsTerminal;
+use std::path::{Path, PathBuf};
 
 /// Stderr logging level for `--logs`.
 #[derive(Clone, clap::ValueEnum)]
@@ -12,9 +15,11 @@ enum LogLevel {
 #[derive(Parser)]
 #[command(name = "mdvs", version, about = "Markdown Validation & Search")]
 struct Cli {
-    /// Output format
-    #[arg(short, long, global = true, default_value = "pretty")]
-    output: mdvs::output::OutputFormat,
+    /// Output format. When omitted, falls back to `mdvs.toml`'s
+    /// `default_output_format`, then to TTY autodetect (`pretty` for a
+    /// terminal, `markdown` when piped).
+    #[arg(short, long, global = true)]
+    output: Option<OutputFormat>,
 
     /// Show detailed output
     #[arg(short, long, global = true)]
@@ -161,6 +166,46 @@ enum UpdateCommand {
     Reinfer(mdvs::cmd::update::ReinferArgs),
 }
 
+/// Resolve the effective output format from the priority chain:
+///
+/// 1. `--output` on the CLI (if provided).
+/// 2. `default_output_format` in the project's `mdvs.toml` (if present and parseable).
+/// 3. TTY autodetect — `pretty` when stdout is a terminal, `markdown` when piped.
+///
+/// A failure to read or parse `mdvs.toml` at step 2 is silent. Config-driven
+/// default is a convenience, not load-bearing — diagnostics for malformed
+/// configs surface through the command itself when it loads the file.
+///
+/// `is_tty` is passed in (not detected here) so the logic stays pure and
+/// testable; the caller reads `std::io::stdout().is_terminal()` once.
+fn resolve_format(
+    cli_flag: Option<OutputFormat>,
+    project_path: &Path,
+    is_tty: bool,
+) -> OutputFormat {
+    if let Some(f) = cli_flag {
+        return f;
+    }
+    let toml_path = project_path.join("mdvs.toml");
+    if let Ok(config) = MdvsToml::read(&toml_path)
+        && let Some(f) = config.default_output_format
+    {
+        return f;
+    }
+    if is_tty {
+        OutputFormat::Pretty
+    } else {
+        OutputFormat::Markdown
+    }
+}
+
+/// Wrapper around [`resolve_format`] that detects TTY state from the live
+/// stdout. Use this from `main`; tests should call [`resolve_format`]
+/// directly with explicit `is_tty`.
+fn resolve_output_format(cli_flag: Option<OutputFormat>, project_path: &Path) -> OutputFormat {
+    resolve_format(cli_flag, project_path, std::io::stdout().is_terminal())
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -207,7 +252,8 @@ async fn main() -> anyhow::Result<()> {
             );
             let failed = mdvs::step::has_failed(&result);
             let verbose = cli.verbose || failed;
-            print!("{}", result.render(&cli.output, verbose)?);
+            let format = resolve_output_format(cli.output, &path);
+            print!("{}", result.render(&format, verbose)?);
             if failed {
                 std::process::exit(2);
             }
@@ -234,7 +280,8 @@ async fn main() -> anyhow::Result<()> {
             let failed = mdvs::step::has_failed(&result);
             let violations = mdvs::step::has_violations(&result);
             let verbose = cli.verbose || failed;
-            print!("{}", result.render(&cli.output, verbose)?);
+            let format = resolve_output_format(cli.output, &path);
+            print!("{}", result.render(&format, verbose)?);
             if failed {
                 std::process::exit(2);
             }
@@ -265,7 +312,8 @@ async fn main() -> anyhow::Result<()> {
             .await;
             let failed = mdvs::step::has_failed(&result);
             let verbose = cli.verbose || failed;
-            print!("{}", result.render(&cli.output, verbose)?);
+            let format = resolve_output_format(cli.output, &path);
+            print!("{}", result.render(&format, verbose)?);
             if failed {
                 std::process::exit(2);
             }
@@ -280,7 +328,8 @@ async fn main() -> anyhow::Result<()> {
             let failed = mdvs::step::has_failed(&result);
             let violations = mdvs::step::has_violations(&result);
             let verbose = cli.verbose || failed;
-            print!("{}", result.render(&cli.output, verbose)?);
+            let format = resolve_output_format(cli.output, &path);
+            print!("{}", result.render(&format, verbose)?);
             if failed {
                 std::process::exit(2);
             }
@@ -305,7 +354,8 @@ async fn main() -> anyhow::Result<()> {
             .await;
             let failed = mdvs::step::has_failed(&result);
             let verbose = cli.verbose || failed;
-            print!("{}", result.render(&cli.output, verbose)?);
+            let format = resolve_output_format(cli.output, &path);
+            print!("{}", result.render(&format, verbose)?);
             if failed {
                 std::process::exit(2);
             }
@@ -315,7 +365,8 @@ async fn main() -> anyhow::Result<()> {
             let result = mdvs::cmd::clean::run(&path).await;
             let failed = mdvs::step::has_failed(&result);
             let verbose = cli.verbose || failed;
-            print!("{}", result.render(&cli.output, verbose)?);
+            let format = resolve_output_format(cli.output, &path);
+            print!("{}", result.render(&format, verbose)?);
             if failed {
                 std::process::exit(2);
             }
@@ -329,7 +380,8 @@ async fn main() -> anyhow::Result<()> {
             let result = mdvs::cmd::info::run(&path, cli.verbose).await;
             let failed = mdvs::step::has_failed(&result);
             let verbose = cli.verbose || failed;
-            print!("{}", result.render(&cli.output, verbose)?);
+            let format = resolve_output_format(cli.output, &path);
+            print!("{}", result.render(&format, verbose)?);
             if failed {
                 std::process::exit(2);
             }
@@ -348,12 +400,109 @@ async fn main() -> anyhow::Result<()> {
             // summary normally.
             if output_file.is_some() || failed {
                 let verbose = cli.verbose || failed;
-                print!("{}", result.render(&cli.output, verbose)?);
+                let format = resolve_output_format(cli.output, &path);
+                print!("{}", result.render(&format, verbose)?);
             }
             if failed {
                 std::process::exit(2);
             }
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    fn write_config_with_default(dir: &Path, default: &str) {
+        let toml = format!(
+            r#"default_output_format = "{default}"
+
+[scan]
+glob = "**"
+include_bare_files = false
+skip_gitignore = false
+frontmatter_format = "auto"
+
+[fields]
+ignore = []
+max_categories = 10
+min_category_repetition = 3
+"#
+        );
+        fs::write(dir.join("mdvs.toml"), toml).unwrap();
+    }
+
+    #[test]
+    fn cli_flag_wins_over_config_and_tty() {
+        let dir = TempDir::new().unwrap();
+        write_config_with_default(dir.path(), "json");
+        let resolved = resolve_format(Some(OutputFormat::Pretty), dir.path(), false);
+        assert_eq!(resolved, OutputFormat::Pretty);
+    }
+
+    #[test]
+    fn config_wins_over_tty_autodetect() {
+        let dir = TempDir::new().unwrap();
+        write_config_with_default(dir.path(), "json");
+        let resolved = resolve_format(None, dir.path(), true);
+        assert_eq!(resolved, OutputFormat::Json);
+    }
+
+    #[test]
+    fn tty_autodetect_pretty_when_terminal() {
+        let dir = TempDir::new().unwrap();
+        // No mdvs.toml in dir
+        let resolved = resolve_format(None, dir.path(), true);
+        assert_eq!(resolved, OutputFormat::Pretty);
+    }
+
+    #[test]
+    fn tty_autodetect_markdown_when_piped() {
+        let dir = TempDir::new().unwrap();
+        let resolved = resolve_format(None, dir.path(), false);
+        assert_eq!(resolved, OutputFormat::Markdown);
+    }
+
+    #[test]
+    fn missing_mdvs_toml_falls_through_silently() {
+        let dir = TempDir::new().unwrap();
+        // No mdvs.toml — should silently fall through to TTY autodetect.
+        let resolved = resolve_format(None, dir.path(), false);
+        assert_eq!(resolved, OutputFormat::Markdown);
+    }
+
+    #[test]
+    fn malformed_mdvs_toml_falls_through_silently() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("mdvs.toml"), "this is not valid toml [[[").unwrap();
+        // Parse failure on the config peek should NOT propagate — the command
+        // itself will surface the error when it tries to load.
+        let resolved = resolve_format(None, dir.path(), true);
+        assert_eq!(resolved, OutputFormat::Pretty);
+    }
+
+    #[test]
+    fn config_without_default_falls_through_to_tty() {
+        let dir = TempDir::new().unwrap();
+        // Valid mdvs.toml but no default_output_format set.
+        let toml = r#"
+[scan]
+glob = "**"
+include_bare_files = false
+skip_gitignore = false
+frontmatter_format = "auto"
+
+[fields]
+ignore = []
+max_categories = 10
+min_category_repetition = 3
+"#;
+        fs::write(dir.path().join("mdvs.toml"), toml).unwrap();
+        let resolved = resolve_format(None, dir.path(), false);
+        assert_eq!(resolved, OutputFormat::Markdown);
     }
 }

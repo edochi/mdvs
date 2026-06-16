@@ -380,6 +380,7 @@ mod tests {
 
     fn write_config(dir: &Path, model_name: &str) {
         let mut config = MdvsToml {
+            default_output_format: None,
             scan: ScanConfig {
                 glob: "**".into(),
                 include_bare_files: false,

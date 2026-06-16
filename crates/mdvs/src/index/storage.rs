@@ -971,6 +971,7 @@ mod tests {
         use crate::schema::config::{FieldsConfig, TomlField, UpdateConfig};
         use crate::schema::shared::{FieldTypeSerde, FrontmatterFormat, ScanConfig};
         MdvsToml {
+            default_output_format: None,
             scan: ScanConfig {
                 glob: "**".into(),
                 include_bare_files: false,

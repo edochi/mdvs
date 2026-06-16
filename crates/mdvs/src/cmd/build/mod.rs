@@ -1220,6 +1220,7 @@ mod tests {
         .unwrap();
 
         let mut config = MdvsToml {
+            default_output_format: None,
             scan: crate::schema::shared::ScanConfig {
                 glob: "**".into(),
                 include_bare_files: false,
@@ -1300,6 +1301,7 @@ mod tests {
         .unwrap();
 
         let mut config = MdvsToml {
+            default_output_format: None,
             scan: crate::schema::shared::ScanConfig {
                 glob: "**".into(),
                 include_bare_files: false,
@@ -1379,6 +1381,7 @@ mod tests {
         .unwrap();
 
         let mut config = MdvsToml {
+            default_output_format: None,
             scan: crate::schema::shared::ScanConfig {
                 glob: "**".into(),
                 include_bare_files: false,

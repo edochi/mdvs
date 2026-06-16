@@ -505,6 +505,7 @@ mod tests {
         use crate::schema::config::{FieldsConfig, UpdateConfig};
         use crate::schema::shared::{FrontmatterFormat, ScanConfig};
         let toml = MdvsToml {
+            default_output_format: None,
             scan: ScanConfig {
                 glob: "**".into(),
                 include_bare_files: false,
@@ -535,6 +536,7 @@ mod tests {
         use crate::schema::config::{FieldsConfig, UpdateConfig};
         use crate::schema::shared::{FrontmatterFormat, ScanConfig};
         let toml = MdvsToml {
+            default_output_format: None,
             scan: ScanConfig {
                 glob: "**".into(),
                 include_bare_files: false,
@@ -565,6 +567,7 @@ mod tests {
         use crate::schema::config::{FieldsConfig, UpdateConfig};
         use crate::schema::shared::{FrontmatterFormat, ScanConfig};
         let toml = MdvsToml {
+            default_output_format: None,
             scan: ScanConfig {
                 glob: "**".into(),
                 include_bare_files: false,
@@ -595,6 +598,7 @@ mod tests {
         use crate::schema::config::{FieldsConfig, UpdateConfig};
         use crate::schema::shared::{FrontmatterFormat, ScanConfig};
         let toml = MdvsToml {
+            default_output_format: None,
             scan: ScanConfig {
                 glob: "**".into(),
                 include_bare_files: false,
