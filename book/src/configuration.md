@@ -49,7 +49,7 @@ The three formats target different consumers:
 
 ### `default_output_format`
 
-Optional. Overrides the TTY-autodetect default for this project. Values: `"pretty"`, `"markdown"`, `"json"`. Always loses to an explicit `--output` flag.
+Optional. Overrides the hard `pretty` default for this project. Values: `"pretty"`, `"markdown"`, `"json"`. Always loses to an explicit `--output` flag.
 
 ```toml
 default_output_format = "markdown"
@@ -58,7 +58,7 @@ default_output_format = "markdown"
 # ...
 ```
 
-Useful for vaults where the same default makes sense for every contributor — for example, an agent-curated KB where every invocation should produce Markdown for the agent's context regardless of whether the agent runs in a TTY.
+Useful for vaults where the same default makes sense for every contributor — for example, an agent-curated KB that should produce Markdown for the agent's context on every invocation without anyone having to remember the flag.
 
 ---
 

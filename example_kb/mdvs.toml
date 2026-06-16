@@ -1,6 +1,5 @@
-# Override the default output format here. When unset, mdvs picks `pretty`
-# for an interactive terminal and `markdown` when stdout is piped. The
-# `--output` / `-o` flag always wins.
+# Override the default output format here. When unset, mdvs uses `pretty`.
+# The `--output` / `-o` flag always wins over this field.
 # default_output_format = "markdown"
 
 [scan]
