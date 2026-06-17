@@ -1,0 +1,36 @@
+id: panic-in-production
+language: rust
+severity: error
+files:
+  - 'crates/*/src/**/*.rs'
+message: Panic-emitting call in production code path
+note: |
+  TODO-0180 audited unwrap / expect / panic out of production paths. Prefer
+  Result propagation (?), Option combinators, or an explicit error variant.
+  If the call is genuinely unreachable, document the invariant alongside it.
+
+  Test code is excluded — anything inside a `#[cfg(test)] mod ...` block.
+  Macro forms (`panic!`, `todo!`, `unreachable!`, `unimplemented!`, `assert*`)
+  are included because clippy's individual lints for them are scattered and
+  easy to miss; this rule catches them all in one pass.
+rule:
+  all:
+    - any:
+        - pattern: $EXPR.unwrap()
+        - pattern: $EXPR.expect($$$ARGS)
+        - pattern: $EXPR.unwrap_unchecked()
+        - pattern: panic!($$$ARGS)
+        - pattern: unimplemented!($$$ARGS)
+        - pattern: todo!($$$ARGS)
+        - pattern: unreachable!($$$ARGS)
+        - pattern: assert!($$$ARGS)
+        - pattern: assert_eq!($$$ARGS)
+        - pattern: assert_ne!($$$ARGS)
+    - not:
+        inside:
+          pattern:
+            context: |
+              #[cfg(test)]
+              mod $NAME { $$$BODY }
+            selector: mod_item
+          stopBy: end
