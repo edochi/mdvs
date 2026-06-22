@@ -20,11 +20,7 @@ use crate::scaffold::{HookConfigFormat, HooksConfig, Platform, template};
 /// Print the hook config JSON for `platform_name` to `stdout`. Writes a
 /// short install hint to `stderr`. Returns an error if the platform has
 /// no `[hooks]` section (OpenCode, Antigravity).
-pub fn run<W: Write, E: Write>(
-    stdout: &mut W,
-    stderr: &mut E,
-    platform_name: &str,
-) -> Result<()> {
+pub fn run<W: Write, E: Write>(stdout: &mut W, stderr: &mut E, platform_name: &str) -> Result<()> {
     let platform = Platform::load(platform_name)?;
     let hooks = platform.hooks.as_ref().ok_or_else(|| {
         anyhow::anyhow!(
@@ -41,7 +37,9 @@ pub fn run<W: Write, E: Write>(
         HookConfigFormat::Json => serde_json::to_string_pretty(&config)?,
         HookConfigFormat::Toml => toml::to_string_pretty(&config)?,
     };
-    stdout.write_all(rendered.as_bytes()).context("writing hook config to stdout")?;
+    stdout
+        .write_all(rendered.as_bytes())
+        .context("writing hook config to stdout")?;
     stdout.write_all(b"\n").ok();
 
     writeln!(
@@ -119,7 +117,10 @@ mod tests {
         // Comment field present.
         assert!(parsed["_comment"].is_string());
         assert!(
-            parsed["_comment"].as_str().unwrap().contains(".claude/settings.json"),
+            parsed["_comment"]
+                .as_str()
+                .unwrap()
+                .contains(".claude/settings.json"),
             "comment should reference the install path"
         );
 
@@ -175,7 +176,10 @@ mod tests {
         );
         // The Claude-Code-style nested `hooks` array should NOT be present
         // on the matcher entry — that would be the wrong schema for Cursor.
-        assert!(entry.get("hooks").is_none(), "cursor entries are flat, no nested hooks array");
+        assert!(
+            entry.get("hooks").is_none(),
+            "cursor entries are flat, no nested hooks array"
+        );
     }
 
     #[test]

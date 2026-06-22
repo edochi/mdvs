@@ -115,7 +115,12 @@ fn handle_validate<W: Write>(
     // Run validation against the vault. `no_update = true` because hook-
     // triggered validation shouldn't modify `mdvs.toml` (the user doesn't
     // expect an edit to silently write new fields into the schema).
-    let result = check::run(&vault_root, /* no_update */ true, /* verbose */ false, None);
+    let result = check::run(
+        &vault_root,
+        /* no_update */ true,
+        /* verbose */ false,
+        None,
+    );
 
     // Silent on clean: no violations AND no command-level failure.
     let has_violations = step::has_violations(&result);
@@ -371,7 +376,10 @@ constraints = { categories = ["active", "archived"] }
         write_fixture_vault(dir.path(), "active");
         let file = dir.path().join("note.md");
         let found = walk_up_to_mdvs_toml(&file).unwrap();
-        assert_eq!(found.canonicalize().unwrap(), dir.path().canonicalize().unwrap());
+        assert_eq!(
+            found.canonicalize().unwrap(),
+            dir.path().canonicalize().unwrap()
+        );
     }
 
     #[test]
@@ -383,7 +391,10 @@ constraints = { categories = ["active", "archived"] }
         let file = sub.join("notes.md");
         std::fs::write(&file, "---\nstatus: active\n---\n# Nested\n").unwrap();
         let found = walk_up_to_mdvs_toml(&file).unwrap();
-        assert_eq!(found.canonicalize().unwrap(), dir.path().canonicalize().unwrap());
+        assert_eq!(
+            found.canonicalize().unwrap(),
+            dir.path().canonicalize().unwrap()
+        );
     }
 
     #[test]
@@ -463,7 +474,10 @@ constraints = { categories = ["active", "archived"] }
         let env = build_envelope(hooks, "agent body", Some("user body"));
         let parsed: Value = serde_json::from_str(&env).unwrap();
         assert_eq!(parsed["hookSpecificOutput"]["hookEventName"], "PostToolUse");
-        assert_eq!(parsed["hookSpecificOutput"]["additionalContext"], "agent body");
+        assert_eq!(
+            parsed["hookSpecificOutput"]["additionalContext"],
+            "agent body"
+        );
         assert_eq!(parsed["systemMessage"], "user body");
     }
 
@@ -477,8 +491,14 @@ constraints = { categories = ["active", "archived"] }
         let env = build_envelope(hooks, "tip only", None);
         let parsed: Value = serde_json::from_str(&env).unwrap();
         assert_eq!(parsed["hookSpecificOutput"]["hookEventName"], "PostToolUse");
-        assert_eq!(parsed["hookSpecificOutput"]["additionalContext"], "tip only");
-        assert!(parsed.get("systemMessage").is_none(), "systemMessage should be pruned");
+        assert_eq!(
+            parsed["hookSpecificOutput"]["additionalContext"],
+            "tip only"
+        );
+        assert!(
+            parsed.get("systemMessage").is_none(),
+            "systemMessage should be pruned"
+        );
     }
 
     /// Cursor's flat shape: snake_case `additional_context` at the top
@@ -504,8 +524,18 @@ constraints = { categories = ["active", "archived"] }
         let file = dir.path().join("note.md");
         let stdin = format!(r#"{{"tool_input":{{"file_path":"{}"}}}}"#, file.display());
         let mut out = Vec::new();
-        run(Cursor::new(stdin), &mut out, "claude-code", HookKind::Validate).unwrap();
-        assert!(out.is_empty(), "expected silent exit on clean vault, got: {}", String::from_utf8_lossy(&out));
+        run(
+            Cursor::new(stdin),
+            &mut out,
+            "claude-code",
+            HookKind::Validate,
+        )
+        .unwrap();
+        assert!(
+            out.is_empty(),
+            "expected silent exit on clean vault, got: {}",
+            String::from_utf8_lossy(&out)
+        );
     }
 
     #[test]
@@ -515,7 +545,13 @@ constraints = { categories = ["active", "archived"] }
         let file = dir.path().join("note.md");
         let stdin = format!(r#"{{"tool_input":{{"file_path":"{}"}}}}"#, file.display());
         let mut out = Vec::new();
-        run(Cursor::new(stdin), &mut out, "claude-code", HookKind::Validate).unwrap();
+        run(
+            Cursor::new(stdin),
+            &mut out,
+            "claude-code",
+            HookKind::Validate,
+        )
+        .unwrap();
         assert!(!out.is_empty(), "expected envelope output for violations");
 
         let env: Value = serde_json::from_slice(&out).unwrap();
@@ -523,21 +559,36 @@ constraints = { categories = ["active", "archived"] }
         let context = env["hookSpecificOutput"]["additionalContext"]
             .as_str()
             .unwrap();
-        assert!(context.contains("status"), "violation should mention the field: {context}");
+        assert!(
+            context.contains("status"),
+            "violation should mention the field: {context}"
+        );
         assert!(
             context.contains(".claude/skills/mdvs/SKILL.md"),
             "skill pointer should use claude-code's install path: {context}"
         );
-        assert!(env["systemMessage"].is_string(), "systemMessage should be populated");
+        assert!(
+            env["systemMessage"].is_string(),
+            "systemMessage should be populated"
+        );
     }
 
     #[test]
     fn validate_silent_on_non_md_file() {
         let dir = TempDir::new().unwrap();
         write_fixture_vault(dir.path(), "active");
-        let stdin = format!(r#"{{"tool_input":{{"file_path":"{}/some.rs"}}}}"#, dir.path().display());
+        let stdin = format!(
+            r#"{{"tool_input":{{"file_path":"{}/some.rs"}}}}"#,
+            dir.path().display()
+        );
         let mut out = Vec::new();
-        run(Cursor::new(stdin), &mut out, "claude-code", HookKind::Validate).unwrap();
+        run(
+            Cursor::new(stdin),
+            &mut out,
+            "claude-code",
+            HookKind::Validate,
+        )
+        .unwrap();
         assert!(out.is_empty());
     }
 
@@ -546,9 +597,18 @@ constraints = { categories = ["active", "archived"] }
         let dir = TempDir::new().unwrap();
         let lone_file = dir.path().join("note.md");
         std::fs::write(&lone_file, "x").unwrap();
-        let stdin = format!(r#"{{"tool_input":{{"file_path":"{}"}}}}"#, lone_file.display());
+        let stdin = format!(
+            r#"{{"tool_input":{{"file_path":"{}"}}}}"#,
+            lone_file.display()
+        );
         let mut out = Vec::new();
-        run(Cursor::new(stdin), &mut out, "claude-code", HookKind::Validate).unwrap();
+        run(
+            Cursor::new(stdin),
+            &mut out,
+            "claude-code",
+            HookKind::Validate,
+        )
+        .unwrap();
         assert!(out.is_empty());
     }
 
@@ -568,10 +628,21 @@ constraints = { categories = ["active", "archived"] }
         run(Cursor::new(stdin), &mut out, "cursor", HookKind::Validate).unwrap();
         let env: Value = serde_json::from_slice(&out).unwrap();
         // Snake-case, no wrapper.
-        let ctx = env["additional_context"].as_str().expect("flat additional_context");
-        assert!(ctx.contains("status"), "violation should mention the field: {ctx}");
-        assert!(env.get("hookSpecificOutput").is_none(), "cursor has no wrapper");
-        assert!(env.get("systemMessage").is_none(), "cursor has no user channel");
+        let ctx = env["additional_context"]
+            .as_str()
+            .expect("flat additional_context");
+        assert!(
+            ctx.contains("status"),
+            "violation should mention the field: {ctx}"
+        );
+        assert!(
+            env.get("hookSpecificOutput").is_none(),
+            "cursor has no wrapper"
+        );
+        assert!(
+            env.get("systemMessage").is_none(),
+            "cursor has no user channel"
+        );
     }
 
     #[test]
@@ -599,7 +670,13 @@ constraints = { categories = ["active", "archived"] }
             dir.path().display()
         );
         let mut out = Vec::new();
-        run(Cursor::new(stdin), &mut out, "claude-code", HookKind::SearchNudge).unwrap();
+        run(
+            Cursor::new(stdin),
+            &mut out,
+            "claude-code",
+            HookKind::SearchNudge,
+        )
+        .unwrap();
         assert!(!out.is_empty());
         let env: Value = serde_json::from_slice(&out).unwrap();
         assert_eq!(env["hookSpecificOutput"]["hookEventName"], "PostToolUse");
@@ -624,7 +701,13 @@ constraints = { categories = ["active", "archived"] }
             dir.path().display()
         );
         let mut out = Vec::new();
-        run(Cursor::new(stdin), &mut out, "claude-code", HookKind::SearchNudge).unwrap();
+        run(
+            Cursor::new(stdin),
+            &mut out,
+            "claude-code",
+            HookKind::SearchNudge,
+        )
+        .unwrap();
         assert!(out.is_empty(), "no nudge outside a vault");
     }
 
@@ -637,7 +720,13 @@ constraints = { categories = ["active", "archived"] }
             dir.path().display()
         );
         let mut out = Vec::new();
-        run(Cursor::new(stdin), &mut out, "claude-code", HookKind::SearchNudge).unwrap();
+        run(
+            Cursor::new(stdin),
+            &mut out,
+            "claude-code",
+            HookKind::SearchNudge,
+        )
+        .unwrap();
         assert!(out.is_empty());
     }
 }

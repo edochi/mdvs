@@ -119,7 +119,10 @@ mod tests {
             "name": "<<NAME>>",
             "extra": "<<MISSING>>",
         });
-        let out = substitute(&template, &vars(&[("NAME", Some("alice")), ("MISSING", None)]));
+        let out = substitute(
+            &template,
+            &vars(&[("NAME", Some("alice")), ("MISSING", None)]),
+        );
         assert_eq!(out, json!({ "name": "alice" }));
     }
 
@@ -152,10 +155,7 @@ mod tests {
                 "kept": "<<Y>>",
             }
         });
-        let out = substitute(
-            &template,
-            &vars(&[("X", Some("foo")), ("Y", Some("bar"))]),
-        );
+        let out = substitute(&template, &vars(&[("X", Some("foo")), ("Y", Some("bar"))]));
         assert_eq!(out, json!({ "outer": { "inner": "foo", "kept": "bar" } }));
     }
 
@@ -171,12 +171,7 @@ mod tests {
 
     #[test]
     fn array_elements_pruned() {
-        let template = json!([
-            "<<A>>",
-            "<<MISSING>>",
-            "<<B>>",
-            "literal",
-        ]);
+        let template = json!(["<<A>>", "<<MISSING>>", "<<B>>", "literal",]);
         let out = substitute(
             &template,
             &vars(&[("A", Some("a")), ("B", Some("b")), ("MISSING", None)]),
@@ -232,7 +227,10 @@ mod tests {
         });
         let out = substitute(
             &template,
-            &vars(&[("MSG", Some("agent body")), ("USER_MSG", Some("pretty body"))]),
+            &vars(&[
+                ("MSG", Some("agent body")),
+                ("USER_MSG", Some("pretty body")),
+            ]),
         );
         assert_eq!(
             out,
@@ -314,8 +312,14 @@ mod tests {
         let out = substitute(
             &template,
             &vars(&[
-                ("COMMAND_VALIDATE", Some("mdvs hook handle --platform claude-code --kind validate")),
-                ("COMMAND_SEARCH", Some("mdvs hook handle --platform claude-code --kind search-nudge")),
+                (
+                    "COMMAND_VALIDATE",
+                    Some("mdvs hook handle --platform claude-code --kind validate"),
+                ),
+                (
+                    "COMMAND_SEARCH",
+                    Some("mdvs hook handle --platform claude-code --kind search-nudge"),
+                ),
             ]),
         );
         let validate = &out["hooks"]["PostToolUse"][0]["hooks"][0]["command"];

@@ -22,7 +22,9 @@ pub fn run<W: Write, E: Write>(
         .contents_utf8()
         .ok_or_else(|| anyhow!("bundled skill/SKILL.md is not valid UTF-8"))?;
 
-    stdout.write_all(body.as_bytes()).context("writing skill body to stdout")?;
+    stdout
+        .write_all(body.as_bytes())
+        .context("writing skill body to stdout")?;
 
     if let Some(name) = platform_name {
         let platform = Platform::load(name)?;
@@ -48,8 +50,14 @@ mod tests {
         run(&mut out, &mut err, None).unwrap();
         let body = String::from_utf8(out).unwrap();
         // First line of SKILL.md is the YAML frontmatter delimiter.
-        assert!(body.starts_with("---\n"), "unexpected skill body start: {body:.60}");
-        assert!(body.contains("name: mdvs"), "skill frontmatter should declare name");
+        assert!(
+            body.starts_with("---\n"),
+            "unexpected skill body start: {body:.60}"
+        );
+        assert!(
+            body.contains("name: mdvs"),
+            "skill frontmatter should declare name"
+        );
         // No --platform → no stderr hint.
         assert!(err.is_empty(), "expected no stderr hint without --platform");
     }
@@ -64,8 +72,14 @@ mod tests {
         // Body unchanged by --platform.
         assert!(body.starts_with("---\n"));
         // Hint mentions the platform's install path.
-        assert!(hint.contains(".claude/skills/mdvs/SKILL.md"), "hint: {hint}");
-        assert!(hint.contains("Claude Code"), "hint should name the display: {hint}");
+        assert!(
+            hint.contains(".claude/skills/mdvs/SKILL.md"),
+            "hint: {hint}"
+        );
+        assert!(
+            hint.contains("Claude Code"),
+            "hint should name the display: {hint}"
+        );
     }
 
     #[test]
@@ -89,7 +103,13 @@ mod tests {
         let mut err = Vec::new();
         run(&mut out, &mut err, None).unwrap();
         let body = String::from_utf8(out).unwrap();
-        assert!(body.contains("schema-evolution loop"), "should mention the loop");
-        assert!(body.contains("mdvs scaffold"), "should reference new commands");
+        assert!(
+            body.contains("schema-evolution loop"),
+            "should mention the loop"
+        );
+        assert!(
+            body.contains("mdvs scaffold"),
+            "should reference new commands"
+        );
     }
 }

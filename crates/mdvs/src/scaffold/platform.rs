@@ -157,8 +157,7 @@ impl Platform {
         let content = file
             .contents_utf8()
             .ok_or_else(|| anyhow!("platform.toml for '{name}' is not valid UTF-8"))?;
-        toml::from_str(content)
-            .with_context(|| format!("parsing scaffolding/{path}"))
+        toml::from_str(content).with_context(|| format!("parsing scaffolding/{path}"))
     }
 
     /// List the names of all bundled platforms, sorted alphabetically.
@@ -169,7 +168,11 @@ impl Platform {
         };
         let mut names: Vec<String> = platforms_dir
             .dirs()
-            .filter_map(|d| d.path().file_name().map(|n| n.to_string_lossy().into_owned()))
+            .filter_map(|d| {
+                d.path()
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+            })
             .collect();
         names.sort();
         names
@@ -187,7 +190,10 @@ mod tests {
             let p = Platform::load(name).unwrap_or_else(|e| {
                 panic!("failed to load platform '{name}': {e:?}");
             });
-            assert_eq!(p.meta.name, name, "platform.toml `meta.name` must match dir name");
+            assert_eq!(
+                p.meta.name, name,
+                "platform.toml `meta.name` must match dir name"
+            );
         }
     }
 
@@ -212,7 +218,10 @@ mod tests {
         let err = Platform::load("does-not-exist").unwrap_err();
         let msg = format!("{err}");
         assert!(msg.contains("unknown platform 'does-not-exist'"), "{msg}");
-        assert!(msg.contains("claude-code"), "available platforms should be listed: {msg}");
+        assert!(
+            msg.contains("claude-code"),
+            "available platforms should be listed: {msg}"
+        );
     }
 
     /// Claude Code's envelope template carries the PostToolUse PascalCase
@@ -277,7 +286,10 @@ mod tests {
     #[test]
     fn antigravity_has_no_hooks_section() {
         let p = Platform::load("antigravity").unwrap();
-        assert!(p.hooks.is_none(), "antigravity should not declare [hooks] in v1");
+        assert!(
+            p.hooks.is_none(),
+            "antigravity should not declare [hooks] in v1"
+        );
         assert_eq!(p.skill.install_path, ".agents/skills/mdvs/SKILL.md");
         assert_eq!(p.snippet.target_file, "AGENTS.md");
     }

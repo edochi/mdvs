@@ -37,7 +37,9 @@ pub fn run<W: Write, E: Write>(
         .contents_utf8()
         .ok_or_else(|| anyhow!("bundled {body_key} is not valid UTF-8"))?;
 
-    stdout.write_all(body.as_bytes()).context("writing snippet body to stdout")?;
+    stdout
+        .write_all(body.as_bytes())
+        .context("writing snippet body to stdout")?;
 
     if let Some(hint) = install_hint {
         writeln!(stderr, "{hint}").context("writing install hint")?;
@@ -65,9 +67,15 @@ mod tests {
         let mut err = Vec::new();
         run(&mut out, &mut err, None).unwrap();
         let body = String::from_utf8(out).unwrap();
-        assert!(body.contains("mdvs knowledge base"), "snippet should mention the KB heading");
+        assert!(
+            body.contains("mdvs knowledge base"),
+            "snippet should mention the KB heading"
+        );
         // Universal body has no Cursor frontmatter wrapping.
-        assert!(!body.starts_with("---\n"), "AGENTS.md body shouldn't have YAML frontmatter");
+        assert!(
+            !body.starts_with("---\n"),
+            "AGENTS.md body shouldn't have YAML frontmatter"
+        );
         assert!(err.is_empty(), "no stderr hint without --platform");
     }
 
@@ -79,8 +87,14 @@ mod tests {
         let body = String::from_utf8(out).unwrap();
         let hint = String::from_utf8(err).unwrap();
         assert!(body.contains("mdvs knowledge base"));
-        assert!(!body.starts_with("---\n"), "claude-code uses agents-md body, no frontmatter");
-        assert!(hint.contains("CLAUDE.md"), "hint should target CLAUDE.md: {hint}");
+        assert!(
+            !body.starts_with("---\n"),
+            "claude-code uses agents-md body, no frontmatter"
+        );
+        assert!(
+            hint.contains("CLAUDE.md"),
+            "hint should target CLAUDE.md: {hint}"
+        );
     }
 
     #[test]
@@ -91,8 +105,14 @@ mod tests {
         let body = String::from_utf8(out).unwrap();
         let hint = String::from_utf8(err).unwrap();
         // .mdc has Cursor frontmatter (alwaysApply: true).
-        assert!(body.starts_with("---\n"), ".mdc body should start with frontmatter");
-        assert!(body.contains("alwaysApply: true"), ".mdc body should set alwaysApply");
+        assert!(
+            body.starts_with("---\n"),
+            ".mdc body should start with frontmatter"
+        );
+        assert!(
+            body.contains("alwaysApply: true"),
+            ".mdc body should set alwaysApply"
+        );
         // Hint mentions the .cursor/rules/ target.
         assert!(hint.contains(".cursor/rules/mdvs.mdc"), "hint: {hint}");
     }
@@ -105,7 +125,10 @@ mod tests {
         let body = String::from_utf8(out).unwrap();
         let hint = String::from_utf8(err).unwrap();
         assert!(!body.starts_with("---\n"));
-        assert!(hint.contains("AGENTS.md"), "hint should target AGENTS.md: {hint}");
+        assert!(
+            hint.contains("AGENTS.md"),
+            "hint should target AGENTS.md: {hint}"
+        );
     }
 
     #[test]

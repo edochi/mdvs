@@ -19,4 +19,6 @@ pub static SCAFFOLDING: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/scaffolding"
 pub mod platform;
 pub mod template;
 
-pub use platform::{HookConfigFormat, HooksConfig, Meta, Platform, SkillConfig, SnippetBody, SnippetConfig};
+pub use platform::{
+    HookConfigFormat, HooksConfig, Meta, Platform, SkillConfig, SnippetBody, SnippetConfig,
+};
