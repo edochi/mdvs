@@ -11,7 +11,8 @@
 //! [`super::SCAFFOLDING`] tree, so there's no disk access at runtime.
 
 use anyhow::{Context, Result, anyhow};
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
+use serde_json::Value;
 
 /// One agent harness's configuration. Deserialised from
 /// `scaffolding/platforms/<name>/platform.toml`.
@@ -86,6 +87,12 @@ pub enum SnippetBody {
 /// Present only for harnesses with a shell-command hook surface (Claude
 /// Code, Codex, Cursor). OpenCode and Antigravity have `Platform::hooks ==
 /// None`.
+///
+/// Per-harness JSON shapes (the envelope `mdvs hook handle` emits and the
+/// config `mdvs scaffold hook` emits) live in the [`envelope`] and
+/// [`config`] templates as data — see [`super::template`] for the
+/// substitution rules. New harnesses with novel shapes can be supported
+/// by adding a new `platform.toml` file; no Rust changes required.
 #[derive(Debug, Clone, Deserialize)]
 pub struct HooksConfig {
     /// Path to the harness's hooks config file (relative to the project
@@ -94,17 +101,30 @@ pub struct HooksConfig {
     pub config_path: String,
     /// On-disk format of the hooks config file.
     pub config_format: HookConfigFormat,
-    /// Value to use in both the matcher key and the
-    /// `hookSpecificOutput.hookEventName` envelope field. Examples:
-    /// `"PostToolUse"` (Claude Code, Codex), `"postToolUse"` (Cursor).
-    pub event_name: String,
-    /// Tool-name matcher pattern for the validate-on-write hook. The
-    /// pipe-separated string follows the harness's matcher syntax.
-    /// Example: `"Edit|Write|MultiEdit"`.
-    pub matcher_validate: String,
-    /// Tool-name matcher pattern for the search-nudge hook. Example:
-    /// `"Bash"`.
-    pub matcher_search: String,
+    /// The envelope template `mdvs hook handle` emits. Parsed as JSON at
+    /// platform-load time; available placeholders are `<<MSG>>` (agent
+    /// context, always populated) and `<<USER_MSG>>` (user channel,
+    /// populated for `validate` only — pruned for `search-nudge`).
+    #[serde(deserialize_with = "deserialize_template")]
+    pub envelope: Value,
+    /// The config-snippet template `mdvs scaffold hook` emits. Parsed as
+    /// JSON at platform-load time; available placeholders are
+    /// `<<COMMAND_VALIDATE>>` and `<<COMMAND_SEARCH>>` (the full `mdvs
+    /// hook handle …` commands, built from the platform name).
+    #[serde(deserialize_with = "deserialize_template")]
+    pub config: Value,
+}
+
+/// Custom serde deserializer that reads a TOML table `{ template = "…" }`
+/// and parses the inner string as JSON. The template must be valid JSON at
+/// load time — a malformed template surfaces here, not at runtime.
+fn deserialize_template<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Value, D::Error> {
+    #[derive(Deserialize)]
+    struct TemplateTable {
+        template: String,
+    }
+    let wrapper = TemplateTable::deserialize(deserializer)?;
+    serde_json::from_str(&wrapper.template).map_err(serde::de::Error::custom)
 }
 
 /// File format of a harness's hook config file.
@@ -195,23 +215,41 @@ mod tests {
         assert!(msg.contains("claude-code"), "available platforms should be listed: {msg}");
     }
 
-    /// Claude Code uses PascalCase event names (per its hooks docs).
+    /// Claude Code's envelope template carries the PostToolUse PascalCase
+    /// event name baked into the JSON shape. The structural detail —
+    /// whether event_name lives in a field, deep in a wrapper, or
+    /// anywhere else — is platform.toml's concern, not Rust's.
     #[test]
-    fn claude_code_uses_pascal_case_event() {
+    fn claude_code_envelope_template_uses_post_tool_use() {
         let p = Platform::load("claude-code").unwrap();
         let hooks = p.hooks.as_ref().expect("claude-code has [hooks]");
-        assert_eq!(hooks.event_name, "PostToolUse");
         assert_eq!(hooks.config_path, ".claude/settings.json");
         assert_eq!(hooks.config_format, HookConfigFormat::Json);
+        // Envelope template contains the right event name as a literal.
+        let envelope_str = serde_json::to_string(&hooks.envelope).unwrap();
+        assert!(
+            envelope_str.contains("PostToolUse"),
+            "claude-code envelope should bake in PostToolUse literally: {envelope_str}"
+        );
     }
 
-    /// Cursor uses camelCase event names (per its hooks docs).
+    /// Cursor uses a totally different envelope shape — snake_case
+    /// `additional_context`, no `hookSpecificOutput` wrapper, no user
+    /// channel. The template captures the divergence.
     #[test]
-    fn cursor_uses_camel_case_event() {
+    fn cursor_envelope_template_uses_snake_case_field() {
         let p = Platform::load("cursor").unwrap();
         let hooks = p.hooks.as_ref().expect("cursor has [hooks]");
-        assert_eq!(hooks.event_name, "postToolUse");
         assert_eq!(hooks.config_path, ".cursor/hooks.json");
+        let envelope_str = serde_json::to_string(&hooks.envelope).unwrap();
+        assert!(
+            envelope_str.contains("additional_context"),
+            "cursor envelope uses snake_case: {envelope_str}"
+        );
+        assert!(
+            !envelope_str.contains("hookSpecificOutput"),
+            "cursor envelope has no hookSpecificOutput wrapper: {envelope_str}"
+        );
     }
 
     /// Cursor's snippet uses the `.mdc` body (with frontmatter), targeting
@@ -244,28 +282,37 @@ mod tests {
         assert_eq!(p.snippet.target_file, "AGENTS.md");
     }
 
-    /// Codex shares Claude Code's PostToolUse capitalization but lives at a
-    /// different config path.
+    /// Codex shares Claude Code's PostToolUse capitalization but lives at
+    /// a different config path. Verified by inspecting the envelope
+    /// template content (the event name is baked in as a literal).
     #[test]
-    fn codex_shares_pascal_case_with_different_path() {
+    fn codex_envelope_template_uses_post_tool_use() {
         let p = Platform::load("codex").unwrap();
         let hooks = p.hooks.as_ref().expect("codex has [hooks]");
-        assert_eq!(hooks.event_name, "PostToolUse");
         assert_eq!(hooks.config_path, ".codex/hooks.json");
         assert_eq!(p.skill.install_path, ".agents/skills/mdvs/SKILL.md");
+        let envelope_str = serde_json::to_string(&hooks.envelope).unwrap();
+        assert!(envelope_str.contains("PostToolUse"));
     }
 
-    /// Every bundled platform declares the same matcher patterns for the
-    /// hook tools, since they all share the Edit/Write/MultiEdit + Bash
-    /// model. This is a consistency regression check — if a future
-    /// platform.toml diverges, the test highlights it for review.
+    /// Every bundled platform's config template references the
+    /// `<<COMMAND_VALIDATE>>` and `<<COMMAND_SEARCH>>` placeholders. This
+    /// is a regression check — `mdvs scaffold hook` won't be able to fill
+    /// the commands in if a platform.toml drops the markers.
     #[test]
-    fn hook_matchers_are_consistent_across_platforms() {
+    fn config_templates_reference_command_markers() {
         for name in ["claude-code", "codex", "cursor"] {
             let p = Platform::load(name).unwrap();
             let hooks = p.hooks.as_ref().expect("has [hooks]");
-            assert_eq!(hooks.matcher_validate, "Edit|Write|MultiEdit", "{name}");
-            assert_eq!(hooks.matcher_search, "Bash", "{name}");
+            let config_str = serde_json::to_string(&hooks.config).unwrap();
+            assert!(
+                config_str.contains("<<COMMAND_VALIDATE>>"),
+                "{name} config template missing COMMAND_VALIDATE marker"
+            );
+            assert!(
+                config_str.contains("<<COMMAND_SEARCH>>"),
+                "{name} config template missing COMMAND_SEARCH marker"
+            );
         }
     }
 }

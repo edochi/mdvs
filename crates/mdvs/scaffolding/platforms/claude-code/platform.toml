@@ -2,10 +2,10 @@
 #
 # Read by:
 #   - `mdvs scaffold skill --platform claude-code`    (install_path → help text)
-#   - `mdvs scaffold snippet --platform claude-code`  (target_file + body selection)
-#   - `mdvs scaffold hook --platform claude-code`     (generates settings.json snippet)
+#   - `mdvs scaffold snippet --platform claude-code`  (target_file + body)
+#   - `mdvs scaffold hook --platform claude-code`     (substitutes hooks.config)
 #   - `mdvs hook handle --platform claude-code --kind <kind>`
-#                                                     (event_name → envelope; runtime)
+#                                                     (substitutes hooks.envelope)
 #
 # Sources:
 #   skills: https://code.claude.com/docs/en/skills
@@ -29,8 +29,35 @@ body = "agents-md"
 [hooks]
 config_path = ".claude/settings.json"
 config_format = "json"
-# Claude Code uses PascalCase event names. The same event covers both the
-# validate matcher (Edit|Write|MultiEdit) and the search-nudge matcher (Bash).
-event_name = "PostToolUse"
-matcher_validate = "Edit|Write|MultiEdit"
-matcher_search = "Bash"
+
+[hooks.envelope]
+# Emitted by `mdvs hook handle` after a fired hook. Placeholders:
+#   <<MSG>>      — agent-context message (always populated)
+#   <<USER_MSG>> — user-visible message; populated for validate, pruned
+#                  for search-nudge (search-nudge stays out of the user UI).
+template = """
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PostToolUse",
+    "additionalContext": "<<MSG>>"
+  },
+  "systemMessage": "<<USER_MSG>>"
+}
+"""
+
+[hooks.config]
+# Emitted by `mdvs scaffold hook`. Placeholders:
+#   <<COMMAND_VALIDATE>>  — full `mdvs hook handle … --kind validate` line
+#   <<COMMAND_SEARCH>>    — full `mdvs hook handle … --kind search-nudge` line
+template = """
+{
+  "hooks": {
+    "PostToolUse": [
+      { "matcher": "Edit|Write|MultiEdit",
+        "hooks": [{ "type": "command", "command": "<<COMMAND_VALIDATE>>" }] },
+      { "matcher": "Bash",
+        "hooks": [{ "type": "command", "command": "<<COMMAND_SEARCH>>" }] }
+    ]
+  }
+}
+"""

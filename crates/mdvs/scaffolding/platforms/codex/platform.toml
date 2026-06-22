@@ -1,15 +1,9 @@
 # mdvs platform config — Codex (OpenAI Codex CLI).
 #
-# Read by:
-#   - `mdvs scaffold skill --platform codex`
-#   - `mdvs scaffold snippet --platform codex`
-#   - `mdvs scaffold hook --platform codex`
-#   - `mdvs hook handle --platform codex --kind <kind>`
-#
 # Sources:
-#   skills:       https://developers.openai.com/codex/skills/
-#   hooks:        https://developers.openai.com/codex/hooks
-#   AGENTS.md:    https://developers.openai.com/codex/guides/agents-md
+#   skills:    https://developers.openai.com/codex/skills/
+#   hooks:     https://developers.openai.com/codex/hooks
+#   AGENTS.md: https://developers.openai.com/codex/guides/agents-md
 
 [meta]
 name = "codex"
@@ -17,8 +11,7 @@ display_name = "Codex"
 documentation_url = "https://developers.openai.com/codex/hooks"
 
 [skill]
-# Codex reads from the cross-harness .agents/skills/ path (its canonical
-# location per the Agent Skills standard).
+# Codex reads from the cross-harness .agents/skills/ path.
 install_path = ".agents/skills/mdvs/SKILL.md"
 
 [snippet]
@@ -28,12 +21,32 @@ target_file = "AGENTS.md"
 body = "agents-md"
 
 [hooks]
-# Codex also accepts hooks declared via the [hooks] table in
-# ~/.codex/config.toml; we emit the .codex/hooks.json form for consistency
-# with the other harnesses.
 config_path = ".codex/hooks.json"
 config_format = "json"
-# Codex shares Claude Code's PascalCase event names.
-event_name = "PostToolUse"
-matcher_validate = "Edit|Write|MultiEdit"
-matcher_search = "Bash"
+
+[hooks.envelope]
+# Same envelope shape as Claude Code per the Codex hooks reference.
+template = """
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PostToolUse",
+    "additionalContext": "<<MSG>>"
+  },
+  "systemMessage": "<<USER_MSG>>"
+}
+"""
+
+[hooks.config]
+# Same hook-config shape as Claude Code, just at a different config path.
+template = """
+{
+  "hooks": {
+    "PostToolUse": [
+      { "matcher": "Edit|Write|MultiEdit",
+        "hooks": [{ "type": "command", "command": "<<COMMAND_VALIDATE>>" }] },
+      { "matcher": "Bash",
+        "hooks": [{ "type": "command", "command": "<<COMMAND_SEARCH>>" }] }
+    ]
+  }
+}
+"""

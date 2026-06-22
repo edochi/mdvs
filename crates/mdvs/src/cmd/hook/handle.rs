@@ -5,17 +5,17 @@
 //! non-blocking by design: violations and tips surface to the agent /
 //! user; mdvs never rejects an edit at the harness layer.
 
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
-use serde_json::{Value, json};
 
 use crate::cmd::check;
 use crate::cmd::hook::HookKind;
 use crate::output::OutputFormat;
-use crate::scaffold::{HooksConfig, Platform};
+use crate::scaffold::{HooksConfig, Platform, template};
 use crate::step;
 
 /// Maximum number of lines to send through the user-visible `systemMessage`
@@ -269,22 +269,21 @@ fn append_skill_pointer(body: &str, skill_install_path: &str) -> String {
     )
 }
 
-/// Build the hook-output envelope. Same shape across the three platforms
-/// we currently support — only `hookEventName` varies (PascalCase for
-/// Claude Code + Codex, camelCase for Cursor; the value comes straight
-/// from `platform.toml`).
+/// Build the hook-output envelope by substituting `<<MSG>>` and
+/// `<<USER_MSG>>` into the platform's envelope template (from
+/// `platform.toml`). When `user_msg` is `None`, the template's
+/// `<<USER_MSG>>` marker (if any) gets pruned — the user-channel field
+/// disappears from the output entirely.
+///
+/// Per-platform JSON shapes live in `platform.toml`, not here. Different
+/// harnesses can have wildly different envelopes (Claude Code's wrapped
+/// `hookSpecificOutput`, Cursor's flat `additional_context`, etc.) and
+/// this function doesn't care — it just feeds substitution values in.
 fn build_envelope(hooks: &HooksConfig, agent_msg: &str, user_msg: Option<&str>) -> String {
-    let mut envelope = json!({
-        "hookSpecificOutput": {
-            "hookEventName": hooks.event_name,
-            "additionalContext": agent_msg,
-        },
-    });
-    if let Some(user_msg) = user_msg
-        && let Value::Object(map) = &mut envelope
-    {
-        map.insert("systemMessage".into(), Value::String(user_msg.to_string()));
-    }
+    let mut vars: HashMap<&str, Option<String>> = HashMap::new();
+    vars.insert("MSG", Some(agent_msg.to_string()));
+    vars.insert("USER_MSG", user_msg.map(|s| s.to_string()));
+    let envelope = template::substitute(&hooks.envelope, &vars);
     envelope.to_string()
 }
 
@@ -295,6 +294,7 @@ fn build_envelope(hooks: &HooksConfig, agent_msg: &str, user_msg: Option<&str>) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value;
     use std::io::Cursor;
     use tempfile::TempDir;
 
@@ -453,36 +453,46 @@ constraints = { categories = ["active", "archived"] }
 
     // --- build_envelope --------------------------------------------------
 
+    /// With user_msg = Some(...), Claude Code's full Claude-Code-shaped
+    /// envelope renders cleanly: PostToolUse + additionalContext +
+    /// systemMessage.
     #[test]
-    fn build_envelope_includes_event_name_from_platform() {
-        let hooks = HooksConfig {
-            config_path: ".claude/settings.json".into(),
-            config_format: crate::scaffold::HookConfigFormat::Json,
-            event_name: "PostToolUse".into(),
-            matcher_validate: "Edit".into(),
-            matcher_search: "Bash".into(),
-        };
-        let env = build_envelope(&hooks, "agent body", Some("user body"));
+    fn build_envelope_claude_code_validate_includes_both_channels() {
+        let p = Platform::load("claude-code").unwrap();
+        let hooks = p.hooks.as_ref().unwrap();
+        let env = build_envelope(hooks, "agent body", Some("user body"));
         let parsed: Value = serde_json::from_str(&env).unwrap();
         assert_eq!(parsed["hookSpecificOutput"]["hookEventName"], "PostToolUse");
         assert_eq!(parsed["hookSpecificOutput"]["additionalContext"], "agent body");
         assert_eq!(parsed["systemMessage"], "user body");
     }
 
+    /// With user_msg = None, the `<<USER_MSG>>` marker is pruned and the
+    /// resulting envelope omits `systemMessage` entirely. The wrapper
+    /// stays because its other field is still populated.
     #[test]
-    fn build_envelope_omits_system_message_when_none() {
-        let hooks = HooksConfig {
-            config_path: ".cursor/hooks.json".into(),
-            config_format: crate::scaffold::HookConfigFormat::Json,
-            event_name: "postToolUse".into(),
-            matcher_validate: "Edit".into(),
-            matcher_search: "Bash".into(),
-        };
-        let env = build_envelope(&hooks, "tip only", None);
+    fn build_envelope_claude_code_search_nudge_prunes_user_message() {
+        let p = Platform::load("claude-code").unwrap();
+        let hooks = p.hooks.as_ref().unwrap();
+        let env = build_envelope(hooks, "tip only", None);
         let parsed: Value = serde_json::from_str(&env).unwrap();
-        assert_eq!(parsed["hookSpecificOutput"]["hookEventName"], "postToolUse");
+        assert_eq!(parsed["hookSpecificOutput"]["hookEventName"], "PostToolUse");
         assert_eq!(parsed["hookSpecificOutput"]["additionalContext"], "tip only");
-        assert!(parsed.get("systemMessage").is_none(), "systemMessage should be absent");
+        assert!(parsed.get("systemMessage").is_none(), "systemMessage should be pruned");
+    }
+
+    /// Cursor's flat shape: snake_case `additional_context` at the top
+    /// level, no wrapper, no user channel ever (USER_MSG marker absent
+    /// from the template).
+    #[test]
+    fn build_envelope_cursor_uses_flat_snake_case_shape() {
+        let p = Platform::load("cursor").unwrap();
+        let hooks = p.hooks.as_ref().unwrap();
+        let env = build_envelope(hooks, "agent body", Some("user body"));
+        let parsed: Value = serde_json::from_str(&env).unwrap();
+        assert_eq!(parsed["additional_context"], "agent body");
+        assert!(parsed.get("hookSpecificOutput").is_none(), "no wrapper");
+        assert!(parsed.get("systemMessage").is_none(), "no user channel");
     }
 
     // --- run() validate end-to-end --------------------------------------
@@ -542,8 +552,14 @@ constraints = { categories = ["active", "archived"] }
         assert!(out.is_empty());
     }
 
+    /// Cursor uses a flat envelope with `additional_context` at the top
+    /// level — no `hookSpecificOutput` wrapper, no `hookEventName` field.
+    /// The template captures the divergence; mdvs just substitutes into
+    /// it. Also: Cursor's postToolUse has no user channel, so even when
+    /// validate populates `user_msg`, nothing user-facing reaches the
+    /// envelope (no `<<USER_MSG>>` marker in the cursor template).
     #[test]
-    fn validate_uses_cursor_event_name_for_cursor_platform() {
+    fn validate_uses_cursors_flat_envelope_shape() {
         let dir = TempDir::new().unwrap();
         write_fixture_vault(dir.path(), "bogus");
         let file = dir.path().join("note.md");
@@ -551,11 +567,11 @@ constraints = { categories = ["active", "archived"] }
         let mut out = Vec::new();
         run(Cursor::new(stdin), &mut out, "cursor", HookKind::Validate).unwrap();
         let env: Value = serde_json::from_slice(&out).unwrap();
-        assert_eq!(
-            env["hookSpecificOutput"]["hookEventName"],
-            "postToolUse",
-            "cursor should use camelCase"
-        );
+        // Snake-case, no wrapper.
+        let ctx = env["additional_context"].as_str().expect("flat additional_context");
+        assert!(ctx.contains("status"), "violation should mention the field: {ctx}");
+        assert!(env.get("hookSpecificOutput").is_none(), "cursor has no wrapper");
+        assert!(env.get("systemMessage").is_none(), "cursor has no user channel");
     }
 
     #[test]

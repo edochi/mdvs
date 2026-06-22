@@ -1,15 +1,19 @@
 # mdvs platform config — Cursor.
 #
-# Read by:
-#   - `mdvs scaffold skill --platform cursor`
-#   - `mdvs scaffold snippet --platform cursor`
-#   - `mdvs scaffold hook --platform cursor`
-#   - `mdvs hook handle --platform cursor --kind <kind>`
-#
 # Sources:
 #   skills: https://cursor.com/docs/context/skills
 #   rules:  https://cursor.com/docs/rules
 #   hooks:  https://cursor.com/docs/hooks
+#
+# Cursor diverges from the Claude Code / Codex hook conventions:
+#   - Hook output envelope uses snake_case field names (`additional_context`)
+#     and no `hookSpecificOutput` wrapper.
+#   - Cursor's `postToolUse` has no user-visible channel — only
+#     `additional_context` (agent-side). The user-channel placeholder
+#     `<<USER_MSG>>` is absent from the envelope template; whether mdvs
+#     passes USER_MSG=Some(...) or None makes no difference.
+#   - The hook config uses a flat matcher entry shape (no nested `hooks`
+#     array), and includes a top-level `"version": 1` field.
 
 [meta]
 name = "cursor"
@@ -17,23 +21,34 @@ display_name = "Cursor"
 documentation_url = "https://cursor.com/docs/hooks"
 
 [skill]
-# Cursor reads from .cursor/skills/ natively, and also from .agents/skills/,
-# .claude/skills/, .codex/skills/ for cross-harness compatibility. We use
-# the native .cursor/skills/ as the default install path.
 install_path = ".cursor/skills/mdvs/SKILL.md"
 
 [snippet]
-# Cursor honors both AGENTS.md and .cursor/rules/*.mdc. The .mdc form lets
-# us set `alwaysApply: true` in frontmatter, guaranteeing the snippet is in
-# every-turn context (vs AGENTS.md which is also always-on but a flatter
-# convention). We use the .mdc form as the default — more idiomatic Cursor.
+# Cursor's idiomatic always-on rules slot is .cursor/rules/<name>.mdc with
+# `alwaysApply: true` in frontmatter. We use the .mdc body by default.
 target_file = ".cursor/rules/mdvs.mdc"
 body = "cursor-rules"
 
 [hooks]
 config_path = ".cursor/hooks.json"
 config_format = "json"
-# Cursor uses camelCase event names (postToolUse instead of PostToolUse).
-event_name = "postToolUse"
-matcher_validate = "Edit|Write|MultiEdit"
-matcher_search = "Bash"
+
+[hooks.envelope]
+template = """
+{
+  "additional_context": "<<MSG>>"
+}
+"""
+
+[hooks.config]
+template = """
+{
+  "version": 1,
+  "hooks": {
+    "postToolUse": [
+      { "matcher": "Edit|Write|MultiEdit", "command": "<<COMMAND_VALIDATE>>" },
+      { "matcher": "Bash",                 "command": "<<COMMAND_SEARCH>>" }
+    ]
+  }
+}
+"""
