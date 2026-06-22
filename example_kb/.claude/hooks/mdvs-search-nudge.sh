@@ -1,1 +1,0 @@
-../../../crates/mdvs/scaffolding/hooks/claude-code/search-nudge.sh

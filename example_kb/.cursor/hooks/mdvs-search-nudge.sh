@@ -1,1 +1,0 @@
-../../../crates/mdvs/scaffolding/hooks/cursor/search-nudge.sh
