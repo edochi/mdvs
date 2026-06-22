@@ -1,0 +1,1 @@
+../../../crates/mdvs/scaffolding/hooks/codex/search-nudge.sh

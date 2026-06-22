@@ -1,0 +1,25 @@
+{
+  "_comment": "mdvs Cursor hooks for the Prismatiq KB. Cursor uses camelCase event names. Both hooks self-scope by walking up from the agent's cwd to find mdvs.toml.",
+  "hooks": {
+    "postToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".cursor/hooks/mdvs-validate.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".cursor/hooks/mdvs-search-nudge.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

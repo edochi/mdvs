@@ -1,0 +1,1 @@
+../../../crates/mdvs/scaffolding/hooks/cursor/validate.sh

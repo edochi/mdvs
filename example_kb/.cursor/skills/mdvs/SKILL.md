@@ -1,0 +1,1 @@
+../../../../crates/mdvs/scaffolding/skill/SKILL.md
