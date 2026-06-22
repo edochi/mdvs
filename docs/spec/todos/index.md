@@ -193,3 +193,4 @@
 | [0189](TODO-0189.md) | Collapse main.rs output dispatch into CommandResult::render() | done | medium | 2026-06-16 |
 | [0190](TODO-0190.md) | Design `mdvs scaffold` — unified agent-harness integration command surface | todo | high | 2026-06-22 |
 | [0191](TODO-0191.md) | Auto-rewrite `array_field = scalar` to `array_has(...)` in `--where` translator | todo | medium | 2026-06-23 |
+| [0192](TODO-0192.md) | Don't persist the mock-embedder default to `mdvs.toml` | done | high | 2026-06-23 |

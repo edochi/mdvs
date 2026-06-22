@@ -45,26 +45,30 @@ pub(crate) fn mutate_config(
 
     match config.embedding_model {
         None => {
-            // With `--features testing-mocks` (CI fast lane), default to the
-            // deterministic mock embedder so tests that flow through init →
-            // build don't reach for Hugging Face. The feature is off in
-            // production builds, so end users always get model2vec.
+            // Production: write the real default to mdvs.toml so subsequent
+            // runs are deterministic. Test/mock builds: synthesize the mock
+            // default in-memory only — never persist it, or a dev binary
+            // running against a real vault corrupts the vault for the
+            // production binary on PATH.
             #[cfg(any(test, feature = "testing-mocks"))]
-            let default = EmbeddingModelConfig {
-                provider: "mock".to_string(),
-                name: set_model.unwrap_or("mock").to_string(),
-                revision: set_revision.and_then(normalize_revision),
-                dim: Some(256),
-            };
+            {
+                config.embedding_model = Some(EmbeddingModelConfig {
+                    provider: "mock".to_string(),
+                    name: set_model.unwrap_or("mock").to_string(),
+                    revision: set_revision.and_then(normalize_revision),
+                    dim: Some(256),
+                });
+            }
             #[cfg(not(any(test, feature = "testing-mocks")))]
-            let default = EmbeddingModelConfig {
-                provider: "model2vec".to_string(),
-                name: set_model.unwrap_or(DEFAULT_MODEL).to_string(),
-                revision: set_revision.and_then(normalize_revision),
-                dim: None,
-            };
-            config.embedding_model = Some(default);
-            config_changed = true;
+            {
+                config.embedding_model = Some(EmbeddingModelConfig {
+                    provider: "model2vec".to_string(),
+                    name: set_model.unwrap_or(DEFAULT_MODEL).to_string(),
+                    revision: set_revision.and_then(normalize_revision),
+                    dim: None,
+                });
+                config_changed = true;
+            }
         }
         Some(ref mut em) if set_model.is_some() || set_revision.is_some() => {
             if !force {
@@ -194,5 +198,65 @@ mod tests {
         assert_eq!(normalize_revision("NONE"), None);
         assert_eq!(normalize_revision("abc123"), Some("abc123".to_string()));
         assert_eq!(normalize_revision("not_none"), Some("not_none".to_string()));
+    }
+
+    /// Under `cfg(test)` the in-memory embedding default is `mock`, but it
+    /// must never reach disk — otherwise a dev binary running auto-build
+    /// against a real vault would write `provider = "mock"` into the user's
+    /// mdvs.toml and break that vault for the production binary on PATH.
+    #[test]
+    fn mock_embedder_default_is_not_persisted_to_mdvs_toml() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path();
+        let config_path = path.join("mdvs.toml");
+
+        // Start with all build sections present except [embedding_model],
+        // so we isolate the mock-default branch from search/build/chunking
+        // defaults that legitimately persist.
+        let original = r#"[scan]
+glob = "**"
+include_bare_files = true
+skip_gitignore = false
+frontmatter_format = "auto"
+
+[check]
+auto_update = true
+
+[chunking]
+max_chunk_size = 1024
+
+[build]
+auto_update = true
+
+[search]
+default_limit = 10
+auto_update = true
+auto_build = true
+internal_prefix = ""
+aliases = {}
+
+[fields]
+ignore = []
+"#;
+        std::fs::write(&config_path, original).unwrap();
+
+        let mut config: MdvsToml = toml::from_str(original).unwrap();
+        let err = mutate_config(&mut config, path, None, None, None, false);
+        assert!(err.is_none(), "mutate_config errored: {err:?}");
+
+        // In-memory: mock was synthesized so the rest of the build chain works.
+        let em = config.embedding_model.as_ref().expect("in-memory default");
+        assert_eq!(em.provider, "mock");
+
+        // On disk: file must be unchanged — no [embedding_model], no mock.
+        let on_disk = std::fs::read_to_string(&config_path).unwrap();
+        assert!(
+            !on_disk.contains("mock"),
+            "mdvs.toml leaked mock embedder to disk:\n{on_disk}"
+        );
+        assert!(
+            !on_disk.contains("[embedding_model]"),
+            "mdvs.toml gained an [embedding_model] block:\n{on_disk}"
+        );
     }
 }
