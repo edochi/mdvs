@@ -9,7 +9,7 @@ homepage = "https://edochi.github.io/mdvs/"
 readme = "../../README.md"
 keywords = ["markdown", "search", "embeddings", "semantic", "vector"]
 categories = ["command-line-utilities", "text-processing"]
-include = ["src/", "skills/", "scaffolding/", "CHANGELOG.md", "Cargo.toml", "LICENSE"]
+include = ["src/", "scaffolding/", "CHANGELOG.md", "Cargo.toml", "LICENSE"]
 
 [features]
 # Enables a deterministic mock embedder selectable via
