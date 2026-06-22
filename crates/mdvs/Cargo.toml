@@ -9,7 +9,7 @@ homepage = "https://edochi.github.io/mdvs/"
 readme = "../../README.md"
 keywords = ["markdown", "search", "embeddings", "semantic", "vector"]
 categories = ["command-line-utilities", "text-processing"]
-include = ["src/", "skills/", "CHANGELOG.md", "Cargo.toml", "LICENSE"]
+include = ["src/", "skills/", "scaffolding/", "CHANGELOG.md", "Cargo.toml", "LICENSE"]
 
 [features]
 # Enables a deterministic mock embedder selectable via
@@ -86,6 +86,12 @@ xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
 # in `index/backend.rs` so a typo in a pattern fails `cargo build`, not at
 # runtime. See TODO-0180.
 lazy-regex = "3"
+
+# Embeds the `scaffolding/` directory into the binary at build time. Lets
+# `scaffold::Platform::load` and `Platform::list` read bundled
+# `platforms/<name>/platform.toml` files without any disk access at run
+# time. See TODO-0190.
+include_dir = "0.7"
 
 [dev-dependencies]
 tempfile = "3"

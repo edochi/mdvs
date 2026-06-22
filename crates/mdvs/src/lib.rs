@@ -29,6 +29,10 @@ pub mod output;
 pub mod preprocess;
 /// Shared formatters (`format_pretty`, `format_markdown`) that consume `Vec<Block>`.
 pub mod render;
+/// Per-platform scaffolding config (`Platform`, loaded from bundled
+/// `scaffolding/platforms/<name>/platform.toml`). Drives `mdvs scaffold`
+/// and `mdvs hook handle`.
+pub mod scaffold;
 /// Configuration file types (`mdvs.toml`) and shared data structures.
 pub mod schema;
 /// Step tree types for the unified command output architecture.
