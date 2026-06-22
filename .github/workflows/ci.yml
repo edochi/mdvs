@@ -35,3 +35,15 @@ jobs:
       - run: cargo install cargo-audit cargo-deny
       - run: cargo audit
       - run: cargo deny check
+
+  # Structural lints via ast-grep — catches things clippy's individual lints
+  # miss or scatter (e.g., panic-emitting macros). Rules in `.ast-grep/rules/`;
+  # config in `sgconfig.yml` at the repo root; mirror locally with `just lint-ast`.
+  lint-ast:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install --locked ast-grep
+      - run: ast-grep scan
