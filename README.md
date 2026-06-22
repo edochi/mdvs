@@ -207,7 +207,7 @@ mdvs export-jsonschema --format json
 
 - **Rust** — mdvs is written in Rust; the CLI is a single static binary.
 - **[LanceDB](https://lancedb.com/)** — backs storage and search. Cosine vector search, BM25 full-text, and RRF hybrid all run natively against the Lance dataset.
-- **[Model2Vec](https://minish.ai/)** — static embedding models; the default is `potion-base-8M` (~60 MB, CPU-only, no GPU).
+- **[Model2Vec](https://minish.ai/)** — static embedding models; the default is `potion-multilingual-128M` (~480 MB, 101 languages, CPU-only, no GPU). Smaller models like `potion-base-8M` (~60 MB) are available via `--set-model`.
 - **[`jsonschema`](https://crates.io/crates/jsonschema)** — JSON Schema 2020-12 validator. mdvs translates your `mdvs.toml` into a canonical JSON Schema document and validates frontmatter values through per-field validators compiled from it.
 - **[`pulldown-cmark`](https://crates.io/crates/pulldown-cmark)** — markdown parsing; used to extract plain text from each chunk before embedding.
 - **[`text-splitter`](https://crates.io/crates/text-splitter)** — semantic-aware chunker that splits the markdown body along heading and paragraph boundaries.

@@ -59,7 +59,7 @@ When nothing needs embedding, the model is never loaded. When the change set is 
 
 ```
 config changed since last build:
-  model: 'minishlab/potion-base-8M' → 'minishlab/potion-base-32M'
+  model: 'minishlab/potion-multilingual-128M' → 'minishlab/potion-base-8M'
 Use --force to rebuild with new config
 ```
 
@@ -72,10 +72,10 @@ Use --force to rebuild with new schema
 
 This catches edits to `[[fields.field]]` definitions, constraint changes, preprocessor changes, and path-scoping changes — anything that affects what gets stored in the `data` column of the index.
 
-The `--set-model`, `--set-revision`, and `--set-chunk-size` flags update `mdvs.toml` and require `--force` (since they change the config and trigger a full re-embed). For example, to switch to a larger model:
+The `--set-model`, `--set-revision`, and `--set-chunk-size` flags update `mdvs.toml` and require `--force` (since they change the config and trigger a full re-embed). For example, to switch to a smaller English-only model:
 
 ```bash
-mdvs build --set-model minishlab/potion-base-32M --force
+mdvs build --set-model minishlab/potion-base-8M --force
 ```
 
 `--set-revision` pins the model to a specific HuggingFace commit SHA, ensuring reproducible embeddings even if the model is updated upstream:
@@ -140,7 +140,7 @@ Scan: 43 files (4ms)
 Infer: 37 field(s) (0ms)
 Validate: 43 files — no violations (87ms)
 Classify: 43 to embed, 0 unchanged, 0 removed (0ms)
-Load model: minishlab/potion-base-8M (24ms)
+Load model: minishlab/potion-multilingual-128M (24ms)
 Embed: 43 files, 59 chunks (12ms)
 Write index: 43 files, 59 chunks (1ms)
 Built index — 43 files, 59 chunks (full rebuild)

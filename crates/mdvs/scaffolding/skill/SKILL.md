@@ -181,7 +181,7 @@ Validates, then chunks markdown, generates embeddings, writes the Lance dataset 
 - Incremental by default — only re-embeds new or edited files
 - Aborts if `check` finds violations
 
-First build downloads the default embedding model `minishlab/potion-base-8M` (~60 MB). Subsequent builds reuse it.
+First build downloads the default embedding model `minishlab/potion-multilingual-128M` (~480 MB, 101 languages). Subsequent builds reuse it.
 
 ### `mdvs search`
 

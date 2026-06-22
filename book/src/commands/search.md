@@ -47,9 +47,9 @@ See [Search & Indexing](../concepts/search.md) for details on chunking, embeddin
 > | Model | Size |
 > |---|---|
 > | `potion-base-2M` | ~8 MB |
-> | `potion-base-8M` (default) | ~30 MB |
+> | `potion-base-8M` | ~30 MB |
 > | `potion-base-32M` | ~120 MB |
-> | `potion-multilingual-128M` | ~480 MB |
+> | `potion-multilingual-128M` (default) | ~480 MB |
 >
 > After the model is cached, a full build of 500+ files completes in under a second.
 
@@ -97,7 +97,7 @@ Searched "experiment" — 3 hits
 ┌──────────────────────────┬───────────────────────────────────────────────────┐
 │ query                    │ experiment                                        │
 ├──────────────────────────┼───────────────────────────────────────────────────┤
-│ model                    │ minishlab/potion-base-8M                          │
+│ model                    │ minishlab/potion-multilingual-128M               │
 ├──────────────────────────┼───────────────────────────────────────────────────┤
 │ limit                    │ 3                                                 │
 └──────────────────────────┴───────────────────────────────────────────────────┘
@@ -149,7 +149,7 @@ Searched "experiment" — 3 hits
 ┌──────────────────────────┬───────────────────────────────────────────────────┐
 │ query                    │ experiment                                        │
 ├──────────────────────────┼───────────────────────────────────────────────────┤
-│ model                    │ minishlab/potion-base-8M                          │
+│ model                    │ minishlab/potion-multilingual-128M               │
 ├──────────────────────────┼───────────────────────────────────────────────────┤
 │ limit                    │ 5                                                 │
 └──────────────────────────┴───────────────────────────────────────────────────┘
@@ -173,7 +173,7 @@ mdvs search "experiment" example_kb -v -n 3
 Read config: example_kb/mdvs.toml (2ms)
 Scan: 43 files (2ms)
 ...
-Load model: minishlab/potion-base-8M (22ms)
+Load model: minishlab/potion-multilingual-128M (22ms)
 Embed query: "experiment" (0ms)
 Execute search: 3 hits (5ms)
 Searched "experiment" — 3 hits

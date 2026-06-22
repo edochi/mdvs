@@ -352,7 +352,7 @@ pub struct EmbeddingModelConfig {
     /// Provider name (e.g. `"model2vec"`).
     #[serde(default = "default_provider")]
     pub provider: String,
-    /// HuggingFace model ID (e.g. `"minishlab/potion-base-8M"`).
+    /// HuggingFace model ID (e.g. `"minishlab/potion-multilingual-128M"`).
     pub name: String,
     /// Pinned revision (commit SHA).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -741,7 +741,7 @@ mod tests {
         let w = Wrapper {
             model: EmbeddingModelConfig {
                 provider: "model2vec".into(),
-                name: "minishlab/potion-base-8M".into(),
+                name: "minishlab/potion-multilingual-128M".into(),
                 revision: Some("abc123".into()),
                 dim: None,
             },
@@ -760,7 +760,7 @@ mod tests {
         let w = Wrapper {
             model: EmbeddingModelConfig {
                 provider: "model2vec".into(),
-                name: "minishlab/potion-base-8M".into(),
+                name: "minishlab/potion-multilingual-128M".into(),
                 revision: None,
                 dim: None,
             },

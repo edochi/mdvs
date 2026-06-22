@@ -18,7 +18,7 @@ use std::path::Path;
 // Unused under `cfg(any(test, feature = "testing-mocks"))` since the
 // default falls back to the mock embedder in that build flavor.
 #[cfg_attr(any(test, feature = "testing-mocks"), allow(dead_code))]
-const DEFAULT_MODEL: &str = "minishlab/potion-base-8M";
+const DEFAULT_MODEL: &str = "minishlab/potion-multilingual-128M";
 pub(super) const DEFAULT_CHUNK_SIZE: usize = 1024;
 
 /// Normalize a revision string: empty and "None" are treated as unset.
