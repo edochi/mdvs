@@ -24,10 +24,15 @@
   - [export-jsonschema](./commands/export-jsonschema.md)
 
 - [Recipes](./recipes.md)
+  - [Agent harnesses](./recipes/agent-harnesses.md)
+    - [Antigravity](./recipes/agent-harnesses/antigravity.md)
+    - [Claude Code](./recipes/agent-harnesses/claude-code.md)
+    - [Codex](./recipes/agent-harnesses/codex.md)
+    - [Cursor](./recipes/agent-harnesses/cursor.md)
+    - [OpenCode](./recipes/agent-harnesses/opencode.md)
   - [Obsidian](./recipes/obsidian.md)
   - [Hugo](./recipes/hugo.md)
   - [CI](./recipes/ci.md)
-  - [Agent Harnesses and Agentic IDEs](./recipes/agentic-harnesses-and-agentic-ides.md)
 
 # Reference
 
