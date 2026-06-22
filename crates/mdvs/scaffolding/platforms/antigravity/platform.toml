@@ -1,0 +1,34 @@
+# mdvs platform config — Antigravity CLI (Google, formerly Gemini CLI).
+#
+# Read by:
+#   - `mdvs scaffold skill --platform antigravity`
+#   - `mdvs scaffold snippet --platform antigravity`
+#   - `mdvs scaffold hook --platform antigravity`  → refuses with a pointer
+#
+# Sources:
+#   skills:        https://codelabs.developers.google.com/getting-started-with-antigravity-skills
+#   inherited config: https://github.com/google-gemini/gemini-cli/blob/main/docs/get-started/configuration.md
+
+[meta]
+name = "antigravity"
+display_name = "Antigravity CLI"
+documentation_url = "https://codelabs.developers.google.com/getting-started-with-antigravity-skills"
+
+[skill]
+# Antigravity reads from .agents/skills/ at project scope (Google's
+# authoring codelab is explicit about this — same as Codex's path).
+install_path = ".agents/skills/mdvs/SKILL.md"
+
+[snippet]
+# Post-rebrand, Antigravity uses AGENTS.md as the workspace-level rules
+# file. Pre-rebrand Gemini CLI used GEMINI.md; both formats are in flight
+# during the transition.
+target_file = "AGENTS.md"
+body = "agents-md"
+
+# No [hooks] section — Antigravity's hook surface is undocumented post-
+# rebrand. The inherited Gemini CLI hooks reference uses different event
+# names (BeforeTool / AfterTool instead of Pre/PostToolUse), but Antigravity
+# may have diverged. `mdvs scaffold hook --platform antigravity` refuses
+# until upstream documentation solidifies. When that happens we can add a
+# [hooks] table here without any Rust changes.

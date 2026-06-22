@@ -1,0 +1,36 @@
+# mdvs platform config — Claude Code.
+#
+# Read by:
+#   - `mdvs scaffold skill --platform claude-code`    (install_path → help text)
+#   - `mdvs scaffold snippet --platform claude-code`  (target_file + body selection)
+#   - `mdvs scaffold hook --platform claude-code`     (generates settings.json snippet)
+#   - `mdvs hook handle --platform claude-code --kind <kind>`
+#                                                     (event_name → envelope; runtime)
+#
+# Sources:
+#   skills: https://code.claude.com/docs/en/skills
+#   hooks:  https://code.claude.com/docs/en/hooks
+
+[meta]
+name = "claude-code"
+display_name = "Claude Code"
+documentation_url = "https://code.claude.com/docs/en/hooks"
+
+[skill]
+# Claude Code reads skills only from .claude/skills/ (does not honor the
+# cross-harness .agents/skills/ convention).
+install_path = ".claude/skills/mdvs/SKILL.md"
+
+[snippet]
+# Claude Code reads project rules from CLAUDE.md at workspace root.
+target_file = "CLAUDE.md"
+body = "agents-md"
+
+[hooks]
+config_path = ".claude/settings.json"
+config_format = "json"
+# Claude Code uses PascalCase event names. The same event covers both the
+# validate matcher (Edit|Write|MultiEdit) and the search-nudge matcher (Bash).
+event_name = "PostToolUse"
+matcher_validate = "Edit|Write|MultiEdit"
+matcher_search = "Bash"
