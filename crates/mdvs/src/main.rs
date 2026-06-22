@@ -154,8 +154,15 @@ enum Command {
         #[arg(long, value_name = "PATH")]
         output_file: Option<PathBuf>,
     },
-    /// Print the agent skill file to stdout
-    Skill,
+    /// Generate install-time artifacts for an agent harness.
+    ///
+    /// Subcommands emit either the bundled SKILL.md, the project-rules
+    /// snippet, or the PostToolUse hook config — to stdout, ready to
+    /// pipe into the right file under the harness's config dir.
+    Scaffold {
+        #[command(subcommand)]
+        subcommand: mdvs::cmd::scaffold::ScaffoldCommand,
+    },
     /// Agent-harness hook runtime — called by PostToolUse hooks.
     ///
     /// Subcommands handle one tool-call payload at a time, reading JSON
@@ -379,8 +386,23 @@ async fn main() -> anyhow::Result<()> {
             }
             Ok(())
         }
-        Command::Skill => {
-            print!("{}", include_str!("../skills/mdvs/SKILL.md"));
+        Command::Scaffold { subcommand } => {
+            use mdvs::cmd::scaffold::ScaffoldCommand;
+            let stdout = std::io::stdout();
+            let stderr = std::io::stderr();
+            let mut out = stdout.lock();
+            let mut err = stderr.lock();
+            match subcommand {
+                ScaffoldCommand::Skill { platform } => {
+                    mdvs::cmd::scaffold::skill::run(&mut out, &mut err, platform.as_deref())?;
+                }
+                ScaffoldCommand::Snippet { platform } => {
+                    mdvs::cmd::scaffold::snippet::run(&mut out, &mut err, platform.as_deref())?;
+                }
+                ScaffoldCommand::Hook { platform } => {
+                    mdvs::cmd::scaffold::hook::run(&mut out, &mut err, &platform)?;
+                }
+            }
             Ok(())
         }
         Command::Info { path } => {

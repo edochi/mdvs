@@ -12,6 +12,8 @@ pub mod export_jsonschema;
 pub mod hook;
 /// Display project configuration and index status.
 pub mod info;
+/// Install-time generator commands (`mdvs scaffold {skill,snippet,hook}`).
+pub mod scaffold;
 /// Initialize a new mdvs project.
 pub mod init;
 /// Query the search index.
