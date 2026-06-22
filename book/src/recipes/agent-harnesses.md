@@ -37,10 +37,10 @@ A separate **search-nudge** hook fires after every Bash command that runs `grep`
 | Platform | Skill | Snippet | Hooks | End-to-end tested |
 |---|---|---|---|---|
 | [Claude Code](agent-harnesses/claude-code.md) | ✓ | ✓ | ✓ | **Yes** |
-| [Codex](agent-harnesses/codex.md) | ✓ | ✓ | ✓ | Schema-correct, not smoke-tested by us |
-| [Cursor](agent-harnesses/cursor.md) | ✓ | ✓ | ✓ | Schema-correct, not smoke-tested by us |
+| [Codex](agent-harnesses/codex.md) | ✓ | ✓ | ✓ | Schema-correct, no live smoke test yet |
+| [Cursor](agent-harnesses/cursor.md) | ✓ | ✓ | ✓ | Schema-correct, no live smoke test yet |
 | [OpenCode](agent-harnesses/opencode.md) | ✓ | ✓ | — (TypeScript plugin API, not shell hooks) | n/a |
-| [Antigravity](agent-harnesses/antigravity.md) | ✓ | ✓ | — (upstream docs incomplete) | skill + snippet verified |
+| [Antigravity](agent-harnesses/antigravity.md) | ✓ | ✓ | — (project-level hooks not supported upstream) | skill + snippet verified |
 
 Pick your harness in the left nav for the install steps.
 
@@ -133,7 +133,7 @@ mdvs scaffold snippet --platform foo-agent
 # → emits the agents-md body, suggests appending to AGENTS.md
 ```
 
-That's it. No Rust changes. Submit a PR adding the `platform.toml`; reviewers verify it matches the harness's documented schema.
+That's it. No Rust changes. Submit a PR adding the `platform.toml` — review is a quick read of the file against the harness's documented schema.
 
 ### Three categories of new platforms
 
@@ -150,7 +150,7 @@ The current substitution syntax handles JSON shapes where the variable parts are
 - Configs that need substitutions of structural elements (an array of N items, a numeric value, etc.)
 - Runtime envelopes that aren't valid JSON
 
-If your harness needs one of these, **open an issue at [github.com/edochi/mdvs/issues](https://github.com/edochi/mdvs/issues)** describing the harness's schema. Substitution can grow to cover more cases without breaking the existing platforms; we'll discuss the right shape together.
+If your harness needs one of these, **open an issue at [github.com/edochi/mdvs/issues](https://github.com/edochi/mdvs/issues)** with the harness's schema. Substitution can grow to cover more cases without breaking the existing platforms — the right way to shape that extension is best worked out against a real example.
 
 The full internals of the scaffolding subsystem (the substitution algorithm, the prune-on-`None` rule, the bundled directory layout, the `Platform` struct) are documented in [`docs/spec/scaffolding.md`](https://github.com/edochi/mdvs/blob/main/docs/spec/scaffolding.md) — the spec is the right read if you're touching mdvs internals beyond a new `platform.toml`.
 
@@ -182,4 +182,4 @@ At the time of writing:
 - **OpenCode** — skill + snippet correct; hooks out of scope (TypeScript plugin API only).
 - **Windows** — architecturally supported (mdvs is a cross-platform Rust binary; no shell or `jq` dependency anywhere) but not smoke-tested.
 
-If you wire mdvs into one of the unverified configurations and hit a bug, [open an issue](https://github.com/edochi/mdvs/issues) — we treat schema mismatches as real bugs to fix, not unsupported edge cases.
+If you wire mdvs into one of the unverified configurations and hit a bug, [open an issue](https://github.com/edochi/mdvs/issues) — schema mismatches are treated as real bugs to fix, not unsupported edge cases.

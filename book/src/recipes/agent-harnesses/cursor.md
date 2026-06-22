@@ -1,6 +1,6 @@
 # Cursor
 
-> **Schema-correct but not smoke-tested end-to-end by us.** The install commands produce output that matches [Cursor's hooks reference](https://cursor.com/docs/hooks) — the flat matcher entry shape, the top-level `"version": 1` field, the snake-case `additional_context` in the runtime envelope. The full feedback loop has not been verified by us in a live Cursor session. If you wire mdvs into Cursor and hit a wiring bug, please [open an issue](https://github.com/edochi/mdvs/issues).
+> **Schema-correct but no live smoke test yet.** The install commands produce output that matches [Cursor's hooks reference](https://cursor.com/docs/hooks) — the flat matcher entry shape, the top-level `"version": 1` field, the snake-case `additional_context` in the runtime envelope. The full feedback loop hasn't been verified end-to-end in a live Cursor session. If you wire mdvs into Cursor and hit a wiring bug, please [open an issue](https://github.com/edochi/mdvs/issues).
 
 For the design intent behind the integration and the runtime story, see the [Agent harnesses overview](../agent-harnesses.md). For copy-paste install steps, read on.
 
@@ -19,7 +19,7 @@ If `.cursor/hooks.json` already exists, **merge by hand**: the snippet emits a c
 
 ## What you get
 
-- **Skill**: agent learns when to call which mdvs command, how to interpret violations, and the schema-evolution loop. Cursor reads skills from `.cursor/skills/`, `.agents/skills/`, `.claude/skills/`, and `.codex/skills/` — we use `.cursor/skills/` as the native path.
+- **Skill**: agent learns when to call which mdvs command, how to interpret violations, and the schema-evolution loop. Cursor reads skills from `.cursor/skills/`, `.agents/skills/`, `.claude/skills/`, and `.codex/skills/` — `mdvs scaffold skill --platform cursor` writes to `.cursor/skills/` as the native path.
 - **Snippet**: `.cursor/rules/mdvs.mdc` with `alwaysApply: true`. Cursor includes it in every conversation automatically.
 - **Validate hook**: after every `Edit` / `Write` / `MultiEdit` on a markdown file inside an mdvs vault, `mdvs hook handle` runs `check` and surfaces violations through Cursor's `additional_context` field. Always exits 0.
 - **Search-nudge hook**: same pattern, matching Bash search-tool invocations.

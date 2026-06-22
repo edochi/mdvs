@@ -1,6 +1,6 @@
 # Codex
 
-> **Schema-correct but not smoke-tested end-to-end by us.** The install commands produce output that matches the Codex hooks reference (envelope shape, event names, config file path), and the runtime envelope template is structurally correct per [the docs](https://developers.openai.com/codex/hooks). The full feedback loop — bogus-frontmatter edit triggering the hook in a live Codex session — has not been verified by us. If you wire mdvs into Codex and hit a wiring bug, please [open an issue](https://github.com/edochi/mdvs/issues).
+> **Schema-correct but no live smoke test yet.** The install commands produce output that matches the Codex hooks reference (envelope shape, event names, config file path), and the runtime envelope template is structurally correct per [the docs](https://developers.openai.com/codex/hooks). The full feedback loop — bogus-frontmatter edit triggering the hook in a live Codex session — hasn't been verified end-to-end. If you wire mdvs into Codex and hit a wiring bug, please [open an issue](https://github.com/edochi/mdvs/issues).
 
 For the design intent behind the integration and the runtime story, see the [Agent harnesses overview](../agent-harnesses.md). For copy-paste install steps, read on.
 
