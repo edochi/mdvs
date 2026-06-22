@@ -53,7 +53,7 @@ mdvs export-jsonschema [path] --output-file <file>
 
 mdvs scaffold skill [--platform <name>]                         # this skill file
 mdvs scaffold snippet [--platform <name>]                       # AGENTS.md / CLAUDE.md snippet
-mdvs scaffold hook --platform <name>                            # PostToolUse hook config + script
+mdvs scaffold hook --platform <name>                            # PostToolUse hook config (JSON snippet)
 ```
 
 All commands take `--output <pretty|markdown|json>`. **For agent context, pass `--output markdown` explicitly** or set `default_output_format = "markdown"` in `mdvs.toml`. `<path>` defaults to `.` for every command.
@@ -94,7 +94,7 @@ After any edit that touches frontmatter (yours or the user's):
 
 ### Step 4 — When a hook surfaces a violation, follow the schema-evolution loop
 
-If a markdown block lands in your context via `additionalContext` from a `PostToolUse` hook listing `MissingRequired` / `WrongType` / `Disallowed` / `InvalidCategory` / `OutOfRange` violations, **that's mdvs talking to you via the validation hook**. The hook is non-blocking by design — the edit already landed; the warning is for you to act on next.
+If a markdown block lands in your context from a `PostToolUse` hook listing `MissingRequired` / `WrongType` / `Disallowed` / `InvalidCategory` / `OutOfRange` violations, **that's mdvs talking to you via the validation hook**. The exact harness channel varies — Claude Code surfaces it under `additionalContext`, Cursor under `additional_context`, etc. — but the content is the same: a markdown report of what failed. The hook is non-blocking by design: the edit already landed; the warning is for you to act on next.
 
 Your job:
 
@@ -115,7 +115,7 @@ A worked example of the intentional path is in the [Examples](#example--respondi
 - **`mdvs.toml` is the only source of truth.** `.mdvs/` is derived — gitignored, recreatable with `mdvs build`.
 - **There is no lock file.** Schema changes flow through `mdvs.toml` only.
 - **Frontmatter formats are auto-detected** per file (YAML / TOML / JSON). A single vault can mix all three.
-- **Use `--output markdown` for any output you intend to read.** It's the format LLMs parse most fluently, and the format the validation hook sends through `additionalContext`.
+- **Use `--output markdown` for any output you intend to read.** It's the format LLMs parse most fluently, and the format the validation hook surfaces back through the harness's model-context channel.
 
 ## Two layers
 
@@ -226,7 +226,7 @@ Emits the three artifacts that wire mdvs into an agent harness (Claude Code, Cod
 
 - `mdvs scaffold skill [--platform <name>]` — this skill file. Default destination: `.agents/skills/mdvs/SKILL.md` for Codex / OpenCode / Cursor / Antigravity; `.claude/skills/mdvs/SKILL.md` for Claude Code.
 - `mdvs scaffold snippet [--platform <name>]` — the project-rules snippet for `AGENTS.md` / `CLAUDE.md` / `.cursor/rules/mdvs.mdc`.
-- `mdvs scaffold hook --platform <name>` — the per-platform `PostToolUse` hook config (settings.json / hooks.json block) and shell script. Supported: `claude-code`, `codex`, `cursor`. `opencode` and `antigravity` refuse with a pointer (different surfaces / undocumented).
+- `mdvs scaffold hook --platform <name>` — the per-platform `PostToolUse` hook config (a JSON snippet to merge into the harness's hooks file). The emitted snippet's `command:` fields call `mdvs hook handle` directly — no shell scripts, no `jq` dependency. Supported: `claude-code`, `codex`, `cursor`. `opencode` (TypeScript plugin surface) and `antigravity` (undocumented hooks) refuse with a pointer.
 
 ## Agent-harness integration
 
@@ -236,34 +236,17 @@ mdvs ships as a CLI; integrating it with an agent harness is wiring rather than 
 |---|---|
 | **Skill file** (`SKILL.md`, this file) | Activated by harnesses implementing the [Agent Skills open standard](https://agentskills.io). Loaded on demand; agent reads procedure + reference. |
 | **Project-rules snippet** | Always-on text in `AGENTS.md` / `CLAUDE.md` / `.cursor/rules/mdvs.mdc`. Short — names the KB, the search-vs-Grep preference, and the warning-loop rule. |
-| **`PostToolUse` hook** | Wraps `mdvs check` output in the harness's JSON envelope after every Edit / Write on a markdown file inside the vault. Surfaces violations as **non-blocking** `additionalContext`. |
+| **`PostToolUse` hook** | Calls `mdvs hook handle` after every Edit / Write on a markdown file inside the vault. mdvs walks up to find `mdvs.toml`, runs `check`, and surfaces violations to you as **non-blocking** model-context (the exact channel name varies per harness — e.g. `additionalContext` for Claude Code, `additional_context` for Cursor). |
 
-### The hook output format
-
-The validation hook reads `tool_input.file_path` from the harness's stdin JSON, walks up to find `mdvs.toml`, runs `mdvs check <vault> --output markdown`, and — only if there were violations — wraps the markdown in:
-
-```json
-{
-  "hookSpecificOutput": {
-    "hookEventName": "PostToolUse",
-    "additionalContext": "## Violations\n\n- ..."
-  }
-}
-```
-
-That JSON envelope is what reaches you (the agent). The hook always exits 0; mdvs's validation never blocks an edit — it surfaces violations as warnings only. The shell uses `jq` for stdin parsing. To debug a hook by hand:
-
-```bash
-echo '{"tool_input":{"file_path":"kb/note.md"}}' | .claude/hooks/mdvs-validate.sh
-```
+All the per-harness JSON wrapping happens inside mdvs. Hooks call `mdvs hook handle --platform <name> --kind validate` (or `--kind search-nudge`) — no shell scripts, no `jq`, no per-platform configuration in the harness settings file beyond pointing at that command.
 
 ## Output format
 
 Three formats; default is `pretty`.
 
 - `--output pretty` — box-drawing tables for terminal display. Adapts to width.
-- `--output markdown` — GFM tables and `##` headers. **Best for agent consumption** and the format the hook surfaces through `additionalContext`.
-- `--output json` — structured JSON for programmatic extraction (e.g. `mdvs check --output json | jq '.violations[]'`).
+- `--output markdown` — GFM tables and `##` headers. **Best for agent consumption** and the format the validation hook surfaces back through the harness's model-context channel.
+- `--output json` — structured JSON for programmatic extraction (pipe through `jq` or any JSON tool).
 
 Priority chain when `--output` is omitted: CLI flag > `default_output_format` in `mdvs.toml` > hard default (`pretty`). Same command always produces the same output regardless of TTY state. `-v` (verbose) adds per-step pipeline output with timings.
 
@@ -325,7 +308,7 @@ Resolution per kind:
 
 ### Example — responding to a hook-delivered violation
 
-You wrote `status: in_review` to `kb/projects/alpha/sprint-12.md`. The next thing in your context is an `additionalContext` block from the PostToolUse hook:
+You wrote `status: in_review` to `kb/projects/alpha/sprint-12.md`. The next thing in your context is a hook-surfaced violation block (the exact channel name varies per harness; the content is the same):
 
 ```
 ## Violations
@@ -349,9 +332,9 @@ mdvs scaffold snippet >> CLAUDE.md                     # the always-on rules blo
 mdvs scaffold hook --platform claude-code              # follow its installation instructions
 ```
 
-`mdvs scaffold hook` prints the JSON to merge into `.claude/settings.json` plus the shell script body to save into `.claude/hooks/`. Read its output for destination paths.
+`mdvs scaffold hook` prints a JSON snippet to merge into `.claude/settings.json`. No shell scripts; the `command:` fields call `mdvs hook handle` directly. Read the stderr install hint for the destination path.
 
-For other harnesses, swap `--platform claude-code` for `codex`, `cursor`. `opencode` (TypeScript plugin surface) and `antigravity` (upstream docs incomplete) refuse with a pointer.
+For other harnesses, swap `--platform claude-code` for `codex` or `cursor` (each emits its own platform-shaped JSON). `opencode` (TypeScript plugin surface) and `antigravity` (upstream docs incomplete) refuse with a pointer; install skill + snippet only.
 
 ### Searching with filters
 
@@ -371,7 +354,7 @@ mdvs search "calibration" -v                                # show matching chun
 - **Mixed-type fields:** widen to `String`. `1` becomes `"1"`. Intentional, not data loss.
 - **Special characters in field names:** TOML handles quoting in `mdvs.toml`. In `--where`, wrap with double quotes: `--where "\"author's note\" IS NOT NULL"`.
 - **Hook fires on non-vault edits:** if no `mdvs.toml` is reachable upward from the edited file, the hook exits silently. No false positives.
-- **Hook stays silent on a bad edit:** check (in order) — matcher (`Edit | Write | MultiEdit`), file extension (`.md`), `mdvs` and `jq` on PATH, symlinks outside the vault.
+- **Hook stays silent on a bad edit:** check (in order) — harness matcher pattern, file extension (`.md`), `mdvs` on PATH for the harness's hook subprocess, symlinks outside the vault.
 
 ## Common errors
 

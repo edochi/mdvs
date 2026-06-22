@@ -9,6 +9,8 @@ mdvs has two layers:
 - **Validation layer** (init, update, check) — scans markdown, infers schema, validates frontmatter. No model needed. Operates on `mdvs.toml`.
 - **Search layer** (build, search) — chunks markdown, embeds text, stores in a single Lance dataset, queries via LanceDB's native search (semantic / fulltext / hybrid). Requires an embedding model. Operates on `.mdvs/`.
 
+A third install-time subsystem — **agent-harness scaffolding** (`mdvs scaffold {skill,snippet,hook}` install commands plus the `mdvs hook handle` runtime) — wires mdvs into Claude Code / Codex / Cursor / OpenCode / Antigravity from per-platform config files. Per-platform JSON shapes (envelope, install-time config) live as data, not Rust. See [scaffolding.md](scaffolding.md) for the full design.
+
 `mdvs.toml` is the single source of truth for schema. There is no lock file. Build metadata (model identity, chunk size, schema hash) is stored as Lance table-level key-value metadata.
 
 ```mermaid
@@ -83,7 +85,15 @@ src/
 │   ├── search.rs                       — load model → embed query → execute search
 │   ├── info.rs                         — show config + index status
 │   ├── clean.rs                        — delete .mdvs/
-│   └── export_jsonschema.rs            — translate mdvs.toml → JSON Schema (json/toml output)
+│   ├── export_jsonschema.rs            — translate mdvs.toml → JSON Schema (json/toml output)
+│   ├── scaffold/                       — install-time `mdvs scaffold {skill,snippet,hook}` (see scaffolding.md)
+│   │   ├── mod.rs                      — ScaffoldCommand clap enum
+│   │   ├── skill.rs                    — print bundled SKILL.md
+│   │   ├── snippet.rs                  — print project-rules body, picking variant per platform.toml
+│   │   └── hook.rs                     — substitute platform's config template, emit JSON snippet
+│   └── hook/                           — runtime `mdvs hook handle --platform <name> --kind <kind>`
+│       ├── mod.rs                      — HookKind value-enum
+│       └── handle.rs                   — stdin parse → walk-up → check or search-nudge → envelope
 │
 ├── discover/
 │   ├── scan.rs                         — directory walking, per-file frontmatter dispatch (YAML / TOML / JSON), ScannedFile
@@ -97,6 +107,11 @@ src/
 │           └── categories.rs           — categorical heuristic (distinct ≤ max, repetition ≥ min)
 │
 ├── preprocess.rs                       — ValueStage enum (Stage 2), Pipeline, infer_value_stages
+│
+├── scaffold/                           — per-platform agent-harness integration data (see scaffolding.md)
+│   ├── mod.rs                          — SCAFFOLDING: Dir<'_> (include_dir bundle of scaffolding/)
+│   ├── platform.rs                     — Platform, HooksConfig, deserialize-with for JSON templates
+│   └── template.rs                     — substitute() with <<MARKER>> placeholders and prune-on-None
 │
 ├── schema/
 │   ├── config.rs                       — MdvsToml, TomlField, FieldsConfig, validate(), from_inferred()
