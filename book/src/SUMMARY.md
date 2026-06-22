@@ -27,6 +27,7 @@
   - [Obsidian](./recipes/obsidian.md)
   - [Hugo](./recipes/hugo.md)
   - [CI](./recipes/ci.md)
+  - [Agent Harnesses and Agentic IDEs](./recipes/agentic-harnesses-and-agentic-ides.md)
 
 # Reference
 
