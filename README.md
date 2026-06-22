@@ -160,7 +160,7 @@ mdvs search "rust" --where "draft = false"
 mdvs search "meeting notes" --where "date > '2026-05-01'"
 ```
 
-The typed schema is what makes `--where` work. Without it, `tags = 'rust'` would be a fuzzy guess; with it, it's an equality check on a known-typed array column.
+The typed schema is what makes `--where` work. Without it, `array_has(tags, 'rust')` would be a fuzzy guess; with it, mdvs knows `tags` is `Array(String)` and the array-containment check runs against a known-typed column.
 
 > **Try it on your own files:**
 > ```bash

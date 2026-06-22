@@ -92,7 +92,7 @@ enum Command {
         /// SQL WHERE clause for filtering
         #[arg(
             long = "where",
-            long_help = "SQL WHERE clause for filtering.\n\nExamples:\n  --where \"draft = false\"\n  --where \"tags = 'rust'\"\n  --where \"author = 'O''Brien'\"  (escape ' by doubling)\n\nField names with special characters require SQL quoting:\n  --where \"\\\"author's note\\\" = 'value'\""
+            long_help = "SQL WHERE clause for filtering.\n\nExamples:\n  --where \"draft = false\"\n  --where \"array_has(tags, 'rust')\"   (Array fields — use array_has, not =)\n  --where \"author = 'O''Brien'\"  (escape ' by doubling)\n\nField names with special characters require SQL quoting:\n  --where \"\\\"author's note\\\" = 'value'\""
         )]
         where_clause: Option<String>,
         /// Retrieval mode: semantic (vector), fulltext (BM25), or hybrid (both)
