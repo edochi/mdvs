@@ -90,7 +90,7 @@ lazy-regex = "3"
 # Embeds the `scaffolding/` directory into the binary at build time. Lets
 # `scaffold::Platform::load` and `Platform::list` read bundled
 # `platforms/<name>/platform.toml` files without any disk access at run
-# time. See TODO-0190.
+# time.
 include_dir = "0.7"
 
 [dev-dependencies]

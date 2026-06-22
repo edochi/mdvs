@@ -8,6 +8,8 @@ pub mod check;
 pub mod clean;
 /// Emit the canonical JSON Schema of the local `mdvs.toml`.
 pub mod export_jsonschema;
+/// Agent-harness PostToolUse hook runtime (`mdvs hook handle`).
+pub mod hook;
 /// Display project configuration and index status.
 pub mod info;
 /// Initialize a new mdvs project.

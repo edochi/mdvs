@@ -156,6 +156,27 @@ enum Command {
     },
     /// Print the agent skill file to stdout
     Skill,
+    /// Agent-harness hook runtime — called by PostToolUse hooks.
+    ///
+    /// Subcommands handle one tool-call payload at a time, reading JSON
+    /// from stdin and writing a platform-specific JSON envelope to stdout.
+    Hook {
+        #[command(subcommand)]
+        subcommand: HookCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum HookCommand {
+    /// Handle one hook invocation (reads stdin, writes envelope to stdout).
+    Handle {
+        /// Platform name (must match a bundled `scaffolding/platforms/<name>/`)
+        #[arg(long)]
+        platform: String,
+        /// Which kind of hook this invocation is — drives the runtime logic.
+        #[arg(long, value_enum)]
+        kind: mdvs::cmd::hook::HookKind,
+    },
 }
 
 #[derive(Subcommand)]
@@ -394,6 +415,14 @@ async fn main() -> anyhow::Result<()> {
             }
             Ok(())
         }
+        Command::Hook { subcommand } => match subcommand {
+            HookCommand::Handle { platform, kind } => {
+                let stdin = std::io::stdin();
+                let mut stdout = std::io::stdout();
+                mdvs::cmd::hook::handle::run(stdin.lock(), &mut stdout, &platform, kind)?;
+                Ok(())
+            }
+        },
     }
 }
 
