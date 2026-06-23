@@ -3,7 +3,7 @@
 use serde::Serialize;
 
 use crate::block::{Block, Render, TableStyle};
-use crate::index::backend::SearchHit;
+use crate::index::backend::{SearchHit, WhereRewrite};
 
 /// Full outcome for the search command.
 #[derive(Debug, Serialize)]
@@ -16,11 +16,35 @@ pub struct SearchOutcome {
     pub model_name: String,
     /// Result limit that was applied.
     pub limit: usize,
+    /// Array-field `--where` rewrites that fired during translation. Empty
+    /// when no `--where` clause was passed or when nothing needed rewriting.
+    /// Surfaced as a "Note" block at the top of the rendered output so users
+    /// see what mdvs sent to Lance.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub where_rewrites: Vec<WhereRewrite>,
 }
 
 impl Render for SearchOutcome {
     fn render(&self) -> Vec<Block> {
         let mut blocks = vec![];
+
+        // Translation note (above everything else, so users see the rewrite
+        // before reading results). Suppressed when nothing fired.
+        if !self.where_rewrites.is_empty() {
+            let n = self.where_rewrites.len();
+            let expr_word = if n == 1 { "expression" } else { "expressions" };
+            blocks.push(Block::Section {
+                label: format!(
+                    "Note — rewrote {n} array-field {expr_word} for List-column matching"
+                ),
+                children: self
+                    .where_rewrites
+                    .iter()
+                    .map(|r| Block::Line(format!("{}  →  {}", r.original, r.rewritten)))
+                    .collect(),
+            });
+            blocks.push(Block::Line(String::new()));
+        }
 
         // Summary line
         let hit_word = if self.hits.len() == 1 { "hit" } else { "hits" };

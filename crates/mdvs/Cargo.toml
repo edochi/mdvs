@@ -87,6 +87,13 @@ xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
 # runtime. See TODO-0180.
 lazy-regex = "3"
 
+# SQL parser for the `--where` translator. AST-based rewriting (column
+# qualification, array-field equality → array_has, etc.) instead of regex
+# pattern-matching, which compounds in fragility with each new rule. Pin
+# matches the version Lance/DataFusion already pull in transitively, so
+# rewrite output stays parseable by the downstream filter engine.
+sqlparser = "0.61"
+
 # Embeds the `scaffolding/` directory into the binary at build time. Lets
 # `scaffold::Platform::load` and `Platform::list` read bundled
 # `platforms/<name>/platform.toml` files without any disk access at run

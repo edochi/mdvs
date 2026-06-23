@@ -26,7 +26,7 @@ use lancedb::query::{ExecutableQuery, QueryBase, Select};
 const OVER_FETCH_FACTOR: usize = 3;
 
 /// Reserved top-level columns of the denormalized Lance table.
-const RESERVED_COLS: &[&str] = &[
+pub(super) const RESERVED_COLS: &[&str] = &[
     COL_CHUNK_ID,
     COL_FILE_ID,
     COL_CHUNK_INDEX,
@@ -44,7 +44,7 @@ const RESERVED_COLS: &[&str] = &[
 /// `DATE`/`TIMESTAMP` are intentionally absent: they're keywords only when
 /// introducing a literal (`date '...'`), which is handled contextually, so a
 /// plain frontmatter field named `date` still resolves correctly.
-const SQL_KEYWORDS: &[&str] = &[
+pub(super) const SQL_KEYWORDS: &[&str] = &[
     "AND",
     "OR",
     "NOT",
@@ -82,30 +82,39 @@ impl LanceBackend {
         limit: usize,
         internal_prefix: &str,
         aliases: &std::collections::HashMap<String, String>,
-    ) -> anyhow::Result<Vec<SearchHit>> {
+    ) -> anyhow::Result<SearchResults> {
         // `--limit 0` means no results; LanceDB rejects a zero `k`, so short-
         // circuit rather than surface a cryptic "k must be positive" error.
         if limit == 0 {
-            return Ok(vec![]);
+            return Ok(SearchResults {
+                hits: vec![],
+                where_rewrites: vec![],
+            });
         }
         let Some(table) = self.open_table().await? else {
-            return Ok(vec![]);
+            return Ok(SearchResults {
+                hits: vec![],
+                where_rewrites: vec![],
+            });
         };
 
-        let translated = match where_clause {
+        let (translated, where_rewrites) = match where_clause {
             Some(w) => {
                 let schema = table.schema().await?;
                 let data_children = data_child_names(schema.as_ref());
                 let float_lists = float_list_child_names(schema.as_ref());
-                Some(translate_where_to_struct(
+                let array_fields = array_child_names(schema.as_ref(), &float_lists);
+                let result = translate_where_to_struct(
                     w,
                     &data_children,
                     &float_lists,
+                    &array_fields,
                     internal_prefix,
                     aliases,
-                )?)
+                )?;
+                (Some(result.clause), result.rewrites)
             }
-            None => None,
+            None => (None, vec![]),
         };
         let k = limit.saturating_mul(OVER_FETCH_FACTOR);
         let fts = || FullTextSearchQuery::new(query_text.to_string());
@@ -224,127 +233,25 @@ impl LanceBackend {
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
         hits.truncate(limit);
-        Ok(hits)
+        Ok(SearchResults {
+            hits,
+            where_rewrites,
+        })
     }
 }
 
-/// Schema-aware `--where` translator. Frontmatter fields (children of the
-/// `data` Struct) are prefixed with `data.`; genuine internal columns are left
-/// top-level. A name that is *both* a frontmatter field and an internal column
-/// is a collision: it's resolved toward the frontmatter field when
-/// `internal_prefix`/aliases give the internal column another name, otherwise
-/// it errors (mirroring the old engine). Single-quoted string literals are
-/// never rewritten.
-pub(super) fn translate_where_to_struct(
-    clause: &str,
-    data_children: &std::collections::HashSet<String>,
-    float_list_fields: &std::collections::HashSet<String>,
-    internal_prefix: &str,
-    aliases: &std::collections::HashMap<String, String>,
-) -> anyhow::Result<String> {
-    // Reverse alias lookup: alias name -> real internal column.
-    let alias_to_internal: std::collections::HashMap<&str, &str> = aliases
-        .iter()
-        .map(|(col, alias)| (alias.as_str(), col.as_str()))
-        .collect();
-    let has_aliasing = !internal_prefix.is_empty() || !aliases.is_empty();
-
-    // A string literal, optionally preceded by a `date`/`timestamp` keyword so
-    // the whole `date '...'` literal is protected as one unit (otherwise a
-    // frontmatter field named `date` and the `date` literal keyword are
-    // indistinguishable once the literal is split off).
-    //
-    // `lazy_regex::regex!` parses these patterns at compile time, so a
-    // syntax error fails `cargo build` and can never reach a user at
-    // runtime.
-    let lit = lazy_regex::regex!(r"(?i)(?:\b(?:date|timestamp)\s+)?'(?:[^']|'')*'");
-    let ident = lazy_regex::regex!(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*");
-
-    let rewrite_segment = |segment: &str| -> anyhow::Result<String> {
-        let mut out = String::new();
-        let mut last = 0;
-        for m in ident.find_iter(segment) {
-            out.push_str(&segment[last..m.start()]);
-            last = m.end();
-            let chain = m.as_str();
-            let first = chain.split('.').next().unwrap_or(chain);
-
-            // A bare identifier immediately followed by `(` is a function call
-            // (lower, length, abs, cast, coalesce, array_length, ...); leave the
-            // function name and let its column arguments be rewritten normally.
-            if !chain.contains('.') && segment[last..].trim_start().starts_with('(') {
-                out.push_str(chain);
-                continue;
-            }
-
-            // Keyword / function — leave untouched.
-            if SQL_KEYWORDS.iter().any(|k| k.eq_ignore_ascii_case(chain)) {
-                out.push_str(chain);
-                continue;
-            }
-            // Explicit reference to an internal column via its alias or prefix.
-            if let Some(internal) = alias_to_internal.get(first) {
-                out.push_str(internal);
-                continue;
-            }
-            if !internal_prefix.is_empty()
-                && let Some(stripped) = first.strip_prefix(internal_prefix)
-                && RESERVED_COLS.contains(&stripped)
-            {
-                out.push_str(stripped);
-                continue;
-            }
-
-            // Reject filters on Array(Float) fields up front — Lance panics on
-            // them (TODO-0159). The referenced field is `first`, or the segment
-            // after `data.` when the user pre-qualified.
-            let fm_name = if first == "data" {
-                chain.split('.').nth(1)
-            } else {
-                Some(first)
-            };
-            if let Some(name) = fm_name
-                && float_list_fields.contains(name)
-            {
-                return Err(anyhow::anyhow!(
-                    "filtering on Array(Float) field '{name}' is not supported in --where. \
-                     Filter on a different field or store the values in a parallel scalar field."
-                ));
-            }
-
-            let is_reserved = RESERVED_COLS.contains(&first);
-            let is_frontmatter = data_children.contains(first);
-            let rewritten = if is_reserved && is_frontmatter {
-                if has_aliasing {
-                    format!("data.{chain}")
-                } else {
-                    return Err(anyhow::anyhow!(
-                        "ambiguous column '{first}' in --where: it is both a frontmatter field and \
-                         an internal column. Disambiguate by setting [search].internal_prefix \
-                         (e.g. \"_\") or [search.aliases].{first} = \"<alias>\""
-                    ));
-                }
-            } else if is_reserved {
-                chain.to_string()
-            } else {
-                format!("data.{chain}")
-            };
-            out.push_str(&rewritten);
-        }
-        out.push_str(&segment[last..]);
-        Ok(out)
-    };
-
-    let mut out = String::with_capacity(clause.len());
-    let mut last = 0;
-    for m in lit.find_iter(clause) {
-        out.push_str(&rewrite_segment(&clause[last..m.start()])?);
-        out.push_str(m.as_str());
-        last = m.end();
-    }
-    out.push_str(&rewrite_segment(&clause[last..])?);
-    Ok(out)
+/// Search results bundled with any array-field rewrites that fired during
+/// `--where` translation. Surfaced to the user as a "Note" block at the top
+/// of the search output so the rewrite isn't magic.
+pub struct SearchResults {
+    /// File-deduped hits, ordered by descending score.
+    pub hits: Vec<SearchHit>,
+    /// Array-field rewrites — empty when no `--where` clause was passed or
+    /// when nothing needed rewriting.
+    pub where_rewrites: Vec<super::where_translator::WhereRewrite>,
 }
+
+pub(super) use super::where_translator::translate_where_to_struct;
 
 /// First-level child field names of the `data` Struct column — i.e. the
 /// top-level frontmatter field names. Used by the `--where` translator to
@@ -356,6 +263,35 @@ fn data_child_names(schema: &arrow::datatypes::Schema) -> std::collections::Hash
     {
         for child in children {
             names.insert(child.name().clone());
+        }
+    }
+    names
+}
+
+/// Top-level `data` Struct children whose Arrow type is `List<T>` or
+/// `LargeList<T>` for any element type *other than* float — i.e. fields
+/// declared as `Array(String)`, `Array(Integer)`, `Array(Boolean)`,
+/// `Array(Date)`, or `Array(DateTime)` in `mdvs.toml`. Used by the `--where`
+/// translator to recognise array-field comparisons and rewrite them as
+/// `array_has(...)` calls. `Array(Float)` lists are returned by
+/// [`float_list_child_names`] and are rejected up front rather than
+/// rewritten.
+pub(super) fn array_child_names(
+    schema: &arrow::datatypes::Schema,
+    float_list_fields: &std::collections::HashSet<String>,
+) -> std::collections::HashSet<String> {
+    let mut names = std::collections::HashSet::new();
+    if let Ok(field) = schema.field_with_name(crate::index::storage::COL_DATA)
+        && let DataType::Struct(children) = field.data_type()
+    {
+        for child in children {
+            let is_list = matches!(
+                child.data_type(),
+                DataType::List(_) | DataType::LargeList(_)
+            );
+            if is_list && !float_list_fields.contains(child.name()) {
+                names.insert(child.name().clone());
+            }
         }
     }
     names

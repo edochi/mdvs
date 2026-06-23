@@ -294,7 +294,7 @@ pub async fn run(
     }
 
     let search_start = Instant::now();
-    let hits = match backend
+    let results = match backend
         .search(
             query_embedding,
             query,
@@ -306,12 +306,12 @@ pub async fn run(
         )
         .await
     {
-        Ok(hits) => {
+        Ok(r) => {
             steps.push(StepEntry::ok(
-                Outcome::ExecuteSearch(ExecuteSearchOutcome { hits: hits.len() }),
+                Outcome::ExecuteSearch(ExecuteSearchOutcome { hits: r.hits.len() }),
                 search_start.elapsed().as_millis() as u64,
             ));
-            hits
+            r
         }
         Err(e) => {
             steps.push(StepEntry::err(
@@ -329,9 +329,10 @@ pub async fn run(
         steps,
         result: Ok(Outcome::Search(Box::new(SearchOutcome {
             query: query.to_string(),
-            hits,
+            hits: results.hits,
             model_name,
             limit,
+            where_rewrites: results.where_rewrites,
         }))),
         elapsed_ms: start.elapsed().as_millis() as u64,
     }
@@ -592,7 +593,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(hits.len(), 1);
+        assert_eq!(hits.hits.len(), 1);
     }
 
     #[tokio::test]
@@ -621,7 +622,7 @@ mod tests {
             .await
             .unwrap();
 
-        for hit in &hits {
+        for hit in &hits.hits {
             assert_ne!(hit.filename, "blog/post2.md");
         }
     }

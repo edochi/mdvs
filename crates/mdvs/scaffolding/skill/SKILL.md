@@ -198,7 +198,7 @@ mdvs search "<query>" [path] [--mode <m>] [--where "<SQL>"] [--limit N] [-v]
 --where "status = 'published'"
 --where "priority = 'high' AND author = 'Alice'"
 --where "sample_count > 20"
---where "array_has(tags, 'rust')"                  # array containment — DON'T write `tags = 'rust'`
+--where "tags = 'rust'"                            # array containment — auto-rewritten to array_has(...)
 --where "status IN ('draft', 'published')"
 --where "calibration.baseline.wavelength > 800"    # dotted-name leaves work natively
 ```
@@ -342,7 +342,7 @@ For other harnesses, swap `--platform claude-code` for `codex` or `cursor` (each
 mdvs search "machine learning" --where "status = 'published'"
 mdvs search "deadline" --where "priority = 'high' AND author = 'Alice'"
 mdvs search "experiment" --where "sample_count >= 100"
-mdvs search "tutorial" --where "array_has(tags, 'beginner')"   # array containment
+mdvs search "tutorial" --where "tags = 'beginner'"             # array — auto-rewritten to array_has(...)
 mdvs search "update" --where "status IN ('draft', 'review')"
 mdvs search "calibration" -v                                # show matching chunks
 ```
