@@ -1081,10 +1081,14 @@ mod tests {
     #[test]
     fn translate_where_array_equality_rewrites_to_array_has() {
         let out = xlate_with_arrays("tags = 'rust'", &["tags"], &["tags"]);
+        // What we send to Lance: data.-qualified for the denormalized struct.
         assert_eq!(out.clause, "array_has(data.tags, 'rust')");
         assert_eq!(out.rewrites.len(), 1);
         assert_eq!(out.rewrites[0].original, "tags = 'rust'");
-        assert_eq!(out.rewrites[0].rewritten, "array_has(data.tags, 'rust')");
+        // What we show the user in the translation note: bare column name,
+        // matching their mental model. `data.` is mdvs's internal column
+        // path; the note operates at the user's abstraction level.
+        assert_eq!(out.rewrites[0].rewritten, "array_has(tags, 'rust')");
     }
 
     #[test]

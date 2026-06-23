@@ -452,7 +452,12 @@ fn as_literal(expr: &Expr) -> Option<Expr> {
     }
 }
 
-/// Construct `array_has(data.<field_name>, <literal>)`.
+/// Construct `array_has(<field_name>, <literal>)` with a bare-identifier
+/// column argument. The recursive walk in [`walk_expr`] qualifies the
+/// identifier to `data.<field_name>` before the clause reaches Lance — but
+/// the translation note is captured upstream of that qualification, so the
+/// user-facing rewrite reads as `array_has(tags, 'x')` instead of leaking
+/// the internal `data.` prefix.
 fn make_array_has(field_name: &str, literal: Expr) -> Expr {
     Expr::Function(sqlparser::ast::Function {
         name: ObjectName(vec![ObjectNamePart::Identifier(Ident::new("array_has"))]),
@@ -461,10 +466,9 @@ fn make_array_has(field_name: &str, literal: Expr) -> Expr {
         args: FunctionArguments::List(FunctionArgumentList {
             duplicate_treatment: None,
             args: vec![
-                FunctionArg::Unnamed(FunctionArgExpr::Expr(Expr::CompoundIdentifier(vec![
-                    Ident::new("data"),
-                    Ident::new(field_name),
-                ]))),
+                FunctionArg::Unnamed(FunctionArgExpr::Expr(Expr::Identifier(Ident::new(
+                    field_name,
+                )))),
                 FunctionArg::Unnamed(FunctionArgExpr::Expr(literal)),
             ],
             clauses: vec![],
