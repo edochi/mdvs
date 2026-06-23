@@ -191,7 +191,7 @@ Searches the indexed notes — semantic (vector), full-text (BM25), or hybrid (R
 mdvs search "<query>" [path] [--mode <m>] [--where "<SQL>"] [--limit N] [-v]
 ```
 
-`--where` examples:
+`--where` examples — **frontmatter fields**:
 
 ```bash
 --where "draft = false"
@@ -202,6 +202,20 @@ mdvs search "<query>" [path] [--mode <m>] [--where "<SQL>"] [--limit N] [-v]
 --where "status IN ('draft', 'published')"
 --where "calibration.baseline.wavelength > 800"    # dotted-name leaves work natively
 ```
+
+`--where` examples — **path filtering** via the always-present `filepath` column:
+
+```bash
+--where "filepath LIKE 'projects/%'"               # everything under projects/
+--where "filepath LIKE '%/notes/%'"                # any directory called notes/
+--where "filepath LIKE '%-postmortem.md'"          # filename suffix
+--where "filepath = 'projects/alpha/overview.md'"  # exact path
+--where "filepath LIKE 'projects/%' AND status = 'published'"  # combine with frontmatter
+```
+
+The `filepath` column stores the file path relative to the project root — the **last component is the filename** (e.g. `projects/alpha/overview.md` → filename is `overview.md`). Use `LIKE '%foo.md'` to match by filename, `LIKE 'dir/%'` to match by directory, or `=` for an exact path.
+
+`--where` operates on **any column** in the Lance index — frontmatter fields (auto-discovered from `mdvs.toml`, referenced by bare name) and the always-present `filepath` column. Other internal columns exist (`start_line`, `end_line`, `built_at`, `chunk_text`) but are rarely useful for filtering — semantic / fulltext search handles those concerns better.
 
 String values use single quotes. Field names with special characters need double-quote escaping: `--where "\"lab section\" = 'Photonics'"`. `--where` on `Array(Float)` is rejected up front; store as parallel arrays instead.
 
@@ -342,9 +356,11 @@ For other harnesses, swap `--platform claude-code` for `codex` or `cursor` (each
 mdvs search "machine learning" --where "status = 'published'"
 mdvs search "deadline" --where "priority = 'high' AND author = 'Alice'"
 mdvs search "experiment" --where "sample_count >= 100"
-mdvs search "tutorial" --where "tags = 'beginner'"             # array — auto-rewritten to array_has(...)
+mdvs search "tutorial" --where "tags = 'beginner'"               # array — auto-rewritten to array_has(...)
 mdvs search "update" --where "status IN ('draft', 'review')"
-mdvs search "calibration" -v                                # show matching chunks
+mdvs search "calibration" -v                                     # show matching chunks
+mdvs search "race condition" --where "filepath LIKE 'logs/%'"    # only files under logs/
+mdvs search "review" --where "filepath LIKE '%-postmortem.md'"   # filename suffix match
 ```
 
 ### Edge cases

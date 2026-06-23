@@ -16,7 +16,7 @@ mdvs search <query> [path] [flags]
 | `path` | `.` | Directory containing `mdvs.toml` |
 | `--mode` | `hybrid` | Search mode: `semantic`, `fulltext`, or `hybrid` |
 | `--limit` / `-n` | `10` | Maximum number of results |
-| `--where` | | SQL WHERE clause for filtering on frontmatter fields |
+| `--where` | | SQL WHERE clause — filter on frontmatter fields or on the `filepath` column |
 | `--no-update` | | Skip auto-update |
 | `--no-build` | | Skip auto-build before searching |
 
@@ -55,9 +55,9 @@ See [Search & Indexing](../concepts/search.md) for details on chunking, embeddin
 
 ### `--where`
 
-Filter results by frontmatter fields using SQL syntax. The filter and similarity ranking are combined in a single query, so files that don't match are excluded efficiently.
+Filter results using SQL syntax. The filter and similarity ranking are combined in a single query, so files that don't match are excluded efficiently. `--where` operates on **any column** in the Lance index — frontmatter fields (auto-discovered from `mdvs.toml`) and the always-present `filepath` column.
 
-Scalar comparisons:
+Scalar frontmatter comparisons:
 
 ```bash
 mdvs search "experiment" --where "status = 'active'"
@@ -65,13 +65,23 @@ mdvs search "experiment" --where "sample_count > 20"
 mdvs search "experiment" --where "status = 'active' AND priority = 1"
 ```
 
-Array fields (via LanceDB's SQL array functions):
+Array fields — `=` / `!=` / `IN` / `NOT IN` are auto-rewritten to `array_has(...)`:
 
 ```bash
-mdvs search "calibration" --where "array_has(tags, 'biosensor')"
+mdvs search "calibration" --where "tags = 'biosensor'"               # auto-rewritten
+mdvs search "calibration" --where "tags IN ('biosensor', 'optics')"  # OR-chain of array_has
 ```
 
-`--where` clauses that reference `Array(Float)` fields are rejected up front with a clear error. See the [Search Guide](../search-guide.md) for the full explanation and the workaround.
+The translation note at the top of the result shows the rewrite. `--where` clauses that reference `Array(Float)` fields are rejected up front with a clear error — see the [Search Guide](../search-guide.md) for the workaround.
+
+Path filtering via the always-present `filepath` column (its last component is the filename):
+
+```bash
+mdvs search "race condition" --where "filepath LIKE 'logs/%'"        # everything under logs/
+mdvs search "review" --where "filepath LIKE '%-postmortem.md'"       # filename suffix
+mdvs search "alpha" --where "filepath = 'projects/alpha/overview.md'" # exact path
+mdvs search "deploy" --where "filepath LIKE 'logs/%' AND status = 'published'"  # combine
+```
 
 Field names with spaces need double-quoting:
 

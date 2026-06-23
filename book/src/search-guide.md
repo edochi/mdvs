@@ -1,6 +1,6 @@
 # Search Guide
 
-The `--where` flag on [search](./commands/search.md) lets you filter results by frontmatter fields using SQL syntax. The filter is combined with similarity ranking in a single query — files that don't match are excluded before results are returned.
+The `--where` flag on [search](./commands/search.md) lets you filter results using SQL syntax. The filter is combined with similarity ranking in a single query — files that don't match are excluded before results are returned. `--where` operates on **any column** in the Lance index: frontmatter fields (auto-discovered from `mdvs.toml`) and the always-present `filepath` column (see [Filtering by file path](#filtering-by-file-path)).
 
 Under the hood, mdvs hands the clause to [LanceDB](https://lancedb.com/)'s SQL filter, which is built on top of DataFusion — so any expression valid in DataFusion's SQL dialect works in `--where`.
 
@@ -229,17 +229,27 @@ Searched "experiment" — 8 hits
 ...
 ```
 
-File paths are stored as relative paths (e.g., `projects/alpha/notes/experiment-1.md`), so use `LIKE` with `%` for path prefix matching:
+File paths are stored as relative paths (e.g., `projects/alpha/notes/experiment-1.md`). The **last component is the filename**, so you can match by directory, by filename, or by both:
 
 ```bash
-# All blog posts
+# All blog posts (directory prefix)
 --where "filepath LIKE 'blog/%'"
 
-# Only published blog posts
+# Only published blog posts (deeper directory prefix)
 --where "filepath LIKE 'blog/published/%'"
 
-# Files in any meetings directory
+# Files in any meetings directory (mid-path match)
 --where "filepath LIKE '%/meetings/%'"
+
+# Match by filename suffix (last component)
+--where "filepath LIKE '%-postmortem.md'"
+--where "filepath LIKE '%/README.md'"
+
+# Exact file
+--where "filepath = 'projects/alpha/overview.md'"
+
+# Combine with frontmatter fields
+--where "filepath LIKE 'blog/%' AND status = 'published'"
 ```
 
 ## Nested objects

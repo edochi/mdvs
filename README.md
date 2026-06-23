@@ -153,14 +153,16 @@ Searched "how to get in touch" — 3 hits
 └──────────────────────────┴─────────────────────────────────────────┘
 ```
 
-`alice.md` doesn't contain "get in touch" — mdvs finds it by meaning, not keywords. Filter with SQL on frontmatter:
+`alice.md` doesn't contain "get in touch" — mdvs finds it by meaning, not keywords. Filter with SQL on frontmatter or on path:
 
 ```bash
 mdvs search "rust" --where "draft = false"
 mdvs search "meeting notes" --where "date > '2026-05-01'"
+mdvs search "incident" --where "filepath LIKE 'logs/%'"      # restrict by directory
+mdvs search "review" --where "filepath LIKE '%-postmortem.md'" # match by filename suffix
 ```
 
-The typed schema is what makes `--where` work. Because mdvs knows `tags` is `Array(String)`, `--where "tags = 'rust'"` is auto-rewritten to the right Lance call (`array_has(data.tags, 'rust')`); the search output includes a small "Note" line showing the rewrite so it's never magic. `=`, `!=`, `IN`, and `NOT IN` all do element-containment against array fields.
+The typed schema is what makes frontmatter filters work — mdvs knows `tags` is `Array(String)`, so `--where "tags = 'rust'"` is auto-rewritten to `array_has(data.tags, 'rust')` (the search output prints a one-line "Note" showing the rewrite so it's never magic). `=`, `!=`, `IN`, and `NOT IN` all do element-containment against array fields. The always-present `filepath` column lets you filter by path with standard `LIKE` patterns; its last component is the filename.
 
 > **Try it on your own files:**
 > ```bash
