@@ -94,7 +94,7 @@ After any edit that touches frontmatter (yours or the user's):
 
 ### Step 4 — When a hook surfaces a violation, follow the schema-evolution loop
 
-If a markdown block lands in your context from a `PostToolUse` hook listing `MissingRequired` / `WrongType` / `Disallowed` / `InvalidCategory` / `OutOfRange` violations, **that's mdvs talking to you via the validation hook**. The exact harness channel varies — Claude Code surfaces it under `additionalContext`, Cursor under `additional_context`, etc. — but the content is the same: a markdown report of what failed. The hook is non-blocking by design: the edit already landed; the warning is for you to act on next.
+If a markdown block lands in your context from a `PostToolUse` hook listing `MissingRequired` / `WrongType` / `Disallowed` / `InvalidCategory` / `OutOfRange` violations, **that's mdvs talking to you via the validation hook**. Claude Code surfaces it under `additionalContext`; other harnesses use their own channel (the wiring is harness-specific). The hook is non-blocking by design: the edit already landed; the warning is for you to act on next.
 
 Your job:
 
@@ -191,33 +191,93 @@ Searches the indexed notes — semantic (vector), full-text (BM25), or hybrid (R
 mdvs search "<query>" [path] [--mode <m>] [--where "<SQL>"] [--limit N] [-v]
 ```
 
-`--where` examples — **frontmatter fields**:
+`--where` operates on **any column** in the Lance index: frontmatter fields (auto-discovered from `mdvs.toml`, referenced by bare name) and the always-present `filepath` column. Field names with spaces need double-quote escaping: `--where "\"lab section\" = 'Photonics'"`. Filtering on `Array(Float)` fields is rejected up front (Lance can't safely decode them); store as parallel scalar arrays.
+
+#### Scalar frontmatter — equality, inequality, comparison
 
 ```bash
---where "draft = false"
---where "status = 'published'"
---where "priority = 'high' AND author = 'Alice'"
---where "sample_count > 20"
---where "tags = 'rust'"                            # array containment — auto-rewritten to array_has(...)
---where "status IN ('draft', 'published')"
---where "calibration.baseline.wavelength > 800"    # dotted-name leaves work natively
+--where "author = 'Federica Bianchi'"        # string equality
+--where "year >= 2020"                       # numeric comparison
+--where "year != 2025"                       # inequality
+--where "year BETWEEN 2018 AND 2024"         # closed range
+--where "year IN (2021, 2022, 2023)"         # discrete set
+--where "year NOT IN (2020, 2024)"           # exclusion
 ```
 
-`--where` examples — **path filtering** via the always-present `filepath` column:
+#### Strings — pattern matching with LIKE
+
+`%` matches any sequence, `_` matches one character.
 
 ```bash
---where "filepath LIKE 'projects/%'"               # everything under projects/
---where "filepath LIKE '%/notes/%'"                # any directory called notes/
---where "filepath LIKE '%-postmortem.md'"          # filename suffix
---where "filepath = 'projects/alpha/overview.md'"  # exact path
---where "filepath LIKE 'projects/%' AND status = 'published'"  # combine with frontmatter
+--where "title LIKE 'Async%'"                # starts with "Async"
+--where "title LIKE '%network%'"             # contains "network"
+--where "title NOT LIKE '%Tutorial%'"        # excludes the word
+--where "lower(title) LIKE '%rust%'"         # case-insensitive (via the lower() function)
 ```
 
-The `filepath` column stores the file path relative to the project root — the **last component is the filename** (e.g. `projects/alpha/overview.md` → filename is `overview.md`). Use `LIKE '%foo.md'` to match by filename, `LIKE 'dir/%'` to match by directory, or `=` for an exact path.
+#### Null filters
 
-`--where` operates on **any column** in the Lance index — frontmatter fields (auto-discovered from `mdvs.toml`, referenced by bare name) and the always-present `filepath` column. Other internal columns exist (`start_line`, `end_line`, `built_at`, `chunk_text`) but are rarely useful for filtering — semantic / fulltext search handles those concerns better.
+```bash
+--where "author IS NOT NULL"                 # field must be set
+--where "url IS NULL"                        # field must be absent
+```
 
-String values use single quotes. Field names with special characters need double-quote escaping: `--where "\"lab section\" = 'Photonics'"`. `--where` on `Array(Float)` is rejected up front; store as parallel arrays instead.
+#### Array fields — auto-rewritten to `array_has(...)`
+
+The `=` / `!=` / `IN` / `NOT IN` operators against an array field auto-rewrite to `array_has(...)` so element-containment "just works". The search output shows the rewrite as a one-line `Note` at the top.
+
+```bash
+--where "tags = 'rust'"                      # has 'rust' as one of its tags
+--where "tags != 'archived'"                 # does NOT have 'archived' as a tag
+--where "tags IN ('rust', 'python', 'go')"   # has at least one of these
+--where "tags NOT IN ('archived', 'draft')"  # has NONE of these
+--where "tags = 'rust' AND tags = 'async'"   # has BOTH (two array_has, AND'd)
+--where "tags = 'rust' OR tags = 'python'"   # equivalent to IN, longer form
+--where "array_has(tags, 'rust')"            # the explicit form — bypasses the rewrite
+```
+
+#### Date fields
+
+Date literals use the `date '...'` keyword form. RFC 3339 datetimes use `timestamp '...'`.
+
+```bash
+--where "published > date '2024-01-01'"
+--where "created BETWEEN date '2024-01-01' AND date '2024-12-31'"
+--where "published >= date '2024-01-01' AND published < date '2025-01-01'"
+```
+
+#### Path filtering — the always-present `filepath` column
+
+The `filepath` column stores the path relative to the project root — the **last component is the filename** (e.g. `articles/long-essay-2024.md` → filename is `long-essay-2024.md`).
+
+```bash
+--where "filepath LIKE 'articles/%'"         # everything under articles/
+--where "filepath LIKE '%/notes/%'"          # any directory called notes/
+--where "filepath LIKE '%-postmortem.md'"    # filename suffix
+--where "filepath = 'articles/foo.md'"       # exact path
+```
+
+#### Combining filters — AND, OR, NOT, parentheses
+
+```bash
+--where "year > 2020 AND tags = 'rust'"
+--where "year > 2020 AND (tags = 'rust' OR tags = 'python')"
+--where "(author = 'Federica Bianchi' OR author = 'Lorenzo Conti') AND year > 2020"
+--where "tags = 'rust' AND filepath LIKE 'technologies/%'"   # array + path
+--where "concepts != 'CRDT' AND filepath LIKE 'technologies/%'"
+```
+
+#### Functions
+
+Most DataFusion scalar functions work — handy when the raw value doesn't quite match.
+
+```bash
+--where "length(title) > 50"                 # long titles
+--where "lower(author) LIKE '%bianchi%'"     # case-insensitive contains
+--where "year + 1 > 2025"                    # arithmetic
+```
+
+Other internal columns exist (`start_line`, `end_line`, `built_at`, `chunk_text`) but are rarely useful for filtering — semantic / fulltext search handles those concerns better.
 
 ### `mdvs info`
 
@@ -236,23 +296,21 @@ Translates `[fields]` into a canonical JSON Schema 2020-12 document. Useful for 
 
 ### `mdvs scaffold`
 
-Emits the three artifacts that wire mdvs into an agent harness (Claude Code, Codex, OpenCode, Cursor, Antigravity). Each subcommand prints to stdout; pipe it into the right location for your harness.
+Emits the artifacts that integrate mdvs with an agent harness (Claude Code, Codex, OpenCode, Cursor, Antigravity). Each subcommand prints to stdout; pipe it into the right location for your harness.
 
 - `mdvs scaffold skill [--platform <name>]` — this skill file. Default destination: `.agents/skills/mdvs/SKILL.md` for Codex / OpenCode / Cursor / Antigravity; `.claude/skills/mdvs/SKILL.md` for Claude Code.
 - `mdvs scaffold snippet [--platform <name>]` — the project-rules snippet for `AGENTS.md` / `CLAUDE.md` / `.cursor/rules/mdvs.mdc`.
-- `mdvs scaffold hook --platform <name>` — the per-platform `PostToolUse` hook config (a JSON snippet to merge into the harness's hooks file). The emitted snippet's `command:` fields call `mdvs hook handle` directly — no shell scripts, no `jq` dependency. Supported: `claude-code`, `codex`, `cursor`. `opencode` (TypeScript plugin surface) and `antigravity` (undocumented hooks) refuse with a pointer.
+- `mdvs scaffold hook --platform claude-code` — the `PostToolUse` hook config (a JSON snippet to merge into `.claude/settings.json`). The emitted snippet's `command:` fields call `mdvs hook handle` directly — no shell scripts, no `jq` dependency. **Currently the only verified hook integration.** The other platforms refuse with a pointer to their per-platform mdbook page; wiring `mdvs hook handle` into Codex / Cursor / OpenCode / Antigravity is possible by following each harness's own hooks documentation.
 
 ## Agent-harness integration
 
 mdvs ships as a CLI; integrating it with an agent harness is wiring rather than installing. Three artifacts cover the three integration points:
 
-| Artifact | Purpose |
-|---|---|
-| **Skill file** (`SKILL.md`, this file) | Activated by harnesses implementing the [Agent Skills open standard](https://agentskills.io). Loaded on demand; agent reads procedure + reference. |
-| **Project-rules snippet** | Always-on text in `AGENTS.md` / `CLAUDE.md` / `.cursor/rules/mdvs.mdc`. Short — names the KB, the search-vs-Grep preference, and the warning-loop rule. |
-| **`PostToolUse` hook** | Calls `mdvs hook handle` after every Edit / Write on a markdown file inside the vault. mdvs walks up to find `mdvs.toml`, runs `check`, and surfaces violations to you as **non-blocking** model-context (the exact channel name varies per harness — e.g. `additionalContext` for Claude Code, `additional_context` for Cursor). |
-
-All the per-harness JSON wrapping happens inside mdvs. Hooks call `mdvs hook handle --platform <name> --kind validate` (or `--kind search-nudge`) — no shell scripts, no `jq`, no per-platform configuration in the harness settings file beyond pointing at that command.
+| Artifact | Purpose | Coverage |
+|---|---|---|
+| **Skill file** (`SKILL.md`, this file) | Activated by harnesses implementing the [Agent Skills open standard](https://agentskills.io). Loaded on demand; agent reads procedure + reference. | Works in any harness that loads `.md` skills (Claude Code, Codex, Cursor, OpenCode, Antigravity, …). |
+| **Project-rules snippet** | Always-on text in `AGENTS.md` / `CLAUDE.md` / `.cursor/rules/mdvs.mdc`. Short — names the KB, the search-vs-Grep preference, and the warning-loop rule. | Works in any harness that reads `AGENTS.md` / `CLAUDE.md` / `.cursor/rules`. |
+| **`PostToolUse` hook** | Calls `mdvs hook handle` after every Edit / Write on a markdown file inside the vault. mdvs walks up to find `mdvs.toml`, runs `check`, and surfaces violations to you as **non-blocking** model-context. | **Shipped for Claude Code only.** Other harnesses: follow their documented hook system to wire `mdvs hook handle` in — see <https://edochi.github.io/mdvs/recipes/agent-harnesses/>. |
 
 ## Output format
 
@@ -283,6 +341,7 @@ Hook scripts use `|| true` to mask the exit-1 from `check` — the hook is inten
 - Model identity is tracked: changing the model in `mdvs.toml` requires `build --force` to confirm a full re-embed.
 - `check` auto-runs `update` first by default (unless `--no-update`, or `--jsonschema` is given, or `[check].auto_update = false` is set in `mdvs.toml`).
 - `search` auto-runs `update` and `build` if needed (unless `--no-update` / `--no-build`).
+- **`.mdvsignore` and `.gitignore` are both honored** when scanning. mdvs reuses the [`ignore`](https://crates.io/crates/ignore) crate (same matcher git uses), so the per-directory `.gitignore` rules you already have apply automatically. For mdvs-only exclusions (e.g. "don't index this draft directory, but keep it tracked in git"), drop a `.mdvsignore` next to the files using the same syntax as `.gitignore`. Both apply to `init` / `update` / `check` / `build` / `search`. To stop honoring `.gitignore` (for example, to index files that are deliberately untracked but should still be searchable), set `[scan].skip_gitignore = true` in `mdvs.toml`. Hidden files and dotfiles are NOT skipped — only `.md` / `.markdown` extensions are scanned to begin with.
 
 ## Examples
 
@@ -338,29 +397,49 @@ Your response:
 
 Note what you did NOT do: silently `mdvs update reinfer status --with=categorical` to make the warning go away. The user decides whether the schema or the file is the source of truth.
 
-### Wiring mdvs into Claude Code
+### Wiring mdvs into Claude Code (end-to-end)
 
 ```bash
 mdvs scaffold skill > .claude/skills/mdvs/SKILL.md     # the skill file
 mdvs scaffold snippet >> CLAUDE.md                     # the always-on rules block
-mdvs scaffold hook --platform claude-code              # follow its installation instructions
+mdvs scaffold hook --platform claude-code              # PostToolUse hook config — read stderr for the destination
 ```
 
-`mdvs scaffold hook` prints a JSON snippet to merge into `.claude/settings.json`. No shell scripts; the `command:` fields call `mdvs hook handle` directly. Read the stderr install hint for the destination path.
+`mdvs scaffold hook` prints a JSON snippet to merge into `.claude/settings.json`. No shell scripts; the `command:` fields call `mdvs hook handle` directly.
 
-For other harnesses, swap `--platform claude-code` for `codex` or `cursor` (each emits its own platform-shaped JSON). `opencode` (TypeScript plugin surface) and `antigravity` (upstream docs incomplete) refuse with a pointer; install skill + snippet only.
+### Wiring mdvs into other harnesses (skill + snippet)
+
+For Codex, Cursor, OpenCode, or Antigravity, install the skill and snippet — the hook half isn't shipped:
+
+```bash
+mdvs scaffold skill --platform <name> > <skills-path>/mdvs/SKILL.md
+mdvs scaffold snippet --platform <name> >> <rules-file>
+```
+
+`mdvs scaffold hook --platform <name>` for these harnesses refuses with a pointer at <https://edochi.github.io/mdvs/recipes/agent-harnesses/>, which describes how to wire `mdvs hook handle` into each harness's own hook config using that harness's documentation.
 
 ### Searching with filters
 
+Full reference for `--where` is in the [search reference section](#mdvs-search) above. A few realistic shapes:
+
 ```bash
-mdvs search "machine learning" --where "status = 'published'"
-mdvs search "deadline" --where "priority = 'high' AND author = 'Alice'"
-mdvs search "experiment" --where "sample_count >= 100"
-mdvs search "tutorial" --where "tags = 'beginner'"               # array — auto-rewritten to array_has(...)
-mdvs search "update" --where "status IN ('draft', 'review')"
-mdvs search "calibration" -v                                     # show matching chunks
-mdvs search "race condition" --where "filepath LIKE 'logs/%'"    # only files under logs/
-mdvs search "review" --where "filepath LIKE '%-postmortem.md'"   # filename suffix match
+# Recent articles by a specific author
+mdvs search "actor model" --where "author = 'Federica Bianchi' AND year >= 2022"
+
+# Notes tagged with both 'rust' and 'async' (two array_has, AND'd)
+mdvs search "cancellation" --where "tags = 'rust' AND tags = 'async'"
+
+# Anything published in 2024
+mdvs search "consensus" --where "published BETWEEN date '2024-01-01' AND date '2024-12-31'"
+
+# Restrict to a subtree, exclude archived
+mdvs search "session model" --where "filepath LIKE 'projects/%' AND tags != 'archived'"
+
+# Either of two authors, recent
+mdvs search "types" --where "(author = 'Lorenzo Conti' OR author = 'Federica Bianchi') AND year > 2020"
+
+# Verbose mode — shows the matching chunk text under each hit
+mdvs search "calibration" -v
 ```
 
 ### Edge cases

@@ -1,9 +1,5 @@
 # Claude Code
 
-Full mdvs integration for Claude Code: skill, project-rules snippet, validate-on-write hook, search-nudge hook. End-to-end tested.
-
-For the design intent behind the integration and the runtime story, see the [Agent harnesses overview](../agent-harnesses.md). For copy-paste install steps, read on.
-
 ## Install
 
 Three commands. Run each in your project root:
@@ -29,7 +25,7 @@ The last command emits a JSON snippet — if `.claude/settings.json` already exi
 - **Skill path**: `.claude/skills/mdvs/SKILL.md` (Claude Code reads only from `.claude/skills/`, not the cross-harness `.agents/skills/`).
 - **Project rules**: `CLAUDE.md` at workspace root.
 - **Hook envelope**: Claude Code's `hookSpecificOutput.additionalContext` + `systemMessage` shape. PascalCase event name (`PostToolUse`).
-- **mdvs on PATH**: the hook command is `mdvs hook handle --platform claude-code --kind <kind>`. For this to work, `mdvs` must be on PATH for Claude Code's hook subprocess. The simplest install: `cargo install --path crates/mdvs` (or download a release binary into `/usr/local/bin/`).
+- **mdvs on PATH**: the hook command is `mdvs hook handle --platform claude-code --kind <kind>`.
 
 ## Sources
 
