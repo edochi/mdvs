@@ -1,6 +1,6 @@
 # Codex
 
-> **Schema-correct but no live smoke test yet.** The install commands produce output that matches the Codex hooks reference (envelope shape, event names, config file path), and the runtime envelope template is structurally correct per [the docs](https://developers.openai.com/codex/hooks). The full feedback loop — bogus-frontmatter edit triggering the hook in a live Codex session — hasn't been verified end-to-end. If you wire mdvs into Codex and hit a wiring bug, please [open an issue](https://github.com/edochi/mdvs/issues).
+> **Schema-correct, hook firing inconclusive in initial smoke test.** The install commands produce output that matches the [Codex hooks reference](https://developers.openai.com/codex/hooks) — envelope shape, event names, config file path. In a live smoke test against a real vault, the hook's firing status was unclear (no observable feedback in either direction — it neither obviously fired nor produced a debuggable failure). Treat the hook half as untested in practice until someone can confirm. The skill and snippet halves work as expected. If you wire mdvs into Codex and either get the hook visibly firing or see a specific failure mode, please [open an issue](https://github.com/edochi/mdvs/issues).
 
 For the design intent behind the integration and the runtime story, see the [Agent harnesses overview](../agent-harnesses.md). For copy-paste install steps, read on.
 

@@ -1,6 +1,6 @@
 # Cursor
 
-> **Schema-correct but no live smoke test yet.** The install commands produce output that matches [Cursor's hooks reference](https://cursor.com/docs/hooks) — the flat matcher entry shape, the top-level `"version": 1` field, the snake-case `additional_context` in the runtime envelope. The full feedback loop hasn't been verified end-to-end in a live Cursor session. If you wire mdvs into Cursor and hit a wiring bug, please [open an issue](https://github.com/edochi/mdvs/issues).
+> **Schema-correct, hooks not observed firing in initial smoke test.** The install commands produce output that matches [Cursor's hooks reference](https://cursor.com/docs/hooks) — the flat matcher entry shape, the top-level `"version": 1` field, the snake-case `additional_context` in the runtime envelope. In a live smoke test against a real vault, the hook was **not observed firing** after a markdown edit — likely a wiring bug (matcher path, envelope shape, or config-file location) that needs investigation. The skill and snippet halves work as expected. If you wire mdvs into Cursor and either get the hook firing or can diagnose why it's not, please [open an issue](https://github.com/edochi/mdvs/issues).
 
 For the design intent behind the integration and the runtime story, see the [Agent harnesses overview](../agent-harnesses.md). For copy-paste install steps, read on.
 
