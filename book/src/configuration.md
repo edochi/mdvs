@@ -135,13 +135,13 @@ Specifies the embedding model for semantic search. See [Embedding](./concepts/se
 ```toml
 [embedding_model]
 provider = "model2vec"
-name = "minishlab/potion-base-8M"
+name = "minishlab/potion-multilingual-128M"
 ```
 
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `provider` | String | `"model2vec"` | Embedding provider (currently only `"model2vec"`) |
-| `name` | String | `"minishlab/potion-base-8M"` | HuggingFace model ID |
+| `name` | String | `"minishlab/potion-multilingual-128M"` | HuggingFace model ID |
 | `revision` | String | (none) | Pin to a specific HuggingFace commit SHA for reproducibility |
 
 The `provider` field can be omitted — it defaults to `"model2vec"`. The `revision` field only appears when explicitly set (e.g., via `build --set-revision`).
@@ -448,7 +448,7 @@ frontmatter_format = "auto"
 
 [embedding_model]
 provider = "model2vec"
-name = "minishlab/potion-base-8M"
+name = "minishlab/potion-multilingual-128M"
 
 [chunking]
 max_chunk_size = 1024

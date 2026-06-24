@@ -4,7 +4,7 @@ mdvs treats your markdown directory like a database. It scans your files, infers
 
 Not a document database. A database *for* documents.
 
-## The problem
+## The challenge
 
 Markdown directories grow organically. You start with a few notes, add frontmatter when it's useful, and eventually have hundreds of files with inconsistent metadata. Tags are misspelled. Required fields are missing. You can't find anything without `grep`.
 
@@ -18,7 +18,7 @@ Frontmatter is the YAML block between `---` fences at the top of a markdown file
 ---
 title: "Experiment A-017: SPR-A1 baseline calibration"    # String
 status: completed                                         # String
-author: Giulia Ferretti                                   # String
+author: Federica Bianchi                                  # String
 draft: false                                              # Boolean
 priority: 2                                               # Integer
 drift_rate: 0.023                                         # Float

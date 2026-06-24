@@ -1,0 +1,24 @@
+# mdvs platform config — Cursor.
+#
+# Sources:
+#   skills: https://cursor.com/docs/context/skills
+#   rules:  https://cursor.com/docs/rules
+#   hooks:  https://cursor.com/docs/hooks
+#
+# No [hooks] section — mdvs doesn't ship a verified hook config for Cursor.
+# `mdvs scaffold hook --platform cursor` refuses with a pointer at the per-
+# platform mdbook page. Skill and snippet install normally.
+
+[meta]
+name = "cursor"
+display_name = "Cursor"
+documentation_url = "https://edochi.github.io/mdvs/recipes/agent-harnesses/cursor.html"
+
+[skill]
+install_path = ".cursor/skills/mdvs/SKILL.md"
+
+[snippet]
+# Cursor's idiomatic always-on rules slot is .cursor/rules/<name>.mdc with
+# `alwaysApply: true` in frontmatter. We use the .mdc body by default.
+target_file = ".cursor/rules/mdvs.mdc"
+body = "cursor-rules"

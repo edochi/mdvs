@@ -9,7 +9,7 @@ homepage = "https://edochi.github.io/mdvs/"
 readme = "../../README.md"
 keywords = ["markdown", "search", "embeddings", "semantic", "vector"]
 categories = ["command-line-utilities", "text-processing"]
-include = ["src/", "skills/", "CHANGELOG.md", "Cargo.toml", "LICENSE"]
+include = ["src/", "scaffolding/", "CHANGELOG.md", "Cargo.toml", "LICENSE"]
 
 [features]
 # Enables a deterministic mock embedder selectable via
@@ -17,6 +17,27 @@ include = ["src/", "skills/", "CHANGELOG.md", "Cargo.toml", "LICENSE"]
 # production binary cannot select it. Enabled in CI for the
 # hermetic fast-lane test suite (TODO-0184).
 testing-mocks = []
+
+# Gates the examples in `examples/` (dev-only probes that touch
+# LanceDB / pipeline internals). Off by default so `cargo build
+# --all-targets` and `cargo clippy --all-targets` skip them.
+# Run a probe explicitly with:
+#   cargo run --features dev-examples --example probe_lance_incremental
+dev-examples = []
+
+# --- Example targets -------------------------------------------------
+# Both examples require `dev-examples` so they're never built unless
+# asked. Cargo's auto-discovery still picks them up by filename; the
+# `required-features` line is what excludes them from default / all-
+# targets builds.
+
+[[example]]
+name = "probe_lance_incremental"
+required-features = ["dev-examples"]
+
+[[example]]
+name = "profile_pipeline"
+required-features = ["dev-examples"]
 
 [dependencies]
 # CLI
@@ -86,6 +107,19 @@ xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
 # in `index/backend.rs` so a typo in a pattern fails `cargo build`, not at
 # runtime. See TODO-0180.
 lazy-regex = "3"
+
+# SQL parser for the `--where` translator. AST-based rewriting (column
+# qualification, array-field equality → array_has, etc.) instead of regex
+# pattern-matching, which compounds in fragility with each new rule. Pin
+# matches the version Lance/DataFusion already pull in transitively, so
+# rewrite output stays parseable by the downstream filter engine.
+sqlparser = "0.61"
+
+# Embeds the `scaffolding/` directory into the binary at build time. Lets
+# `scaffold::Platform::load` and `Platform::list` read bundled
+# `platforms/<name>/platform.toml` files without any disk access at run
+# time.
+include_dir = "0.7"
 
 [dev-dependencies]
 tempfile = "3"

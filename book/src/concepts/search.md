@@ -24,18 +24,18 @@ Chunks are embedded into dense vectors using a local [Model2Vec](https://minish.
 ```toml
 [embedding_model]
 provider = "model2vec"
-name = "minishlab/potion-base-8M"
+name = "minishlab/potion-multilingual-128M"
 ```
 
-The default is `potion-base-8M`, a good balance of size and quality. The full [POTION family](https://huggingface.co/collections/minishlab/potion-6721e0abd4ea41881417f062):
+The default is `potion-multilingual-128M` — 101 languages, ~480 MB on disk. The full [POTION family](https://huggingface.co/collections/minishlab/potion-6721e0abd4ea41881417f062):
 
 | Model | Parameters | Notes |
 |---|---|---|
 | `minishlab/potion-base-2M` | 2M | Smallest, fastest |
-| `minishlab/potion-base-8M` | 8M | Default — good balance |
-| `minishlab/potion-base-32M` | 32M | Higher quality, slower |
-| `minishlab/potion-retrieval-32M` | 32M | Optimized for retrieval tasks |
-| `minishlab/potion-multilingual-128M` | 128M | 101 languages |
+| `minishlab/potion-base-8M` | 8M | English-only, ~60 MB — good balance for English vaults |
+| `minishlab/potion-base-32M` | 32M | English-only, higher quality, slower |
+| `minishlab/potion-retrieval-32M` | 32M | English-only, optimized for retrieval tasks |
+| `minishlab/potion-multilingual-128M` | 128M | Default — 101 languages |
 
 Any Model2Vec-compatible model on HuggingFace works — set the `name` to its model ID. You can pin a specific revision for reproducibility.
 

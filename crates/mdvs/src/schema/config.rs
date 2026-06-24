@@ -619,7 +619,7 @@ mod tests {
             },
             embedding_model: Some(EmbeddingModelConfig {
                 provider: "model2vec".into(),
-                name: "minishlab/potion-base-8M".into(),
+                name: "minishlab/potion-multilingual-128M".into(),
                 revision: None,
                 dim: None,
             }),
@@ -687,7 +687,7 @@ mod tests {
             },
             embedding_model: Some(EmbeddingModelConfig {
                 provider: "model2vec".into(),
-                name: "minishlab/potion-base-8M".into(),
+                name: "minishlab/potion-multilingual-128M".into(),
                 revision: Some("abc123".into()),
                 dim: None,
             }),
@@ -732,7 +732,7 @@ allowed = ["blog/**"]
 required = []
 
 [embedding_model]
-name = "minishlab/potion-base-8M"
+name = "minishlab/potion-multilingual-128M"
 
 [chunking]
 max_chunk_size = 1024
@@ -1720,7 +1720,7 @@ skip_gitignore = true
 
 [embedding_model]
 provider = "model2vec"
-name = "minishlab/potion-base-8M"
+name = "minishlab/potion-multilingual-128M"
 
 [chunking]
 max_chunk_size = 1024

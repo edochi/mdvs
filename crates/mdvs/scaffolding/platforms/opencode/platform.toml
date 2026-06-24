@@ -1,0 +1,36 @@
+# mdvs platform config — OpenCode.
+#
+# Read by:
+#   - `mdvs scaffold skill --platform opencode`
+#   - `mdvs scaffold snippet --platform opencode`
+#   - `mdvs scaffold hook --platform opencode`  → refuses with a pointer
+#
+# Sources:
+#   skills: https://opencode.ai/docs/skills/
+#   agents: https://opencode.ai/docs/agents/
+#   rules:  https://opencode.ai/docs/rules/
+
+[meta]
+name = "opencode"
+display_name = "OpenCode"
+documentation_url = "https://edochi.github.io/mdvs/recipes/agent-harnesses/opencode.html"
+
+[skill]
+# OpenCode reads from .opencode/skills/ natively, plus .claude/skills/ and
+# .agents/skills/ for cross-harness compatibility. We use the native path
+# as the default install location.
+install_path = ".opencode/skills/mdvs/SKILL.md"
+
+[snippet]
+# OpenCode reads project rules from AGENTS.md (also CLAUDE.md as a
+# Claude-Code-compat fallback).
+target_file = "AGENTS.md"
+body = "agents-md"
+
+# No [hooks] section — OpenCode's hook surface is a TypeScript plugin API
+# (tool.execute.before / tool.execute.after), not a shell-command config
+# file. `mdvs scaffold hook --platform opencode` refuses with a pointer to
+# the recipe page section that describes the community OpenCode-Hooks
+# shell-command package (https://github.com/KristjanPikhof/OpenCode-Hooks).
+# When/if OpenCode adds a first-class shell-hook config we can fill in a
+# [hooks] table here and the rest of the wiring takes care of itself.

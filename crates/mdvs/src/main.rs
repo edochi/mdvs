@@ -92,7 +92,7 @@ enum Command {
         /// SQL WHERE clause for filtering
         #[arg(
             long = "where",
-            long_help = "SQL WHERE clause for filtering.\n\nExamples:\n  --where \"draft = false\"\n  --where \"tags = 'rust'\"\n  --where \"author = 'O''Brien'\"  (escape ' by doubling)\n\nField names with special characters require SQL quoting:\n  --where \"\\\"author's note\\\" = 'value'\""
+            long_help = "SQL WHERE clause for filtering.\n\nExamples:\n  --where \"draft = false\"\n  --where \"tags = 'rust'\"                    (array fields — auto-rewritten to array_has)\n  --where \"tags IN ('rust', 'go')\"            (auto-rewritten to OR-chain of array_has)\n  --where \"author = 'O''Brien'\"              (escape ' by doubling)\n\nField names with special characters require SQL quoting:\n  --where \"\\\"author's note\\\" = 'value'\""
         )]
         where_clause: Option<String>,
         /// Retrieval mode: semantic (vector), fulltext (BM25), or hybrid (both)
@@ -154,8 +154,36 @@ enum Command {
         #[arg(long, value_name = "PATH")]
         output_file: Option<PathBuf>,
     },
-    /// Print the agent skill file to stdout
-    Skill,
+    /// Generate install-time artifacts for an agent harness.
+    ///
+    /// Subcommands emit either the bundled SKILL.md, the project-rules
+    /// snippet, or the PostToolUse hook config — to stdout, ready to
+    /// pipe into the right file under the harness's config dir.
+    Scaffold {
+        #[command(subcommand)]
+        subcommand: mdvs::cmd::scaffold::ScaffoldCommand,
+    },
+    /// Agent-harness hook runtime — called by PostToolUse hooks.
+    ///
+    /// Subcommands handle one tool-call payload at a time, reading JSON
+    /// from stdin and writing a platform-specific JSON envelope to stdout.
+    Hook {
+        #[command(subcommand)]
+        subcommand: HookCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum HookCommand {
+    /// Handle one hook invocation (reads stdin, writes envelope to stdout).
+    Handle {
+        /// Platform name (must match a bundled `scaffolding/platforms/<name>/`)
+        #[arg(long)]
+        platform: String,
+        /// Which kind of hook this invocation is — drives the runtime logic.
+        #[arg(long, value_enum)]
+        kind: mdvs::cmd::hook::HookKind,
+    },
 }
 
 #[derive(Subcommand)]
@@ -358,8 +386,23 @@ async fn main() -> anyhow::Result<()> {
             }
             Ok(())
         }
-        Command::Skill => {
-            print!("{}", include_str!("../skills/mdvs/SKILL.md"));
+        Command::Scaffold { subcommand } => {
+            use mdvs::cmd::scaffold::ScaffoldCommand;
+            let stdout = std::io::stdout();
+            let stderr = std::io::stderr();
+            let mut out = stdout.lock();
+            let mut err = stderr.lock();
+            match subcommand {
+                ScaffoldCommand::Skill { platform } => {
+                    mdvs::cmd::scaffold::skill::run(&mut out, &mut err, platform.as_deref())?;
+                }
+                ScaffoldCommand::Snippet { platform } => {
+                    mdvs::cmd::scaffold::snippet::run(&mut out, &mut err, platform.as_deref())?;
+                }
+                ScaffoldCommand::Hook { platform } => {
+                    mdvs::cmd::scaffold::hook::run(&mut out, &mut err, &platform)?;
+                }
+            }
             Ok(())
         }
         Command::Info { path } => {
@@ -394,6 +437,14 @@ async fn main() -> anyhow::Result<()> {
             }
             Ok(())
         }
+        Command::Hook { subcommand } => match subcommand {
+            HookCommand::Handle { platform, kind } => {
+                let stdin = std::io::stdin();
+                let mut stdout = std::io::stdout();
+                mdvs::cmd::hook::handle::run(stdin.lock(), &mut stdout, &platform, kind)?;
+                Ok(())
+            }
+        },
     }
 }
 

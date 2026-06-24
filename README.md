@@ -153,14 +153,16 @@ Searched "how to get in touch" — 3 hits
 └──────────────────────────┴─────────────────────────────────────────┘
 ```
 
-`alice.md` doesn't contain "get in touch" — mdvs finds it by meaning, not keywords. Filter with SQL on frontmatter:
+`alice.md` doesn't contain "get in touch" — mdvs finds it by meaning, not keywords. Filter with SQL on frontmatter or on path:
 
 ```bash
 mdvs search "rust" --where "draft = false"
 mdvs search "meeting notes" --where "date > '2026-05-01'"
+mdvs search "incident" --where "filepath LIKE 'logs/%'"      # restrict by directory
+mdvs search "review" --where "filepath LIKE '%-postmortem.md'" # match by filename suffix
 ```
 
-The typed schema is what makes `--where` work. Without it, `tags = 'rust'` would be a fuzzy guess; with it, it's an equality check on a known-typed array column.
+The typed schema is what makes frontmatter filters work — mdvs knows `tags` is `Array(String)`, so `--where "tags = 'rust'"` is auto-rewritten to `array_has(data.tags, 'rust')` (the search output prints a one-line "Note" showing the rewrite so it's never magic). `=`, `!=`, `IN`, and `NOT IN` all do element-containment against array fields. The always-present `filepath` column lets you filter by path with standard `LIKE` patterns; its last component is the filename.
 
 > **Try it on your own files:**
 > ```bash
@@ -207,7 +209,7 @@ mdvs export-jsonschema --format json
 
 - **Rust** — mdvs is written in Rust; the CLI is a single static binary.
 - **[LanceDB](https://lancedb.com/)** — backs storage and search. Cosine vector search, BM25 full-text, and RRF hybrid all run natively against the Lance dataset.
-- **[Model2Vec](https://minish.ai/)** — static embedding models; the default is `potion-base-8M` (~60 MB, CPU-only, no GPU).
+- **[Model2Vec](https://minish.ai/)** — static embedding models; the default is `potion-multilingual-128M` (~480 MB, 101 languages, CPU-only, no GPU). Smaller models like `potion-base-8M` (~60 MB) are available via `--set-model`.
 - **[`jsonschema`](https://crates.io/crates/jsonschema)** — JSON Schema 2020-12 validator. mdvs translates your `mdvs.toml` into a canonical JSON Schema document and validates frontmatter values through per-field validators compiled from it.
 - **[`pulldown-cmark`](https://crates.io/crates/pulldown-cmark)** — markdown parsing; used to extract plain text from each chunk before embedding.
 - **[`text-splitter`](https://crates.io/crates/text-splitter)** — semantic-aware chunker that splits the markdown body along heading and paragraph boundaries.

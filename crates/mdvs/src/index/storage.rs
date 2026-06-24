@@ -1097,7 +1097,7 @@ mod tests {
         let meta = BuildMetadata {
             embedding_model: EmbeddingModelConfig {
                 provider: "model2vec".into(),
-                name: "minishlab/potion-base-8M".into(),
+                name: "minishlab/potion-multilingual-128M".into(),
                 revision: None,
                 dim: None,
             },

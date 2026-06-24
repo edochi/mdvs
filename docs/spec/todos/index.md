@@ -188,6 +188,9 @@
 | [0184](TODO-0184.md) | Introduce MockEmbedder; keep real-model tests in a separate local-only lane | done | high | 2026-06-05 |
 | [0185](TODO-0185.md) | Refresh crates/mdvs/skills/mdvs/SKILL.md for v0.7.0 surface | done | high | 2026-06-05 |
 | [0186](TODO-0186.md) | mdvs explain — path-scoped schema query for agent callers | todo | high | 2026-06-06 |
-| [0187](TODO-0187.md) | Recipe — agent harness hook for auto-check (and optional auto-explain / pre-validate) | todo | medium | 2026-06-06 |
+| [0187](TODO-0187.md) | Recipe — agent harness hook for auto-check (and optional auto-explain / pre-validate) | done | medium | 2026-06-06 |
 | [0188](TODO-0188.md) | mdvs check --stdin — in-memory frontmatter validation | todo | medium | 2026-06-06 |
 | [0189](TODO-0189.md) | Collapse main.rs output dispatch into CommandResult::render() | done | medium | 2026-06-16 |
+| [0190](TODO-0190.md) | Design `mdvs scaffold` — unified agent-harness integration command surface | done | high | 2026-06-22 |
+| [0191](TODO-0191.md) | Auto-rewrite array-field comparisons in `--where` (parser-based, with translation note) | done | medium | 2026-06-23 |
+| [0192](TODO-0192.md) | Don't persist the mock-embedder default to `mdvs.toml` | done | high | 2026-06-23 |

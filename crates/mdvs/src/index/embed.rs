@@ -18,7 +18,7 @@ pub enum ModelConfig {
     /// in production builds.
     #[cfg(any(test, feature = "testing-mocks"))]
     Mock {
-        /// Embedding dimension. Defaults to 256 (matches potion-base-8M).
+        /// Embedding dimension. Defaults to 256 (matches the potion family).
         dim: usize,
     },
 }
@@ -182,6 +182,11 @@ mod tests {
     /// invocation skips them — they would otherwise download
     /// `minishlab/potion-base-8M` from Hugging Face. Run locally with
     /// `cargo test -- --ignored` once the model is cached.
+    ///
+    /// Deliberately the small 8M model, not the production default
+    /// (`minishlab/potion-multilingual-128M`, ~480 MB) — these tests
+    /// exercise the model2vec loader path, not embedding quality, so
+    /// the small model keeps first-run download cheap.
     const TEST_MODEL: &str = "minishlab/potion-base-8M";
 
     fn test_embedder() -> Embedder {

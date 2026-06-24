@@ -1,0 +1,25 @@
+# mdvs platform config — Codex (OpenAI Codex CLI).
+#
+# Sources:
+#   skills:    https://developers.openai.com/codex/skills/
+#   hooks:     https://developers.openai.com/codex/hooks
+#   AGENTS.md: https://developers.openai.com/codex/guides/agents-md
+#
+# No [hooks] section — mdvs doesn't ship a verified hook config for Codex.
+# `mdvs scaffold hook --platform codex` refuses with a pointer at the per-
+# platform mdbook page. Skill and snippet install normally.
+
+[meta]
+name = "codex"
+display_name = "Codex"
+documentation_url = "https://edochi.github.io/mdvs/recipes/agent-harnesses/codex.html"
+
+[skill]
+# Codex reads from the cross-harness .agents/skills/ path.
+install_path = ".agents/skills/mdvs/SKILL.md"
+
+[snippet]
+# Codex reads project rules from AGENTS.md (or AGENTS.override.md, which
+# takes precedence).
+target_file = "AGENTS.md"
+body = "agents-md"

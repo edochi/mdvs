@@ -1,5 +1,9 @@
 mod read;
 mod search;
+mod where_translator;
+
+pub use search::SearchResults;
+pub use where_translator::WhereRewrite;
 
 use crate::discover::field_type::FieldType;
 use crate::index::storage::{
@@ -172,7 +176,7 @@ impl Backend {
         limit: usize,
         internal_prefix: &str,
         aliases: &std::collections::HashMap<String, String>,
-    ) -> anyhow::Result<Vec<SearchHit>> {
+    ) -> anyhow::Result<SearchResults> {
         match self {
             Backend::Lance(b) => {
                 b.search(
@@ -631,7 +635,7 @@ mod tests {
             .unwrap();
 
         // Query vector close to rust.md's embedding
-        let hits = backend
+        let results = backend
             .search(
                 Some(vec![1.0, 0.0, 0.0, 0.0]),
                 "rust",
@@ -643,6 +647,7 @@ mod tests {
             )
             .await
             .unwrap();
+        let hits = results.hits;
 
         assert_eq!(hits.len(), 2);
         assert_eq!(hits[0].filename, "blog/rust.md");
@@ -660,6 +665,24 @@ mod tests {
             clause,
             &fields(children),
             &std::collections::HashSet::new(),
+            &std::collections::HashSet::new(),
+            "",
+            &std::collections::HashMap::new(),
+        )
+        .unwrap()
+        .clause
+    }
+
+    fn xlate_with_arrays(
+        clause: &str,
+        children: &[&str],
+        arrays: &[&str],
+    ) -> super::where_translator::TranslatedWhere {
+        translate_where_to_struct(
+            clause,
+            &fields(children),
+            &std::collections::HashSet::new(),
+            &fields(arrays),
             "",
             &std::collections::HashMap::new(),
         )
@@ -691,6 +714,7 @@ mod tests {
             "file_id = 'x'",
             &fields(&["file_id"]),
             &std::collections::HashSet::new(),
+            &std::collections::HashSet::new(),
             "",
             &std::collections::HashMap::new(),
         )
@@ -706,11 +730,12 @@ mod tests {
             "file_id = 'x' AND _file_id = 'y'",
             &fields(&["file_id"]),
             &std::collections::HashSet::new(),
+            &std::collections::HashSet::new(),
             "_",
             &std::collections::HashMap::new(),
         )
         .unwrap();
-        assert_eq!(out, "data.file_id = 'x' AND file_id = 'y'");
+        assert_eq!(out.clause, "data.file_id = 'x' AND file_id = 'y'");
     }
 
     // --- Translator: comparison operators ---
@@ -725,8 +750,9 @@ mod tests {
 
     #[test]
     fn translate_where_not_equal_both_spellings() {
+        // sqlparser canonicalizes both `<>` and `!=` to `<>` on emit.
         assert_eq!(xlate("rating <> 5", &["rating"]), "data.rating <> 5");
-        assert_eq!(xlate("rating != 5", &["rating"]), "data.rating != 5");
+        assert_eq!(xlate("rating != 5", &["rating"]), "data.rating <> 5");
     }
 
     #[test]
@@ -783,16 +809,19 @@ mod tests {
 
     #[test]
     fn translate_where_keywords_case_insensitive() {
+        // sqlparser canonicalizes operators (AND/OR/etc.) to uppercase on
+        // emit regardless of the user's input case. Semantics unchanged.
         assert_eq!(
             xlate("a > 1 and b < 2 Or c = 3", &["a", "b", "c"]),
-            "data.a > 1 and data.b < 2 Or data.c = 3"
+            "data.a > 1 AND data.b < 2 OR data.c = 3"
         );
     }
 
     #[test]
-    fn translate_where_boolean_literals_untouched() {
+    fn translate_where_boolean_literals_canonicalized() {
+        // sqlparser canonicalizes boolean literals to lowercase on emit.
         assert_eq!(xlate("draft = true", &["draft"]), "data.draft = true");
-        assert_eq!(xlate("draft = FALSE", &["draft"]), "data.draft = FALSE");
+        assert_eq!(xlate("draft = FALSE", &["draft"]), "data.draft = false");
     }
 
     #[test]
@@ -805,19 +834,21 @@ mod tests {
 
     #[test]
     fn translate_where_date_literal() {
+        // sqlparser canonicalizes the typed-string keyword to uppercase.
         assert_eq!(
             xlate("published >= date '2024-01-01'", &["published"]),
-            "data.published >= date '2024-01-01'"
+            "data.published >= DATE '2024-01-01'"
         );
     }
 
     #[test]
     fn translate_where_date_as_field_name() {
         // A frontmatter field literally named `date` must be prefixed, while
-        // the `date '...'` literal keyword on the right is left alone.
+        // the `date '...'` literal keyword on the right is left alone (and
+        // canonicalized to `DATE`).
         assert_eq!(
             xlate("date >= date '2032-01-01'", &["date"]),
-            "data.date >= date '2032-01-01'"
+            "data.date >= DATE '2032-01-01'"
         );
     }
 
@@ -828,7 +859,7 @@ mod tests {
                 "timestamp < timestamp '2024-01-01T00:00:00Z'",
                 &["timestamp"]
             ),
-            "data.timestamp < timestamp '2024-01-01T00:00:00Z'"
+            "data.timestamp < TIMESTAMP '2024-01-01T00:00:00Z'"
         );
     }
 
@@ -839,7 +870,7 @@ mod tests {
                 "synced_at < timestamp '2024-01-01T00:00:00Z'",
                 &["synced_at"]
             ),
-            "data.synced_at < timestamp '2024-01-01T00:00:00Z'"
+            "data.synced_at < TIMESTAMP '2024-01-01T00:00:00Z'"
         );
     }
 
@@ -867,10 +898,11 @@ mod tests {
             xlate("abs(drift_rate) < 1", &["drift_rate"]),
             "abs(data.drift_rate) < 1"
         );
-        // function with whitespace before the paren
+        // Function call with whitespace before the paren — sqlparser
+        // normalizes the whitespace on emit.
         assert_eq!(
             xlate("upper (status) = 'A'", &["status"]),
-            "upper (data.status) = 'A'"
+            "upper(data.status) = 'A'"
         );
     }
 
@@ -986,12 +1018,13 @@ mod tests {
             "file_id = 'x' AND fid = 'y'",
             &fields(&["file_id"]),
             &std::collections::HashSet::new(),
+            &std::collections::HashSet::new(),
             "",
             &aliases,
         )
         .unwrap();
         // bare `file_id` = frontmatter field → data.file_id; alias `fid` → internal file_id
-        assert_eq!(out, "data.file_id = 'x' AND file_id = 'y'");
+        assert_eq!(out.clause, "data.file_id = 'x' AND file_id = 'y'");
     }
 
     #[test]
@@ -1015,6 +1048,7 @@ mod tests {
                 clause,
                 &fields(&["measurement_values"]),
                 &float_lists,
+                &std::collections::HashSet::new(),
                 "",
                 &std::collections::HashMap::new(),
             )
@@ -1034,10 +1068,121 @@ mod tests {
             "filepath = 'a' AND title = 'b'",
             &fields(&["filepath", "title"]),
             &std::collections::HashSet::new(),
+            &std::collections::HashSet::new(),
             "",
             &std::collections::HashMap::new(),
         )
         .unwrap_err();
         assert!(err.to_string().contains("ambiguous column 'filepath'"));
+    }
+
+    // --- Translator: array-field rewrites (TODO-0191) ---
+
+    #[test]
+    fn translate_where_array_equality_rewrites_to_array_has() {
+        let out = xlate_with_arrays("tags = 'rust'", &["tags"], &["tags"]);
+        // What we send to Lance: data.-qualified for the denormalized struct.
+        assert_eq!(out.clause, "array_has(data.tags, 'rust')");
+        assert_eq!(out.rewrites.len(), 1);
+        assert_eq!(out.rewrites[0].original, "tags = 'rust'");
+        // What we show the user in the translation note: bare column name,
+        // matching their mental model. `data.` is mdvs's internal column
+        // path; the note operates at the user's abstraction level.
+        assert_eq!(out.rewrites[0].rewritten, "array_has(tags, 'rust')");
+    }
+
+    #[test]
+    fn translate_where_array_equality_literal_on_left() {
+        let out = xlate_with_arrays("'rust' = tags", &["tags"], &["tags"]);
+        assert_eq!(out.clause, "array_has(data.tags, 'rust')");
+        assert_eq!(out.rewrites.len(), 1);
+    }
+
+    #[test]
+    fn translate_where_array_inequality_rewrites_to_not_array_has() {
+        let out = xlate_with_arrays("tags != 'rust'", &["tags"], &["tags"]);
+        assert_eq!(out.clause, "NOT array_has(data.tags, 'rust')");
+        assert_eq!(out.rewrites.len(), 1);
+    }
+
+    #[test]
+    fn translate_where_array_in_list_rewrites_to_or_chain() {
+        let out = xlate_with_arrays("tags IN ('rust', 'go')", &["tags"], &["tags"]);
+        assert_eq!(
+            out.clause,
+            "array_has(data.tags, 'rust') OR array_has(data.tags, 'go')"
+        );
+        assert_eq!(out.rewrites.len(), 1);
+    }
+
+    #[test]
+    fn translate_where_array_not_in_list_rewrites_to_not_or_chain() {
+        let out = xlate_with_arrays("tags NOT IN ('rust', 'go')", &["tags"], &["tags"]);
+        // Wrapped in NOT(...) so OR-chain precedence is correct.
+        assert!(
+            out.clause
+                .contains("NOT (array_has(data.tags, 'rust') OR array_has(data.tags, 'go'))")
+                || out.clause.starts_with(
+                    "NOT (array_has(data.tags, 'rust') OR array_has(data.tags, 'go'))"
+                ),
+            "expected NOT-wrapped OR-chain, got: {}",
+            out.clause
+        );
+        assert_eq!(out.rewrites.len(), 1);
+    }
+
+    #[test]
+    fn translate_where_array_inside_array_has_not_double_rewritten() {
+        // Explicit array_has(...) the user typed must stay as is (modulo
+        // data. prefixing on the column argument).
+        let out = xlate_with_arrays("array_has(tags, 'rust')", &["tags"], &["tags"]);
+        assert_eq!(out.clause, "array_has(data.tags, 'rust')");
+        assert!(
+            out.rewrites.is_empty(),
+            "no rewrite fired (already canonical form), got: {:?}",
+            out.rewrites
+        );
+    }
+
+    #[test]
+    fn translate_where_array_inside_array_length_not_rewritten() {
+        // array_length(tags) > 2 — `tags` is inside a function, not a direct
+        // operand of equality. Must stay as a plain qualified identifier.
+        let out = xlate_with_arrays("array_length(tags) > 2", &["tags"], &["tags"]);
+        assert_eq!(out.clause, "array_length(data.tags) > 2");
+        assert!(out.rewrites.is_empty());
+    }
+
+    #[test]
+    fn translate_where_array_equality_with_data_prefix() {
+        // User pre-qualified the array field as `data.tags`. The rewrite
+        // still fires.
+        let out = xlate_with_arrays("data.tags = 'rust'", &["tags"], &["tags"]);
+        assert_eq!(out.clause, "array_has(data.tags, 'rust')");
+        assert_eq!(out.rewrites.len(), 1);
+    }
+
+    #[test]
+    fn translate_where_scalar_equality_not_rewritten_when_not_array() {
+        // `status` is NOT an array field — `=` stays as `=`, no rewrite.
+        let out = xlate_with_arrays("status = 'active'", &["status"], &[]);
+        assert_eq!(out.clause, "data.status = 'active'");
+        assert!(out.rewrites.is_empty());
+    }
+
+    #[test]
+    fn translate_where_array_equality_combined_with_scalar_clauses() {
+        // Mixed clause: scalar AND array. Only the array side fires the
+        // rewrite; the scalar side stays as a plain equality.
+        let out = xlate_with_arrays(
+            "status = 'active' AND tags = 'rust'",
+            &["status", "tags"],
+            &["tags"],
+        );
+        assert_eq!(
+            out.clause,
+            "data.status = 'active' AND array_has(data.tags, 'rust')"
+        );
+        assert_eq!(out.rewrites.len(), 1);
     }
 }
