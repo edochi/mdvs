@@ -18,6 +18,27 @@ include = ["src/", "scaffolding/", "CHANGELOG.md", "Cargo.toml", "LICENSE"]
 # hermetic fast-lane test suite (TODO-0184).
 testing-mocks = []
 
+# Gates the examples in `examples/` (dev-only probes that touch
+# LanceDB / pipeline internals). Off by default so `cargo build
+# --all-targets` and `cargo clippy --all-targets` skip them.
+# Run a probe explicitly with:
+#   cargo run --features dev-examples --example probe_lance_incremental
+dev-examples = []
+
+# --- Example targets -------------------------------------------------
+# Both examples require `dev-examples` so they're never built unless
+# asked. Cargo's auto-discovery still picks them up by filename; the
+# `required-features` line is what excludes them from default / all-
+# targets builds.
+
+[[example]]
+name = "probe_lance_incremental"
+required-features = ["dev-examples"]
+
+[[example]]
+name = "profile_pipeline"
+required-features = ["dev-examples"]
+
 [dependencies]
 # CLI
 clap = { version = "4", features = ["derive"] }
