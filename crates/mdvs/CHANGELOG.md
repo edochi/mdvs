@@ -2,6 +2,48 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## v0.8.2 - 2026-06-24
+#### Features
+- (**cmd**) add `mdvs scaffold {skill,snippet,hook}` install commands - (b2a92ea) - edochi
+- (**cmd**) add `mdvs hook handle` cross-platform PostToolUse runtime - (c5a54b7) - edochi
+- (**embed**) default to minishlab/potion-multilingual-128M - (646a7a4) - edochi
+- (**scaffold**) make per-platform JSON shapes config-driven via templates - (268554a) - edochi
+- (**scaffold**) add Platform struct + loader, bundle scaffolding/ into binary - (75f8e84) - edochi
+#### Bug Fixes
+- (**build**) render embedded/removed file lists as sections, not table cells - (370dafc) - edochi
+- (**build**) don't persist mock-embedder default to mdvs.toml - (4488ab3) - edochi
+- (**scaffold**) retract unverified hook configs for non-claude-code platforms - (694086f) - edochi
+- (**search**) show bare column name in --where translation note - (22807a3) - edochi
+- (**search**) auto-rewrite array-field comparisons in --where (parser-based) - (5521783) - edochi
+#### Documentation
+- (**book**) rebuild agent-harnesses recipes as one-page-per-platform - (3cee1bc) - edochi
+- (**harnesses**) update codex + cursor callouts (missed in previous commit) - (49978f2) - edochi
+- (**harnesses**) match test-status claims to what was actually verified - (7185299) - edochi
+- (**harnesses**) voice sweep, antigravity user-level note, opencode bridge plugin - (caa522b) - edochi
+- (**scaffolding**) refresh SKILL.md post-pivot + add scaffolding spec - (7e4fef7) - edochi
+- (**scaffolding**) add platform.toml for the five supported harnesses - (0209953) - edochi
+- (**scaffolding**) add Codex + Cursor hook variants, extract search-nudge, dogfood example_kb - (01d8ff8) - edochi
+- (**scaffolding**) add mdvs scaffold content artifacts for agent harnesses - (63311cf) - edochi
+- (**spec**) pivot mdvs scaffold design to cross-platform mdvs-internal hooks - (2840f3b) - edochi
+- (**spec**) plan mdvs scaffold for agent-harness integration - (debea25) - edochi
+- (**todo**) close TODO-0190; mark TODO-0187 subsumed - (f1337d8) - edochi
+- (**todos**) rework graph-architecture TODOs 0106 + 0171 - (da13fbe) - edochi
+- rebuild agent-harness docs around honest scope + verified --where examples - (542f728) - edochi
+- surface filepath filtering in --where examples - (bf130fc) - edochi
+- fix array-field --where examples and open TODO-0191 for auto-rewrite - (a2f310d) - edochi
+#### Continuous Integration
+- (**lint**) add ast-grep structural lints with panic-in-production rule - (22c62ed) - edoch, *Claude*
+#### Miscellaneous Chores
+- (**cargo**) gate examples/ behind a dev-examples feature - (439a211) - edochi
+- (**crate**) remove orphaned skills/ dir after mdvs scaffold rename - (644fb00) - edochi
+- (**deps**) bump memmap2 + quinn-proto + cargo update sweep - (e14165d) - edochi
+- (**example_kb**) regenerate hook configs from no-shell scaffold - (3861ca0) - edochi
+- (**scaffolding**) remove .sh-based hook implementation ahead of Rust pivot - (ff3ec76) - edochi
+#### Style
+- cargo fmt on scaffold + hook modules - (3a5f4cf) - edochi
+
+- - -
+
 ## v0.8.1 - 2026-06-16
 #### Features
 - (**init**) persist --output to default_output_format in mdvs.toml - (fb1db69) - edoch, *Claude*
