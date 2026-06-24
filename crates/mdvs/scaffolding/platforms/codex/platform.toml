@@ -4,11 +4,15 @@
 #   skills:    https://developers.openai.com/codex/skills/
 #   hooks:     https://developers.openai.com/codex/hooks
 #   AGENTS.md: https://developers.openai.com/codex/guides/agents-md
+#
+# No [hooks] section — mdvs doesn't ship a verified hook config for Codex.
+# `mdvs scaffold hook --platform codex` refuses with a pointer at the per-
+# platform mdbook page. Skill and snippet install normally.
 
 [meta]
 name = "codex"
 display_name = "Codex"
-documentation_url = "https://developers.openai.com/codex/hooks"
+documentation_url = "https://edochi.github.io/mdvs/recipes/agent-harnesses/codex.html"
 
 [skill]
 # Codex reads from the cross-harness .agents/skills/ path.
@@ -19,34 +23,3 @@ install_path = ".agents/skills/mdvs/SKILL.md"
 # takes precedence).
 target_file = "AGENTS.md"
 body = "agents-md"
-
-[hooks]
-config_path = ".codex/hooks.json"
-config_format = "json"
-
-[hooks.envelope]
-# Same envelope shape as Claude Code per the Codex hooks reference.
-template = """
-{
-  "hookSpecificOutput": {
-    "hookEventName": "PostToolUse",
-    "additionalContext": "<<MSG>>"
-  },
-  "systemMessage": "<<USER_MSG>>"
-}
-"""
-
-[hooks.config]
-# Same hook-config shape as Claude Code, just at a different config path.
-template = """
-{
-  "hooks": {
-    "PostToolUse": [
-      { "matcher": "Edit|Write|MultiEdit",
-        "hooks": [{ "type": "command", "command": "<<COMMAND_VALIDATE>>" }] },
-      { "matcher": "Bash",
-        "hooks": [{ "type": "command", "command": "<<COMMAND_SEARCH>>" }] }
-    ]
-  }
-}
-"""

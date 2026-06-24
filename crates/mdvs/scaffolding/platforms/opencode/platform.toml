@@ -13,7 +13,7 @@
 [meta]
 name = "opencode"
 display_name = "OpenCode"
-documentation_url = "https://opencode.ai/docs/skills/"
+documentation_url = "https://edochi.github.io/mdvs/recipes/agent-harnesses/opencode.html"
 
 [skill]
 # OpenCode reads from .opencode/skills/ natively, plus .claude/skills/ and

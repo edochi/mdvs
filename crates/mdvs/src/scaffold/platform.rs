@@ -242,25 +242,6 @@ mod tests {
         );
     }
 
-    /// Cursor uses a totally different envelope shape — snake_case
-    /// `additional_context`, no `hookSpecificOutput` wrapper, no user
-    /// channel. The template captures the divergence.
-    #[test]
-    fn cursor_envelope_template_uses_snake_case_field() {
-        let p = Platform::load("cursor").unwrap();
-        let hooks = p.hooks.as_ref().expect("cursor has [hooks]");
-        assert_eq!(hooks.config_path, ".cursor/hooks.json");
-        let envelope_str = serde_json::to_string(&hooks.envelope).unwrap();
-        assert!(
-            envelope_str.contains("additional_context"),
-            "cursor envelope uses snake_case: {envelope_str}"
-        );
-        assert!(
-            !envelope_str.contains("hookSpecificOutput"),
-            "cursor envelope has no hookSpecificOutput wrapper: {envelope_str}"
-        );
-    }
-
     /// Cursor's snippet uses the `.mdc` body (with frontmatter), targeting
     /// `.cursor/rules/`.
     #[test]
@@ -270,61 +251,35 @@ mod tests {
         assert_eq!(p.snippet.target_file, ".cursor/rules/mdvs.mdc");
     }
 
-    /// OpenCode has no shell-hook surface, so `hooks` is `None`. `mdvs
-    /// scaffold hook --platform opencode` reads this and refuses.
+    /// Only Claude Code ships a verified [hooks] config today. The other
+    /// four platforms either don't have a shell-hook surface (OpenCode,
+    /// Antigravity) or had their previous hook config retracted after live
+    /// smoke tests failed to confirm firing (Codex, Cursor).
     #[test]
-    fn opencode_has_no_hooks_section() {
-        let p = Platform::load("opencode").unwrap();
-        assert!(p.hooks.is_none(), "opencode should not declare [hooks]");
-        assert_eq!(p.skill.install_path, ".opencode/skills/mdvs/SKILL.md");
-        assert_eq!(p.snippet.target_file, "AGENTS.md");
-    }
-
-    /// Antigravity has no documented hook surface (yet) — `hooks` is `None`.
-    /// The skill + snippet install paths are well-documented in Google's
-    /// Codelab and survive the rebrand.
-    #[test]
-    fn antigravity_has_no_hooks_section() {
-        let p = Platform::load("antigravity").unwrap();
-        assert!(
-            p.hooks.is_none(),
-            "antigravity should not declare [hooks] in v1"
-        );
-        assert_eq!(p.skill.install_path, ".agents/skills/mdvs/SKILL.md");
-        assert_eq!(p.snippet.target_file, "AGENTS.md");
-    }
-
-    /// Codex shares Claude Code's PostToolUse capitalization but lives at
-    /// a different config path. Verified by inspecting the envelope
-    /// template content (the event name is baked in as a literal).
-    #[test]
-    fn codex_envelope_template_uses_post_tool_use() {
-        let p = Platform::load("codex").unwrap();
-        let hooks = p.hooks.as_ref().expect("codex has [hooks]");
-        assert_eq!(hooks.config_path, ".codex/hooks.json");
-        assert_eq!(p.skill.install_path, ".agents/skills/mdvs/SKILL.md");
-        let envelope_str = serde_json::to_string(&hooks.envelope).unwrap();
-        assert!(envelope_str.contains("PostToolUse"));
-    }
-
-    /// Every bundled platform's config template references the
-    /// `<<COMMAND_VALIDATE>>` and `<<COMMAND_SEARCH>>` placeholders. This
-    /// is a regression check — `mdvs scaffold hook` won't be able to fill
-    /// the commands in if a platform.toml drops the markers.
-    #[test]
-    fn config_templates_reference_command_markers() {
-        for name in ["claude-code", "codex", "cursor"] {
+    fn only_claude_code_ships_hooks() {
+        assert!(Platform::load("claude-code").unwrap().hooks.is_some());
+        for name in ["codex", "cursor", "opencode", "antigravity"] {
             let p = Platform::load(name).unwrap();
-            let hooks = p.hooks.as_ref().expect("has [hooks]");
-            let config_str = serde_json::to_string(&hooks.config).unwrap();
-            assert!(
-                config_str.contains("<<COMMAND_VALIDATE>>"),
-                "{name} config template missing COMMAND_VALIDATE marker"
-            );
-            assert!(
-                config_str.contains("<<COMMAND_SEARCH>>"),
-                "{name} config template missing COMMAND_SEARCH marker"
-            );
+            assert!(p.hooks.is_none(), "{name} should not declare [hooks]");
         }
+    }
+
+    /// Claude Code's config template references the
+    /// `<<COMMAND_VALIDATE>>` and `<<COMMAND_SEARCH>>` placeholders.
+    /// Regression check — `mdvs scaffold hook` won't be able to fill the
+    /// commands in if claude-code/platform.toml drops the markers.
+    #[test]
+    fn config_template_references_command_markers() {
+        let p = Platform::load("claude-code").unwrap();
+        let hooks = p.hooks.as_ref().expect("claude-code has [hooks]");
+        let config_str = serde_json::to_string(&hooks.config).unwrap();
+        assert!(
+            config_str.contains("<<COMMAND_VALIDATE>>"),
+            "claude-code config template missing COMMAND_VALIDATE marker"
+        );
+        assert!(
+            config_str.contains("<<COMMAND_SEARCH>>"),
+            "claude-code config template missing COMMAND_SEARCH marker"
+        );
     }
 }

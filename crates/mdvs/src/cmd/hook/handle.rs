@@ -501,19 +501,9 @@ constraints = { categories = ["active", "archived"] }
         );
     }
 
-    /// Cursor's flat shape: snake_case `additional_context` at the top
-    /// level, no wrapper, no user channel ever (USER_MSG marker absent
-    /// from the template).
-    #[test]
-    fn build_envelope_cursor_uses_flat_snake_case_shape() {
-        let p = Platform::load("cursor").unwrap();
-        let hooks = p.hooks.as_ref().unwrap();
-        let env = build_envelope(hooks, "agent body", Some("user body"));
-        let parsed: Value = serde_json::from_str(&env).unwrap();
-        assert_eq!(parsed["additional_context"], "agent body");
-        assert!(parsed.get("hookSpecificOutput").is_none(), "no wrapper");
-        assert!(parsed.get("systemMessage").is_none(), "no user channel");
-    }
+    // Cursor envelope test removed: mdvs no longer ships a hook config or
+    // envelope for cursor — the previous implementation was schema-correct
+    // per the docs but not observed firing in a live smoke test.
 
     // --- run() validate end-to-end --------------------------------------
 
@@ -612,38 +602,11 @@ constraints = { categories = ["active", "archived"] }
         assert!(out.is_empty());
     }
 
-    /// Cursor uses a flat envelope with `additional_context` at the top
-    /// level — no `hookSpecificOutput` wrapper, no `hookEventName` field.
-    /// The template captures the divergence; mdvs just substitutes into
-    /// it. Also: Cursor's postToolUse has no user channel, so even when
-    /// validate populates `user_msg`, nothing user-facing reaches the
-    /// envelope (no `<<USER_MSG>>` marker in the cursor template).
-    #[test]
-    fn validate_uses_cursors_flat_envelope_shape() {
-        let dir = TempDir::new().unwrap();
-        write_fixture_vault(dir.path(), "bogus");
-        let file = dir.path().join("note.md");
-        let stdin = format!(r#"{{"tool_input":{{"file_path":"{}"}}}}"#, file.display());
-        let mut out = Vec::new();
-        run(Cursor::new(stdin), &mut out, "cursor", HookKind::Validate).unwrap();
-        let env: Value = serde_json::from_slice(&out).unwrap();
-        // Snake-case, no wrapper.
-        let ctx = env["additional_context"]
-            .as_str()
-            .expect("flat additional_context");
-        assert!(
-            ctx.contains("status"),
-            "violation should mention the field: {ctx}"
-        );
-        assert!(
-            env.get("hookSpecificOutput").is_none(),
-            "cursor has no wrapper"
-        );
-        assert!(
-            env.get("systemMessage").is_none(),
-            "cursor has no user channel"
-        );
-    }
+    // Cursor end-to-end envelope test removed: mdvs no longer ships a hook
+    // config or envelope for cursor — the previous implementation was
+    // schema-correct per the docs but not observed firing in a live smoke
+    // test. The `validate_errors_on_platform_without_hooks` test below
+    // covers the "no hook config" path more generally.
 
     #[test]
     fn validate_errors_on_platform_without_hooks() {

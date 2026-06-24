@@ -5,20 +5,14 @@
 #   rules:  https://cursor.com/docs/rules
 #   hooks:  https://cursor.com/docs/hooks
 #
-# Cursor diverges from the Claude Code / Codex hook conventions:
-#   - Hook output envelope uses snake_case field names (`additional_context`)
-#     and no `hookSpecificOutput` wrapper.
-#   - Cursor's `postToolUse` has no user-visible channel — only
-#     `additional_context` (agent-side). The user-channel placeholder
-#     `<<USER_MSG>>` is absent from the envelope template; whether mdvs
-#     passes USER_MSG=Some(...) or None makes no difference.
-#   - The hook config uses a flat matcher entry shape (no nested `hooks`
-#     array), and includes a top-level `"version": 1` field.
+# No [hooks] section — mdvs doesn't ship a verified hook config for Cursor.
+# `mdvs scaffold hook --platform cursor` refuses with a pointer at the per-
+# platform mdbook page. Skill and snippet install normally.
 
 [meta]
 name = "cursor"
 display_name = "Cursor"
-documentation_url = "https://cursor.com/docs/hooks"
+documentation_url = "https://edochi.github.io/mdvs/recipes/agent-harnesses/cursor.html"
 
 [skill]
 install_path = ".cursor/skills/mdvs/SKILL.md"
@@ -28,27 +22,3 @@ install_path = ".cursor/skills/mdvs/SKILL.md"
 # `alwaysApply: true` in frontmatter. We use the .mdc body by default.
 target_file = ".cursor/rules/mdvs.mdc"
 body = "cursor-rules"
-
-[hooks]
-config_path = ".cursor/hooks.json"
-config_format = "json"
-
-[hooks.envelope]
-template = """
-{
-  "additional_context": "<<MSG>>"
-}
-"""
-
-[hooks.config]
-template = """
-{
-  "version": 1,
-  "hooks": {
-    "postToolUse": [
-      { "matcher": "Edit|Write|MultiEdit", "command": "<<COMMAND_VALIDATE>>" },
-      { "matcher": "Bash",                 "command": "<<COMMAND_SEARCH>>" }
-    ]
-  }
-}
-"""

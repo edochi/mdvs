@@ -24,11 +24,11 @@ pub fn run<W: Write, E: Write>(stdout: &mut W, stderr: &mut E, platform_name: &s
     let platform = Platform::load(platform_name)?;
     let hooks = platform.hooks.as_ref().ok_or_else(|| {
         anyhow::anyhow!(
-            "platform '{}' has no shell-hook surface. \
-             Skill and snippet still install via `mdvs scaffold skill --platform {0}` and \
-             `mdvs scaffold snippet --platform {0}`. Hook support depends on the harness adding \
-             a documented PostToolUse-style mechanism.",
-            platform.meta.name
+            "mdvs doesn't ship a verified hook config for '{name}'. The skill and snippet still \
+             install normally:\n\n  mdvs scaffold skill --platform {name}\n  mdvs scaffold snippet --platform {name}\n\n\
+             For the current status and integration guidance, see:\n  \
+             https://edochi.github.io/mdvs/recipes/agent-harnesses/{name}.html",
+            name = platform.meta.name
         )
     })?;
 
@@ -152,46 +152,36 @@ mod tests {
     }
 
     /// Cursor uses a flat matcher entry shape and a top-level `version`
-    /// field — completely different from Claude Code's nested layout.
-    /// The platform.toml template captures the difference; the scaffolder
-    /// just substitutes commands in.
+    /// mdvs doesn't ship a verified hook config for Cursor — the previous
+    /// attempt was schema-correct per the docs but not observed firing in
+    /// a live smoke test. Until that's resolved, `scaffold hook --platform
+    /// cursor` refuses with a pointer at the per-platform mdbook page.
     #[test]
-    fn hook_emits_cursor_flat_shape_with_version() {
+    fn hook_refuses_for_cursor_with_pointer() {
         let mut out = Vec::new();
         let mut err = Vec::new();
-        run(&mut out, &mut err, "cursor").unwrap();
-        let parsed: Value = serde_json::from_slice(&out).unwrap();
-        // Top-level version: 1 (Cursor-specific).
-        assert_eq!(parsed["version"], 1);
-        // camelCase event key.
-        assert!(parsed["hooks"]["postToolUse"].is_array());
-        assert!(parsed["hooks"]["PostToolUse"].is_null());
-        // Flat shape: command is a direct property of the matcher entry,
-        // not nested inside a `hooks` array.
-        let entry = &parsed["hooks"]["postToolUse"][0];
-        assert_eq!(entry["matcher"], "Edit|Write|MultiEdit");
-        assert_eq!(
-            entry["command"].as_str().unwrap(),
-            "mdvs hook handle --platform cursor --kind validate"
-        );
-        // The Claude-Code-style nested `hooks` array should NOT be present
-        // on the matcher entry — that would be the wrong schema for Cursor.
+        let res = run(&mut out, &mut err, "cursor");
+        let e = res.unwrap_err();
+        let msg = format!("{e}");
         assert!(
-            entry.get("hooks").is_none(),
-            "cursor entries are flat, no nested hooks array"
+            msg.contains("recipes/agent-harnesses/cursor.html"),
+            "expected mdbook URL pointer: {msg}"
         );
     }
 
+    /// Same as Cursor — Codex hook firing was inconclusive in a live smoke
+    /// test, so mdvs no longer ships a hook config for it.
     #[test]
-    fn hook_uses_codex_config_path() {
+    fn hook_refuses_for_codex_with_pointer() {
         let mut out = Vec::new();
         let mut err = Vec::new();
-        run(&mut out, &mut err, "codex").unwrap();
-        let hint = String::from_utf8(err).unwrap();
-        assert!(hint.contains(".codex/hooks.json"), "{hint}");
-        let parsed: Value = serde_json::from_slice(&out).unwrap();
-        // Codex shares Claude Code's PascalCase event name.
-        assert!(parsed["hooks"]["PostToolUse"].is_array());
+        let res = run(&mut out, &mut err, "codex");
+        let e = res.unwrap_err();
+        let msg = format!("{e}");
+        assert!(
+            msg.contains("recipes/agent-harnesses/codex.html"),
+            "expected mdbook URL pointer: {msg}"
+        );
     }
 
     #[test]
@@ -202,11 +192,14 @@ mod tests {
         let e = res.unwrap_err();
         let msg = format!("{e}");
         assert!(msg.contains("opencode"), "{msg}");
-        assert!(msg.contains("no shell-hook surface"), "{msg}");
         // The error should still point users at scaffold skill / snippet
-        // (which DO work for opencode).
+        // (which DO work for opencode) plus the per-platform mdbook page.
         assert!(msg.contains("mdvs scaffold skill"), "{msg}");
         assert!(msg.contains("mdvs scaffold snippet"), "{msg}");
+        assert!(
+            msg.contains("recipes/agent-harnesses/opencode.html"),
+            "expected mdbook URL pointer: {msg}"
+        );
     }
 
     #[test]
@@ -214,7 +207,12 @@ mod tests {
         let mut out = Vec::new();
         let mut err = Vec::new();
         let res = run(&mut out, &mut err, "antigravity");
-        assert!(res.is_err());
+        let e = res.unwrap_err();
+        let msg = format!("{e}");
+        assert!(
+            msg.contains("recipes/agent-harnesses/antigravity.html"),
+            "expected mdbook URL pointer: {msg}"
+        );
     }
 
     #[test]

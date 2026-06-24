@@ -7,12 +7,12 @@
 #
 # Sources:
 #   skills:        https://codelabs.developers.google.com/getting-started-with-antigravity-skills
-#   inherited config: https://github.com/google-gemini/gemini-cli/blob/main/docs/get-started/configuration.md
+#   inherited config: https://github.com/google-gemini/gemini-cli/tree/main/docs/hooks
 
 [meta]
 name = "antigravity"
 display_name = "Antigravity CLI"
-documentation_url = "https://codelabs.developers.google.com/getting-started-with-antigravity-skills"
+documentation_url = "https://edochi.github.io/mdvs/recipes/agent-harnesses/antigravity.html"
 
 [skill]
 # Antigravity reads from .agents/skills/ at project scope (Google's
