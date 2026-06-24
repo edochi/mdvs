@@ -36,13 +36,13 @@ A separate **search-nudge** hook fires after every Bash command that runs `grep`
 
 | Platform | Skill | Snippet | Hooks | End-to-end tested |
 |---|---|---|---|---|
-| [Claude Code](agent-harnesses/claude-code.md) | ✓ | ✓ | ✓ | **Yes** |
-| [Codex](agent-harnesses/codex.md) | ✓ | ✓ | ✓ | Schema-correct, no live smoke test yet |
-| [Cursor](agent-harnesses/cursor.md) | ✓ | ✓ | ✓ | Schema-correct, no live smoke test yet |
-| [OpenCode](agent-harnesses/opencode.md) | ✓ | ✓ | — (TypeScript plugin API, not shell hooks) | n/a |
+| [Claude Code](agent-harnesses/claude-code.md) | ✓ | ✓ | ✓ | **Yes — full loop verified** |
+| [Codex](agent-harnesses/codex.md) | ✓ | ✓ | ✓ | Built to docs only — hook firing not confirmed in practice |
+| [Cursor](agent-harnesses/cursor.md) | ✓ | ✓ | ✓ | Built to docs only — hooks did not fire in initial smoke test |
+| [OpenCode](agent-harnesses/opencode.md) | ✓ | ✓ | — (TypeScript plugin bridge; see page) | Bridge plugin did not fire in initial smoke test |
 | [Antigravity](agent-harnesses/antigravity.md) | ✓ | ✓ | — (project-level hooks not supported upstream) | skill + snippet verified |
 
-Pick your harness in the left nav for the install steps.
+**Reality check.** Only Claude Code's hook path has been verified end-to-end in practice. Codex, Cursor, and OpenCode were built against each harness's published documentation (envelope shape, event names, config file path) and the install commands produce schema-correct output — but in initial smoke tests the hooks were either not observed firing (Cursor, OpenCode) or had unclear behaviour (Codex). The skill and snippet halves work everywhere; the hook half needs more investigation per harness, and PRs that diagnose specific failures are extremely welcome. Pick your harness in the left nav for the install steps and the per-platform caveats.
 
 ## Extending to a new harness
 
@@ -174,12 +174,13 @@ For CI-side validation, see the [CI recipe](./ci.md).
 
 ## What's tested
 
-At the time of writing:
+At the time of writing, all five integrations have been **installed and tried in practice** against real vaults. Results vary by integration:
 
-- **Claude Code** — full end-to-end loop verified: edit a file with a bogus frontmatter value, the hook fires, the agent receives the violation via `additionalContext`, the user receives the pretty render via `systemMessage`. The schema-evolution loop path is also verified.
-- **Antigravity CLI** — skill + snippet verified to be picked up by the harness. Hooks are out of scope (upstream docs incomplete post-rebrand).
-- **Codex, Cursor** — the install commands produce output matching each harness's documented schema, and the runtime envelope template is structurally correct per their docs. Neither has been smoke-tested end-to-end against the running harness.
-- **OpenCode** — skill + snippet correct; hooks out of scope (TypeScript plugin API only).
-- **Windows** — architecturally supported (mdvs is a cross-platform Rust binary; no shell or `jq` dependency anywhere) but not smoke-tested.
+- **Claude Code** — **full end-to-end loop verified**: edit a file with a bogus frontmatter value, the hook fires, the agent receives the violation via `additionalContext`, the user receives the pretty render via `systemMessage`. The schema-evolution loop path is also verified. This is the only harness where the hook half is known to work.
+- **Antigravity CLI** — skill + snippet verified to be picked up by the harness. **Hooks not supported by mdvs for Antigravity** because Antigravity only ships user-level (not project-level) hooks; `mdvs scaffold hook --platform antigravity` refuses with a pointer.
+- **Codex** — install commands produce output matching the [Codex hooks reference](https://developers.openai.com/codex/hooks). In a live smoke test the hook **firing status was unclear** (no observable feedback in either direction). Treat as untested in practice until someone can confirm.
+- **Cursor** — install commands produce output matching the [Cursor hooks reference](https://cursor.com/docs/hooks). In a live smoke test the hook was **not observed firing**. Likely a wiring bug (matcher path, envelope shape, or config-file location) — needs investigation.
+- **OpenCode** — skill + snippet correct. The [reference TypeScript bridge plugin](./agent-harnesses/opencode.md#workaround-typescript-bridge-plugin) was **not observed firing** in a live smoke test. Likely the plugin loader, the `tool.execute.after` event signature, or the prompt injection path needs adjustment — needs investigation.
+- **Windows** — architecturally supported (mdvs is a cross-platform Rust binary; no shell or `jq` dependency anywhere) but **not smoke-tested** on Windows.
 
-If you wire mdvs into one of the unverified configurations and hit a bug, [open an issue](https://github.com/edochi/mdvs/issues) — schema mismatches are treated as real bugs to fix, not unsupported edge cases.
+The skill and snippet halves work everywhere they were tried; the hook half is the part that varies. If you wire mdvs into one of the unverified configurations and either get it working or hit a specific failure mode, [open an issue](https://github.com/edochi/mdvs/issues) — schema mismatches and wiring bugs are real bugs to fix.
