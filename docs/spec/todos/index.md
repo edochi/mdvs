@@ -172,7 +172,7 @@
 | [0168](TODO-0168.md) | Compact-snippet output mode for LLM-friendly search results | todo | medium | 2026-05-27 |
 | [0169](TODO-0169.md) | Investigate Lance encoding panic on large markdown corpora | done | medium | 2026-05-28 |
 | [0170](TODO-0170.md) | Incremental check cache to keep auto-validation cheap at scale | deferred | low | 2026-05-28 |
-| [0171](TODO-0171.md) | Similarity-edge graph: top-K semantic neighbors per file | todo | medium | 2026-05-30 |
+| [0171](TODO-0171.md) | Semantic-assisted link authoring: turn similarity into explicit links | todo | medium | 2026-05-30 |
 | [0172](TODO-0172.md) | Cheap wins in check::validate — precompile globs, hoist conversions, fast-path validators | done | high | 2026-05-29 |
 | [0173](TODO-0173.md) | Incremental Lance writes — stop nuking the index on every build | done | high | 2026-05-29 |
 | [0174](TODO-0174.md) | content_hash should cover frontmatter, not just the parsed body | todo | medium | 2026-05-29 |
@@ -194,3 +194,4 @@
 | [0190](TODO-0190.md) | Design `mdvs scaffold` — unified agent-harness integration command surface | done | high | 2026-06-22 |
 | [0191](TODO-0191.md) | Auto-rewrite array-field comparisons in `--where` (parser-based, with translation note) | done | medium | 2026-06-23 |
 | [0192](TODO-0192.md) | Don't persist the mock-embedder default to `mdvs.toml` | done | high | 2026-06-23 |
+| [0193](TODO-0193.md) | Support .mdx files — free validation, gated search-body stripping | todo | medium | 2026-07-06 |
