@@ -2,6 +2,16 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## v0.8.3 - 2026-07-07
+#### Bug Fixes
+- bump anyhow and crossbeam-epoch to clear RUSTSEC advisories - (024bc7f) - edochi, *Claude*
+#### Documentation
+- add TODO-0193 for .mdx support (free validation, gated search-body stripping) - (bf09d8a) - edochi, *Claude*
+- finalize TODO-0106 graph model, reframe TODO-0171 as discovery workflows - (2653400) - edochi
+- scope TODO-0106 to the extracted markdown link graph - (9a4475b) - edochi
+
+- - -
+
 ## v0.8.2 - 2026-06-24
 #### Features
 - (**cmd**) add `mdvs scaffold {skill,snippet,hook}` install commands - (b2a92ea) - edochi
