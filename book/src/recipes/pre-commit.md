@@ -85,6 +85,8 @@ git config core.hooksPath .githooks   # commit your hook script under .githooks/
 
 ## Scope
 
-The hook runs `mdvs check` over the whole vault, not just the staged files. That's the same trade-off the [CI recipe](./ci.md) makes: whole-vault is simpler and catches cross-file violations (a missing required field, a duplicate that only conflicts in aggregate), at the cost of also re-validating files the commit didn't touch. For a vault where `check` runs in milliseconds this is a non-issue; on a very large vault where you want staged-only validation, that needs per-file validation mode which mdvs does not yet expose — track it via the frontmatter-linting issues on the repo.
+The hook runs `mdvs check` over the whole vault, not just the files staged for the commit. That's the same trade-off the [CI recipe](./ci.md) makes: whole-vault is simpler and catches cross-file violations (a missing required field, a duplicate that only conflicts in aggregate), at the cost of also re-validating files the commit didn't touch.
+
+In practice that cost is negligible — validation is a frontmatter pass, not an embedding pass, and runs in milliseconds even on vaults of a few thousand files. Validating only the staged files would need a per-file validation mode, which mdvs does not expose: `check` takes a vault path, not a file list. If you have a vault where the whole-vault pass is actually too slow, open an issue.
 
 Like in CI, `mdvs check` covers frontmatter only — types, required fields, disallowed fields, nulls, constraints, and unparseable frontmatter. It does not check body content, spelling, or links. Pair it with a markdown linter for those; they run independently.
