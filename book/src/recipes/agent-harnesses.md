@@ -32,53 +32,8 @@ A separate **search-nudge** hook fires after every Bash command that runs `grep`
 
 ## Pre-commit hook
 
-A **pre-commit hook** is a script git runs locally before each `git commit` — if it exits non-zero, the commit is blocked. The community [`pre-commit`](https://pre-commit.com/) tool manages hooks declaratively per-repo via a YAML config; mdvs plugs into it as a one-line entry.
+A **pre-commit hook** is a script git runs locally before each `git commit` — if it exits non-zero, the commit is blocked. Running `mdvs check --no-update` there catches frontmatter violations before they reach the repo, **regardless of how the file was edited** — agent, IDE, or by hand.
 
-Running `mdvs check` as a pre-commit hook catches frontmatter violations before they reach the repo, **regardless of how the file was edited** — agent, IDE, or by hand. It's the simplest harness-independent safety net, and the recommended fallback for harnesses where the post-edit hook isn't wired up.
+That makes it the harness-independent safety net, and the recommended fallback for harnesses where the PostToolUse hook isn't wired up. It complements the hooks above rather than replacing them: the PostToolUse hook tells the agent mid-session, while the pre-commit hook is the backstop that catches whatever slipped through.
 
-### Install
-
-To install the `pre-commit` tool on your machine check the docs at this [link](https://pre-commit.com/#install).
-
-It's also possible to install `pre-commit` using [`uv`](https://docs.astral.sh/uv/):
-
-```bash
-uv tool install pre-commit
-```
-
-### Configure
-
-In your mdvs vault, create `.pre-commit-config.yaml`:
-
-```yaml
-repos:
-  - repo: local
-    hooks:
-      - id: mdvs-check
-        name: mdvs check
-        entry: mdvs check --no-update
-        language: system
-        pass_filenames: false
-```
-
-Activate the hook in this repo (writes `.git/hooks/pre-commit`):
-
-```bash
-pre-commit install
-```
-
-That's it. The next `git commit` runs `mdvs check`; if there are violations the commit aborts and the violation report is printed. To run the check manually without committing:
-
-```bash
-pre-commit run --all-files
-```
-
-### Notes
-
-- **Works with any install method.** `language: system` just runs the `mdvs` already on your PATH — it doesn't matter whether you installed via `cargo install mdvs`, the release shell installer, Homebrew, or a manually-placed binary. The only requirement is that `mdvs` is invocable from git's environment.
-- **PATH gotcha for GUI git clients.** git pre-commit hooks fire under git's environment, which isn't always the same as your interactive shell's PATH. If `mdvs` lives in `~/.cargo/bin/` and you commit from a GUI client that doesn't inherit your shell PATH, the hook fails with `mdvs: command not found`. Either commit from the terminal, or use the absolute path in `entry:` (`entry: /Users/you/.cargo/bin/mdvs check --no-update`).
-- **Version-pinned alternative.** To have `pre-commit` fetch `mdvs` into its own isolated environment (slower per-repo install, but reproducible across machines and CI), swap to `language: rust` and `additional_dependencies: ["mdvs"]`.
-- `--no-update` tells `mdvs check` not to auto-update `mdvs.toml` from inferred new fields. The hook validates against the committed schema; schema evolution stays an explicit user action.
-- `pass_filenames: false` because `mdvs check` runs against the whole vault, not file-by-file. The same validation pass covers every staged change in one shot.
-
-For CI-side validation (catches violations even if a contributor skipped the local hook), see the [CI recipe](./ci.md).
+Full setup — both the [pre-commit framework](https://pre-commit.com/) and the plain `.git/hooks/pre-commit` script — is in the [pre-commit recipe](./pre-commit.md). For CI-side validation (catches violations even if a contributor skipped the local hook), see the [CI recipe](./ci.md).

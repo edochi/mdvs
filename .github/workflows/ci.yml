@@ -6,15 +6,19 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Set by dtolnay/rust-toolchain before we switched to installing from
+  # rust-toolchain.toml; incremental artifacts are useless on a fresh runner
+  # and only bloat the cache.
+  CARGO_INCREMENTAL: 0
 
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
+      # Installs the toolchain pinned in rust-toolchain.toml — channel and
+      # components both come from that file, so the version lives in one place.
+      - run: rustup toolchain install
       # `lance-encoding`'s build.rs invokes `prost-build`, which needs `protoc`
       # on PATH. Ubuntu runners don't ship it by default.
       - run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
@@ -30,7 +34,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - run: cargo install cargo-audit cargo-deny
       - run: cargo audit
@@ -43,7 +47,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - run: cargo install --locked ast-grep
       - run: ast-grep scan

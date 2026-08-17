@@ -1,0 +1,22 @@
+# pre-commit framework hook definition (https://pre-commit.com).
+# Consumers add this repo to their .pre-commit-config.yaml:
+#
+#   repos:
+#     - repo: https://github.com/edochi/mdvs
+#       rev: vX.Y.Z          # pin to a released tag
+#       hooks:
+#         - id: mdvs-check
+#
+# `language: system` means mdvs must already be on PATH (no build-from-source).
+# `pass_filenames: false` because `mdvs check` validates the whole vault, not
+# individual files — cross-file rules (required fields per directory) need the
+# full tree. `--no-update` validates against the committed schema instead of
+# re-inferring it first, so a newly added field fails loudly instead of being
+# silently absorbed. See book/src/recipes/pre-commit.md.
+- id: mdvs-check
+  name: mdvs check
+  description: Validate markdown frontmatter against mdvs.toml
+  entry: mdvs check --no-update
+  language: system
+  types: [markdown]
+  pass_filenames: false

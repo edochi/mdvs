@@ -108,7 +108,7 @@
 | [0104](TODO-0104.md) | Redesign internal column naming — move prefix from storage to search view | done | medium | 2026-03-14 |
 | [0105](TODO-0105.md) | Test and write CI recipe for mdvs check | todo | medium | 2026-03-14 |
 | [0106](TODO-0106.md) | Link graph from internal links and wikilinks | todo | medium | 2026-03-14 |
-| [0107](TODO-0107.md) | Pre-commit hook for mdvs check | todo | medium | 2026-03-14 |
+| [0107](TODO-0107.md) | Pre-commit hook for mdvs check | done | medium | 2026-03-14 |
 | [0108](TODO-0108.md) | --set-revision with empty string or "None" should clear the revision | done | low | 2026-03-14 |
 | [0109](TODO-0109.md) | Clean up DataFusion error messages in --where | todo | low | 2026-03-14 |
 | [0110](TODO-0110.md) | Recursive output architecture — nested process steps | done (superseded by 0119) | high | 2026-03-14 |

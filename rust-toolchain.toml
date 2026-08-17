@@ -1,0 +1,13 @@
+# Pinned toolchain — the single source of truth for the Rust version, local and
+# in CI. Without it, CI tracked `stable` while developer machines lagged behind,
+# so a clippy lint added upstream turned a green branch red with no local
+# reproduction (`unneeded_wildcard_pattern`, fixed in the same commit as this
+# file). Bump deliberately, not implicitly.
+#
+# CI installs from this file — the workflows run `rustup toolchain install` with
+# no arguments, which reads the channel and components below. Nothing else pins
+# a version, so bumping here is the whole change.
+[toolchain]
+channel = "1.97.1"
+components = ["clippy", "rustfmt"]
+profile = "minimal"
