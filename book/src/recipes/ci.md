@@ -71,6 +71,6 @@ The shape translates directly:
 
 - **GitLab CI:** the same two-step install-then-run pattern in `.gitlab-ci.yml`. Use the install script under `before_script:` and run `mdvs check --no-update` in the job.
 - **CircleCI:** an `orb` or a custom step that installs the binary and invokes the check.
-- **Pre-commit hook:** `mdvs check --no-update` as a hook entry in `.pre-commit-config.yaml` runs the check locally on every commit, catching issues before they reach CI.
+- **Pre-commit hook:** `mdvs check --no-update` as a hook entry in `.pre-commit-config.yaml` runs the check locally on every commit, catching issues before they reach CI. See the dedicated [pre-commit recipe](./pre-commit.md) for both the framework and plain-git-hook setups.
 
 The contract is always the same: install `mdvs`, run `mdvs check --no-update`, fail on non-zero exit.

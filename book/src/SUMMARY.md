@@ -33,6 +33,7 @@
   - [Obsidian](./recipes/obsidian.md)
   - [Hugo](./recipes/hugo.md)
   - [CI](./recipes/ci.md)
+  - [Pre-commit hook](./recipes/pre-commit.md)
 
 # Reference
 
