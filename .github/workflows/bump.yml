@@ -44,7 +44,7 @@ jobs:
           fetch-depth: 0
           ssh-key: ${{ secrets.DEPLOY_KEY }}
 
-      - uses: dtolnay/rust-toolchain@stable
+      - run: rustup toolchain install
 
       - name: Install cocogitto
         run: |

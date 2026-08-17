@@ -194,10 +194,7 @@ fn walk_expr(
             Ok(())
         }
         Expr::Like {
-            expr: e,
-            pattern,
-            escape_char: _,
-            ..
+            expr: e, pattern, ..
         } => {
             walk_expr(e, ctx, rewrites)?;
             walk_expr(pattern, ctx, rewrites)
