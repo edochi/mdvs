@@ -2,6 +2,17 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## v0.8.4 - 2026-08-17
+#### Documentation
+- clarify whole-vault scope in the pre-commit recipe - (86d5eed) - edochi, *Claude*
+- add pre-commit hook recipe and .pre-commit-hooks.yaml - (c2bd4d3) - edochi, *Claude*
+#### Continuous Integration
+- pin the Rust toolchain and fix a clippy lint from stable drift - (7cee356) - edochi, *Claude*
+#### Miscellaneous Chores
+- add ast-grep skill for structural code search - (0984de3) - edochi, *Claude*
+
+- - -
+
 ## v0.8.3 - 2026-07-07
 #### Bug Fixes
 - bump anyhow and crossbeam-epoch to clear RUSTSEC advisories - (024bc7f) - edochi, *Claude*
