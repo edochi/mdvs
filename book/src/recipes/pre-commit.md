@@ -6,7 +6,11 @@ There are two ways to wire it up: the [pre-commit framework](https://pre-commit.
 
 ## Use `--no-update`
 
-Every setup below runs `mdvs check --no-update`. The flag validates strictly against the committed `mdvs.toml` instead of re-running inference first. Without it, a commit that adds a brand-new frontmatter field passes silently — `check` re-infers the schema and absorbs the field. With it, that commit fails with a `Disallowed` violation, forcing you to add the field to the schema deliberately (`mdvs update`, then commit the new `mdvs.toml`) or drop it. The [CI recipe explains the trade-off in full](./ci.md#--no-update-for-deterministic-ci); the short version is: **always use `--no-update` in a hook.**
+Every setup below runs `mdvs check --no-update`. The flag validates against the committed `mdvs.toml` instead of re-running inference first.
+
+This matters more in a hook than in CI. Without it, `check` **rewrites `mdvs.toml` on disk** as it runs — so a commit that adds a new frontmatter field silently edits your schema file mid-commit, leaving a modified `mdvs.toml` in your working tree that isn't part of what you staged. With it, the file is left alone and the new field is reported instead.
+
+Note what `--no-update` does *not* do: an undeclared field is **not** a violation, and the hook still exits 0, so it won't block the commit. See [`check` does not fail on undeclared fields](./ci.md#check-does-not-fail-on-undeclared-fields) for what does and doesn't gate. The [CI recipe covers the flag in full](./ci.md#--no-update-for-deterministic-ci); the short version is: **always use `--no-update` in a hook.**
 
 ## pre-commit framework
 
