@@ -197,4 +197,4 @@
 | [0193](TODO-0193.md) | Support .mdx files — free validation, gated search-body stripping | todo | medium | 2026-07-06 |
 | [0194](TODO-0194.md) | Directory-scoped schema policy — freeze undeclared fields per path | todo | high | 2026-08-17 |
 | [0195](TODO-0195.md) | Cross-field rules — conditional requiredness, and the variant-type question | todo | medium | 2026-08-17 |
-| [0196](TODO-0196.md) | Duplicate `[[fields.field]]` names are silently accepted — last one wins | todo | high | 2026-08-20 |
+| [0196](TODO-0196.md) | Duplicate `[[fields.field]]` names are silently accepted — last one wins | done | high | 2026-08-20 |
