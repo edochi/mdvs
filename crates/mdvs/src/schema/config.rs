@@ -295,6 +295,9 @@ impl MdvsToml {
     ///    segments (`..`). Names without dots are unaffected.
     /// 8. No shape conflicts: a name cannot be declared both as a leaf and
     ///    as a parent of nested leaves (e.g., `foo` *and* `foo.bar`).
+    /// 9. `Array` of `Object` is not representable on disk — use parallel
+    ///    scalar arrays instead (per TODO-0155).
+    /// 10. No two `[[fields.field]]` entries may share a `name`.
     pub fn validate(&self) -> anyhow::Result<()> {
         // Invariant 1: ignore and [[fields.field]] are mutually exclusive
         for ignored in &self.fields.ignore {
@@ -302,6 +305,22 @@ impl MdvsToml {
                 anyhow::bail!(
                     "field '{}' appears in both [fields].ignore and [[fields.field]] — remove it from one",
                     ignored
+                );
+            }
+        }
+
+        // Invariant 10: field names are unique. Lookup downstream keys on the
+        // bare name (`cmd/check/validate.rs` collects into a `HashMap<&str, _>`),
+        // so a repeated name would silently discard the earlier entry rather
+        // than scoping it. Rejected regardless of whether the two entries agree
+        // on type — see TODO-0196.
+        let mut seen: std::collections::HashSet<&str> =
+            std::collections::HashSet::with_capacity(self.fields.field.len());
+        for field in &self.fields.field {
+            if !seen.insert(field.name.as_str()) {
+                anyhow::bail!(
+                    "field '{}' is declared more than once — each [[fields.field]] name must be unique. Merge the entries into one, or rename one of them.",
+                    field.name
                 );
             }
         }
@@ -1111,6 +1130,90 @@ nullable = false
             preprocess: vec![],
         }]);
         config.fields.ignore = vec!["other_field".into()];
+        assert!(config.validate().is_ok());
+    }
+
+    // --- Invariant 10: field names are unique ---
+
+    #[test]
+    fn validate_rejects_duplicate_field_names() {
+        let config = full_toml(vec![
+            TomlField {
+                name: "status".into(),
+                field_type: FieldTypeSerde::Scalar("String".into()),
+                allowed: vec!["blog/**".into()],
+                required: vec![],
+                nullable: false,
+                constraints: None,
+                preprocess: vec![],
+            },
+            TomlField {
+                name: "status".into(),
+                field_type: FieldTypeSerde::Scalar("Integer".into()),
+                allowed: vec!["projects/**".into()],
+                required: vec![],
+                nullable: false,
+                constraints: None,
+                preprocess: vec![],
+            },
+        ]);
+        let err = config.validate().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("field 'status' is declared more than once"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    /// Duplicates are rejected on the name alone — agreeing on type does not
+    /// make a repeated entry acceptable. Scoping a field per directory is a
+    /// separate feature; see TODO-0196.
+    #[test]
+    fn validate_rejects_duplicate_names_even_with_matching_type() {
+        let field = |allowed: &str| TomlField {
+            name: "status".into(),
+            field_type: FieldTypeSerde::Scalar("String".into()),
+            allowed: vec![allowed.into()],
+            required: vec![],
+            nullable: false,
+            constraints: None,
+            preprocess: vec![],
+        };
+        let config = full_toml(vec![field("blog/**"), field("projects/**")]);
+        assert!(config.validate().is_err());
+    }
+
+    /// Field names are matched exactly. YAML keys are case-sensitive, so
+    /// `status` and `Status` are genuinely different frontmatter fields and
+    /// must both remain declarable.
+    #[test]
+    fn validate_allows_names_differing_only_by_case() {
+        let field = |name: &str| TomlField {
+            name: name.into(),
+            field_type: FieldTypeSerde::Scalar("String".into()),
+            allowed: vec!["**".into()],
+            required: vec![],
+            nullable: true,
+            constraints: None,
+            preprocess: vec![],
+        };
+        let config = full_toml(vec![field("status"), field("Status")]);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_distinct_field_names_pass() {
+        let field = |name: &str| TomlField {
+            name: name.into(),
+            field_type: FieldTypeSerde::Scalar("String".into()),
+            allowed: vec!["**".into()],
+            required: vec![],
+            nullable: true,
+            constraints: None,
+            preprocess: vec![],
+        };
+        let config = full_toml(vec![field("title"), field("status"), field("author")]);
         assert!(config.validate().is_ok());
     }
 
