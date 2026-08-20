@@ -41,12 +41,32 @@ Bump the pinned version when you're ready to adopt new validation behavior. The 
 
 ## `--no-update` for deterministic CI
 
-The `--no-update` flag (or `[check].auto_update = false` in `mdvs.toml`) tells `check` to validate strictly against the committed schema instead of re-running inference first. This matters in CI:
+The `--no-update` flag (or `[check].auto_update = false` in `mdvs.toml`) tells `check` to validate against the committed schema instead of re-running inference first. This matters in CI:
 
-- **With auto-update on:** a PR that adds a new frontmatter field will pass because `check` re-infers the schema and silently includes the new field. The unintended addition slips through.
-- **With `--no-update`:** the same PR fails with a `Disallowed` violation because the new field isn't in the committed `mdvs.toml`. The contributor has to either remove the field, add it to the schema deliberately, or add it to the `ignore` list — all of which surface the decision.
+- **With auto-update on:** `check` re-infers the schema before validating and **rewrites `mdvs.toml` on disk**, absorbing any new frontmatter field. On a runner that rewrite is thrown away with the checkout, but the run validated against a schema that differs from the committed one, and the new field is never mentioned.
+- **With `--no-update`:** `mdvs.toml` is left untouched and the run validates against exactly what's committed. A new field is reported under a **New fields** heading in the output.
 
-In practice this means: in CI, **always** use `--no-update`. Run `mdvs update` locally when you want to add new fields, commit the resulting `mdvs.toml`, and the CI run will then pass.
+Re-inference only ever *adds* fields — it does not widen an existing field's type or relax its constraints. A value that breaks a declared `categories` list, or a field with the wrong type, fails in both modes.
+
+In practice: in CI, **always** use `--no-update`. You validate against the committed schema, nothing is rewritten mid-run, and additions are visible in the log.
+
+### `check` does not fail on undeclared fields
+
+Worth being explicit, because it is easy to assume otherwise: a frontmatter field that appears in **no** `[[fields.field]]` entry is **not** a violation, in either mode. `--no-update` surfaces it as informational output and the command still **exits 0**.
+
+```
+Checked 2 files — no violations, 1 new field(s)
+```
+
+Validation iterates the fields declared in `mdvs.toml`, so a key it has never seen is reported, not rejected. `Disallowed` means something narrower: a *declared* field appearing at a path outside its `allowed` globs.
+
+If you want new fields to break the build today, gate on the JSON output — it carries a `new_fields` array:
+
+```bash
+mdvs check --no-update --output json | jq -e '.new_fields | length == 0'
+```
+
+`jq -e` exits non-zero when the expression is false, so the step fails as soon as an undeclared field shows up. Run it *in addition to* `mdvs check --no-update`, which still owns the real violations. A schema-level "freeze this directory" option does not exist yet.
 
 ## Caching the install
 
@@ -58,12 +78,12 @@ The installer step downloads a small binary (~6 MB on Linux) and finishes in wel
 
 - ✓ Wrong types (a `Boolean` field with a string value)
 - ✓ Missing required fields per directory
-- ✓ Disallowed fields (anything not in `mdvs.toml` and not in `ignore`)
+- ✓ Disallowed fields (a declared field appearing outside its `allowed` paths)
 - ✓ Null violations
 - ✓ Category, length, range, and regex constraint violations
 - ✓ Frontmatter that can't be parsed at all (broken YAML, broken TOML, broken JSON)
 
-It does **not** check spelling, link validity, markdown style, or anything in the body content. Pair it with a markdown linter (markdownlint, vale) for those concerns. They run independently and have no conflict — `mdvs check` and a body-content linter cover orthogonal parts of the file.
+It does **not** flag a field that appears in no `[[fields.field]]` entry — see [above](#check-does-not-fail-on-undeclared-fields). It also does **not** check spelling, link validity, markdown style, or anything in the body content. Pair it with a markdown linter (markdownlint, vale) for those concerns. They run independently and have no conflict — `mdvs check` and a body-content linter cover orthogonal parts of the file.
 
 ## Other CI systems
 
