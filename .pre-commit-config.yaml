@@ -1,0 +1,22 @@
+# Run `uv tool install pre-commit` (not `uvx` — `pre-commit install` bakes the
+# interpreter path into .git/hooks/pre-commit, and a uvx cache entry can be
+# pruned out from under it), then `pre-commit install` once per clone.
+#
+# Node and prettier are provisioned by pre-commit into ~/.cache/pre-commit;
+# nothing needs to be installed globally.
+repos:
+  - repo: local
+    hooks:
+      - id: prettier
+        name: prettier (markdown)
+        entry: prettier --write
+        language: node
+        additional_dependencies: ["prettier@3.6.2"]
+        types: [markdown]
+        exclude: |
+          (?x)^(
+            example_kb/|
+            assets/demo_kb/|
+            crates/mdvs/tests/fixtures/|
+            crates/mdvs/CHANGELOG\.md$
+          )
