@@ -10,17 +10,22 @@ mdvs clean [path]
 
 ## Flags
 
-| Flag | Default | Description |
-|---|---|---|
-| `path` | `.` | Directory containing `mdvs.toml` |
+| Flag   | Default | Description                      |
+| ------ | ------- | -------------------------------- |
+| `path` | `.`     | Directory containing `mdvs.toml` |
 
-Global flags (`-o`, `-v`, `--logs`) are described in [Configuration](../configuration.md).
+Global flags (`-o`, `-v`, `--logs`) are described in
+[Configuration](../configuration.md).
 
 ## What it does
 
-`clean` deletes the `.mdvs/` directory, which contains the Lance dataset that makes up the search index (plus the cached embedding model). The `mdvs.toml` configuration file is never touched — you can rebuild the index at any time with [build](./build.md).
+`clean` deletes the `.mdvs/` directory, which contains the Lance dataset that
+makes up the search index (plus the cached embedding model). The `mdvs.toml`
+configuration file is never touched — you can rebuild the index at any time with
+[build](./build.md).
 
-The command is idempotent — running it when `.mdvs/` doesn't exist is a no-op. It also refuses to delete if `.mdvs/` is a symlink, as a safety measure.
+The command is idempotent — running it when `.mdvs/` doesn't exist is a no-op.
+It also refuses to delete if `.mdvs/` is a symlink, as a safety measure.
 
 ## Output
 
@@ -81,13 +86,13 @@ Cleaned "example_kb/.mdvs"
 
 ## Exit codes
 
-| Code | Meaning |
-|---|---|
-| `0` | Success (including when nothing to clean) |
-| `2` | Pipeline error (symlink detected, I/O failure) |
+| Code | Meaning                                        |
+| ---- | ---------------------------------------------- |
+| `0`  | Success (including when nothing to clean)      |
+| `2`  | Pipeline error (symlink detected, I/O failure) |
 
 ## Errors
 
-| Error | Cause |
-|---|---|
+| Error                | Cause                                                      |
+| -------------------- | ---------------------------------------------------------- |
 | `.mdvs is a symlink` | Refuses to delete symlinks for safety — remove it manually |

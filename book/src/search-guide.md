@@ -1,10 +1,21 @@
 # Search Guide
 
-The `--where` flag on [search](./commands/search.md) lets you filter results using SQL syntax. The filter is combined with similarity ranking in a single query — files that don't match are excluded before results are returned. `--where` operates on **any column** in the Lance index: frontmatter fields (auto-discovered from `mdvs.toml`) and the always-present `filepath` column (see [Filtering by file path](#filtering-by-file-path)).
+The `--where` flag on [search](./commands/search.md) lets you filter results
+using SQL syntax. The filter is combined with similarity ranking in a single
+query — files that don't match are excluded before results are returned.
+`--where` operates on **any column** in the Lance index: frontmatter fields
+(auto-discovered from `mdvs.toml`) and the always-present `filepath` column (see
+[Filtering by file path](#filtering-by-file-path)).
 
-Under the hood, mdvs hands the clause to [LanceDB](https://lancedb.com/)'s SQL filter, which is built on top of DataFusion — so any expression valid in DataFusion's SQL dialect works in `--where`.
+Under the hood, mdvs hands the clause to [LanceDB](https://lancedb.com/)'s SQL
+filter, which is built on top of DataFusion — so any expression valid in
+DataFusion's SQL dialect works in `--where`.
 
-> **Limitation.** `--where` clauses that reference an `Array(Float)` field (e.g. `measurement_values`) are rejected up front, because the underlying search engine can't safely decode them and crashes on read. mdvs catches this before the query runs and returns a clear error. Filter on a scalar field, or store the data as a parallel array of strings, instead.
+> **Limitation.** `--where` clauses that reference an `Array(Float)` field (e.g.
+> `measurement_values`) are rejected up front, because the underlying search
+> engine can't safely decode them and crashes on read. mdvs catches this before
+> the query runs and returns a clear error. Filter on a scalar field, or store
+> the data as a parallel array of strings, instead.
 
 ## Scalar fields
 
@@ -73,7 +84,10 @@ mdvs search "notes" --where "NOT status = 'archived'"
 
 ## Date and DateTime
 
-Fields typed as `Date` (Arrow `Date32`) and `DateTime` (Arrow `Timestamp(Millisecond, UTC)`) support native date arithmetic, comparisons, and the usual SQL date functions. Auto-inferred from RFC 3339 strings — see [Date and DateTime](./concepts/types.md#date-and-datetime) for the type itself.
+Fields typed as `Date` (Arrow `Date32`) and `DateTime` (Arrow
+`Timestamp(Millisecond, UTC)`) support native date arithmetic, comparisons, and
+the usual SQL date functions. Auto-inferred from RFC 3339 strings — see
+[Date and DateTime](./concepts/types.md#date-and-datetime) for the type itself.
 
 ### Direct comparison
 
@@ -83,7 +97,9 @@ mdvs search "meeting" --where "date < '2032-01-01'"
 mdvs search "calibration" --where "synced_at >= '2024-04-01T00:00:00Z'"
 ```
 
-DateTime offsets are normalized to UTC at storage time, so `2024-04-02T16:14:30+02:00` (in a YAML file) and `2024-04-02T14:14:30Z` (in a `--where` clause) compare as the same absolute moment.
+DateTime offsets are normalized to UTC at storage time, so
+`2024-04-02T16:14:30+02:00` (in a YAML file) and `2024-04-02T14:14:30Z` (in a
+`--where` clause) compare as the same absolute moment.
 
 ### Range filters (`BETWEEN`)
 
@@ -94,7 +110,8 @@ mdvs search "report" --where "joined BETWEEN '2023-01-01' AND '2024-12-31'"
 
 ### Date functions (`EXTRACT`, `date_part`)
 
-Both extract numeric components from `Date` and `DateTime`. Two equivalent syntaxes:
+Both extract numeric components from `Date` and `DateTime`. Two equivalent
+syntaxes:
 
 ```bash
 mdvs search "meeting" --where "EXTRACT(YEAR FROM date) = 2031"
@@ -116,7 +133,9 @@ mdvs search "experiment" \
   --where "synced_at < CAST('2024-04-15T00:00:00Z' AS TIMESTAMP) - INTERVAL '7 days'"
 ```
 
-`CAST('...' AS DATE)` and `CAST('...' AS TIMESTAMP)` are usually needed for string literals on the right side of the arithmetic — the SQL type inference doesn't always pick the date/timestamp type automatically.
+`CAST('...' AS DATE)` and `CAST('...' AS TIMESTAMP)` are usually needed for
+string literals on the right side of the arithmetic — the SQL type inference
+doesn't always pick the date/timestamp type automatically.
 
 ### Date subtraction (days between)
 
@@ -129,7 +148,9 @@ mdvs search "researcher" --where "CAST('2032-01-01' AS DATE) - joined > 365"
 
 ### Null checks
 
-`Date` and `DateTime` columns support standard null predicates, including for fields scoped to a subset of directories (rows outside the scope have null values for that column):
+`Date` and `DateTime` columns support standard null predicates, including for
+fields scoped to a subset of directories (rows outside the scope have null
+values for that column):
 
 ```bash
 mdvs search "protocol" --where "last_reviewed IS NOT NULL"
@@ -139,7 +160,8 @@ mdvs search "experiment" \
 
 ### Combining with other filters
 
-Date filters compose freely with the rest of the language — string compare, `IN`, `LIKE`, dotted-leaf access, array operations, and search ranking:
+Date filters compose freely with the rest of the language — string compare,
+`IN`, `LIKE`, dotted-leaf access, array operations, and search ranking:
 
 ```bash
 # Blog posts in 2031 H2 by specific authors
@@ -153,7 +175,8 @@ mdvs search "experiment SPR" \
 
 ## Array fields
 
-Fields typed as `Array(String)` (like `tags`, `attendees`, `action_items`) support array functions.
+Fields typed as `Array(String)` (like `tags`, `attendees`, `action_items`)
+support array functions.
 
 ### Containment
 
@@ -229,7 +252,9 @@ Searched "experiment" — 8 hits
 ...
 ```
 
-File paths are stored as relative paths (e.g., `projects/alpha/notes/experiment-1.md`). The **last component is the filename**, so you can match by directory, by filename, or by both:
+File paths are stored as relative paths (e.g.,
+`projects/alpha/notes/experiment-1.md`). The **last component is the filename**,
+so you can match by directory, by filename, or by both:
 
 ```bash
 # All blog posts (directory prefix)
@@ -254,7 +279,8 @@ File paths are stored as relative paths (e.g., `projects/alpha/notes/experiment-
 
 ## Nested objects
 
-Fields typed as Object (like `calibration` in `example_kb`) are stored as nested Struct columns. Access nested values with bracket notation:
+Fields typed as Object (like `calibration` in `example_kb`) are stored as nested
+Struct columns. Access nested values with bracket notation:
 
 ```bash
 mdvs search "sensor" --where "calibration['baseline']['wavelength'] > 600"
@@ -280,7 +306,8 @@ Searched "sensor" — 2 hits
 ...
 ```
 
-The top-level field name (`calibration`) can be used bare. Only the nested access needs brackets:
+The top-level field name (`calibration`) can be used bare. Only the nested
+access needs brackets:
 
 ```bash
 # These are equivalent:
@@ -290,7 +317,9 @@ The top-level field name (`calibration`) can be used bare. Only the nested acces
 
 ## Field names with special characters
 
-Some field names need quoting in SQL. The [init](./commands/init.md), [update](./commands/update.md), and [info](./commands/info.md) commands show hints in their output when this applies.
+Some field names need quoting in SQL. The [init](./commands/init.md),
+[update](./commands/update.md), and [info](./commands/info.md) commands show
+hints in their output when this applies.
 
 ### Spaces
 
@@ -324,21 +353,27 @@ To include a literal single quote inside a string value, double it:
 mdvs search "query" --where "title = 'What''s New?'"
 ```
 
-mdvs validates quote balance before running the query. If you see "unmatched single quote", check that every `'` in a value is doubled.
+mdvs validates quote balance before running the query. If you see "unmatched
+single quote", check that every `'` in a value is doubled.
 
 ## Tips
 
-- **Case sensitivity**: field names and string values are case-sensitive. Use `LOWER()` for case-insensitive matching:
+- **Case sensitivity**: field names and string values are case-sensitive. Use
+  `LOWER()` for case-insensitive matching:
+
   ```bash
   --where "LOWER(author) = 'giulia ferretti'"
   ```
 
 - **LIKE patterns**: `%` matches any sequence, `_` matches a single character:
+
   ```bash
   --where "title LIKE 'Project%'"       # starts with "Project"
   --where "title LIKE '%sensor%'"       # contains "sensor"
   ```
 
-- **NULL semantics**: comparisons against NULL always return false. Use `IS NULL` / `IS NOT NULL`, not `= NULL`.
+- **NULL semantics**: comparisons against NULL always return false. Use
+  `IS NULL` / `IS NOT NULL`, not `= NULL`.
 
-- **No aggregates in --where**: functions like `COUNT()` or `SUM()` don't work in `--where` — the filter applies per-file, not across results.
+- **No aggregates in --where**: functions like `COUNT()` or `SUM()` don't work
+  in `--where` — the filter applies per-file, not across results.

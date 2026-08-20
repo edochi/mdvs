@@ -1,126 +1,200 @@
 # Validation
 
-`mdvs check` validates every file's frontmatter against the schema in `mdvs.toml`. It's read-only and produces no side effects — it just tells you what's wrong. The output is byte-stable across runs: violations are sorted by `(field, kind, rule)` and the files within each violation are sorted by path, so CI tools that diff `mdvs check` output across runs get a clean comparison regardless of file-walking order.
+`mdvs check` validates every file's frontmatter against the schema in
+`mdvs.toml`. It's read-only and produces no side effects — it just tells you
+what's wrong. The output is byte-stable across runs: violations are sorted by
+`(field, kind, rule)` and the files within each violation are sorted by path, so
+CI tools that diff `mdvs check` output across runs get a clean comparison
+regardless of file-walking order.
 
 ## The seven violations
 
-| Violation | Meaning |
-|---|---|
-| `WrongType` | The value doesn't match the declared `type` (or fails a `pattern` regex) |
-| `Disallowed` | The field appears in a file outside its `allowed` paths |
-| `MissingRequired` | A file matches a `required` glob but doesn't have the field |
-| `NullNotAllowed` | The field is present but `null`, and `nullable` is `false` |
-| `InvalidCategory` | The value is not in the field's declared `categories` |
-| `OutOfRange` | A numeric value violates `min`/`max`, or a length violates `min_length`/`max_length` |
+| Violation                    | Meaning                                                                                              |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `WrongType`                  | The value doesn't match the declared `type` (or fails a `pattern` regex)                             |
+| `Disallowed`                 | The field appears in a file outside its `allowed` paths                                              |
+| `MissingRequired`            | A file matches a `required` glob but doesn't have the field                                          |
+| `NullNotAllowed`             | The field is present but `null`, and `nullable` is `false`                                           |
+| `InvalidCategory`            | The value is not in the field's declared `categories`                                                |
+| `OutOfRange`                 | A numeric value violates `min`/`max`, or a length violates `min_length`/`max_length`                 |
 | `FrontmatterUnrepresentable` | The file's frontmatter can't be represented as JSON (NaN/inf, non-string keys, non-object top-level) |
 
 ### WrongType
 
-Fires when a value doesn't match the declared type. If `convergence_ms` is declared as `Boolean` but a file has `convergence_ms: 42`, the integer value fails the boolean check.
+Fires when a value doesn't match the declared type. If `convergence_ms` is
+declared as `Boolean` but a file has `convergence_ms: 42`, the integer value
+fails the boolean check.
 
-This violation has two important leniencies — see [Type checking rules](#type-checking-rules) below.
+This violation has two important leniencies — see
+[Type checking rules](#type-checking-rules) below.
 
 ### Disallowed
 
-Fires when a field appears in a file whose path doesn't match any of the field's `allowed` globs. For example, if `firmware_version` has `allowed = ["people/interns/**"]` but appears in `people/remo.md`, that file is outside the allowed paths.
+Fires when a field appears in a file whose path doesn't match any of the field's
+`allowed` globs. For example, if `firmware_version` has
+`allowed = ["people/interns/**"]` but appears in `people/remo.md`, that file is
+outside the allowed paths.
 
 ### MissingRequired
 
-Fires when a file's path matches one of the field's `required` globs, but the file doesn't contain that field at all.
+Fires when a file's path matches one of the field's `required` globs, but the
+file doesn't contain that field at all.
 
-For example, if `observation_notes` has `required = ["projects/alpha/notes/**"]`, then every file under `projects/alpha/notes/` must have it. Files that don't → `MissingRequired`.
+For example, if `observation_notes` has
+`required = ["projects/alpha/notes/**"]`, then every file under
+`projects/alpha/notes/` must have it. Files that don't → `MissingRequired`.
 
 ### NullNotAllowed
 
-Fires when a field is present with an explicit `null` value, but `nullable` is `false`. For example, if `drift_rate` has `nullable = false` and a file has `drift_rate: null`.
+Fires when a field is present with an explicit `null` value, but `nullable` is
+`false`. For example, if `drift_rate` has `nullable = false` and a file has
+`drift_rate: null`.
 
-This is distinct from a missing field — see [Null vs absent](#null-vs-absent) below.
+This is distinct from a missing field — see [Null vs absent](#null-vs-absent)
+below.
 
 ### InvalidCategory
 
-Fires when a field has a `categories` constraint and the value is not in the declared list. For example, if `status` has `categories = ["draft", "published", "archived"]` and a file has `status: pending`, the value `"pending"` is not in the list.
+Fires when a field has a `categories` constraint and the value is not in the
+declared list. For example, if `status` has
+`categories = ["draft", "published", "archived"]` and a file has
+`status: pending`, the value `"pending"` is not in the list.
 
-For array fields, each element is checked individually. The violation detail lists the specific offending elements.
+For array fields, each element is checked individually. The violation detail
+lists the specific offending elements.
 
-This check only runs on non-null values that pass the type check. If the value has the wrong type, only `WrongType` fires — `InvalidCategory` is skipped. If the value is null and the field is nullable, the category check is skipped entirely.
+This check only runs on non-null values that pass the type check. If the value
+has the wrong type, only `WrongType` fires — `InvalidCategory` is skipped. If
+the value is null and the field is nullable, the category check is skipped
+entirely.
 
-See [Constraints](./constraints.md) for how categories are configured and auto-inferred.
+See [Constraints](./constraints.md) for how categories are configured and
+auto-inferred.
 
 ### OutOfRange
 
 Fires when a value violates a numeric or length bound:
 
-- `min` / `max` on numeric fields — `rating: 7` with `min = 1, max = 5` is above `max`.
-- `min_length` / `max_length` on string fields — `slug: "a"` with `min_length = 3` is too short.
-- `min_items` / `max_items` on array fields (when emitted by inference) — applies to the array's length.
+- `min` / `max` on numeric fields — `rating: 7` with `min = 1, max = 5` is above
+  `max`.
+- `min_length` / `max_length` on string fields — `slug: "a"` with
+  `min_length = 3` is too short.
+- `min_items` / `max_items` on array fields (when emitted by inference) —
+  applies to the array's length.
 
-For array fields, numeric-element bounds are checked individually. The violation detail lists the specific offending elements or, for length checks, the actual length.
+For array fields, numeric-element bounds are checked individually. The violation
+detail lists the specific offending elements or, for length checks, the actual
+length.
 
-This check only runs on non-null values that pass the type check, same as `InvalidCategory`.
+This check only runs on non-null values that pass the type check, same as
+`InvalidCategory`.
 
 See [Constraints](./constraints.md) for how bounds are configured.
 
 ### FrontmatterUnrepresentable
 
-Fires when a file's YAML frontmatter parses successfully but can't be represented as JSON. Causes include `NaN` / `inf` floats, non-string mapping keys, or a top-level value that isn't a mapping. The violation is reported at the document level with the sentinel field name `<frontmatter>`.
+Fires when a file's YAML frontmatter parses successfully but can't be
+represented as JSON. Causes include `NaN` / `inf` floats, non-string mapping
+keys, or a top-level value that isn't a mapping. The violation is reported at
+the document level with the sentinel field name `<frontmatter>`.
 
-Pre-Wave-B mdvs silently dropped these files; they're now surfaced explicitly so the schema can't lie about what's actually in your vault.
+Pre-Wave-B mdvs silently dropped these files; they're now surfaced explicitly so
+the schema can't lie about what's actually in your vault.
 
 ## Type checking rules
 
-Type checking is strict — a `String` field rejects integers, a `Boolean` field rejects strings, and so on. Two opt-in adjustments cover the common YAML pain points:
+Type checking is strict — a `String` field rejects integers, a `Boolean` field
+rejects strings, and so on. Two opt-in adjustments cover the common YAML pain
+points:
 
-**Preprocessors normalize before validation.** A field's `preprocess` array runs before jsonschema sees the value. Two built-ins:
+**Preprocessors normalize before validation.** A field's `preprocess` array runs
+before jsonschema sees the value. Two built-ins:
 
-- `coerce-to-string` — non-string values (booleans, integers, arrays) are serialized to their JSON string representation, then validated as strings. Auto-inferred when the inferred type widened to `String` because of mixed-type observations.
-- `widen-int-to-float` — integers are widened to equivalent floats. Auto-inferred when the inferred type widened to `Float` because some files used `5` and others `5.0`. Without it, a Float field rejects integer values.
+- `coerce-to-string` — non-string values (booleans, integers, arrays) are
+  serialized to their JSON string representation, then validated as strings.
+  Auto-inferred when the inferred type widened to `String` because of mixed-type
+  observations.
+- `widen-int-to-float` — integers are widened to equivalent floats.
+  Auto-inferred when the inferred type widened to `Float` because some files
+  used `5` and others `5.0`. Without it, a Float field rejects integer values.
 
-Fields with empty `preprocess` arrays are validated strictly — there are no implicit leniencies. See [Types & Widening](./types.md) for how inference picks the preprocessors.
+Fields with empty `preprocess` arrays are validated strictly — there are no
+implicit leniencies. See [Types & Widening](./types.md) for how inference picks
+the preprocessors.
 
-**Recursion.** Arrays check element types recursively — an `Array(Integer)` field rejects `["a", "b"]` because the string elements fail the Integer check. Nested frontmatter structure is validated per leaf: a config entry named `calibration.baseline.wavelength` is checked against the value at the corresponding nested path in the YAML. Missing intermediate Objects mean the leaf is absent — handled by the `MissingRequired` check.
+**Recursion.** Arrays check element types recursively — an `Array(Integer)`
+field rejects `["a", "b"]` because the string elements fail the Integer check.
+Nested frontmatter structure is validated per leaf: a config entry named
+`calibration.baseline.wavelength` is checked against the value at the
+corresponding nested path in the YAML. Missing intermediate Objects mean the
+leaf is absent — handled by the `MissingRequired` check.
 
-**Pattern.** A `pattern` constraint on a String field is enforced as a regex; pattern failures surface as `WrongType` (with detail naming the offending value).
+**Pattern.** A `pattern` constraint on a String field is enforced as a regex;
+pattern failures surface as `WrongType` (with detail naming the offending
+value).
 
-**Date and DateTime format validation.** `Date` and `DateTime` fields use JSON Schema's `format: date` / `format: date-time` keywords. Non-conforming values (invalid calendar dates, missing timezones, wrong separators) fire `WrongType` with a rule like `format date` or `format date-time`. See [Date and DateTime](./types.md#date-and-datetime) for the exact accepted shapes.
+**Date and DateTime format validation.** `Date` and `DateTime` fields use JSON
+Schema's `format: date` / `format: date-time` keywords. Non-conforming values
+(invalid calendar dates, missing timezones, wrong separators) fire `WrongType`
+with a rule like `format date` or `format date-time`. See
+[Date and DateTime](./types.md#date-and-datetime) for the exact accepted shapes.
 
 ## Engine
 
-Per-value validation runs through the `jsonschema` crate. mdvs translates `mdvs.toml`'s `[fields]` block into a JSON Schema 2020-12 document, compiles one validator per field, runs Stage 2 preprocessors, then validates each value. Errors from `jsonschema` are mapped exhaustively into the seven `ViolationKind`s above.
+Per-value validation runs through the `jsonschema` crate. mdvs translates
+`mdvs.toml`'s `[fields]` block into a JSON Schema 2020-12 document, compiles one
+validator per field, runs Stage 2 preprocessors, then validates each value.
+Errors from `jsonschema` are mapped exhaustively into the seven `ViolationKind`s
+above.
 
-One subtype check runs in Rust ahead of jsonschema: a `Float` field without `widen-int-to-float` rejects integer-backed values (`5` is rejected, `5.0` is accepted). JSON Schema's `"number"` accepts both — but YAML and TOML preserve the int/float distinction at parse time, and so does mdvs.
+One subtype check runs in Rust ahead of jsonschema: a `Float` field without
+`widen-int-to-float` rejects integer-backed values (`5` is rejected, `5.0` is
+accepted). JSON Schema's `"number"` accepts both — but YAML and TOML preserve
+the int/float distinction at parse time, and so does mdvs.
 
 ## Null handling
 
 Null interacts with validation in specific ways:
 
-**The checks are independent.** A null value is checked like any other value — each violation type is evaluated separately:
+**The checks are independent.** A null value is checked like any other value —
+each violation type is evaluated separately:
 
 - **`WrongType`** — null is accepted by any type, so this never fires on null.
-- **`Disallowed`** — the field is present (the key exists), so `Disallowed` fires if the path isn't in `allowed`.
+- **`Disallowed`** — the field is present (the key exists), so `Disallowed`
+  fires if the path isn't in `allowed`.
 - **`MissingRequired`** — null counts as "present", so this never fires on null.
 - **`NullNotAllowed`** — fires when the value is null and `nullable = false`.
-- **`InvalidCategory`** — null skips the category check (same as `WrongType`), so this never fires on null.
-- **`OutOfRange`** — null skips the range check (same as `InvalidCategory`), so this never fires on null.
+- **`InvalidCategory`** — null skips the category check (same as `WrongType`),
+  so this never fires on null.
+- **`OutOfRange`** — null skips the range check (same as `InvalidCategory`), so
+  this never fires on null.
 
-A single null field can trigger both `Disallowed` and `NullNotAllowed` at the same time.
+A single null field can trigger both `Disallowed` and `NullNotAllowed` at the
+same time.
 
 **Null vs absent.** These are different situations with different outcomes:
 
-| Situation | Example | Result |
-|---|---|---|
-| Field is **absent** | File has no `drift_rate` key at all | `MissingRequired` (if path matches `required`) |
-| Field is **null**, `nullable = true` | `drift_rate: null` | Passes |
-| Field is **null**, `nullable = false` | `drift_rate: null` | `NullNotAllowed` |
+| Situation                             | Example                             | Result                                         |
+| ------------------------------------- | ----------------------------------- | ---------------------------------------------- |
+| Field is **absent**                   | File has no `drift_rate` key at all | `MissingRequired` (if path matches `required`) |
+| Field is **null**, `nullable = true`  | `drift_rate: null`                  | Passes                                         |
+| Field is **null**, `nullable = false` | `drift_rate: null`                  | `NullNotAllowed`                               |
 
-A null value counts as "present" — the field key exists in the frontmatter, it just has no value. So null never triggers `MissingRequired`. An absent field is genuinely missing — it can trigger `MissingRequired` but never `NullNotAllowed`.
+A null value counts as "present" — the field key exists in the frontmatter, it
+just has no value. So null never triggers `MissingRequired`. An absent field is
+genuinely missing — it can trigger `MissingRequired` but never `NullNotAllowed`.
 
-> **Note:** In YAML, unquoted `null` is a null value, not the string `"null"`. To store the literal string, write `drift_rate: "null"` (with quotes).
+> **Note:** In YAML, unquoted `null` is a null value, not the string `"null"`.
+> To store the literal string, write `drift_rate: "null"` (with quotes).
 
 ## New fields
 
-When `mdvs check` encounters a frontmatter field that isn't in `mdvs.toml` — neither constrained under `[[fields.field]]` nor listed in `ignore` — it reports it as a **new field**.
+When `mdvs check` encounters a frontmatter field that isn't in `mdvs.toml` —
+neither constrained under `[[fields.field]]` nor listed in `ignore` — it reports
+it as a **new field**.
 
-New fields are informational only. They don't count as violations and don't affect the exit code:
+New fields are informational only. They don't count as violations and don't
+affect the exit code:
 
 ```
 Checked 43 files — no violations, 1 new field(s)
@@ -130,24 +204,33 @@ Checked 43 files — no violations, 1 new field(s)
 ╰──────────────────────────────┴─────────────────────┴─────────────────────────╯
 ```
 
-They're shown in the output so you know to either run `mdvs update` to add them to the schema, or add them to the `ignore` list.
+They're shown in the output so you know to either run `mdvs update` to add them
+to the schema, or add them to the `ignore` list.
 
 ## Bare files
 
-When `include_bare_files = true` in `[scan]`, bare files (no frontmatter at all) are included in validation. Since they have no fields, they trigger `MissingRequired` for any `required` glob matching their path.
+When `include_bare_files = true` in `[scan]`, bare files (no frontmatter at all)
+are included in validation. Since they have no fields, they trigger
+`MissingRequired` for any `required` glob matching their path.
 
-For example, if `title` has `required = ["**"]` and `scratch.md` is a bare file, it triggers `MissingRequired` for `title`. This is often why the inferred schema uses narrower required globs — bare files at the root prevent `required = ["**"]` from being inferred for fields that don't appear in them.
+For example, if `title` has `required = ["**"]` and `scratch.md` is a bare file,
+it triggers `MissingRequired` for `title`. This is often why the inferred schema
+uses narrower required globs — bare files at the root prevent
+`required = ["**"]` from being inferred for fields that don't appear in them.
 
 ## Check and build
 
-`mdvs build` runs the same validation internally before embedding. If any violations are found, build aborts — no dirty data reaches the index. The violations are the same ones `check` would report.
+`mdvs build` runs the same validation internally before embedding. If any
+violations are found, build aborts — no dirty data reaches the index. The
+violations are the same ones `check` would report.
 
-This means you can use `check` as a dry run before building, but you don't have to — build will catch the same problems.
+This means you can use `check` as a dry run before building, but you don't have
+to — build will catch the same problems.
 
 ## Exit codes
 
-| Exit code | Meaning |
-|---|---|
-| 0 | No violations (new fields don't count) |
-| 1 | One or more violations found |
-| 2 | Scan or config error (couldn't run validation) |
+| Exit code | Meaning                                        |
+| --------- | ---------------------------------------------- |
+| 0         | No violations (new fields don't count)         |
+| 1         | One or more violations found                   |
+| 2         | Scan or config error (couldn't run validation) |

@@ -1,18 +1,24 @@
 # Introduction
 
-mdvs treats your markdown directory like a database. It scans your files, infers a typed schema from frontmatter, validates it, and builds a local search index — all in a single binary with no external services.
+mdvs treats your markdown directory like a database. It scans your files, infers
+a typed schema from frontmatter, validates it, and builds a local search index —
+all in a single binary with no external services.
 
-Not a document database. A database *for* documents.
+Not a document database. A database _for_ documents.
 
 ## The challenge
 
-Markdown directories grow organically. You start with a few notes, add frontmatter when it's useful, and eventually have hundreds of files with inconsistent metadata. Tags are misspelled. Required fields are missing. You can't find anything without `grep`.
+Markdown directories grow organically. You start with a few notes, add
+frontmatter when it's useful, and eventually have hundreds of files with
+inconsistent metadata. Tags are misspelled. Required fields are missing. You
+can't find anything without `grep`.
 
 mdvs gives you structure without forcing you to change how you write.
 
 ## Frontmatter
 
-Frontmatter is the YAML block between `---` fences at the top of a markdown file. It stores structured metadata alongside your content:
+Frontmatter is the YAML block between `---` fences at the top of a markdown
+file. It stores structured metadata alongside your content:
 
 ```yaml
 ---
@@ -30,58 +36,89 @@ tags:                                                     # Array(String)
 # Your markdown content starts here...
 ```
 
-mdvs recognizes these types automatically. When it scans your files, it infers the type of each field from the values it finds — no configuration needed.
+mdvs recognizes these types automatically. When it scans your files, it infers
+the type of each field from the values it finds — no configuration needed.
 
-> TOML (`+++`) and JSON (`{...}`) frontmatter are also supported, auto-detected per file. This guide uses YAML throughout; see [`[scan].frontmatter_format`](./configuration.md#frontmatter-format) for the format knob and the [Hugo recipe](./recipes/hugo.md) for mixed-format vaults.
+> TOML (`+++`) and JSON (`{...}`) frontmatter are also supported, auto-detected
+> per file. This guide uses YAML throughout; see
+> [`[scan].frontmatter_format`](./configuration.md#frontmatter-format) for the
+> format knob and the [Hugo recipe](./recipes/hugo.md) for mixed-format vaults.
 
 ## Directory-aware schema
 
 mdvs infers a three-dimensional schema from your files:
 
-- **Types** — boolean, integer, float, string, arrays, nested objects. Inferred automatically, with widening when files disagree.
-- **Paths** — which fields belong in which directories. `draft` only in `blog/`, `sensor_type` only in `projects/alpha/notes/`. Captured as `allowed` and `required` glob patterns.
+- **Types** — boolean, integer, float, string, arrays, nested objects. Inferred
+  automatically, with widening when files disagree.
+- **Paths** — which fields belong in which directories. `draft` only in `blog/`,
+  `sensor_type` only in `projects/alpha/notes/`. Captured as `allowed` and
+  `required` glob patterns.
 - **Nullability** — whether a field can be null. Tracked per field.
 
-This means different directories can have different fields with different constraints — all inferred automatically from your existing files.
+This means different directories can have different fields with different
+constraints — all inferred automatically from your existing files.
 
-> **Tightest fit:** `mdvs init` infers the strictest schema that's consistent with your existing files. A field is inferred as *allowed* in a directory if at least one file there has it. It's inferred as *required* if every file there has it. These rules propagate up — if every subdirectory requires a field, the parent directory does too. The result is the tightest set of constraints where `check` still returns zero violations. You can always loosen them later.
+> **Tightest fit:** `mdvs init` infers the strictest schema that's consistent
+> with your existing files. A field is inferred as _allowed_ in a directory if
+> at least one file there has it. It's inferred as _required_ if every file
+> there has it. These rules propagate up — if every subdirectory requires a
+> field, the parent directory does too. The result is the tightest set of
+> constraints where `check` still returns zero violations. You can always loosen
+> them later.
 
 ## Two layers
 
 mdvs has two distinct capabilities that work independently:
 
-**Validation** — Scan your files, infer what frontmatter fields exist, which directories they appear in, and what types they have. Write the result to `mdvs.toml`. Then validate files against that schema. No model, no index, nothing to download.
+**Validation** — Scan your files, infer what frontmatter fields exist, which
+directories they appear in, and what types they have. Write the result to
+`mdvs.toml`. Then validate files against that schema. No model, no index,
+nothing to download.
 
-**Search** — Chunk your markdown, embed it with a lightweight local model, store the chunks and vectors in a Lance dataset under `.mdvs/`, and query with natural language. Choose semantic (vector), full-text (BM25), or hybrid (both, reranked) — and filter results on any frontmatter field using standard SQL.
+**Search** — Chunk your markdown, embed it with a lightweight local model, store
+the chunks and vectors in a Lance dataset under `.mdvs/`, and query with natural
+language. Choose semantic (vector), full-text (BM25), or hybrid (both, reranked)
+— and filter results on any frontmatter field using standard SQL.
 
-You need validation without search? Run `mdvs init`, customize the fields in `mdvs.toml`, and run `mdvs check`.
+You need validation without search? Run `mdvs init`, customize the fields in
+`mdvs.toml`, and run `mdvs check`.
 
-You want search without validation? Just run `mdvs init` and `mdvs search`. The inferred schema is used to extract metadata for search results, but you don't have to worry about it if you don't want to.
+You want search without validation? Just run `mdvs init` and `mdvs search`. The
+inferred schema is used to extract metadata for search results, but you don't
+have to worry about it if you don't want to.
 
-Use them together for the best experience, or separately if that's what you need.
+Use them together for the best experience, or separately if that's what you
+need.
 
 ## Using a nested directory of markdown files as a database
 
-You can think of mdvs as a layer on top of your markdown files that gives you database-like capabilities. Here's a rough mapping of concepts and commands:
+You can think of mdvs as a layer on top of your markdown files that gives you
+database-like capabilities. Here's a rough mapping of concepts and commands:
 
-| Concept | Database | mdvs |
-|---|---|---|
-| Define structure | `CREATE TABLE` | `mdvs init` |
-| Per-table columns | Different columns per table | Per-directory fields via `allowed`/`required` globs |
-| Enforce constraints | Constraint validation | `mdvs check` |
-| Evolve structure | `ALTER TABLE` | `mdvs update` |
-| Create an index | `CREATE INDEX` | `mdvs build` |
-| Query | `SELECT ... WHERE ... ORDER BY` | `mdvs search --where` |
+| Concept             | Database                        | mdvs                                                |
+| ------------------- | ------------------------------- | --------------------------------------------------- |
+| Define structure    | `CREATE TABLE`                  | `mdvs init`                                         |
+| Per-table columns   | Different columns per table     | Per-directory fields via `allowed`/`required` globs |
+| Enforce constraints | Constraint validation           | `mdvs check`                                        |
+| Evolve structure    | `ALTER TABLE`                   | `mdvs update`                                       |
+| Create an index     | `CREATE INDEX`                  | `mdvs build`                                        |
+| Query               | `SELECT ... WHERE ... ORDER BY` | `mdvs search --where`                               |
 
-Two artifacts: `mdvs.toml` (your schema, to be committed) and `.mdvs/` (the search index, can be ignored by version control).
+Two artifacts: `mdvs.toml` (your schema, to be committed) and `.mdvs/` (the
+search index, can be ignored by version control).
 
 ## What this book covers
 
-This book uses a fictional research lab knowledge base ([example_kb](https://github.com/edochi/mdvs/tree/main/example_kb)) as a running example. Every command, every output, every query is real and reproducible.
+This book uses a fictional research lab knowledge base
+([example_kb](https://github.com/edochi/mdvs/tree/main/example_kb)) as a running
+example. Every command, every output, every query is real and reproducible.
 
-- **[Getting Started](./getting-started.md)** — Install mdvs and run it on the example vault
-- **[Concepts](./concepts.md)** — How schema inference, types, and validation work
+- **[Getting Started](./getting-started.md)** — Install mdvs and run it on the
+  example vault
+- **[Concepts](./concepts.md)** — How schema inference, types, and validation
+  work
 - **[Commands](./commands/init.md)** — Full reference for all 8 commands
 - **[Configuration](./configuration.md)** — The `mdvs.toml` file explained
-- **[Search Guide](./search-guide.md)** — SQL filtering, array queries, and ranking
+- **[Search Guide](./search-guide.md)** — SQL filtering, array queries, and
+  ranking
 - **[Recipes](./recipes/obsidian.md)** — Obsidian setup, CI integration

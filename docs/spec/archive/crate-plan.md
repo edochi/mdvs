@@ -2,7 +2,8 @@
 
 ## Overview
 
-Single crate, single binary. All prototypes from `scripts/` are validated and ready to become real modules.
+Single crate, single binary. All prototypes from `scripts/` are validated and
+ready to become real modules.
 
 Pipeline: **discover** → **schema** → **index** → **search**
 
@@ -83,7 +84,8 @@ uuid = { version = "1", features = ["v4"] }
 chrono = "0.4"
 ```
 
-**No explicit `arrow` or `parquet` deps** — use `datafusion::arrow` and `datafusion::parquet` re-exports to avoid version mismatch.
+**No explicit `arrow` or `parquet` deps** — use `datafusion::arrow` and
+`datafusion::parquet` re-exports to avoid version mismatch.
 
 ---
 
@@ -467,6 +469,7 @@ pub struct SearchResult {
 Each command is a thin function that wires the library modules together.
 
 **`cmd/init.rs`** — The big one:
+
 1. `ScannedFiles::scan(root, glob, include_bare_files)`
 2. `InferredSchema::infer(&scanned)`
 3. `MdvsToml::from_inferred(&schema, &config)` → write `mdvs.toml`
@@ -477,6 +480,7 @@ Each command is a thin function that wires the library modules together.
 8. `build_files_batch` + `build_chunks_batch` → write Parquet to `.mdvs/`
 
 **`cmd/build.rs`** — Incremental rebuild:
+
 1. Read `mdvs.lock` for content hashes
 2. `ScannedFiles::scan` for current state
 3. Diff: new/modified/deleted files
@@ -485,6 +489,7 @@ Each command is a thin function that wires the library modules together.
 6. Update lock with new hashes
 
 **`cmd/search.rs`**:
+
 1. Read `.mdvs/files.parquet` + `.mdvs/chunks.parquet`
 2. `Embedder::load` + embed query text
 3. `CosineSimilarityUDF::new(query_embedding)`
@@ -493,20 +498,24 @@ Each command is a thin function that wires the library modules together.
 6. Format and print results
 
 **`cmd/check.rs`**:
+
 1. Read schema from `mdvs.toml`
 2. `ScannedFiles::scan`
 3. Validate each file's frontmatter against field defs
 4. Report diagnostics
 
 **`cmd/update.rs`**:
+
 1. Re-scan directory
 2. Re-infer (or just update lock with current observations)
 3. Rewrite `mdvs.lock`
 
 **`cmd/clean.rs`**:
+
 1. `rm -rf .mdvs/`
 
 **`cmd/info.rs`**:
+
 1. Read `mdvs.toml` + `mdvs.lock` + `.mdvs/` Parquet metadata
 2. Print: model, file count, chunk count, field list, staleness
 
@@ -546,49 +555,60 @@ async fn main() {
 
 ## Implementation Order
 
-Each step produces a compiling, testable crate. Tests are written alongside each module.
+Each step produces a compiling, testable crate. Tests are written alongside each
+module.
 
 ### Step 1: Skeleton
+
 - `Cargo.toml` with all deps
 - Empty module stubs (`mod.rs` files with `pub mod` declarations)
 - `main.rs` with clap parsing (commands exist but print "not implemented")
 - `cargo build` passes
 
 ### Step 2: `discover/field_type.rs`
+
 - `FieldType` enum, `From<&Value>`, `widen`, `Into<DataType>`
 - Unit tests (from test_widening.rs + test_arrow.rs)
 
 ### Step 3: `discover/scan.rs`
+
 - `ScannedFile`, `ScannedFiles::scan`
 - Unit tests (from test_scan.rs, uses tempdir)
 
 ### Step 4: `discover/infer.rs`
+
 - `DirectoryTree`, `GlobMap`, `InferredSchema`
 - Unit tests (from test_inference.rs)
 
 ### Step 5: `schema/`
+
 - `shared.rs`: `FieldTypeSerde`, `TomlConfig`
 - `config.rs`: `MdvsToml`
 - `lock.rs`: `MdvsLock`
 - Unit tests (from test_toml.rs)
 
 ### Step 6: `index/chunk.rs`
+
 - `Chunks`, `extract_plain_text`, `strip_wikilinks`
 - Unit tests (from test_chunk.rs)
 
 ### Step 7: `index/embed.rs`
+
 - `ModelConfig`, `Embedder`, `resolve_revision`
 - Integration tests (requires model download, from test_embed.rs)
 
 ### Step 8: `index/storage.rs`
+
 - Arrow builders + Parquet I/O
 - Unit tests (from test_parquet.rs, uses tempdir)
 
 ### Step 9: `search.rs`
+
 - `CosineSimilarityUDF`
 - Unit tests (from test_search.rs, uses tempdir + DataFusion)
 
 ### Step 10: `cmd/` — wire it all together
+
 - `init` first (exercises the full pipeline)
 - Then `build`, `search`, `check`, `update`, `clean`, `info`
 - Integration tests against real directories
@@ -597,9 +617,11 @@ Each step produces a compiling, testable crate. Tests are written alongside each
 
 ## DataFusion Gotchas (reference)
 
-- **Always use `datafusion::arrow` and `datafusion::parquet` re-exports** — never add separate arrow/parquet deps
+- **Always use `datafusion::arrow` and `datafusion::parquet` re-exports** —
+  never add separate arrow/parquet deps
 - **Parquet strings → `Utf8View` / `StringViewArray`** — not `StringArray`
-- **`ScalarUDFImpl` requires `DynEq + DynHash`** — manual `PartialEq`/`Eq`/`Hash` impls needed
+- **`ScalarUDFImpl` requires `DynEq + DynHash`** — manual
+  `PartialEq`/`Eq`/`Hash` impls needed
 - **`register_parquet` takes `&str`** path, not `&Path`
 - **Struct field access in SQL**: `f.data['field_name']`
 
@@ -614,6 +636,7 @@ Each step produces a compiling, testable crate. Tests are written alongside each
 ```
 
 Config files live at repo root:
+
 ```
 mdvs.toml              # boundaries (user edits this)
 mdvs.lock              # observed state (auto-generated)

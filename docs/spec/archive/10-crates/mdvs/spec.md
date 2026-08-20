@@ -2,19 +2,25 @@
 
 **Status: DRAFT**
 
-**Cross-references:** [Terminology](../../01-terminology.md) | [Crate: mdvs-schema](../mdvs-schema/spec.md) | [Crate: mfv](../mfv/spec.md) | [Storage Schema](../../20-storage/schema.md)
+**Cross-references:** [Terminology](../../01-terminology.md) |
+[Crate: mdvs-schema](../mdvs-schema/spec.md) | [Crate: mfv](../mfv/spec.md) |
+[Storage Schema](../../20-storage/schema.md)
 
 ---
 
 ## Overview
 
-Full semantic search CLI binary. Superset of `mfv` — does everything `mfv` does (field discovery, schema validation) plus frontmatter content querying and vector search over file contents. Depends on `mdvs-schema` and `mfv`.
+Full semantic search CLI binary. Superset of `mfv` — does everything `mfv` does
+(field discovery, schema validation) plus frontmatter content querying and
+vector search over file contents. Depends on `mdvs-schema` and `mfv`.
 
-**Architecture:** DataFusion (pure Rust SQL on Arrow) for querying, compressed Parquet files in `.mdvs/` for persistence.
+**Architecture:** DataFusion (pure Rust SQL on Arrow) for querying, compressed
+Parquet files in `.mdvs/` for persistence.
 
 **Responsibilities:**
 
-- Initialize vault: discover fields, infer schema, download model, write config + lock
+- Initialize vault: discover fields, infer schema, download model, write
+  config + lock
 - Build artifact: incremental ingestion, chunking, embedding, Parquet output
 - Search: embed query, cosine distance, note-level ranking
 - Model identity management and mismatch detection
@@ -45,24 +51,27 @@ mdvs init [path] [--model <id>] [--glob <pattern>] [--config <path>]
                   [--force] [--dry-run] [--ignore-bare-files]
 ```
 
-Subsumes `mfv init`. Discovers fields, infers types and allowed/required patterns via tree inference, writes config and lock, downloads the embedding model.
+Subsumes `mfv init`. Discovers fields, infers types and allowed/required
+patterns via tree inference, writes config and lock, downloads the embedding
+model.
 
 **Flags:**
 
-| Flag | Default | Description |
-|---|---|---|
-| `[path]` | `.` | Directory to scan |
-| `--model <id>` | `minishlab/potion-multilingual-128M` | HuggingFace model ID |
-| `--glob <pattern>` | `**` | File matching glob (path scope, `.md` hardcoded) |
-| `--config <path>` | `mdvs.toml` | Output config file path |
-| `--force` | off | Overwrite existing config and lock |
-| `--dry-run` | off | Print discovery table only, write nothing |
-| `--ignore-bare-files` | off | Exclude files without frontmatter from inference |
+| Flag                  | Default                              | Description                                      |
+| --------------------- | ------------------------------------ | ------------------------------------------------ |
+| `[path]`              | `.`                                  | Directory to scan                                |
+| `--model <id>`        | `minishlab/potion-multilingual-128M` | HuggingFace model ID                             |
+| `--glob <pattern>`    | `**`                                 | File matching glob (path scope, `.md` hardcoded) |
+| `--config <path>`     | `mdvs.toml`                          | Output config file path                          |
+| `--force`             | off                                  | Overwrite existing config and lock               |
+| `--dry-run`           | off                                  | Print discovery table only, write nothing        |
+| `--ignore-bare-files` | off                                  | Exclude files without frontmatter from inference |
 
 **Steps:**
 
 1. Scan directory, discover fields via `mdvs_schema::discover_fields`
-2. Infer types and allowed/required patterns via `mdvs_schema::infer_field_paths`
+2. Infer types and allowed/required patterns via
+   `mdvs_schema::infer_field_paths`
 3. Display frequency table to stderr
 4. Write `mdvs.toml` (field schema + `[model]` section)
 5. Write `mdvs.lock` (field observations + file hashes)
@@ -78,12 +87,14 @@ See [Workflow: Init](../../30-workflows/init.md).
 mdvs build [--full]
 ```
 
-Scans the directory, processes files into the `.mdvs/` artifact. Incremental by default — only changed files are reprocessed. Implicitly refreshes the lock before building (like `cargo build` updates `Cargo.lock`).
+Scans the directory, processes files into the `.mdvs/` artifact. Incremental by
+default — only changed files are reprocessed. Implicitly refreshes the lock
+before building (like `cargo build` updates `Cargo.lock`).
 
 **Flags:**
 
-| Flag | Description |
-|---|---|
+| Flag     | Description                                             |
+| -------- | ------------------------------------------------------- |
 | `--full` | Clean rebuild: remove `.mdvs/` and reprocess everything |
 
 See [Workflow: Build](../../30-workflows/build.md).
@@ -95,29 +106,30 @@ mdvs search <query> [--where <filter>] [-n <count>] [--format <fmt>]
                      [--chunks] [--build] [--no-build]
 ```
 
-Embeds the query, computes cosine distance against all chunks, returns results ranked at the note level (or chunk level with `--chunks`).
+Embeds the query, computes cosine distance against all chunks, returns results
+ranked at the note level (or chunk level with `--chunks`).
 
 **Flags:**
 
-| Flag | Default | Description |
-|---|---|---|
-| `--where <filter>` | — | DataFusion SQL WHERE clause on files table |
-| `-n <count>` | 10 | Number of results |
-| `--format <fmt>` | `table` | Output format: `table`, `json`, `paths` |
-| `--chunks` | off | Show chunk-level results instead of note-level grouping |
-| `--build` | — | Force build before search (overrides `on_stale` config) |
-| `--no-build` | — | Never auto-build (overrides `on_stale` config) |
+| Flag               | Default | Description                                             |
+| ------------------ | ------- | ------------------------------------------------------- |
+| `--where <filter>` | —       | DataFusion SQL WHERE clause on files table              |
+| `-n <count>`       | 10      | Number of results                                       |
+| `--format <fmt>`   | `table` | Output format: `table`, `json`, `paths`                 |
+| `--chunks`         | off     | Show chunk-level results instead of note-level grouping |
+| `--build`          | —       | Force build before search (overrides `on_stale` config) |
+| `--no-build`       | —       | Never auto-build (overrides `on_stale` config)          |
 
 **Auto-build behavior:**
 
-| Config `on_stale` | `--build` | `--no-build` | Result |
-|---|---|---|---|
-| `auto` | — | — | Build if stale |
-| `auto` | — | yes | Skip build |
-| `strict` | — | — | Error if stale |
-| `strict` | yes | — | Build if stale |
-| any | yes | — | Always build |
-| any | — | yes | Never build |
+| Config `on_stale` | `--build` | `--no-build` | Result         |
+| ----------------- | --------- | ------------ | -------------- |
+| `auto`            | —         | —            | Build if stale |
+| `auto`            | —         | yes          | Skip build     |
+| `strict`          | —         | —            | Error if stale |
+| `strict`          | yes       | —            | Build if stale |
+| any               | yes       | —            | Always build   |
+| any               | —         | yes          | Never build    |
 
 See [Workflow: Search](../../30-workflows/search.md).
 
@@ -127,7 +139,8 @@ See [Workflow: Search](../../30-workflows/search.md).
 mdvs update [--dir <path>] [--config <path>]
 ```
 
-Re-scans the directory and refreshes the lock file. Same as `mfv update` but for `mdvs.toml`/`mdvs.lock`. Does not modify config.
+Re-scans the directory and refreshes the lock file. Same as `mfv update` but for
+`mdvs.toml`/`mdvs.lock`. Does not modify config.
 
 ### `mdvs check`
 
@@ -135,9 +148,11 @@ Re-scans the directory and refreshes the lock file. Same as `mfv update` but for
 mdvs check [--dir <path>] [--schema <path>] [--format <fmt>]
 ```
 
-Delegates to `mfv::validate`. Validates all matching markdown files against the field schema. Convenience command so users don't need a separate `mfv` binary.
+Delegates to `mfv::validate`. Validates all matching markdown files against the
+field schema. Convenience command so users don't need a separate `mfv` binary.
 
-**Exit codes:** 0 = all valid, 1 = validation errors found, 2 = config/runtime error.
+**Exit codes:** 0 = all valid, 1 = validation errors found, 2 = config/runtime
+error.
 
 ### `mdvs clean`
 
@@ -153,7 +168,8 @@ Removes the `.mdvs/` artifact directory. Does not touch config or lock files.
 mdvs info
 ```
 
-Displays: vault path, artifact size, file count, chunk count, model ID/dimension/revision, last build timestamp.
+Displays: vault path, artifact size, file count, chunk count, model
+ID/dimension/revision, last build timestamp.
 
 ---
 
@@ -270,47 +286,53 @@ See [Workflow: Model Mismatch](../../30-workflows/model-mismatch.md).
 
 Configured via `on_stale` in `mdvs.toml` `[behavior]` section:
 
-| Mode | Behavior |
-|---|---|
-| `auto` | Run incremental build before search if stale (default) |
-| `strict` | Error if any files have changed since last build |
+| Mode     | Behavior                                               |
+| -------- | ------------------------------------------------------ |
+| `auto`   | Run incremental build before search if stale (default) |
+| `strict` | Error if any files have changed since last build       |
 
-In `auto` mode, `mdvs search` transparently runs the equivalent of `mdvs build` first, so results are always fresh. The overhead is minimal for unchanged vaults (just a hash comparison).
+In `auto` mode, `mdvs search` transparently runs the equivalent of `mdvs build`
+first, so results are always fresh. The overhead is minimal for unchanged vaults
+(just a hash comparison).
 
-CLI overrides: `--build` forces a build regardless of config, `--no-build` skips it.
+CLI overrides: `--build` forces a build regardless of config, `--no-build` skips
+it.
 
 ---
 
 ## Dependencies
 
-| Crate | Purpose |
-|---|---|
-| `mdvs-schema` | Field definitions, type system, TOML parsing |
-| `mfv` | Validation engine (library dependency) |
-| `datafusion` | SQL query engine on Arrow |
-| `parquet` | Parquet file I/O |
-| `arrow` | Arrow columnar data types |
-| `model2vec-rs` | Static embedding inference |
-| `gray_matter` | Frontmatter extraction |
-| `text-splitter` (markdown) | Semantic chunking |
-| `pulldown-cmark` | Markdown → plain text |
-| `clap` | CLI parsing |
-| `anyhow` | Error handling |
-| `walkdir` | Filesystem traversal |
-| `indicatif` | Progress bars |
-| `xxhash-rust` or `blake3` | Content hashing |
-| `serde_json` | JSON output format |
+| Crate                      | Purpose                                      |
+| -------------------------- | -------------------------------------------- |
+| `mdvs-schema`              | Field definitions, type system, TOML parsing |
+| `mfv`                      | Validation engine (library dependency)       |
+| `datafusion`               | SQL query engine on Arrow                    |
+| `parquet`                  | Parquet file I/O                             |
+| `arrow`                    | Arrow columnar data types                    |
+| `model2vec-rs`             | Static embedding inference                   |
+| `gray_matter`              | Frontmatter extraction                       |
+| `text-splitter` (markdown) | Semantic chunking                            |
+| `pulldown-cmark`           | Markdown → plain text                        |
+| `clap`                     | CLI parsing                                  |
+| `anyhow`                   | Error handling                               |
+| `walkdir`                  | Filesystem traversal                         |
+| `indicatif`                | Progress bars                                |
+| `xxhash-rust` or `blake3`  | Content hashing                              |
+| `serde_json`               | JSON output format                           |
 
 ---
 
 ## Related Documents
 
 - [Terminology](../../01-terminology.md)
-- [Storage Schema](../../20-storage/schema.md) — Parquet file schemas and type mappings
+- [Storage Schema](../../20-storage/schema.md) — Parquet file schemas and type
+  mappings
 - [Workflow: Init](../../30-workflows/init.md) — full init flow
 - [Workflow: Build](../../30-workflows/build.md) — incremental build pipeline
 - [Workflow: Search](../../30-workflows/search.md) — query, rank, display
-- [Workflow: Model Loading](../../30-workflows/model-loading.md) — format detection, universal loader
-- [Workflow: Model Mismatch](../../30-workflows/model-mismatch.md) — identity checks
+- [Workflow: Model Loading](../../30-workflows/model-loading.md) — format
+  detection, universal loader
+- [Workflow: Model Mismatch](../../30-workflows/model-mismatch.md) — identity
+  checks
 - [Configuration: Field Schema](../../40-configuration/frontmatter-toml.md)
 - [Configuration: mdvs.toml](../../40-configuration/mdvs-toml.md)

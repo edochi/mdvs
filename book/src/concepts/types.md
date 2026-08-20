@@ -1,18 +1,20 @@
 # Types & Widening
 
-mdvs infers a type for every frontmatter field it encounters. When the same field appears with different types across files, mdvs resolves the conflict automatically through **type widening**.
+mdvs infers a type for every frontmatter field it encounters. When the same
+field appears with different types across files, mdvs resolves the conflict
+automatically through **type widening**.
 
 ## The supported types
 
-| Type | YAML example | example_kb field |
-|---|---|---|
-| **Boolean** | `draft: false` | `draft` in blog posts |
-| **Integer** | `sample_count: 24` | `sample_count` in experiments |
-| **Float** | `drift_rate: 0.023` | `drift_rate` in experiments |
-| **String** | `author: Giulia Ferretti` | `author` across many files |
-| **Date** | `joined: 2023-02-01` | `joined`, `date`, `commission_date`, `last_reviewed` |
-| **DateTime** | `synced_at: "2024-04-02T16:14:30+02:00"` | `synced_at` in experiments |
-| **Array(Scalar)** | `tags: [calibration, SPR-A1]` | `tags` in projects and blog |
+| Type              | YAML example                             | example_kb field                                     |
+| ----------------- | ---------------------------------------- | ---------------------------------------------------- |
+| **Boolean**       | `draft: false`                           | `draft` in blog posts                                |
+| **Integer**       | `sample_count: 24`                       | `sample_count` in experiments                        |
+| **Float**         | `drift_rate: 0.023`                      | `drift_rate` in experiments                          |
+| **String**        | `author: Giulia Ferretti`                | `author` across many files                           |
+| **Date**          | `joined: 2023-02-01`                     | `joined`, `date`, `commission_date`, `last_reviewed` |
+| **DateTime**      | `synced_at: "2024-04-02T16:14:30+02:00"` | `synced_at` in experiments                           |
+| **Array(Scalar)** | `tags: [calibration, SPR-A1]`            | `tags` in projects and blog                          |
 
 The on-disk type grammar is tight:
 
@@ -21,11 +23,15 @@ Type   := Scalar | Array(Scalar)
 Scalar := String | Integer | Float | Boolean | Date | DateTime
 ```
 
-`Array(Array(...))` and `Array(Object{...})` are not representable on disk — see [Arrays of structured items](#arrays-of-structured-items) below for the workaround.
+`Array(Array(...))` and `Array(Object{...})` are not representable on disk — see
+[Arrays of structured items](#arrays-of-structured-items) below for the
+workaround.
 
-`Date` and `DateTime` are described in detail in [Date and DateTime](#date-and-datetime) below.
+`Date` and `DateTime` are described in detail in
+[Date and DateTime](#date-and-datetime) below.
 
-**Nested Objects in YAML are expressed as dotted-name leaf fields** in `mdvs.toml`. A frontmatter shape like:
+**Nested Objects in YAML are expressed as dotted-name leaf fields** in
+`mdvs.toml`. A frontmatter shape like:
 
 ```yaml
 calibration:
@@ -44,7 +50,11 @@ infers as five separate leaf fields, one per nested path:
 - `calibration.adjusted.wavelength` → Float
 - `calibration.adjusted.intensity` → Float
 
-Each leaf gets its own nullability and `allowed`/`required` glob set. This avoids the readability and per-leaf-validation problems of monolithic Object types. Top-level Object types are not supported in `mdvs.toml`, and neither are Objects nested inside Array fields — see [Arrays of structured items](#arrays-of-structured-items) below.
+Each leaf gets its own nullability and `allowed`/`required` glob set. This
+avoids the readability and per-leaf-validation problems of monolithic Object
+types. Top-level Object types are not supported in `mdvs.toml`, and neither are
+Objects nested inside Array fields — see
+[Arrays of structured items](#arrays-of-structured-items) below.
 
 ## Arrays of structured items
 
@@ -58,14 +68,16 @@ measurements:
     value: 0.598
 ```
 
-has no first-class representation on disk in v0. Inference detects the `Array(Object{...})` shape, **skips the field**, and emits a warning to stderr:
+has no first-class representation on disk in v0. Inference detects the
+`Array(Object{...})` shape, **skips the field**, and emits a warning to stderr:
 
 ```
 warning: skipped field 'measurements' — Array(Object{...}) isn't representable on disk.
   Consider parallel scalar arrays (see TODO-0156). (first observed in projects/alpha/notes/experiment-2.md)
 ```
 
-The recommended workaround is **parallel scalar arrays** — one field per element-leaf. Replace the YAML above with:
+The recommended workaround is **parallel scalar arrays** — one field per
+element-leaf. Replace the YAML above with:
 
 ```yaml
 measurement_timestamps: ["14:02:11", "14:03:00"]
@@ -84,11 +96,15 @@ name = "measurement_values"
 type = "Array(Float)"
 ```
 
-The downside is the loss of per-element grouping — there's no schema-level guarantee that `measurement_timestamps[3]` and `measurement_values[3]` belong to the same record. A first-class Array-of-structured-item representation is tracked in TODO-0156.
+The downside is the loss of per-element grouping — there's no schema-level
+guarantee that `measurement_timestamps[3]` and `measurement_values[3]` belong to
+the same record. A first-class Array-of-structured-item representation is
+tracked in TODO-0156.
 
 ## Date and DateTime
 
-Both types use **RFC 3339** as the canonical wire format — a strict subset of ISO 8601 designed for machine interoperability.
+Both types use **RFC 3339** as the canonical wire format — a strict subset of
+ISO 8601 designed for machine interoperability.
 
 ### `Date` — calendar date, no time
 
@@ -97,12 +113,15 @@ Date   = YYYY-MM-DD
 ```
 
 Rules:
+
 - Exactly 4-digit year, 2-digit month, 2-digit day (no `2024-1-1` shorthand).
 - Hyphen separators.
-- Calendar-valid: `2024-13-01` (month 13) and `2024-02-30` (no Feb 30th) are rejected.
+- Calendar-valid: `2024-13-01` (month 13) and `2024-02-30` (no Feb 30th) are
+  rejected.
 - No time component, no timezone.
 
 Accepted:
+
 ```text
 2023-02-01
 1990-05-12
@@ -110,6 +129,7 @@ Accepted:
 ```
 
 Rejected:
+
 ```text
 2024-1-1          ← single-digit components not allowed
 2024-13-01        ← month must be 01-12
@@ -117,7 +137,13 @@ Rejected:
 2024/01/15        ← only hyphens
 ```
 
-Stored as Arrow `Date32` (days since 1970-01-01). Native date arithmetic works in `--where` queries — e.g. `WHERE date > '2024-01-01'`, `WHERE date_part('year', published) = 2024`, `WHERE date BETWEEN '2024-06-01' AND '2024-06-30'`. See [Date and DateTime in --where queries](../search-guide.md#date-and-datetime) for worked examples including `EXTRACT`, `INTERVAL`, date subtraction, and compound filters.
+Stored as Arrow `Date32` (days since 1970-01-01). Native date arithmetic works
+in `--where` queries — e.g. `WHERE date > '2024-01-01'`,
+`WHERE date_part('year', published) = 2024`,
+`WHERE date BETWEEN '2024-06-01' AND '2024-06-30'`. See
+[Date and DateTime in --where queries](../search-guide.md#date-and-datetime) for
+worked examples including `EXTRACT`, `INTERVAL`, date subtraction, and compound
+filters.
 
 ### `DateTime` — date + time, mandatory timezone
 
@@ -130,13 +156,16 @@ DateTime = YYYY-MM-DDTHH:MM:SS[.frac]<tz>
 ```
 
 Rules:
+
 - Date part: same as `Date` above.
 - `T` separator between date and time is **mandatory** — no space alternative.
 - `HH:MM:SS` (24-hour, all two digits). Seconds are required.
 - Fractional seconds optional, any number of digits.
-- **Timezone is mandatory** — naive `2024-01-15T14:30:00` is rejected (not valid RFC 3339).
+- **Timezone is mandatory** — naive `2024-01-15T14:30:00` is rejected (not valid
+  RFC 3339).
 
 Accepted:
+
 ```text
 2024-01-15T14:30:00Z              ← Zulu = UTC
 2024-01-15T14:30:00+00:00         ← same moment, explicit offset
@@ -147,6 +176,7 @@ Accepted:
 ```
 
 Rejected:
+
 ```text
 2024-01-15T14:30:00               ← no timezone
 2024-01-15 14:30:00Z              ← space instead of T
@@ -155,38 +185,55 @@ Rejected:
 2024-01-15T25:30:00Z              ← invalid hour
 ```
 
-Stored as Arrow `Timestamp(Millisecond, "UTC")`. Offsets are **normalized to UTC** at storage time — `2024-04-02T16:14:30+02:00` and `2024-04-02T14:14:30Z` are the same absolute moment and store identically. The original offset is intentionally not preserved.
+Stored as Arrow `Timestamp(Millisecond, "UTC")`. Offsets are **normalized to
+UTC** at storage time — `2024-04-02T16:14:30+02:00` and `2024-04-02T14:14:30Z`
+are the same absolute moment and store identically. The original offset is
+intentionally not preserved.
 
 ### example_kb demonstration
 
 Both types are auto-inferred in the example vault:
 
-| Field | Type | Files |
-|---|---|---|
-| `joined` | Date | `people/**` |
-| `date` | Date | meetings + blog/published |
-| `commission_date` | Date | `people/*` |
-| `last_reviewed` | Date | `reference/protocols/**` |
-| `synced_at` | DateTime | `experiment-1.md` uses `Z`, `experiment-2.md` uses `+02:00` |
+| Field             | Type     | Files                                                       |
+| ----------------- | -------- | ----------------------------------------------------------- |
+| `joined`          | Date     | `people/**`                                                 |
+| `date`            | Date     | meetings + blog/published                                   |
+| `commission_date` | Date     | `people/*`                                                  |
+| `last_reviewed`   | Date     | `reference/protocols/**`                                    |
+| `synced_at`       | DateTime | `experiment-1.md` uses `Z`, `experiment-2.md` uses `+02:00` |
 
-No manual configuration was needed for any of these — inference detects the RFC 3339 shape and assigns the appropriate type. See [Type widening in practice](#date-and-datetime-inference) below for the inference rule.
+No manual configuration was needed for any of these — inference detects the RFC
+3339 shape and assigns the appropriate type. See
+[Type widening in practice](#date-and-datetime-inference) below for the
+inference rule.
 
 ### Validation
 
-JSON Schema's `format: date` and `format: date-time` keywords validate values at check time. Bad shapes (invalid calendar dates, missing timezones, wrong separators) produce `WrongType` violations with a rule like `format date` or `format date-time`.
+JSON Schema's `format: date` and `format: date-time` keywords validate values at
+check time. Bad shapes (invalid calendar dates, missing timezones, wrong
+separators) produce `WrongType` violations with a rule like `format date` or
+`format date-time`.
 
 ### Constraints
 
-- `categories` applies (e.g. `categories = ["2024-01-01", "2024-12-31"]` on a Date field; values are strings, the runtime format validator catches malformed entries).
-- `pattern`, `min`, `max`, `min_length`, `max_length` do **not** apply — the type's format is itself the pattern. Bounded date ranges (e.g. "published in 2024") are tracked as a future feature.
+- `categories` applies (e.g. `categories = ["2024-01-01", "2024-12-31"]` on a
+  Date field; values are strings, the runtime format validator catches malformed
+  entries).
+- `pattern`, `min`, `max`, `min_length`, `max_length` do **not** apply — the
+  type's format is itself the pattern. Bounded date ranges (e.g. "published in
+  2024") are tracked as a future feature.
 
 ### Preprocessors
 
-No preprocessor applies to `Date` or `DateTime` in v1. Unlike `String` (which can opt in to `coerce-to-string`) or `Float` (which can opt in to `widen-int-to-float`), date types are strict — either the string parses as RFC 3339 or it doesn't.
+No preprocessor applies to `Date` or `DateTime` in v1. Unlike `String` (which
+can opt in to `coerce-to-string`) or `Float` (which can opt in to
+`widen-int-to-float`), date types are strict — either the string parses as RFC
+3339 or it doesn't.
 
 ## Type hierarchy
 
-When two values have different types, mdvs widens to a common type. The hierarchy looks like this:
+When two values have different types, mdvs widens to a common type. The
+hierarchy looks like this:
 
 ```mermaid
 graph BT
@@ -198,19 +245,34 @@ graph BT
     Array["Array(T)"] --> String
 ```
 
-Each arrow means "widens to." **String is the top type** — every type eventually reaches it.
+Each arrow means "widens to." **String is the top type** — every type eventually
+reaches it.
 
-The one special case is Integer → Float: integers widen to floats (not directly to String) because the conversion is lossless. Date and DateTime have no internal cross-promotion — mixed `Date + DateTime` observations widen to String (the two shapes are disjoint).
+The one special case is Integer → Float: integers widen to floats (not directly
+to String) because the conversion is lossless. Date and DateTime have no
+internal cross-promotion — mixed `Date + DateTime` observations widen to String
+(the two shapes are disjoint).
 
 Two same-category combinations widen internally instead of jumping to String:
-- **Array + Array** — element types are widened recursively (e.g., `Array(Integer)` + `Array(String)` → `Array(String)`)
-- **Object + Object** — at the leaf level: each dotted path's type is widened independently across files. A file with `cal.wave = 850` (Integer) and another with `cal.wave = 632.8` (Float) yields `cal.wave: Float`. New leaf paths in some files are added to the schema; leaves absent from some files affect nullability/required-globs naturally.
 
-Everything else (Boolean + any other type, Array + scalar, Object + scalar) widens to String. The one exception is **Array containing Object** — `Array(Object{...})` isn't representable on disk, so inference drops the field with a warning instead of widening to String (see [Arrays of structured items](#arrays-of-structured-items)).
+- **Array + Array** — element types are widened recursively (e.g.,
+  `Array(Integer)` + `Array(String)` → `Array(String)`)
+- **Object + Object** — at the leaf level: each dotted path's type is widened
+  independently across files. A file with `cal.wave = 850` (Integer) and another
+  with `cal.wave = 632.8` (Float) yields `cal.wave: Float`. New leaf paths in
+  some files are added to the schema; leaves absent from some files affect
+  nullability/required-globs naturally.
+
+Everything else (Boolean + any other type, Array + scalar, Object + scalar)
+widens to String. The one exception is **Array containing Object** —
+`Array(Object{...})` isn't representable on disk, so inference drops the field
+with a warning instead of widening to String (see
+[Arrays of structured items](#arrays-of-structured-items)).
 
 ## Type widening in practice
 
-When mdvs scans your files and the same field has different types, it picks the **least upper bound** — the most specific type that covers all observed values.
+When mdvs scans your files and the same field has different types, it picks the
+**least upper bound** — the most specific type that covers all observed values.
 
 ### Integer + Float → Float
 
@@ -227,7 +289,8 @@ wavelength_nm: 632.8     # Float
 wavelength_nm: 780.0     # Float
 ```
 
-Result: `wavelength_nm` is inferred as **Float**. The integer `850` is safely represented as a float.
+Result: `wavelength_nm` is inferred as **Float**. The integer `850` is safely
+represented as a float.
 
 ### Integer + String → String
 
@@ -241,17 +304,23 @@ priority: 1              # Integer
 priority: high           # String
 ```
 
-Result: `priority` is inferred as **String**. There's no numeric type that can hold `"high"`, so mdvs widens to String.
+Result: `priority` is inferred as **String**. There's no numeric type that can
+hold `"high"`, so mdvs widens to String.
 
 ### Boolean + any non-Boolean → String
 
-If the same field is `true` in one file and `3` in another, there's no numeric or boolean type that can hold both. The result is String.
+If the same field is `true` in one file and `3` in another, there's no numeric
+or boolean type that can hold both. The result is String.
 
-This doesn't happen in `example_kb` because booleans (`draft`) are used consistently — but it's a common mistake in organically grown vaults where someone writes `draft: yes` (String) instead of `draft: true` (Boolean).
+This doesn't happen in `example_kb` because booleans (`draft`) are used
+consistently — but it's a common mistake in organically grown vaults where
+someone writes `draft: yes` (String) instead of `draft: true` (Boolean).
 
 ### Date and DateTime inference
 
-A string is inferred as `Date` or `DateTime` when **every observation** across all files matches the RFC 3339 shape AND parses as a real value. A single non-matching value downgrades the whole field to String.
+A string is inferred as `Date` or `DateTime` when **every observation** across
+all files matches the RFC 3339 shape AND parses as a real value. A single
+non-matching value downgrades the whole field to String.
 
 Pure-date observations across files:
 
@@ -275,7 +344,8 @@ joined: 2023-02-01
 joined: "see HR records"        # not a date
 ```
 
-Result: `joined` widens to **String** — the second observation can't be typed as Date, and `Date + String → String` is the widening rule.
+Result: `joined` widens to **String** — the second observation can't be typed as
+Date, and `Date + String → String` is the widening rule.
 
 Same logic for invalid calendar dates:
 
@@ -287,7 +357,9 @@ published: 2024-06-01
 published: 2024-13-01           # invalid month — typed String per-value
 ```
 
-Result: `published` widens to **String**. The typo gets silently absorbed into String typing; the user only catches it via a `WrongType` violation if they manually set `type = "Date"` in `mdvs.toml`.
+Result: `published` widens to **String**. The typo gets silently absorbed into
+String typing; the user only catches it via a `WrongType` violation if they
+manually set `type = "Date"` in `mdvs.toml`.
 
 Date + DateTime are cross-shape — never auto-promote:
 
@@ -299,11 +371,13 @@ when: 2024-01-15                # Date
 when: 2024-01-15T14:30:00Z      # DateTime
 ```
 
-Result: `when` widens to **String**. Pick one shape consistently to get a typed field.
+Result: `when` widens to **String**. Pick one shape consistently to get a typed
+field.
 
 ### Array element widening
 
-The `tags` field is a string array in most files, but one file accidentally used integers:
+The `tags` field is a string array in most files, but one file accidentally used
+integers:
 
 ```yaml
 # projects/alpha/overview.md
@@ -318,13 +392,18 @@ tags:
   - 3                     # Array(Integer)
 ```
 
-Result: `tags` is inferred as **`Array(String)`**. The array element types (String vs Integer) are widened to String, giving `Array(String)`.
+Result: `tags` is inferred as **`Array(String)`**. The array element types
+(String vs Integer) are widened to String, giving `Array(String)`.
 
 ### Object leaf merging (dotted-name flattening)
 
-When two files have nested keys at the same paths, each leaf is inferred independently. New leaves seen in one file but not another are added to the schema; their `required` glob naturally narrows to just the files that contain them.
+When two files have nested keys at the same paths, each leaf is inferred
+independently. New leaves seen in one file but not another are added to the
+schema; their `required` glob naturally narrows to just the files that contain
+them.
 
-In `example_kb`, the `calibration` object appears in two experiment files with different structures:
+In `example_kb`, the `calibration` object appears in two experiment files with
+different structures:
 
 ```yaml
 # experiment-1.md (simpler calibration, integer values)
@@ -371,45 +450,58 @@ preprocess = ["widen-int-to-float"]
 ```
 
 What happened:
-- `calibration.baseline.wavelength` seen as both Integer (850) and Float (632.8) → widened to Float with `widen-int-to-float` preprocessor recording the mix
-- `calibration.baseline.intensity` similar: Integer (1) + Float (0.95) → Float with the preprocessor
-- `calibration.baseline.notes` only in experiment-1 → still inferred as String (with a `required` glob narrowed to just the files that have it)
+
+- `calibration.baseline.wavelength` seen as both Integer (850) and Float (632.8)
+  → widened to Float with `widen-int-to-float` preprocessor recording the mix
+- `calibration.baseline.intensity` similar: Integer (1) + Float (0.95) → Float
+  with the preprocessor
+- `calibration.baseline.notes` only in experiment-1 → still inferred as String
+  (with a `required` glob narrowed to just the files that have it)
 - `calibration.adjusted.*` only in experiment-2 → inferred from that file alone
 
-The user-facing schema is flat, but its semantics still match the YAML's nested shape. Validation, storage, and `--where` queries all operate on the natural nested structure — the dotted-name form is purely a `mdvs.toml` UX choice.
+The user-facing schema is flat, but its semantics still match the YAML's nested
+shape. Validation, storage, and `--where` queries all operate on the natural
+nested structure — the dotted-name form is purely a `mdvs.toml` UX choice.
 
 ## The full widening matrix
 
 Every possible combination of types and its result:
 
-|  | Boolean | Integer | Float | String | Date | DateTime | Array | Object |
-|---|---|---|---|---|---|---|---|---|
-| **Boolean** | Boolean | String | String | String | String | String | String | String |
-| **Integer** | String | Integer | **Float** | String | String | String | String | String |
-| **Float** | String | **Float** | Float | String | String | String | String | String |
-| **String** | String | String | String | String | String | String | String | String |
-| **Date** | String | String | String | String | Date | String | String | String |
-| **DateTime** | String | String | String | String | String | DateTime | String | String |
-| **Array** | String | String | String | String | String | String | Array\* | dropped\*\* |
-| **Object** | String | String | String | String | String | String | dropped\*\* | Object\* |
+|              | Boolean | Integer   | Float     | String | Date   | DateTime | Array       | Object      |
+| ------------ | ------- | --------- | --------- | ------ | ------ | -------- | ----------- | ----------- |
+| **Boolean**  | Boolean | String    | String    | String | String | String   | String      | String      |
+| **Integer**  | String  | Integer   | **Float** | String | String | String   | String      | String      |
+| **Float**    | String  | **Float** | Float     | String | String | String   | String      | String      |
+| **String**   | String  | String    | String    | String | String | String   | String      | String      |
+| **Date**     | String  | String    | String    | String | Date   | String   | String      | String      |
+| **DateTime** | String  | String    | String    | String | String | DateTime | String      | String      |
+| **Array**    | String  | String    | String    | String | String | String   | Array\*     | dropped\*\* |
+| **Object**   | String  | String    | String    | String | String | String   | dropped\*\* | Object\*    |
 
 \* Array + Array: element types are widened recursively.
 
-\* Object + Object: not a top-level on-disk type. Nested Objects in YAML flatten to dotted-name leaves before widening; each leaf path is widened independently.
+\* Object + Object: not a top-level on-disk type. Nested Objects in YAML flatten
+to dotted-name leaves before widening; each leaf path is widened independently.
 
-\*\* Inference observed Array(Object{...}) — not representable on disk in v0. The field is dropped from the schema and a warning is emitted (see [Arrays of structured items](#arrays-of-structured-items)).
+\*\* Inference observed Array(Object{...}) — not representable on disk in v0.
+The field is dropped from the schema and a warning is emitted (see
+[Arrays of structured items](#arrays-of-structured-items)).
 
-Date and DateTime are cross-shape — they never auto-promote into each other. The single non-trivial pair is `Date + DateTime → String`.
+Date and DateTime are cross-shape — they never auto-promote into each other. The
+single non-trivial pair is `Date + DateTime → String`.
 
 The matrix is symmetric — `widen(A, B)` always equals `widen(B, A)`.
 
 ## Nullable
 
-Separately from the type, mdvs tracks whether `null` was observed for a field. This is shown as a `?` suffix in output — e.g., `Float?` means "Float, but sometimes null."
+Separately from the type, mdvs tracks whether `null` was observed for a field.
+This is shown as a `?` suffix in output — e.g., `Float?` means "Float, but
+sometimes null."
 
 ### How it works
 
-In `example_kb`, the `drift_rate` field is Float in two experiment files but null in a third:
+In `example_kb`, the `drift_rate` field is Float in two experiment files but
+null in a third:
 
 ```yaml
 # experiment-1.md
@@ -422,7 +514,8 @@ drift_rate: null          # sensor malfunction — Giulia discarded the data
 drift_rate: 0.012         # Float
 ```
 
-Result: `drift_rate` is inferred as **Float?** — the type is Float (null doesn't affect the type), and `nullable` is set to true.
+Result: `drift_rate` is inferred as **Float?** — the type is Float (null doesn't
+affect the type), and `nullable` is set to true.
 
 ### Null-only fields
 
@@ -440,13 +533,18 @@ Result: `review_score` is inferred as **String?**.
 - Null is **transparent** in widening — it doesn't affect the inferred type
 - Null-only fields default to String (the safest fallback)
 - `nullable` is a separate boolean, not part of the type itself
-- In validation: null values skip type checks, but a non-nullable required field with a null value triggers a `NullNotAllowed` violation (see [Validation](./validation.md))
+- In validation: null values skip type checks, but a non-nullable required field
+  with a null value triggers a `NullNotAllowed` violation (see
+  [Validation](./validation.md))
 
 ## Widening and preprocessors
 
-Widening picks the type. **Preprocessors** are how the schema declares what coercions were needed to get there. Inference auto-populates them — you rarely write them by hand.
+Widening picks the type. **Preprocessors** are how the schema declares what
+coercions were needed to get there. Inference auto-populates them — you rarely
+write them by hand.
 
-When inference observes a field as a mix of types (some files have `priority: 1`, others `priority: high`), it widens to `String` and writes:
+When inference observes a field as a mix of types (some files have
+`priority: 1`, others `priority: high`), it widens to `String` and writes:
 
 ```toml
 [[fields.field]]
@@ -455,27 +553,45 @@ type = "String"
 preprocess = ["coerce-to-string"]
 ```
 
-The `coerce-to-string` entry tells validation: "before checking this value is a string, serialize whatever you find to its JSON representation." Without it, the field is strict — integers and booleans fail validation.
+The `coerce-to-string` entry tells validation: "before checking this value is a
+string, serialize whatever you find to its JSON representation." Without it, the
+field is strict — integers and booleans fail validation.
 
-Same for Float: a mix of `5` and `5.0` widens to `Float` with `preprocess = ["widen-int-to-float"]`. Without it, integers fail the float check.
+Same for Float: a mix of `5` and `5.0` widens to `Float` with
+`preprocess = ["widen-int-to-float"]`. Without it, integers fail the float
+check.
 
 The two built-in Stage 2 preprocessors:
 
-| Preprocessor | Applies to | Effect |
-|---|---|---|
-| `coerce-to-string` | `String`, `Array(String)` | Serialize non-strings to their JSON string representation before validation |
-| `widen-int-to-float` | `Float`, `Array(Float)` | Treat integer values as their float equivalent |
+| Preprocessor         | Applies to                | Effect                                                                      |
+| -------------------- | ------------------------- | --------------------------------------------------------------------------- |
+| `coerce-to-string`   | `String`, `Array(String)` | Serialize non-strings to their JSON string representation before validation |
+| `widen-int-to-float` | `Float`, `Array(Float)`   | Treat integer values as their float equivalent                              |
 
-**`preprocess = []` means strict.** If you delete a preprocessor from `mdvs.toml`, the field rejects values that would have been coerced. Conversely, you can hand-add a preprocessor to a strict-inferred field if you want to accept type variation.
+**`preprocess = []` means strict.** If you delete a preprocessor from
+`mdvs.toml`, the field rejects values that would have been coerced. Conversely,
+you can hand-add a preprocessor to a strict-inferred field if you want to accept
+type variation.
 
-**No preprocessor applies to `Date` or `DateTime`.** Those types are strict by design — values either parse as RFC 3339 or they don't. There is no `parse-loose-date` opt-in; non-ISO formats fall back to String (and the user can add a `pattern` constraint if they want a custom shape).
+**No preprocessor applies to `Date` or `DateTime`.** Those types are strict by
+design — values either parse as RFC 3339 or they don't. There is no
+`parse-loose-date` opt-in; non-ISO formats fall back to String (and the user can
+add a `pattern` constraint if they want a custom shape).
 
-**In storage** — when validation accepts a coerced value, the coerced form is what gets stored. A `priority: 1` value with `coerce-to-string` becomes `"1"` in the search index. No data is silently dropped.
+**In storage** — when validation accepts a coerced value, the coerced form is
+what gets stored. A `priority: 1` value with `coerce-to-string` becomes `"1"` in
+the search index. No data is silently dropped.
 
-Re-run `mdvs update reinfer <field>` to refresh both the inferred type and the inferred preprocessors after editing source files.
+Re-run `mdvs update reinfer <field>` to refresh both the inferred type and the
+inferred preprocessors after editing source files.
 
 ## Edge cases
 
-- **Empty arrays** `[]` default to **`Array(String)`** — if real values are added later, the field must be re-inferred with `mdvs update reinfer <field>` to pick up the new element type
-- **Empty frontmatter** (`---` followed immediately by `---`) is a file with zero fields — not a bare file. It still counts as "having frontmatter" for inference purposes.
-- **Bare files** (no `---` fences at all) are handled differently — see [Schema Inference](./schema.md)
+- **Empty arrays** `[]` default to **`Array(String)`** — if real values are
+  added later, the field must be re-inferred with `mdvs update reinfer <field>`
+  to pick up the new element type
+- **Empty frontmatter** (`---` followed immediately by `---`) is a file with
+  zero fields — not a bare file. It still counts as "having frontmatter" for
+  inference purposes.
+- **Bare files** (no `---` fences at all) are handled differently — see
+  [Schema Inference](./schema.md)

@@ -2,25 +2,30 @@
 
 **Status: DRAFT**
 
-**Cross-references:** [Terminology](../01-terminology.md) | [Crate: mdvs](../10-crates/mdvs/spec.md) | [Storage Schema](../20-storage/schema.md)
+**Cross-references:** [Terminology](../01-terminology.md) |
+[Crate: mdvs](../10-crates/mdvs/spec.md) |
+[Storage Schema](../20-storage/schema.md)
 
 ---
 
 ## Overview
 
-The search workflow embeds a user query, computes cosine distance against chunk embeddings, and returns results ranked at the note level (or chunk level with `--chunks`). Auto-build behavior ensures results reflect the current state of files on disk.
+The search workflow embeds a user query, computes cosine distance against chunk
+embeddings, and returns results ranked at the note level (or chunk level with
+`--chunks`). Auto-build behavior ensures results reflect the current state of
+files on disk.
 
 ---
 
 ## Actors
 
-| Actor | Role |
-|---|---|
-| **User** | Provides query string and optional filters |
-| **CLI** | Orchestrates the search |
-| **model2vec-rs** | Embeds the query string |
-| **Rust** | Cosine distance computation over Arrow arrays |
-| **DataFusion** | SQL JOIN, GROUP BY, WHERE, ORDER BY, LIMIT |
+| Actor            | Role                                          |
+| ---------------- | --------------------------------------------- |
+| **User**         | Provides query string and optional filters    |
+| **CLI**          | Orchestrates the search                       |
+| **model2vec-rs** | Embeds the query string                       |
+| **Rust**         | Cosine distance computation over Arrow arrays |
+| **DataFusion**   | SQL JOIN, GROUP BY, WHERE, ORDER BY, LIMIT    |
 
 ---
 
@@ -92,16 +97,17 @@ sequenceDiagram
 
 The `on_stale` config key and `--build`/`--no-build` CLI flags interact:
 
-| Config `on_stale` | `--build` | `--no-build` | Result |
-|---|---|---|---|
-| `auto` | — | — | Build if stale |
-| `auto` | — | yes | Skip build |
-| `strict` | — | — | Error if stale |
-| `strict` | yes | — | Build if stale |
-| any | yes | — | Always build |
-| any | — | yes | Never build |
+| Config `on_stale` | `--build` | `--no-build` | Result         |
+| ----------------- | --------- | ------------ | -------------- |
+| `auto`            | —         | —            | Build if stale |
+| `auto`            | —         | yes          | Skip build     |
+| `strict`          | —         | —            | Error if stale |
+| `strict`          | yes       | —            | Build if stale |
+| any               | yes       | —            | Always build   |
+| any               | —         | yes          | Never build    |
 
-Staleness is determined by comparing filesystem content hashes against `mdvs.lock` `[[file]]` entries.
+Staleness is determined by comparing filesystem content hashes against
+`mdvs.lock` `[[file]]` entries.
 
 ---
 
@@ -111,8 +117,10 @@ Default mode. Groups chunk results by file and ranks by best chunk match.
 
 **Strategy:**
 
-- **Score:** Maximum similarity (minimum cosine distance) across all chunks of a file
-- **Snippet:** Plain text of the best-matching chunk (truncated to `snippet_length`)
+- **Score:** Maximum similarity (minimum cosine distance) across all chunks of a
+  file
+- **Snippet:** Plain text of the best-matching chunk (truncated to
+  `snippet_length`)
 - **Heading:** The heading associated with the best-matching chunk
 
 ```sql
@@ -130,7 +138,9 @@ ORDER BY distance
 LIMIT :limit;
 ```
 
-The `--where` clause operates on `files` table columns (both schema fields and `metadata` JSON). This gives users the full power of DataFusion SQL for filtering.
+The `--where` clause operates on `files` table columns (both schema fields and
+`metadata` JSON). This gives users the full power of DataFusion SQL for
+filtering.
 
 ---
 
@@ -152,7 +162,8 @@ ORDER BY c.distance
 LIMIT :limit;
 ```
 
-Useful for finding specific sections across different files, or when a single long file has multiple relevant sections.
+Useful for finding specific sections across different files, or when a single
+long file has multiple relevant sections.
 
 ---
 
@@ -174,10 +185,9 @@ Useful for finding specific sections across different files, or when a single lo
 2 results (8ms search, 1ms embed)
 ```
 
-**Line 1:** Rank, filename, `§ heading` (if present), cosine distance.
-**Line 2:** Field values (tags, date, etc.).
-**Line 3:** Snippet from the best-matching chunk.
-**Footer:** Result count, search time, embedding time.
+**Line 1:** Rank, filename, `§ heading` (if present), cosine distance. **Line
+2:** Field values (tags, date, etc.). **Line 3:** Snippet from the best-matching
+chunk. **Footer:** Result count, search time, embedding time.
 
 ### JSON
 
@@ -203,7 +213,8 @@ Useful for finding specific sections across different files, or when a single lo
 }
 ```
 
-Field values are included as top-level keys in each result object. The field names depend on the schema.
+Field values are included as top-level keys in each result object. The field
+names depend on the schema.
 
 ### Paths
 
@@ -212,7 +223,8 @@ projects/collabide/crdt-design.md
 reading/kleppmann-crdt-paper.md
 ```
 
-One filename per line. Useful for piping into other tools (`xargs`, `fzf`, editors).
+One filename per line. Useful for piping into other tools (`xargs`, `fzf`,
+editors).
 
 ---
 
@@ -238,21 +250,22 @@ mdvs search "testing" --where "tags @> ['rust'] AND date > '2024-01-01'"
 
 ## Edge Cases
 
-| Case | Behavior |
-|---|---|
-| Empty query string | Error: query must not be empty |
-| No results found | Exit code 1, message: "No results found." |
-| `--where` with syntax error | DataFusion SQL error, surfaced to user with the invalid clause highlighted |
-| `--where` referencing non-existent column | DataFusion error, surfaced to user |
-| Artifact not built | Error: ".mdvs/ not found. Run `mdvs build` first." (unless auto-build triggers) |
-| Empty artifact (init done, no build yet) | No results (chunks Parquet is empty) |
-| Model mismatch | See [Model Mismatch Workflow](model-mismatch.md) |
+| Case                                      | Behavior                                                                        |
+| ----------------------------------------- | ------------------------------------------------------------------------------- |
+| Empty query string                        | Error: query must not be empty                                                  |
+| No results found                          | Exit code 1, message: "No results found."                                       |
+| `--where` with syntax error               | DataFusion SQL error, surfaced to user with the invalid clause highlighted      |
+| `--where` referencing non-existent column | DataFusion error, surfaced to user                                              |
+| Artifact not built                        | Error: ".mdvs/ not found. Run `mdvs build` first." (unless auto-build triggers) |
+| Empty artifact (init done, no build yet)  | No results (chunks Parquet is empty)                                            |
+| Model mismatch                            | See [Model Mismatch Workflow](model-mismatch.md)                                |
 
 ---
 
 ## Related Documents
 
-- [Terminology](../01-terminology.md) — definitions for note-level ranking, embedding, cosine distance
+- [Terminology](../01-terminology.md) — definitions for note-level ranking,
+  embedding, cosine distance
 - [Crate: mdvs](../10-crates/mdvs/spec.md) — search implementation
 - [Storage Schema](../20-storage/schema.md) — query patterns
 - [Workflow: Model Mismatch](model-mismatch.md) — identity check before search

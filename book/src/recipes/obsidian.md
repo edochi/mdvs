@@ -1,6 +1,10 @@
 # Obsidian
 
-mdvs works well with [Obsidian](https://obsidian.md/) vaults — it validates your YAML frontmatter for consistency and provides semantic search across all your notes. Everything runs locally, no external services needed. (Obsidian emits YAML; mdvs also handles TOML and JSON if you've imported notes from other tools — see the [Hugo recipe](./hugo.md) for the mixed-format case.)
+mdvs works well with [Obsidian](https://obsidian.md/) vaults — it validates your
+YAML frontmatter for consistency and provides semantic search across all your
+notes. Everything runs locally, no external services needed. (Obsidian emits
+YAML; mdvs also handles TOML and JSON if you've imported notes from other tools
+— see the [Hugo recipe](./hugo.md) for the mixed-format case.)
 
 ## Setup
 
@@ -10,7 +14,9 @@ Point mdvs at your vault:
 mdvs init path/to/vault
 ```
 
-This scans all markdown files, infers a typed schema from your frontmatter, and writes `mdvs.toml`. If auto-build is enabled (the default), it also downloads the embedding model and builds the search index.
+This scans all markdown files, infers a typed schema from your frontmatter, and
+writes `mdvs.toml`. If auto-build is enabled (the default), it also downloads
+the embedding model and builds the search index.
 
 Two artifacts are created:
 
@@ -19,11 +25,14 @@ Two artifacts are created:
 
 ### .gitignore
 
-mdvs respects `.gitignore` by default. If your vault has `.obsidian/` in `.gitignore` (many do), those files are automatically excluded from scanning. No extra configuration needed.
+mdvs respects `.gitignore` by default. If your vault has `.obsidian/` in
+`.gitignore` (many do), those files are automatically excluded from scanning. No
+extra configuration needed.
 
 ### .mdvsignore
 
-For additional exclusions, create a `.mdvsignore` file at the vault root. It uses the same syntax as `.gitignore`:
+For additional exclusions, create a `.mdvsignore` file at the vault root. It
+uses the same syntax as `.gitignore`:
 
 ```
 # AI working directories
@@ -38,7 +47,8 @@ attachments/
 assets/
 ```
 
-Any directory that doesn't contain markdown with frontmatter is a good candidate for exclusion — it speeds up scanning and avoids noise in the schema.
+Any directory that doesn't contain markdown with frontmatter is a good candidate
+for exclusion — it speeds up scanning and avoids noise in the schema.
 
 ## Common frontmatter patterns
 
@@ -56,21 +66,27 @@ draft: false
 
 mdvs infers types automatically:
 
-| Field | Inferred type | Notes |
-|---|---|---|
-| `title` | String | |
-| `tags` | Array(String) | Array of strings |
-| `status` | String | |
-| `date` | Date | RFC 3339 `YYYY-MM-DD` strings auto-promote to `Date`; mixed shapes fall back to `String` |
-| `draft` | Boolean | |
+| Field    | Inferred type | Notes                                                                                    |
+| -------- | ------------- | ---------------------------------------------------------------------------------------- |
+| `title`  | String        |                                                                                          |
+| `tags`   | Array(String) | Array of strings                                                                         |
+| `status` | String        |                                                                                          |
+| `date`   | Date          | RFC 3339 `YYYY-MM-DD` strings auto-promote to `Date`; mixed shapes fall back to `String` |
+| `draft`  | Boolean       |                                                                                          |
 
 ### Inconsistent types
 
-If the same field has different types across notes (e.g., `priority` is an integer in some files and a string like `"high"` in others), mdvs widens to the broadest compatible type — usually String. See [Types & Widening](../concepts/types.md) for the full rules.
+If the same field has different types across notes (e.g., `priority` is an
+integer in some files and a string like `"high"` in others), mdvs widens to the
+broadest compatible type — usually String. See
+[Types & Widening](../concepts/types.md) for the full rules.
 
 ### Dataview fields
 
-If you use the [Dataview](https://blacksmithgu.github.io/obsidian-dataview/) plugin, its inline fields (e.g., `key:: value`) are **not** picked up by mdvs — only YAML frontmatter between `---` fences is scanned. Dataview fields that appear in the YAML block are handled normally.
+If you use the [Dataview](https://blacksmithgu.github.io/obsidian-dataview/)
+plugin, its inline fields (e.g., `key:: value`) are **not** picked up by mdvs —
+only YAML frontmatter between `---` fences is scanned. Dataview fields that
+appear in the YAML block are handled normally.
 
 ## Validation
 
@@ -83,7 +99,8 @@ mdvs check path/to/vault
 This catches:
 
 - **Wrong types** — a Boolean field with a string value
-- **Missing required fields** — a field that should be present in certain directories
+- **Missing required fields** — a field that should be present in certain
+  directories
 - **Disallowed fields** — a field appearing where it shouldn't
 - **Null violations** — null where it's not allowed
 
@@ -91,7 +108,8 @@ See [Validation](../concepts/validation.md) for the full rules.
 
 ### Tightening constraints
 
-The inferred schema is permissive by default. To enforce stricter rules, edit `mdvs.toml` directly. For example, to require `tags` in all daily notes:
+The inferred schema is permissive by default. To enforce stricter rules, edit
+`mdvs.toml` directly. For example, to require `tags` in all daily notes:
 
 ```toml
 [[fields.field]]
@@ -110,7 +128,9 @@ When you introduce new frontmatter fields, run `update` to incorporate them:
 mdvs update path/to/vault
 ```
 
-This discovers new fields and adds them to `mdvs.toml` without touching existing field definitions. Use the `reinfer` subcommand to re-infer specific fields if you've reorganized your vault.
+This discovers new fields and adds them to `mdvs.toml` without touching existing
+field definitions. Use the `reinfer` subcommand to re-infer specific fields if
+you've reorganized your vault.
 
 ## Search
 
@@ -138,13 +158,23 @@ See the [Search Guide](../search-guide.md) for the full `--where` reference.
 
 ## Tips
 
-- **Incremental builds** — only notes whose body changed since the last build are re-embedded. Frontmatter-only changes (updating tags, status) don't trigger re-embedding. Run `mdvs build` freely — on an unchanged vault the index write itself is skipped, so it's effectively a no-op.
+- **Incremental builds** — only notes whose body changed since the last build
+  are re-embedded. Frontmatter-only changes (updating tags, status) don't
+  trigger re-embedding. Run `mdvs build` freely — on an unchanged vault the
+  index write itself is skipped, so it's effectively a no-op.
 
-- **Alongside Obsidian search** — mdvs search is semantic (finds conceptually related notes), while Obsidian's built-in search is keyword-based. They complement each other.
+- **Alongside Obsidian search** — mdvs search is semantic (finds conceptually
+  related notes), while Obsidian's built-in search is keyword-based. They
+  complement each other.
 
-- **Large vaults** — mdvs has been tested on vaults of over 1,500 files; full build from scratch finishes in single-digit seconds, and incremental builds touching one or two files complete in tens of milliseconds. See [docs/benchmarks/](https://github.com/edochi/mdvs/tree/main/docs/benchmarks) for measured numbers.
+- **Large vaults** — mdvs has been tested on vaults of over 1,500 files; full
+  build from scratch finishes in single-digit seconds, and incremental builds
+  touching one or two files complete in tens of milliseconds. See
+  [docs/benchmarks/](https://github.com/edochi/mdvs/tree/main/docs/benchmarks)
+  for measured numbers.
 
-- **Ignore noisy fields** — if some frontmatter fields are auto-generated and you don't want to validate them, add them to the `ignore` list in `mdvs.toml`:
+- **Ignore noisy fields** — if some frontmatter fields are auto-generated and
+  you don't want to validate them, add them to the `ignore` list in `mdvs.toml`:
   ```toml
   [fields]
   ignore = ["cssclass", "kanban-plugin"]

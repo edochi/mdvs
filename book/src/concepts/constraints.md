@@ -1,20 +1,28 @@
 # Constraints
 
-Constraints are validation rules that go beyond type checking. While types ensure a value is a `String` or `Integer`, constraints refine what values are actually valid — for example, restricting a `String` field to a specific set of allowed values.
+Constraints are validation rules that go beyond type checking. While types
+ensure a value is a `String` or `Integer`, constraints refine what values are
+actually valid — for example, restricting a `String` field to a specific set of
+allowed values.
 
-Constraints are not a new type. They're an optional layer on top of the existing type system. A field without constraints is validated by type alone; a field with constraints gets an additional check.
+Constraints are not a new type. They're an optional layer on top of the existing
+type system. A field without constraints is validated by type alone; a field
+with constraints gets an additional check.
 
 ## Categories
 
-The **categories** constraint restricts a field's values to a declared set. It applies to:
+The **categories** constraint restricts a field's values to a declared set. It
+applies to:
 
 - **String** — the value must be one of the listed strings
 - **Integer** — the value must be one of the listed integers
 - **Date** — each category is a string in RFC 3339 full-date shape
 - **DateTime** — each category is a string in RFC 3339 datetime shape
-- **Array(String)**, **Array(Integer)**, **Array(Date)**, **Array(DateTime)** — each element must be one of the listed values
+- **Array(String)**, **Array(Integer)**, **Array(Date)**, **Array(DateTime)** —
+  each element must be one of the listed values
 
-Boolean, Float, and Object fields don't support categories — Boolean is already two-valued, Float is continuous, and Object is structural.
+Boolean, Float, and Object fields don't support categories — Boolean is already
+two-valued, Float is continuous, and Object is structural.
 
 ### TOML representation
 
@@ -54,28 +62,41 @@ type = "Array(String)"
 categories = ["go", "python", "rust"]
 ```
 
-A field without a `[fields.field.constraints]` section (or without a `categories` key) is unconstrained.
+A field without a `[fields.field.constraints]` section (or without a
+`categories` key) is unconstrained.
 
 ### Validation
 
-When a value doesn't match any of the declared categories, `check` reports an `InvalidCategory` violation. For arrays, the violation lists the specific offending elements. See [Validation](./validation.md#invalidcategory) for details.
+When a value doesn't match any of the declared categories, `check` reports an
+`InvalidCategory` violation. For arrays, the violation lists the specific
+offending elements. See [Validation](./validation.md#invalidcategory) for
+details.
 
-Null values on categorical fields follow the existing nullable logic — if `nullable = true`, null skips the category check. The category constraint only fires on non-null values that pass the type check.
+Null values on categorical fields follow the existing nullable logic — if
+`nullable = true`, null skips the category check. The category constraint only
+fires on non-null values that pass the type check.
 
 ## Auto-inference
 
-During `init` and `update reinfer`, mdvs automatically detects categorical fields using a heuristic with two conditions (both must hold):
+During `init` and `update reinfer`, mdvs automatically detects categorical
+fields using a heuristic with two conditions (both must hold):
 
-1. **Max distinct values** — the field has at most `max_categories` distinct values (default: 10)
-2. **Minimum repetition** — `total occurrences / distinct values >= min_category_repetition` (default: 3)
+1. **Max distinct values** — the field has at most `max_categories` distinct
+   values (default: 10)
+2. **Minimum repetition** —
+   `total occurrences / distinct values >= min_category_repetition` (default: 3)
 
-For array fields, distinct values and occurrences are counted at the element level.
+For array fields, distinct values and occurrences are counted at the element
+level.
 
 ### Examples
 
-- `status` with 3 distinct values across 30 files: distinct=3, repetition=10 — **categorical**
-- `title` with 28 distinct values across 30 files: distinct=28 (exceeds cap) — **not categorical**
-- `author` with 5 distinct values across 5 files: repetition=1 (below threshold) — **not categorical**
+- `status` with 3 distinct values across 30 files: distinct=3, repetition=10 —
+  **categorical**
+- `title` with 28 distinct values across 30 files: distinct=28 (exceeds cap) —
+  **not categorical**
+- `author` with 5 distinct values across 5 files: repetition=1 (below threshold)
+  — **not categorical**
 
 ### Configurable thresholds
 
@@ -87,7 +108,8 @@ max_categories = 10
 min_category_repetition = 3
 ```
 
-These control automatic inference only. Manually written `categories` in the TOML are unaffected by thresholds.
+These control automatic inference only. Manually written `categories` in the
+TOML are unaffected by thresholds.
 
 CLI flags on `update reinfer` override the TOML values per-invocation:
 
@@ -97,14 +119,19 @@ mdvs update example_kb reinfer --max-categories 15 --min-repetition 3
 
 ## Range
 
-The **range** constraint restricts a numeric field's value to an inclusive `[min, max]` interval. It applies to:
+The **range** constraint restricts a numeric field's value to an inclusive
+`[min, max]` interval. It applies to:
 
 - **Integer** — value must satisfy `min <= value <= max`
 - **Float** — same, with float comparison
 - **Array(Integer)** — each element must satisfy the range
 - **Array(Float)** — same, element-wise
 
-Both `min` and `max` are optional — you can specify just one bound. Boolean, String, Date, DateTime, and Object fields don't support range. Date / DateTime bounds (e.g. "published after 2024-01-01") aren't supported in v1 — they require JSON Schema's `formatMinimum`/`formatMaximum` vocab and are tracked as a follow-up.
+Both `min` and `max` are optional — you can specify just one bound. Boolean,
+String, Date, DateTime, and Object fields don't support range. Date / DateTime
+bounds (e.g. "published after 2024-01-01") aren't supported in v1 — they require
+JSON Schema's `formatMinimum`/`formatMaximum` vocab and are tracked as a
+follow-up.
 
 ### TOML representation
 
@@ -118,7 +145,8 @@ min = 1
 max = 5
 ```
 
-Float bounds (with optional integer bound on a Float field — bounds widen to `f64` for comparison):
+Float bounds (with optional integer bound on a Float field — bounds widen to
+`f64` for comparison):
 
 ```toml
 [[fields.field]]
@@ -144,22 +172,30 @@ max = 10
 
 ### Validation
 
-When a value is out of bounds, `check` reports an `OutOfRange` violation with the rule (`min = N, max = N`) and the offending value. For arrays, the violation lists the specific elements that are out of range.
+When a value is out of bounds, `check` reports an `OutOfRange` violation with
+the rule (`min = N, max = N`) and the offending value. For arrays, the violation
+lists the specific elements that are out of range.
 
-Null values follow the existing nullable logic — if `nullable = true`, null skips the range check.
+Null values follow the existing nullable logic — if `nullable = true`, null
+skips the range check.
 
 ### Type rules
 
 Bound types must match the field type:
 
-- **Integer fields** require integer bounds. Float bounds (e.g., `min = 0.5`) are rejected at config load — likely a mistake; an integer can never equal `0.5`.
-- **Float fields** accept both integer and float bounds (integer bounds widen to `f64`).
+- **Integer fields** require integer bounds. Float bounds (e.g., `min = 0.5`)
+  are rejected at config load — likely a mistake; an integer can never equal
+  `0.5`.
+- **Float fields** accept both integer and float bounds (integer bounds widen to
+  `f64`).
 
-If both bounds are present, `min` must be `<= max` — otherwise rejected at config load.
+If both bounds are present, `min` must be `<= max` — otherwise rejected at
+config load.
 
 ## Manual overrides
 
-Use the `--with` flag on `update reinfer` to override the default heuristic for specific fields:
+Use the `--with` flag on `update reinfer` to override the default heuristic for
+specific fields:
 
 ```bash
 # Force categorical (skip heuristic threshold)
@@ -172,15 +208,21 @@ mdvs update example_kb reinfer sample_count --with=range
 mdvs update example_kb reinfer status --with=none
 ```
 
-`--with` takes a comma-separated list of constraint kinds: `categorical`, `range`, or `none`. Incompatible kinds (e.g., `range,categorical` on the same field) are rejected at parse time. `--with=none` cannot be combined with other kinds. The flag requires named fields.
+`--with` takes a comma-separated list of constraint kinds: `categorical`,
+`range`, or `none`. Incompatible kinds (e.g., `range,categorical` on the same
+field) are rejected at parse time. `--with=none` cannot be combined with other
+kinds. The flag requires named fields.
 
-**Manual TOML edit** — you can also add or remove constraints by hand. Running `update` (without `reinfer`) preserves existing constraints as-is. Only `update reinfer` re-evaluates them.
+**Manual TOML edit** — you can also add or remove constraints by hand. Running
+`update` (without `reinfer`) preserves existing constraints as-is. Only
+`update reinfer` re-evaluates them.
 
 ## Length
 
 The **length** constraint bounds string length or array length. It applies to:
 
-- **String** — `min_length <= len(value) <= max_length`, where length is the Unicode scalar count
+- **String** — `min_length <= len(value) <= max_length`, where length is the
+  Unicode scalar count
 - **Array(T)** — `min_length <= array length <= max_length`
 
 ```toml
@@ -193,7 +235,9 @@ min_length = 3
 max_length = 64
 ```
 
-Both bounds are optional. Integer fields, Float fields, and Boolean fields don't support length. Length violations surface as `OutOfRange`. If both bounds are present, `min_length <= max_length` is enforced at config load.
+Both bounds are optional. Integer fields, Float fields, and Boolean fields don't
+support length. Length violations surface as `OutOfRange`. If both bounds are
+present, `min_length <= max_length` is enforced at config load.
 
 ## Pattern
 
@@ -208,24 +252,35 @@ type = "String"
 pattern = '^v\d+\.\d+\.\d+$'
 ```
 
-The regex is compiled at config load time — invalid syntax fails fast. Pattern is currently String-only. Pattern violations surface as `WrongType` (with detail naming the offending value). Categorical fields can't also have a pattern — categories already enumerate the legal forms. Date and DateTime fields don't accept `pattern` either — the type's format is itself the pattern (see [Date and DateTime](./types.md#date-and-datetime)).
+The regex is compiled at config load time — invalid syntax fails fast. Pattern
+is currently String-only. Pattern violations surface as `WrongType` (with detail
+naming the offending value). Categorical fields can't also have a pattern —
+categories already enumerate the legal forms. Date and DateTime fields don't
+accept `pattern` either — the type's format is itself the pattern (see
+[Date and DateTime](./types.md#date-and-datetime)).
 
 ## Conflicts between constraint kinds
 
 Some combinations are mutually exclusive on the same field:
 
-- **`categories` + anything else** — categories enumerate the legal values; other constraints would be redundant or contradictory. Rejected at config load.
-- **`range` + `length`** — range bounds numeric values; length bounds size. They apply to different field types (numeric vs. String/Array), so they should never collide in practice; the check is still enforced.
+- **`categories` + anything else** — categories enumerate the legal values;
+  other constraints would be redundant or contradictory. Rejected at config
+  load.
+- **`range` + `length`** — range bounds numeric values; length bounds size. They
+  apply to different field types (numeric vs. String/Array), so they should
+  never collide in practice; the check is still enforced.
 
-Compatible combinations: `min`/`max` together; `min_length`/`max_length` together; `pattern` with `min_length`/`max_length`.
+Compatible combinations: `min`/`max` together; `min_length`/`max_length`
+together; `pattern` with `min_length`/`max_length`.
 
 ## Constraint kinds summary
 
-| Constraint | Field types | Violation |
-|---|---|---|
-| `categories` | String, Integer, Array(String), Array(Integer) | `InvalidCategory` |
-| `min` / `max` | Integer, Float, Array(Integer), Array(Float) | `OutOfRange` |
-| `min_length` / `max_length` | String, Array(T) | `OutOfRange` |
-| `pattern` | String | `WrongType` |
+| Constraint                  | Field types                                    | Violation         |
+| --------------------------- | ---------------------------------------------- | ----------------- |
+| `categories`                | String, Integer, Array(String), Array(Integer) | `InvalidCategory` |
+| `min` / `max`               | Integer, Float, Array(Integer), Array(Float)   | `OutOfRange`      |
+| `min_length` / `max_length` | String, Array(T)                               | `OutOfRange`      |
+| `pattern`                   | String                                         | `WrongType`       |
 
-Each constraint kind is a key in the `[fields.field.constraints]` sub-table. Compatibility is checked at config load time.
+Each constraint kind is a key in the `[fields.field.constraints]` sub-table.
+Compatibility is checked at config load time.
