@@ -1,0 +1,18 @@
+# Read by editors (LazyVim runs markdownlint-cli2 via nvim-lint). Reports only;
+# prettier does the formatting. line_length must match printWidth.
+config:
+  # The three exclusions are what prettier deliberately won't wrap.
+  MD013:
+    line_length: 80
+    code_blocks: false
+    tables: false
+    headings: false
+
+# Mirrors .prettierignore.
+ignores:
+  - "example_kb/**"
+  - "assets/demo_kb/**"
+  - "crates/mdvs/tests/fixtures/**"
+  - "crates/mdvs/CHANGELOG.md"
+  - "target/**"
+  - "node_modules/**"

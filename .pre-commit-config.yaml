@@ -1,0 +1,17 @@
+# Setup: uv tool install pre-commit && pre-commit install
+repos:
+  - repo: local
+    hooks:
+      - id: prettier
+        name: prettier (markdown)
+        entry: prettier --write
+        language: node
+        additional_dependencies: ["prettier@3.6.2"]
+        types: [markdown]
+        exclude: |
+          (?x)^(
+            example_kb/|
+            assets/demo_kb/|
+            crates/mdvs/tests/fixtures/|
+            crates/mdvs/CHANGELOG\.md$
+          )

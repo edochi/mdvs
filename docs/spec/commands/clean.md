@@ -10,10 +10,12 @@ Delete the `.mdvs/` index directory.
 2. **Stats** — `walk_dir_stats()` counts files and sums sizes for the outcome
 3. **Delete** — `fs::remove_dir_all()`
 
-Returns `CleanOutcome` with `removed: bool`, `path`, `files_removed`, `size_bytes`.
+Returns `CleanOutcome` with `removed: bool`, `path`, `files_removed`,
+`size_bytes`.
 
 ## Key points
 
-- **Destructive** — removes the Lance dataset (`index.lance/`), the cached embedding model, and build metadata. Requires a `build` to recreate.
+- **Destructive** — removes the Lance dataset (`index.lance/`), the cached
+  embedding model, and build metadata. Requires a `build` to recreate.
 - **Config preserved** — `mdvs.toml` is not touched. Only `.mdvs/` is deleted.
 - **No confirmation** — deletes immediately. No `--force` required.

@@ -29,11 +29,15 @@ docs/spec/
 
 ## Document Categories
 
-- **Terminology** (`terminology.md`) — Canonical definitions, single source of truth for terms
-- **Storage** (`storage.md`) — Parquet schemas, config file formats, directory layout
+- **Terminology** (`terminology.md`) — Canonical definitions, single source of
+  truth for terms
+- **Storage** (`storage.md`) — Parquet schemas, config file formats, directory
+  layout
 - **Shared types** (`shared.md`) — Output structs used by multiple commands
-- **Command specs** (`commands/*.md`) — One per CLI command: inputs, behavior, output struct, errors
-- **Workflows** (`workflows/*.md`) — Cross-cutting logic used by multiple commands
+- **Command specs** (`commands/*.md`) — One per CLI command: inputs, behavior,
+  output struct, errors
+- **Workflows** (`workflows/*.md`) — Cross-cutting logic used by multiple
+  commands
 
 ## Writing a Spec
 
@@ -95,6 +99,7 @@ Command specs should include these sections:
 
 - **Single source of truth:** each term/struct/concept defined in ONE place only
 - **Cross-references:** link, never duplicate definitions
-- **Output structs:** every command must define its result as a struct, separate from display formatting
+- **Output structs:** every command must define its result as a struct, separate
+  from display formatting
 - **Mermaid for diagrams** — never ASCII art
 - **No stale references:** do not link to anything in `archive/`

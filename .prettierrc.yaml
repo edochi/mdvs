@@ -1,0 +1,5 @@
+# Markdown only. printWidth must match MD013 line_length in .markdownlint-cli2.yaml.
+proseWrap: always
+printWidth: 80
+# Don't reformat fence contents (default "auto" rewrites json/yaml/js fences).
+embeddedLanguageFormatting: "off"

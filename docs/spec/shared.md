@@ -1,6 +1,7 @@
 # Shared Types
 
-Output and validation types used across commands. All defined in `src/output.rs` unless noted.
+Output and validation types used across commands. All defined in `src/output.rs`
+unless noted.
 
 ## Output Format
 
@@ -8,7 +9,8 @@ Output and validation types used across commands. All defined in `src/output.rs`
 pub enum OutputFormat { Text, Json }  // output.rs:7
 ```
 
-Global `--output`/`-o` flag. Default `Text`. JSON is free via `#[derive(Serialize)]` on all outcome structs.
+Global `--output`/`-o` flag. Default `Text`. JSON is free via
+`#[derive(Serialize)]` on all outcome structs.
 
 ## Field Hints
 
@@ -20,7 +22,8 @@ pub enum FieldHint {                   // output.rs:16
 }
 ```
 
-`field_hints(name)` at `output.rs:39` detects special characters in field names and suggests escaping for `--where` queries. Used in `info` and `check` output.
+`field_hints(name)` at `output.rs:39` detects special characters in field names
+and suggests escaping for `--where` queries. Used in `info` and `check` output.
 
 ## Discovered Field
 
@@ -97,7 +100,11 @@ pub struct FieldViolation {            // output.rs:197
 
 Used in `CheckOutcome.violations` and `ValidateOutcome.violations`.
 
-`PartialOrd, Ord` on `ViolationKind` are deliberate: `collect_violations` sorts the output `Vec<FieldViolation>` by `(field, kind, rule)` (with `files` inner-sorted by path) so `mdvs check` output is byte-stable across runs. The declaration order above is the sort order — adding a variant changes that order; check downstream consumers (diff tooling, golden fixtures) before reordering.
+`PartialOrd, Ord` on `ViolationKind` are deliberate: `collect_violations` sorts
+the output `Vec<FieldViolation>` by `(field, kind, rule)` (with `files`
+inner-sorted by path) so `mdvs check` output is byte-stable across runs. The
+declaration order above is the sort order — adding a variant changes that order;
+check downstream consumers (diff tooling, golden fixtures) before reordering.
 
 ## New Field
 
@@ -108,25 +115,30 @@ pub struct NewField {                  // output.rs:210
 }
 ```
 
-Informational — fields in frontmatter but not in `mdvs.toml`. Does not affect exit code.
+Informational — fields in frontmatter but not in `mdvs.toml`. Does not affect
+exit code.
 
 ## Constraint Violations (post-Wave-B)
 
-Constraint violations are no longer carried as a separate internal type. The `jsonschema` crate emits `ValidationError` instances at validation time; `cmd/check.rs::map_validation_error` translates each into a `ViolationKind` + rule string + per-file detail.
+Constraint violations are no longer carried as a separate internal type. The
+`jsonschema` crate emits `ValidationError` instances at validation time;
+`cmd/check.rs::map_validation_error` translates each into a `ViolationKind` +
+rule string + per-file detail.
 
 Mapping summary (exhaustive in code):
 
-| jsonschema error | mdvs `ViolationKind` |
-|---|---|
-| `Type` (non-null mismatch) / `Pattern` | `WrongType` |
-| `Type` (null on non-nullable) | `NullNotAllowed` |
-| `Enum`, `Constant` | `InvalidCategory` |
-| `Minimum`, `Maximum`, `ExclusiveMinimum`, `ExclusiveMaximum`, `MultipleOf` | `OutOfRange` |
-| `MinLength`, `MaxLength`, `MinItems`, `MaxItems`, `UniqueItems` | `OutOfRange` |
-| `Required` | `MissingRequired` |
-| `AdditionalProperties` | `Disallowed` |
+| jsonschema error                                                           | mdvs `ViolationKind` |
+| -------------------------------------------------------------------------- | -------------------- |
+| `Type` (non-null mismatch) / `Pattern`                                     | `WrongType`          |
+| `Type` (null on non-nullable)                                              | `NullNotAllowed`     |
+| `Enum`, `Constant`                                                         | `InvalidCategory`    |
+| `Minimum`, `Maximum`, `ExclusiveMinimum`, `ExclusiveMaximum`, `MultipleOf` | `OutOfRange`         |
+| `MinLength`, `MaxLength`, `MinItems`, `MaxItems`, `UniqueItems`            | `OutOfRange`         |
+| `Required`                                                                 | `MissingRequired`    |
+| `AdditionalProperties`                                                     | `Disallowed`         |
 
-See [architecture.md](./architecture.md#validation-pipeline) for the full pipeline.
+See [architecture.md](./architecture.md#validation-pipeline) for the full
+pipeline.
 
 ## Build File Detail
 

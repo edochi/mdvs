@@ -2,18 +2,22 @@
 
 **Status: DRAFT**
 
-**Cross-references:** [Terminology](../../01-terminology.md) | [Configuration](../../40-configuration/frontmatter-toml.md)
+**Cross-references:** [Terminology](../../01-terminology.md) |
+[Configuration](../../40-configuration/frontmatter-toml.md)
 
 ---
 
 ## Overview
 
-Shared library crate containing field definitions, the type system, TOML parsing, field discovery, tree inference, and lock file types. Dependency of both `mfv` and `mdvs`. Has no knowledge of DataFusion, embeddings, or search.
+Shared library crate containing field definitions, the type system, TOML
+parsing, field discovery, tree inference, and lock file types. Dependency of
+both `mfv` and `mdvs`. Has no knowledge of DataFusion, embeddings, or search.
 
 **Responsibilities:**
 
 - Parse `mfv.toml` / `mdvs.toml` into structured field definitions
-- Define the field type system (`string`, `string[]`, `date`, `boolean`, `integer`, `float`, `enum`)
+- Define the field type system (`string`, `string[]`, `date`, `boolean`,
+  `integer`, `float`, `enum`)
 - Infer field types from observed YAML/TOML/JSON values
 - Provide path-scoped validation via `allowed` and `required` glob patterns
 - Infer `allowed`/`required` patterns from file observations (tree inference)
@@ -84,7 +88,9 @@ impl FieldDef {
 
 #### TOML defaults
 
-When parsing from TOML, `allowed` defaults to `["**"]` (field allowed everywhere) and `required` defaults to `[]` (field not required anywhere). This makes the common case minimal:
+When parsing from TOML, `allowed` defaults to `["**"]` (field allowed
+everywhere) and `required` defaults to `[]` (field not required anywhere). This
+makes the common case minimal:
 
 ```toml
 [[fields.field]]
@@ -95,7 +101,8 @@ type = "string"
 
 #### Invariant: `required ⊆ allowed`
 
-A field cannot be required somewhere it isn't allowed. If `required` is non-empty but `allowed` is empty, schema validation fails.
+A field cannot be required somewhere it isn't allowed. If `required` is
+non-empty but `allowed` is empty, schema validation fails.
 
 ### `Schema`
 
@@ -139,7 +146,8 @@ impl FromStr for Schema {
 - `pattern` is a valid regex (only for `string`/`date` types)
 - `allowed` and `required` are valid glob patterns
 - `required ⊆ allowed` (required non-empty implies allowed non-empty)
-- Unknown top-level sections are silently ignored (allows `mfv.toml` and `mdvs.toml` to share format)
+- Unknown top-level sections are silently ignored (allows `mfv.toml` and
+  `mdvs.toml` to share format)
 
 ### `SchemaError`
 
@@ -169,7 +177,8 @@ struct FieldInfo {
 
 ### `FieldPaths`
 
-Inferred `allowed` and `required` patterns for a single field. Output of tree inference.
+Inferred `allowed` and `required` patterns for a single field. Output of tree
+inference.
 
 ```rust
 struct FieldPaths {
@@ -227,7 +236,9 @@ impl LockFile {
 
 ## Type Inference
 
-When `type` is not explicitly set in TOML, the type is inferred from observed values during `mfv init`. The inference logic lives in this crate so both tools use the same rules.
+When `type` is not explicitly set in TOML, the type is inferred from observed
+values during `mfv init`. The inference logic lives in this crate so both tools
+use the same rules.
 
 ### `infer_type` Function
 
@@ -235,19 +246,22 @@ When `type` is not explicitly set in TOML, the type is inferred from observed va
 fn infer_type(value: &serde_json::Value) -> FieldType
 ```
 
-Takes a single JSON value (converted from YAML/TOML frontmatter by `gray_matter`). Returns the inferred `FieldType`.
+Takes a single JSON value (converted from YAML/TOML frontmatter by
+`gray_matter`). Returns the inferred `FieldType`.
 
-| Value | Inferred Type |
-|---|---|
-| JSON boolean | `Boolean` |
-| JSON integer | `Integer` |
-| JSON float | `Float` |
-| JSON string matching YYYY-MM-DD | `Date` |
-| JSON string (other) | `String` |
-| JSON array | `StringArray` |
-| Anything else | `String` |
+| Value                           | Inferred Type |
+| ------------------------------- | ------------- |
+| JSON boolean                    | `Boolean`     |
+| JSON integer                    | `Integer`     |
+| JSON float                      | `Float`       |
+| JSON string matching YYYY-MM-DD | `Date`        |
+| JSON string (other)             | `String`      |
+| JSON array                      | `StringArray` |
+| Anything else                   | `String`      |
 
-**Mixed types:** When a field has different types across files, `discover_fields` picks the most common type. The user can override with an explicit `type` in the config.
+**Mixed types:** When a field has different types across files,
+`discover_fields` picks the most common type. The user can override with an
+explicit `type` in the config.
 
 ---
 
@@ -261,11 +275,14 @@ fn discover_fields(
 ) -> Vec<FieldInfo>
 ```
 
-Takes `(relative_path, frontmatter)` pairs. For each field found across all files, tracks:
+Takes `(relative_path, frontmatter)` pairs. For each field found across all
+files, tracks:
+
 - The most common inferred type (majority vote)
 - Which files contain the field
 
-Returns `Vec<FieldInfo>` sorted by frequency (descending), then name (ascending).
+Returns `Vec<FieldInfo>` sorted by frequency (descending), then name
+(ascending).
 
 ---
 
@@ -279,35 +296,43 @@ fn infer_field_paths(
 ) -> BTreeMap<String, FieldPaths>
 ```
 
-Given a flat list of `(file_path, set_of_fields)`, infers `allowed` and `required` glob patterns for each field by building a directory tree and walking it.
+Given a flat list of `(file_path, set_of_fields)`, infers `allowed` and
+`required` glob patterns for each field by building a directory tree and walking
+it.
 
-See [Workflow: Inference](../../30-workflows/inference.md) for the full algorithm specification.
+See [Workflow: Inference](../../30-workflows/inference.md) for the full
+algorithm specification.
 
 Key behaviors:
+
 - Leaf nodes (direct files) emit `*` (shallow) patterns
 - Directory nodes emit `**` (recursive) patterns via collapse
 - Collapse upgrades `*` to `**` when a directory confirms the claim
-- `required` only comes from directory-level `all` sets (not leaf initialization)
+- `required` only comes from directory-level `all` sets (not leaf
+  initialization)
 
 ---
 
 ## Dependencies
 
-| Crate | Purpose |
-|---|---|
-| `serde` + `toml` | Parse TOML config |
-| `serde_json` | Type inference from JSON values (via gray_matter) |
-| `regex` | Compile and validate `pattern` rules |
-| `globset` | Compile and validate `allowed`/`required` globs; path matching |
-| `indextree` | Arena-backed tree for inference algorithm |
-| `chrono` | Date string validation |
+| Crate            | Purpose                                                        |
+| ---------------- | -------------------------------------------------------------- |
+| `serde` + `toml` | Parse TOML config                                              |
+| `serde_json`     | Type inference from JSON values (via gray_matter)              |
+| `regex`          | Compile and validate `pattern` rules                           |
+| `globset`        | Compile and validate `allowed`/`required` globs; path matching |
+| `indextree`      | Arena-backed tree for inference algorithm                      |
+| `chrono`         | Date string validation                                         |
 
 ---
 
 ## Related Documents
 
-- [Terminology](../../01-terminology.md) — canonical definitions for field, field type
-- [Configuration](../../40-configuration/frontmatter-toml.md) — file format this crate parses
-- [Workflow: Inference](../../30-workflows/inference.md) — tree inference algorithm
+- [Terminology](../../01-terminology.md) — canonical definitions for field,
+  field type
+- [Configuration](../../40-configuration/frontmatter-toml.md) — file format this
+  crate parses
+- [Workflow: Inference](../../30-workflows/inference.md) — tree inference
+  algorithm
 - [Crate: mfv](../mfv/spec.md) — validation engine that consumes this crate
 - [Crate: mdvs](../mdvs/spec.md) — search tool that consumes this crate
