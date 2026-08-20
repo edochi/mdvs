@@ -1,14 +1,5 @@
-# Prettier config — markdown only (no JS/TS/CSS in this repo).
-# Paired with .markdownlint-cli2.yaml: prettier does the wrapping, markdownlint
-# checks it. The two must agree on line_length / printWidth or they fight.
-
-# Hard-wrap prose at 80 columns. Only paragraphs, list-item text, and
-# blockquotes are wrapped — tables, code fences, and headings are left alone.
+# Markdown only. printWidth must match MD013 line_length in .markdownlint-cli2.yaml.
 proseWrap: always
 printWidth: 80
-
-# Freeze fenced code blocks. Prettier's default ("auto") reformats fences whose
-# language it can parse — json, yaml, js, css — which would silently rewrite
-# doc examples. rust/bash/toml fences have no parser and are untouched either
-# way; this makes the guarantee uniform.
+# Don't reformat fence contents (default "auto" rewrites json/yaml/js fences).
 embeddedLanguageFormatting: "off"

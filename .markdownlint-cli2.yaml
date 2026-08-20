@@ -1,21 +1,15 @@
-# markdownlint-cli2 config. Read by editors — LazyVim runs markdownlint-cli2
-# via nvim-lint over stdin, resolving config from cwd upward. Not wired into
-# pre-commit: prettier writes the format, this only reports. The two must agree
-# on width, so line_length here tracks printWidth in .prettierrc.yaml.
-
+# Read by editors (LazyVim runs markdownlint-cli2 via nvim-lint). Reports only;
+# prettier does the formatting. line_length must match printWidth.
 config:
-  # 80-column limit, matching prettier's printWidth. The three exclusions are
-  # exactly what prettier's proseWrap deliberately will not wrap; without them
-  # markdownlint flags lines prettier just produced.
+  # The three exclusions are what prettier deliberately won't wrap.
   MD013:
     line_length: 80
     code_blocks: false
     tables: false
     headings: false
 
+# Mirrors .prettierignore.
 ignores:
-  # Mirrors .prettierignore — nothing prettier skips should be linted, or the
-  # editor lights up on files we deliberately do not format.
   - "example_kb/**"
   - "assets/demo_kb/**"
   - "crates/mdvs/tests/fixtures/**"

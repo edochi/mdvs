@@ -1,9 +1,4 @@
-# Run `uv tool install pre-commit` (not `uvx` — `pre-commit install` bakes the
-# interpreter path into .git/hooks/pre-commit, and a uvx cache entry can be
-# pruned out from under it), then `pre-commit install` once per clone.
-#
-# Node and prettier are provisioned by pre-commit into ~/.cache/pre-commit;
-# nothing needs to be installed globally.
+# Setup: uv tool install pre-commit && pre-commit install
 repos:
   - repo: local
     hooks:

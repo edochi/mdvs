@@ -51,3 +51,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo install --locked ast-grep
       - run: ast-grep scan
+
+  # Prettier version pinned to match .pre-commit-config.yaml and the Justfile.
+  # The pre-commit hook can't catch non-idempotency (it only sees the file it
+  # just rewrote); re-checking committed content does.
+  fmt-md:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: npx --yes prettier@3.6.2 --check "**/*.md"

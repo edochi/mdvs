@@ -54,18 +54,11 @@ Hugging Face network calls. See TODO-0184.
 
 ## Markdown conventions
 
-- **Hard-wrap at 80 columns.** Markdown prose in this repo is wrapped at 80
-  characters. Don't wrap by hand — `prettier` does it, configured in
-  `.prettierrc.yaml` and enforced by the `pre-commit` hook. Tables, fenced code
-  blocks, headings, and long URLs are deliberately left over-length; `MD013` in
-  `.markdownlint-cli2.yaml` is configured to match. This applies to README,
-  `book/`, `docs/spec/`, TODO files, and any other `.md` in the tree except the
-  paths in `.prettierignore` (`example_kb/`, `assets/demo_kb/`, test fixtures,
-  and the generated `CHANGELOG.md`), whose exact bytes are fixtures.
-- **Setup:** `uv tool install pre-commit && pre-commit install`. Use
-  `uv tool install`, not `uvx` — `pre-commit install` bakes the interpreter path
-  into `.git/hooks/pre-commit` and a uvx cache entry can be pruned away. Node
-  and prettier are provisioned by pre-commit; no global npm install needed.
+- **Hard-wrap at 80 columns.** Don't wrap by hand — `just fmt-md` does it, and
+  the `pre-commit` hook enforces it. Tables, code fences, headings and long URLs
+  are left over-length by design. Paths in `.prettierignore` are exempt.
+- **Setup:** `uv tool install pre-commit && pre-commit install` (`uv tool`, not
+  `uvx` — the hook bakes in the interpreter path).
 - Don't reference scratch or gitignored folders in committed markdown files —
   keep references in committed docs limited to paths that survive a fresh clone.
 
