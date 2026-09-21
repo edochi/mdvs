@@ -2,6 +2,23 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## v0.8.5 - 2026-09-21
+#### Bug Fixes
+- (**deps**) update lockfile to patch RUSTSEC-2026-0285 - (0cba70b) - edochi, *Claude*
+- (**deps**) bump h2 to 0.4.17 for RUSTSEC-2026-0258 - (92a1778) - edochi, *Claude*
+- (**schema**) reject duplicate [[fields.field]] names - (78b739a) - edochi, *Claude*
+#### Documentation
+- close TODO-0196 — duplicate field names rejected - (6ed2a69) - edochi, *Claude*
+- add TODOs 0194-0196 — directory-scoped policy, cross-field rules, duplicate names - (2890361) - edochi, *Claude*
+- correct the --no-update claim in the CI and pre-commit recipes - (96bd08a) - edochi, *Claude*
+#### Miscellaneous Chores
+- add just recipes and CI check for markdown formatting - (8a15864) - edochi
+- hard-wrap markdown at 80 cols via prettier + pre-commit - (e5cf18b) - edochi
+#### Style
+- hard-wrap all markdown at 80 cols - (46a3cb7) - edochi
+
+- - -
+
 ## v0.8.4 - 2026-08-17
 #### Documentation
 - clarify whole-vault scope in the pre-commit recipe - (86d5eed) - edochi, *Claude*

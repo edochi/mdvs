@@ -4153,7 +4153,7 @@ checksum = "7ebb8d8732c6a6df3d8f032a82911cfc747e00efb95cc46e8d0acd5b5b88570c"
 
 [[package]]
 name = "mdvs"
-version = "0.8.4"
+version = "0.8.5"
 dependencies = [
  "anyhow",
  "arrow",
