@@ -12,7 +12,7 @@ use tracing::{info, instrument, warn};
 const MAX_NESTING_DEPTH: usize = 50;
 const MAX_FIELD_COUNT: usize = 1000;
 
-/// Which gray_matter engine to use for a given file. Internal-only; the
+/// Which `gray_matter` engine to use for a given file. Internal-only; the
 /// user-facing equivalent is [`FrontmatterFormat`] (which adds `Auto`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FrontmatterEngine {
@@ -72,16 +72,16 @@ fn forced_engine(format: FrontmatterFormat) -> Option<FrontmatterEngine> {
 
 /// Output of a single engine parse, uniform across YAML / TOML / JSON.
 /// `None` means parse failed and the file should fall back to bare-file
-/// handling (mirrors gray_matter's `Err` arm).
+/// handling (mirrors `gray_matter`'s `Err` arm).
 struct EngineParse {
     data: Option<Value>,
     body: String,
 }
 
-/// Parse a file's frontmatter + body with gray_matter using the given
+/// Parse a file's frontmatter + body with `gray_matter` using the given
 /// `Matter` instance. The `Pod` is converted to `serde_json::Value` and
 /// validated (top-level must be an object, NaN/inf rejected). Returns
-/// `None` when gray_matter itself fails to parse — caller falls back to
+/// `None` when `gray_matter` itself fails to parse — caller falls back to
 /// bare-file handling for backward compatibility.
 fn parse_via_gray_matter<E: gray_matter::engine::Engine>(
     matter: &Matter<E>,
@@ -136,7 +136,7 @@ fn parse_via_gray_matter<E: gray_matter::engine::Engine>(
 /// Parse JSON frontmatter using `serde_json::Deserializer` directly.
 /// Hugo-style convention: the JSON object itself starts at column 0 with
 /// `{` and ends with the matching `}`; the body follows immediately.
-/// gray_matter's `Matter::<JSON>` wraps JSON in `---` delimiters instead,
+/// `gray_matter`'s `Matter::<JSON>` wraps JSON in `---` delimiters instead,
 /// which is not the convention users expect — so we bypass it here.
 fn parse_json_native(raw: &str) -> Option<(EngineParse, Option<String>)> {
     // `StreamDeserializer::byte_offset` tells us where the first JSON

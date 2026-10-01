@@ -128,7 +128,7 @@ fn field_from_subschema(name: &str, sub: &Map<String, Value>) -> Result<TomlFiel
     })
 }
 
-/// Extract the FieldType and nullability from a subschema's `type` keyword
+/// Extract the `FieldType` and nullability from a subschema's `type` keyword
 /// (and `items` recursion for arrays).
 fn extract_type(name: &str, sub: &Map<String, Value>) -> Result<(FieldType, bool), String> {
     let type_val = sub

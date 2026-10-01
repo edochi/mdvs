@@ -18,13 +18,13 @@ pub(super) struct FileToEmbed<'a> {
     pub(super) scanned: &'a ScannedFile,
 }
 
-/// Data produced by classification, carried forward to embed and write_index steps.
+/// Data produced by classification, carried forward to embed and `write_index` steps.
 pub(super) struct ClassifyData<'a> {
     /// Whether this is a full rebuild.
     pub(super) full_rebuild: bool,
     /// Files that need chunking + embedding (new or edited).
     pub(super) needs_embedding: Vec<FileToEmbed<'a>>,
-    /// Maps filename → file_id for ALL current files (new, edited, unchanged).
+    /// Maps filename → `file_id` for ALL current files (new, edited, unchanged).
     pub(super) file_id_map: HashMap<String, String>,
     /// Chunks retained from unchanged files.
     pub(super) retained_chunks: Vec<ChunkRow>,
@@ -34,7 +34,7 @@ pub(super) struct ClassifyData<'a> {
     pub(super) chunks_removed: usize,
     /// Per-file chunk counts for removed files (for verbose output).
     pub(super) removed_details: Vec<BuildFileDetail>,
-    /// file_ids of files that were removed (chunks to delete in the
+    /// `file_id`s of files that were removed (chunks to delete in the
     /// incremental write path).
     pub(super) removed_file_ids: Vec<String>,
 }

@@ -411,7 +411,7 @@ impl fmt::Display for FieldTypeSerde {
 mod tests {
     use super::*;
 
-    /// Wrapper for testing FieldTypeSerde in isolation (TOML needs a root table).
+    /// Wrapper for testing `FieldTypeSerde` in isolation (TOML needs a root table).
     #[derive(Debug, Serialize, Deserialize, PartialEq)]
     struct TypeWrapper {
         #[serde(rename = "type")]

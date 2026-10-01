@@ -157,13 +157,13 @@ enum Command {
     /// Generate install-time artifacts for an agent harness.
     ///
     /// Subcommands emit either the bundled SKILL.md, the project-rules
-    /// snippet, or the PostToolUse hook config — to stdout, ready to
+    /// snippet, or the `PostToolUse` hook config — to stdout, ready to
     /// pipe into the right file under the harness's config dir.
     Scaffold {
         #[command(subcommand)]
         subcommand: mdvs::cmd::scaffold::ScaffoldCommand,
     },
-    /// Agent-harness hook runtime — called by PostToolUse hooks.
+    /// Agent-harness hook runtime — called by `PostToolUse` hooks.
     ///
     /// Subcommands handle one tool-call payload at a time, reading JSON
     /// from stdin and writing a platform-specific JSON envelope to stdout.

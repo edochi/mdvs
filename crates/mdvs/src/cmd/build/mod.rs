@@ -149,7 +149,7 @@ pub async fn run(
 ///
 /// Returns `BuildOutcome` + optional `Embedder` (for reuse by search) on success.
 /// On failure, pushes error steps and returns `Err(())` — the caller constructs
-/// the failed CommandResult from the steps.
+/// the failed `CommandResult` from the steps.
 ///
 /// Public for profiling and benchmarking (the per-phase timings in `steps` are
 /// the closest thing to a profile of a real `mdvs build` invocation).
@@ -718,7 +718,7 @@ mod tests {
     }
 
     /// A second build over an unchanged vault must short-circuit the
-    /// write_index step (Skipped, not Completed). The first build is a full
+    /// `write_index` step (Skipped, not Completed). The first build is a full
     /// rebuild and must Complete it.
     #[tokio::test]
     async fn second_build_skips_write_index_when_nothing_changed() {
@@ -783,7 +783,7 @@ mod tests {
 
     /// When a new file appears between two builds, the incremental write
     /// path must persist it: the new file's chunks must be visible in the
-    /// index, unchanged files retain their chunks, and the WriteIndex step
+    /// index, unchanged files retain their chunks, and the `WriteIndex` step
     /// is Completed (not Skipped).
     #[tokio::test]
     async fn third_build_persists_new_file_via_incremental_path() {
@@ -1452,7 +1452,7 @@ mod tests {
     // Incremental build integration tests
     // ========================================================================
 
-    /// Read file_id→filename map and chunk_id→file_id map from the Lance index.
+    /// Read `file_id`→filename map and `chunk_id`→`file_id` map from the Lance index.
     async fn read_index_state(dir: &Path) -> (HashMap<String, String>, Vec<(String, String)>) {
         let backend = Backend::lance(dir);
         let file_index = backend.read_file_index().await.unwrap();

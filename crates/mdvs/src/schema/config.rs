@@ -43,7 +43,7 @@ pub struct BuildConfig {
 pub struct SearchConfig {
     /// Maximum number of results returned when `--limit` is not specified.
     pub default_limit: usize,
-    /// Whether to auto-run update before building (when auto_build is true).
+    /// Whether to auto-run update before building (when `auto_build` is true).
     #[serde(default)]
     pub auto_update: bool,
     /// Whether to auto-run build before searching.
@@ -617,7 +617,7 @@ mod tests {
         UpdateConfig {}
     }
 
-    /// Helper to build a full MdvsToml with all sections present.
+    /// Helper to build a full `MdvsToml` with all sections present.
     fn full_toml(fields: Vec<TomlField>) -> MdvsToml {
         MdvsToml {
             default_output_format: None,

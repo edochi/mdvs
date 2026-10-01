@@ -73,7 +73,7 @@ struct HookPayload {
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct ToolInput {
-    /// Set for Edit / Write / MultiEdit tool calls — the file being changed.
+    /// Set for `Edit` / `Write` / `MultiEdit` tool calls — the file being changed.
     file_path: Option<String>,
     /// Set for Bash tool calls — the command being run.
     command: Option<String>,
@@ -464,9 +464,9 @@ constraints = { categories = ["active", "archived"] }
 
     // --- build_envelope --------------------------------------------------
 
-    /// With user_msg = Some(...), Claude Code's full Claude-Code-shaped
-    /// envelope renders cleanly: PostToolUse + additionalContext +
-    /// systemMessage.
+    /// With `user_msg = Some(...)`, Claude Code's full Claude-Code-shaped
+    /// envelope renders cleanly: `PostToolUse` + `additionalContext` +
+    /// `systemMessage`.
     #[test]
     fn build_envelope_claude_code_validate_includes_both_channels() {
         let p = Platform::load("claude-code").unwrap();
@@ -481,7 +481,7 @@ constraints = { categories = ["active", "archived"] }
         assert_eq!(parsed["systemMessage"], "user body");
     }
 
-    /// With user_msg = None, the `<<USER_MSG>>` marker is pruned and the
+    /// With `user_msg = None`, the `<<USER_MSG>>` marker is pruned and the
     /// resulting envelope omits `systemMessage` entirely. The wrapper
     /// stays because its other field is still populated.
     #[test]

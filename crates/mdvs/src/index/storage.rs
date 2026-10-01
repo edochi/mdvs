@@ -410,8 +410,8 @@ fn insert_at_segments(map: &mut BTreeMap<String, FieldType>, segments: &[&str], 
 /// (`filepath`, `content_hash`, `data` Struct, `built_at`) duplicated inline.
 /// LanceDB is single-table, so file and chunk rows are joined here.
 ///
-/// Column order: chunk_id, file_id, chunk_index, start_line, end_line,
-/// chunk_text, embedding, filepath, content_hash, data, built_at.
+/// Column order: `chunk_id`, `file_id`, `chunk_index`, `start_line`, `end_line`,
+/// `chunk_text`, `embedding`, `filepath`, `content_hash`, `data`, `built_at`.
 pub fn build_index_batch(
     schema_fields: &[(String, FieldType)],
     files: &[FileRow],

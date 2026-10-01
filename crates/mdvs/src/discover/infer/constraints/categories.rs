@@ -54,7 +54,7 @@ fn type_supports_categories(ft: &FieldType) -> bool {
     }
 }
 
-/// Convert a serde_json::Value to a toml::Value for category storage.
+/// Convert a `serde_json::Value` to a `toml::Value` for category storage.
 fn json_to_toml_value(val: &Value) -> Option<toml::Value> {
     match val {
         Value::String(s) => Some(toml::Value::String(s.clone())),
@@ -63,7 +63,7 @@ fn json_to_toml_value(val: &Value) -> Option<toml::Value> {
     }
 }
 
-/// Compare two toml::Values for sorting (strings alphabetically, integers numerically).
+/// Compare two `toml::Value`s for sorting (strings alphabetically, integers numerically).
 fn cmp_toml_values(a: &toml::Value, b: &toml::Value) -> std::cmp::Ordering {
     match (a, b) {
         (toml::Value::String(a), toml::Value::String(b)) => a.cmp(b),

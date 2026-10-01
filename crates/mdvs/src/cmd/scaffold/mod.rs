@@ -43,7 +43,7 @@ pub enum ScaffoldCommand {
         #[arg(long)]
         platform: Option<String>,
     },
-    /// Print the per-platform PostToolUse hook config (JSON) to merge into
+    /// Print the per-platform `PostToolUse` hook config (JSON) to merge into
     /// the harness's hooks file.
     ///
     /// `--platform` is required because the JSON shape varies (config file

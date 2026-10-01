@@ -30,8 +30,6 @@ similar_names = "allow"
 module_name_repetitions = "allow"
 
 # TEMPORARY: lints that still fire; this block shrinks wave by wave per TODO-0197.
-# wave 3 — docs
-doc_markdown = "allow"
 # wave 4 — control flow
 manual_let_else = "allow"
 single_match_else = "allow"

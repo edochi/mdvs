@@ -224,9 +224,9 @@ mod tests {
         );
     }
 
-    /// Claude Code's envelope template carries the PostToolUse PascalCase
+    /// Claude Code's envelope template carries the `PostToolUse` PascalCase
     /// event name baked into the JSON shape. The structural detail —
-    /// whether event_name lives in a field, deep in a wrapper, or
+    /// whether `event_name` lives in a field, deep in a wrapper, or
     /// anywhere else — is platform.toml's concern, not Rust's.
     #[test]
     fn claude_code_envelope_template_uses_post_tool_use() {

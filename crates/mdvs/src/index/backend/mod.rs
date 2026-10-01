@@ -89,7 +89,7 @@ impl Backend {
     /// `CreateTableMode::Overwrite`. Used on the first build and whenever
     /// `--force` is passed. For the small-delta case, use
     /// [`Backend::write_index_incremental`] instead — it avoids the full
-    /// table rewrite by deleting only the changed file_ids and appending
+    /// table rewrite by deleting only the changed `file_id`s and appending
     /// the newly embedded chunks.
     #[instrument(name = "write_index", skip_all)]
     pub async fn write_index(
@@ -104,15 +104,15 @@ impl Backend {
         }
     }
 
-    /// Incremental write: delete rows for the given file_ids (changed +
+    /// Incremental write: delete rows for the given `file_id`s (changed +
     /// removed), append rows for the given new chunks, refresh the schema
     /// metadata, and optimize the indexes. Used when an existing index is
     /// present and the change set is small — avoids the full-table rewrite
     /// (`CreateTableMode::Overwrite`) that `write_index` performs.
     ///
-    /// `file_ids_to_clear` must contain every file_id whose existing rows
+    /// `file_ids_to_clear` must contain every `file_id` whose existing rows
     /// must go (typically: removed files + edited files whose chunks are
-    /// being replaced). It may overlap with file_ids referenced by
+    /// being replaced). It may overlap with `file_id`s referenced by
     /// `new_chunks` — those files first have their old rows deleted, then
     /// their new chunks added.
     #[instrument(name = "write_index_incremental", skip_all)]

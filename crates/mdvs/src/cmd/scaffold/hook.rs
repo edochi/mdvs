@@ -1,4 +1,4 @@
-//! `mdvs scaffold hook` — print the per-platform PostToolUse hook config.
+//! `mdvs scaffold hook` — print the per-platform `PostToolUse` hook config.
 //!
 //! The emitted config calls `mdvs hook handle --platform <name> --kind
 //! <kind>` for each matcher. No shell scripts are generated; the runtime

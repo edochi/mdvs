@@ -1,10 +1,10 @@
-//! Outcome types for search-related leaf steps (ExecuteSearch).
+//! Outcome types for search-related leaf steps (`ExecuteSearch`).
 
 use serde::Serialize;
 
 use crate::block::{Block, Render};
 
-/// Full outcome for the execute_search step.
+/// Full outcome for the `execute_search` step.
 #[derive(Debug, Serialize)]
 pub struct ExecuteSearchOutcome {
     /// Number of hits found.
