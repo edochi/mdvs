@@ -22,7 +22,7 @@ pub(crate) fn load_schema(path: &Path) -> anyhow::Result<Value> {
     let ext = path
         .extension()
         .and_then(|s| s.to_str())
-        .map(|s| s.to_ascii_lowercase());
+        .map(str::to_ascii_lowercase);
     let content = fs::read_to_string(path)
         .map_err(|e| anyhow::anyhow!("failed to read schema '{}': {e}", path.display()))?;
     match ext.as_deref() {

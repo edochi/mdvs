@@ -237,10 +237,13 @@ impl DirectoryTree {
             result.insert(
                 field.clone(),
                 FieldPaths {
-                    allowed: allowed.get(field).map(|g| g.to_globs()).unwrap_or_default(),
+                    allowed: allowed
+                        .get(field)
+                        .map(GlobMap::to_globs)
+                        .unwrap_or_default(),
                     required: required
                         .get(field)
-                        .map(|g| g.to_globs())
+                        .map(GlobMap::to_globs)
                         .unwrap_or_default(),
                 },
             );

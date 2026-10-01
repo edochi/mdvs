@@ -187,7 +187,7 @@ mod tests {
         assert!(text.contains("bold"));
         assert!(text.contains("italic"));
         assert!(!text.contains("**"));
-        assert!(!text.contains("#"));
+        assert!(!text.contains('#'));
     }
 
     #[test]

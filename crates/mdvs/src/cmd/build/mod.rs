@@ -891,16 +891,14 @@ mod tests {
         let output = run(tmp.path(), None, None, None, false, true, false).await;
         assert!(
             !crate::step::has_failed(&output),
-            "first build failed: {:#?}",
-            output
+            "first build failed: {output:#?}"
         );
 
         // Run build again (tests standalone rebuild)
         let output = run(tmp.path(), None, None, None, false, true, false).await;
         assert!(
             !crate::step::has_failed(&output),
-            "build failed: {:#?}",
-            output
+            "build failed: {output:#?}"
         );
         assert!(!crate::step::has_failed(&output));
 
@@ -1057,8 +1055,7 @@ mod tests {
         let output = run(tmp.path(), None, None, None, false, true, false).await;
         assert!(
             !crate::step::has_failed(&output),
-            "build failed: {:#?}",
-            output
+            "build failed: {output:#?}"
         );
 
         // Verify sections were written. Under the `testing-mocks` feature the
@@ -1173,8 +1170,7 @@ mod tests {
         let output = run(tmp.path(), None, None, Some(512), true, true, false).await;
         assert!(
             !crate::step::has_failed(&output),
-            "build with --force failed: {:#?}",
-            output
+            "build with --force failed: {output:#?}"
         );
 
         let config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
@@ -1219,8 +1215,7 @@ mod tests {
         let output = run(tmp.path(), None, None, None, true, true, false).await;
         assert!(
             !crate::step::has_failed(&output),
-            "build with --force failed: {:#?}",
-            output
+            "build with --force failed: {output:#?}"
         );
     }
 
@@ -1446,8 +1441,7 @@ mod tests {
         let output = run(tmp.path(), None, None, None, false, true, false).await;
         assert!(
             !crate::step::has_failed(&output),
-            "build should succeed with new fields: {:#?}",
-            output
+            "build should succeed with new fields: {output:#?}"
         );
 
         // Verify index was created

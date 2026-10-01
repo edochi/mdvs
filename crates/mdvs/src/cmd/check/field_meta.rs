@@ -97,7 +97,7 @@ impl FieldValidators {
             let Some(subschema) = leaf_schemas.get(field.name.as_str()) else {
                 continue;
             };
-            if subschema.as_object().is_some_and(|o| o.is_empty()) {
+            if subschema.as_object().is_some_and(Map::is_empty) {
                 continue;
             }
             // Strip `x-mdvs` before compiling — it's an extension, not a

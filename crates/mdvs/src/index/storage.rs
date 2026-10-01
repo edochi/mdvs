@@ -175,11 +175,11 @@ impl BuildMetadata {
 fn build_array(values: &[Option<&Value>], ft: &FieldType) -> ArrayRef {
     match ft {
         FieldType::Boolean => {
-            let arr: BooleanArray = values.iter().map(|v| v.and_then(|v| v.as_bool())).collect();
+            let arr: BooleanArray = values.iter().map(|v| v.and_then(Value::as_bool)).collect();
             Arc::new(arr)
         }
         FieldType::Integer => {
-            let arr: Int64Array = values.iter().map(|v| v.and_then(|v| v.as_i64())).collect();
+            let arr: Int64Array = values.iter().map(|v| v.and_then(Value::as_i64)).collect();
             Arc::new(arr)
         }
         FieldType::Float => {

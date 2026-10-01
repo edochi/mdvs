@@ -242,7 +242,7 @@ impl Serialize for FieldTypeSerde {
 impl<'de> Deserialize<'de> for FieldTypeSerde {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         struct V;
-        impl<'de> Visitor<'de> for V {
+        impl Visitor<'_> for V {
             type Value = FieldTypeSerde;
             fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 write!(f, "a type expression string like \"Array(String)\"")

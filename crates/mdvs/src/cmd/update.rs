@@ -455,7 +455,7 @@ mod tests {
 
     fn reinfer_args(fields: &[&str]) -> ReinferArgs {
         ReinferArgs {
-            fields: fields.iter().map(|s| s.to_string()).collect(),
+            fields: fields.iter().map(ToString::to_string).collect(),
             with: vec![],
             max_categories: None,
             min_repetition: None,

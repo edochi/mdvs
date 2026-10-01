@@ -134,7 +134,7 @@ impl Embedder {
     pub async fn embed_batch(&self, texts: &[&str]) -> Vec<Vec<f32>> {
         match self {
             Embedder::Model2Vec(model) => {
-                let owned: Vec<String> = texts.iter().map(|s| s.to_string()).collect();
+                let owned: Vec<String> = texts.iter().map(ToString::to_string).collect();
                 model.encode(&owned)
             }
             #[cfg(any(test, feature = "testing-mocks"))]

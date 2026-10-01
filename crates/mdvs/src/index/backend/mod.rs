@@ -19,6 +19,7 @@ use lancedb::connection::LanceFileVersion;
 use lancedb::database::CreateTableMode;
 use lancedb::database::listing::{ListingDatabaseOptions, NewTableConfig};
 use lancedb::index::Index;
+use lancedb::index::scalar::FtsIndexBuilder;
 use lancedb::index::vector::IvfPqIndexBuilder;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -382,7 +383,7 @@ impl LanceBackend {
             return Ok(());
         }
         table
-            .create_index(&[COL_CHUNK_TEXT], Index::FTS(Default::default()))
+            .create_index(&[COL_CHUNK_TEXT], Index::FTS(FtsIndexBuilder::default()))
             .execute()
             .await
             .context("building full-text index")?;
@@ -657,7 +658,7 @@ mod tests {
     }
 
     fn fields(names: &[&str]) -> std::collections::HashSet<String> {
-        names.iter().map(|s| s.to_string()).collect()
+        names.iter().map(ToString::to_string).collect()
     }
 
     fn xlate(clause: &str, children: &[&str]) -> String {

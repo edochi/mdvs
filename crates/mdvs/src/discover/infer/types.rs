@@ -74,7 +74,7 @@ pub fn infer_field_types(scanned: &ScannedFiles) -> BTreeMap<String, FieldTypeIn
             types
                 .entry(path.clone())
                 .and_modify(|existing| {
-                    *existing = FieldType::from_widen(existing.clone(), ft.clone())
+                    *existing = FieldType::from_widen(existing.clone(), ft.clone());
                 })
                 .or_insert(ft);
 

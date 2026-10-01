@@ -92,7 +92,7 @@ pub fn run(path: &Path, format: ExportFormat, output_file: Option<&Path>) -> Com
         result: Ok(Outcome::ExportJsonschema(Box::new(
             ExportJsonschemaOutcome {
                 source: config_path,
-                destination: output_file.map(|p| p.to_path_buf()),
+                destination: output_file.map(Path::to_path_buf),
                 format,
                 fields_exported,
                 ignore_exported,

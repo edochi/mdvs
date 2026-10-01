@@ -31,7 +31,7 @@ pub(super) async fn embed_file(
         .iter()
         .map(|c| extract_plain_text(&c.plain_text))
         .collect();
-    let text_refs: Vec<&str> = plain_texts.iter().map(|s| s.as_str()).collect();
+    let text_refs: Vec<&str> = plain_texts.iter().map(String::as_str).collect();
     let embeddings = if text_refs.is_empty() {
         vec![]
     } else {

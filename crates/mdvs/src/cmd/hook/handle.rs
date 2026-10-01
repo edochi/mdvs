@@ -287,7 +287,7 @@ fn append_skill_pointer(body: &str, skill_install_path: &str) -> String {
 fn build_envelope(hooks: &HooksConfig, agent_msg: &str, user_msg: Option<&str>) -> String {
     let mut vars: HashMap<&str, Option<String>> = HashMap::new();
     vars.insert("MSG", Some(agent_msg.to_string()));
-    vars.insert("USER_MSG", user_msg.map(|s| s.to_string()));
+    vars.insert("USER_MSG", user_msg.map(ToString::to_string));
     let envelope = template::substitute(&hooks.envelope, &vars);
     envelope.to_string()
 }

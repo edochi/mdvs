@@ -136,7 +136,7 @@ fn init_infers_mixed_vault() {
     // field is present in all 3 files.
     let names: Vec<&str> = toml.fields.field.iter().map(|f| f.name.as_str()).collect();
     let mut sorted = names.clone();
-    sorted.sort();
+    sorted.sort_unstable();
     assert_eq!(sorted, vec!["author", "tags", "title", "year"]);
 
     // Each field present in 3/3 files (so `required = ["**"]` glob-style).

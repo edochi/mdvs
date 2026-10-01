@@ -102,7 +102,7 @@ mod tests {
     fn vars(pairs: &[(&'static str, Option<&str>)]) -> HashMap<&'static str, Option<String>> {
         pairs
             .iter()
-            .map(|(k, v)| (*k, v.map(|s| s.to_string())))
+            .map(|(k, v)| (*k, v.map(ToString::to_string)))
             .collect()
     }
 

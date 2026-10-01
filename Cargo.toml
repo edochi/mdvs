@@ -30,17 +30,6 @@ similar_names = "allow"
 module_name_repetitions = "allow"
 
 # TEMPORARY: lints that still fire; this block shrinks wave by wave per TODO-0197.
-# wave 2 — auto-fixable
-uninlined_format_args = "allow"
-redundant_closure_for_method_calls = "allow"
-manual_string_new = "allow"
-semicolon_if_nothing_returned = "allow"
-explicit_iter_loop = "allow"
-single_char_pattern = "allow"
-elidable_lifetime_names = "allow"
-stable_sort_primitive = "allow"
-cast_lossless = "allow"
-default_trait_access = "allow"
 # wave 3 — docs
 doc_markdown = "allow"
 # wave 4 — control flow

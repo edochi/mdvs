@@ -117,7 +117,7 @@ fn assert_encodable(
 
 fn format_path(segments: &[String]) -> String {
     if segments.is_empty() {
-        "".to_string()
+        String::new()
     } else {
         let mut out = String::new();
         for s in segments {

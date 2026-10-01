@@ -26,7 +26,7 @@ pub fn infer(field: &InferredField) -> Option<(toml::Value, toml::Value)> {
     let nums: Vec<f64> = field
         .distinct_values
         .iter()
-        .filter_map(|v| v.as_f64())
+        .filter_map(serde_json::Value::as_f64)
         .collect();
 
     if nums.is_empty() {

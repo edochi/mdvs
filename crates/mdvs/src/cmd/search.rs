@@ -493,8 +493,7 @@ mod tests {
         .await;
         assert!(
             !crate::step::has_failed(&output),
-            "search failed: {:?}",
-            output
+            "search failed: {output:?}"
         );
         let result = unwrap_search(&output);
         assert_eq!(result.query, "rust programming");

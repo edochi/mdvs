@@ -248,7 +248,7 @@ impl ScannedFiles {
             .add_custom_ignore_filename(".mdvsignore")
             .git_ignore(!config.skip_gitignore)
             .build()
-            .filter_map(|e| e.ok())
+            .filter_map(Result::ok)
             .filter(|e| e.file_type().is_some_and(|ft| ft.is_file()))
             .filter(|e| {
                 e.path()

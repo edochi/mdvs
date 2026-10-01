@@ -100,8 +100,8 @@ fn format_pretty_block(block: &Block, out: &mut String, indent: usize) {
                     // Fixed proportional column widths via per-column Modify
                     let col_count = headers
                         .as_ref()
-                        .map(|h| h.len())
-                        .or_else(|| rows.first().map(|r| r.len()))
+                        .map(Vec::len)
+                        .or_else(|| rows.first().map(Vec::len))
                         .unwrap_or(1);
                     // Overhead: borders (col_count + 1 chars) + padding (2 per col)
                     let overhead = (col_count + 1) + (col_count * 2);

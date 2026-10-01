@@ -62,7 +62,7 @@ pub fn field_hints(name: &str) -> Vec<FieldHint> {
 pub fn format_hints(hints: &[FieldHint]) -> String {
     hints
         .iter()
-        .map(|h| h.to_string())
+        .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -362,7 +362,7 @@ mod tests {
     #[test]
     fn format_hints_single() {
         let s = format_hints(&[FieldHint::EscapeSingleQuotes]);
-        assert!(s.contains("'"));
+        assert!(s.contains('\''));
         assert!(s.contains("''"));
     }
 

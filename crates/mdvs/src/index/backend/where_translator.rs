@@ -130,7 +130,7 @@ struct WalkCtx<'a> {
     internal_prefix: &'a str,
 }
 
-impl<'a> WalkCtx<'a> {
+impl WalkCtx<'_> {
     fn has_aliasing(&self) -> bool {
         !self.internal_prefix.is_empty() || !self.alias_to_internal.is_empty()
     }
@@ -208,7 +208,7 @@ fn walk_expr(
         Expr::Function(func) => {
             // Recurse into function arguments to qualify any column references.
             if let FunctionArguments::List(arg_list) = &mut func.args {
-                for arg in arg_list.args.iter_mut() {
+                for arg in &mut arg_list.args {
                     if let FunctionArg::Unnamed(FunctionArgExpr::Expr(inner)) = arg {
                         walk_expr(inner, ctx, rewrites)?;
                     } else if let FunctionArg::Named {

@@ -46,7 +46,7 @@ pub fn validate(
         .iter()
         .map(|f| (f.name.as_str(), f))
         .collect();
-    let ignore_set: HashSet<&str> = config.fields.ignore.iter().map(|s| s.as_str()).collect();
+    let ignore_set: HashSet<&str> = config.fields.ignore.iter().map(String::as_str).collect();
     let validators = FieldValidators::build(config)?;
     let pipeline = Pipeline::for_config(config);
     // Per-field precomputed metadata (compiled GlobSets for allowed/required,

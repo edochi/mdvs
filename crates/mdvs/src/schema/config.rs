@@ -303,8 +303,7 @@ impl MdvsToml {
         for ignored in &self.fields.ignore {
             if self.fields.field.iter().any(|f| &f.name == ignored) {
                 anyhow::bail!(
-                    "field '{}' appears in both [fields].ignore and [[fields.field]] — remove it from one",
-                    ignored
+                    "field '{ignored}' appears in both [fields].ignore and [[fields.field]] — remove it from one"
                 );
             }
         }
@@ -1113,8 +1112,7 @@ nullable = false
         assert!(
             err.to_string()
                 .contains("appears in both [fields].ignore and [[fields.field]]"),
-            "unexpected error: {}",
-            err
+            "unexpected error: {err}"
         );
     }
 
@@ -1161,8 +1159,7 @@ nullable = false
         assert!(
             err.to_string()
                 .contains("field 'status' is declared more than once"),
-            "unexpected error: {}",
-            err
+            "unexpected error: {err}"
         );
     }
 
@@ -1233,8 +1230,7 @@ nullable = false
         let err = config.validate().unwrap_err();
         assert!(
             err.to_string().contains("invalid glob pattern 'blog'"),
-            "unexpected error: {}",
-            err
+            "unexpected error: {err}"
         );
     }
 
@@ -1253,8 +1249,7 @@ nullable = false
         assert!(
             err.to_string()
                 .contains("invalid glob pattern 'blog/post.md'"),
-            "unexpected error: {}",
-            err
+            "unexpected error: {err}"
         );
     }
 
@@ -1309,8 +1304,7 @@ nullable = false
         assert!(
             err.to_string()
                 .contains("required glob 'blog/**' is not covered by any allowed pattern"),
-            "unexpected error: {}",
-            err
+            "unexpected error: {err}"
         );
     }
 
@@ -1635,7 +1629,7 @@ nullable = false
     #[test]
     fn validate_rejects_empty_name() {
         let config = full_toml(vec![TomlField {
-            name: "".into(),
+            name: String::new(),
             field_type: FieldTypeSerde::Scalar("String".into()),
             allowed: vec!["**".into()],
             required: vec![],

@@ -202,7 +202,7 @@ impl LanceBackend {
             let chunk_texts = str_col(batch, COL_CHUNK_TEXT)?;
             let scores = f32_col(batch, score_col)?;
             for i in 0..batch.num_rows() {
-                let raw = scores.value(i) as f64;
+                let raw = f64::from(scores.value(i));
                 let score = if mode == SearchMode::Semantic {
                     1.0 - raw
                 } else {
