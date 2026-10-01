@@ -14,6 +14,7 @@ use serde::Deserialize;
 
 use crate::cmd::check;
 use crate::cmd::hook::HookKind;
+use crate::discover::scan::is_markdown_path;
 use crate::output::OutputFormat;
 use crate::scaffold::{HooksConfig, Platform, template};
 use crate::step;
@@ -97,11 +98,11 @@ fn handle_validate<W: Write>(
     platform: &Platform,
     payload: &HookPayload,
 ) -> Result<()> {
-    // Only fire on .md edits.
+    // Only fire on markdown edits, using the same rule as the scanner.
     let Some(file_path_str) = payload.tool_input.file_path.as_deref() else {
         return Ok(());
     };
-    if !file_path_str.ends_with(".md") {
+    if !is_markdown_path(Path::new(file_path_str)) {
         return Ok(());
     }
 
@@ -564,9 +565,41 @@ constraints = { categories = ["active", "archived"] }
     }
 
     #[test]
-    fn validate_silent_on_non_md_file() {
+    fn validate_reaches_markdown_extension_file() {
         let dir = TempDir::new().unwrap();
         write_fixture_vault(dir.path(), "active");
+        let file = dir.path().join("long.markdown");
+        std::fs::write(&file, "---\nstatus: bogus\n---\n# Long\n").unwrap();
+        let stdin = format!(r#"{{"tool_input":{{"file_path":"{}"}}}}"#, file.display());
+        let mut out = Vec::new();
+        run(
+            Cursor::new(stdin),
+            &mut out,
+            "claude-code",
+            HookKind::Validate,
+        )
+        .unwrap();
+        assert!(
+            !out.is_empty(),
+            "a .markdown edit should reach validation and surface its violation"
+        );
+
+        let env: Value = serde_json::from_slice(&out).unwrap();
+        let context = env["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap();
+        assert!(
+            context.contains("long.markdown"),
+            "violation should name the .markdown file: {context}"
+        );
+    }
+
+    #[test]
+    fn validate_silent_on_non_md_file() {
+        // The vault carries a violation, so any output means the extension
+        // gate let a non-markdown edit through to validation.
+        let dir = TempDir::new().unwrap();
+        write_fixture_vault(dir.path(), "bogus");
         let stdin = format!(
             r#"{{"tool_input":{{"file_path":"{}/some.rs"}}}}"#,
             dir.path().display()

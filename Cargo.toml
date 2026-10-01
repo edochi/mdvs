@@ -41,7 +41,6 @@ items_after_statements = "allow"
 enum_glob_use = "allow"
 bool_to_int_with_if = "allow"
 float_cmp = "allow"
-case_sensitive_file_extension_comparisons = "allow"
 # wave 5 — casts
 cast_possible_truncation = "allow"
 cast_possible_wrap = "allow"

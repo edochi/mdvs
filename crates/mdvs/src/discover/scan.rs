@@ -12,6 +12,13 @@ use tracing::{info, instrument, warn};
 const MAX_NESTING_DEPTH: usize = 50;
 const MAX_FIELD_COUNT: usize = 1000;
 
+/// Whether `path` names a markdown file: its extension is exactly `md` or
+/// `markdown`. The comparison is case-sensitive, so `NOTE.MD` is not a match.
+pub(crate) fn is_markdown_path(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|ext| ext == "md" || ext == "markdown")
+}
+
 /// Which `gray_matter` engine to use for a given file. Internal-only; the
 /// user-facing equivalent is [`FrontmatterFormat`] (which adds `Auto`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -250,11 +257,7 @@ impl ScannedFiles {
             .build()
             .filter_map(Result::ok)
             .filter(|e| e.file_type().is_some_and(|ft| ft.is_file()))
-            .filter(|e| {
-                e.path()
-                    .extension()
-                    .is_some_and(|ext| ext == "md" || ext == "markdown")
-            })
+            .filter(|e| is_markdown_path(e.path()))
         {
             let abs_path = entry.path();
             let rel_path = match abs_path.strip_prefix(root) {
