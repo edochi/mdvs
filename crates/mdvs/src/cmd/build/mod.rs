@@ -205,6 +205,7 @@ pub async fn build_core(
             .iter()
             .filter(|f| !existing.contains(f.name.as_str()))
             .filter(|f| !config.fields.ignore.contains(&f.name))
+            .inspect(|f| f.emit_inexact_widening_warning())
             .map(|f| TomlField {
                 name: f.name.clone(),
                 field_type: FieldTypeSerde::from(&f.field_type),

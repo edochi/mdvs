@@ -213,6 +213,7 @@ pub async fn run(
         if config.fields.ignore.contains(&inf.name) {
             continue;
         }
+        inf.emit_inexact_widening_warning();
 
         let new_type = FieldTypeSerde::from(&inf.field_type);
         let constraints = if let Some(args) = reinfer {

@@ -15,7 +15,10 @@ the schema from an external JSON Schema file via `--from-jsonschema`.
    tracking. Fields with unrepresentable shapes (`Array(Object{...})`) are
    partitioned into `schema.dropped`.
 4. **Warn** — `schema.emit_dropped_warnings()` prints one stderr line per
-   dropped field with the field name, reason, and first-observed file path.
+   dropped field with the field name, reason, and first-observed file path. Each
+   inferred field that widens integers to Float while holding integers beyond
+   ±2^53 (no exact Float equivalent) prints an `emit_inexact_widening_warning()`
+   line.
 5. **Build config** — `MdvsToml::from_inferred(&schema, scan_config)`
    (`schema/config.rs`) — converts representable `InferredField`s to
    `TomlField`s, runs `infer_constraints()` for categorical fields, runs

@@ -187,7 +187,9 @@ Bound types must match the field type:
   are rejected at config load — likely a mistake; an integer can never equal
   `0.5`.
 - **Float fields** accept both integer and float bounds (integer bounds widen to
-  `f64`).
+  `f64`). An integer bound whose magnitude exceeds 2^53 is rejected at config
+  load, since a float cannot hold it exactly — use a smaller integer or a float
+  bound.
 
 If both bounds are present, `min` must be `<= max` — otherwise rejected at
 config load.

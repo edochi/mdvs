@@ -150,7 +150,10 @@ above.
 One subtype check runs in Rust ahead of jsonschema: a `Float` field without
 `widen-int-to-float` rejects integer-backed values (`5` is rejected, `5.0` is
 accepted). JSON Schema's `"number"` accepts both — but YAML and TOML preserve
-the int/float distinction at parse time, and so does mdvs.
+the int/float distinction at parse time, and so does mdvs. With
+`widen-int-to-float`, integers whose magnitude exceeds 2^53 are not widened,
+since a float cannot hold them exactly; they are reported as type errors on the
+`Float` or `Array(Float)` field.
 
 ## Null handling
 

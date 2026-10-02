@@ -168,6 +168,7 @@ pub fn run(
             .iter()
             .filter(|f| !existing.contains(f.name.as_str()))
             .filter(|f| !config.fields.ignore.contains(&f.name))
+            .inspect(|f| f.emit_inexact_widening_warning())
             .map(|f| TomlField {
                 name: f.name.clone(),
                 field_type: FieldTypeSerde::from(&f.field_type),
@@ -560,6 +561,54 @@ mod tests {
         );
 
         let step = run(tmp.path(), true, false, None);
+        let result = unwrap_check(&step);
+        assert!(result.violations.is_empty());
+    }
+
+    /// 2^53, the largest magnitude at which every integer is an exact f64.
+    fn f64_exact_limit() -> i64 {
+        i64::try_from(crate::num::F64_EXACT_INT_LIMIT).unwrap()
+    }
+
+    /// Writes a single file with the given integer `rating`, declares it as
+    /// a Float field with `widen_int_to_float`, and runs check.
+    fn check_widened_float_rating(rating: i64) -> CommandResult {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("blog")).unwrap();
+        fs::write(
+            tmp.path().join("blog/post1.md"),
+            format!("---\nrating: {rating}\n---\n# Post\nBody."),
+        )
+        .unwrap();
+        write_toml(
+            tmp.path(),
+            vec![TomlField {
+                name: "rating".into(),
+                field_type: FieldTypeSerde::Scalar("Float".into()),
+                allowed: vec!["**".into()],
+                required: vec![],
+                nullable: false,
+                constraints: None,
+                preprocess: vec![crate::preprocess::ValueStage::WidenIntToFloat],
+            }],
+            vec![],
+        );
+        run(tmp.path(), true, false, None)
+    }
+
+    #[test]
+    fn int_beyond_f64_precision_in_widened_float_is_wrong_type() {
+        let step = check_widened_float_rating(f64_exact_limit() + 1);
+        let result = unwrap_check(&step);
+        assert_eq!(result.violations.len(), 1);
+        let v = &result.violations[0];
+        assert_eq!(v.field, "rating");
+        assert!(matches!(v.kind, ViolationKind::WrongType));
+    }
+
+    #[test]
+    fn int_at_f64_precision_limit_in_widened_float_passes() {
+        let step = check_widened_float_rating(f64_exact_limit());
         let result = unwrap_check(&step);
         assert!(result.violations.is_empty());
     }

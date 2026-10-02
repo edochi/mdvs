@@ -16,7 +16,10 @@ config.
    `--jsonschema` override, runs inference + merges any newly-discovered fields
    into the config. Fields with unrepresentable shapes (`Array(Object{...})`)
    are partitioned out by `InferredSchema::infer` and surfaced via
-   `emit_dropped_warnings()` to stderr; they are NOT added to the config.
+   `emit_dropped_warnings()` to stderr; they are NOT added to the config. Each
+   newly added field that widens integers to Float while holding integers beyond
+   ±2^53 prints an `emit_inexact_widening_warning()` line; fields already
+   declared or ignored stay silent.
 3. **Scan** — `ScannedFiles::scan(path, &config.scan)` —
    `ScannedFile.frontmatter_error` carries any YAML→JSON representation failure.
 4. **Build validators + field metas + pipeline** — once per `validate()` call:

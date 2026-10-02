@@ -428,8 +428,11 @@ is called from `cmd/check.rs::check_field_values` before
   value — no double violation.
 
 Current scope: `Float` and `Array(Float)` fields without `WidenIntToFloat` in
-`preprocess` reject integer-backed values. Future ValueStages with a similar
-"absence-must-be-enforced-in-Rust" requirement extend the same function.
+`preprocess` reject integer-backed values. With `WidenIntToFloat`, integers
+whose magnitude exceeds 2^53 have no exact f64 equivalent: the stage leaves them
+unwidened and the check reports them as `WrongType` rather than rounding them.
+Future ValueStages with a similar "absence-must-be-enforced-in-Rust" requirement
+extend the same function.
 
 ## Date and DateTime types (TODO-0007)
 

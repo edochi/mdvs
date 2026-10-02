@@ -5,6 +5,7 @@
 //! constraint is well-formed at config load time.
 
 use crate::discover::field_type::FieldType;
+use crate::num::i64_to_f64_exact;
 
 /// Check that `min`/`max` are applicable to `field_type` and well-formed.
 ///
@@ -57,18 +58,14 @@ pub(super) fn validate_for_type(
     }
 
     // If both present, check min <= max.
-    if let (Some(min_v), Some(max_v)) = (min, max) {
-        let min_f = toml_to_f64(min_v);
-        let max_f = toml_to_f64(max_v);
-        if let (Some(lo), Some(hi)) = (min_f, max_f)
-            && lo > hi
-        {
-            return Some(format!(
-                "field '{field_name}': min ({}) is greater than max ({})",
-                format_toml_num(min_v),
-                format_toml_num(max_v),
-            ));
-        }
+    if let (Some(min_v), Some(max_v)) = (min, max)
+        && min_exceeds_max(min_v, max_v)
+    {
+        return Some(format!(
+            "field '{field_name}': min ({}) is greater than max ({})",
+            format_toml_num(min_v),
+            format_toml_num(max_v),
+        ));
     }
 
     None
@@ -87,9 +84,17 @@ fn validate_bound_type(
 ) -> Option<String> {
     match (element_type, bound) {
         // Integer field: only integer bounds allowed.
-        // Float field: integer or float bounds (widened to f64).
+        // Float field: integer or float bounds; integers widen to f64 and must
+        // therefore convert exactly.
         (FieldType::Integer, toml::Value::Integer(_))
-        | (FieldType::Float, toml::Value::Integer(_) | toml::Value::Float(_)) => None,
+        | (FieldType::Float, toml::Value::Float(_)) => None,
+        (FieldType::Float, toml::Value::Integer(n)) => match i64_to_f64_exact(*n) {
+            Some(_) => None,
+            None => Some(format!(
+                "field '{field_name}': {bound_name} ({n}) is beyond ±2^53 and has no exact \
+                 Float equivalent — use a smaller integer or a float bound",
+            )),
+        },
         (FieldType::Integer, toml::Value::Float(_)) => Some(format!(
             "field '{field_name}': {bound_name} is a float but field type is Integer \
              — use an integer bound",
@@ -102,10 +107,27 @@ fn validate_bound_type(
     }
 }
 
-/// Convert a TOML value to f64 for comparison.
-fn toml_to_f64(v: &toml::Value) -> Option<f64> {
+/// Whether `min_v` is greater than `max_v`.
+///
+/// Two integer bounds compare exactly in i64; any other pair compares in f64.
+/// Integer bounds on Float fields were already checked to convert exactly, so
+/// a bound that does not convert only arises for non-numeric values, which
+/// are reported elsewhere.
+fn min_exceeds_max(min_v: &toml::Value, max_v: &toml::Value) -> bool {
+    if let (toml::Value::Integer(lo), toml::Value::Integer(hi)) = (min_v, max_v) {
+        return lo > hi;
+    }
+    matches!(
+        (bound_to_f64(min_v), bound_to_f64(max_v)),
+        (Some(lo), Some(hi)) if lo > hi
+    )
+}
+
+/// Convert a numeric TOML bound to f64; `None` for non-numeric values and for
+/// integers beyond ±2^53, which f64 cannot hold exactly.
+fn bound_to_f64(v: &toml::Value) -> Option<f64> {
     match v {
-        toml::Value::Integer(n) => Some(*n as f64),
+        toml::Value::Integer(n) => i64_to_f64_exact(*n),
         toml::Value::Float(f) => Some(*f),
         _ => None,
     }
@@ -279,6 +301,81 @@ mod tests {
     #[test]
     fn min_greater_than_max_rejects() {
         let err = validate_for_type("f", &FieldType::Integer, &int_min(10), &int_max(5)).unwrap();
+        assert!(err.contains("greater than"));
+    }
+
+    /// 2^53, the largest magnitude at which every integer is an exact f64.
+    fn f64_exact_limit() -> i64 {
+        i64::try_from(crate::num::F64_EXACT_INT_LIMIT).unwrap()
+    }
+
+    #[test]
+    fn integer_field_bounds_beyond_f64_precision_compare_exactly() {
+        // As f64 both bounds round to 2^53 and would look equal.
+        let err = validate_for_type(
+            "f",
+            &FieldType::Integer,
+            &int_min(f64_exact_limit() + 1),
+            &int_max(f64_exact_limit()),
+        )
+        .unwrap();
+        assert!(err.contains("greater than"));
+    }
+
+    #[test]
+    fn integer_field_accepts_bounds_beyond_f64_precision() {
+        assert!(
+            validate_for_type(
+                "f",
+                &FieldType::Integer,
+                &int_min(-f64_exact_limit() - 1),
+                &int_max(f64_exact_limit() + 1),
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn float_field_lone_integer_min_beyond_f64_precision_rejects() {
+        let err = validate_for_type(
+            "f",
+            &FieldType::Float,
+            &int_min(f64_exact_limit() + 1),
+            &None,
+        )
+        .unwrap();
+        assert!(err.contains("beyond"));
+    }
+
+    #[test]
+    fn float_field_integer_pair_beyond_f64_precision_rejects() {
+        let err = validate_for_type(
+            "f",
+            &FieldType::Float,
+            &int_min(0),
+            &int_max(f64_exact_limit() + 1),
+        )
+        .unwrap();
+        assert!(err.contains("beyond"));
+    }
+
+    #[test]
+    fn array_float_field_mixed_bounds_beyond_f64_precision_rejects() {
+        let ft = FieldType::Array(Box::new(FieldType::Float));
+        let err =
+            validate_for_type("f", &ft, &int_min(-f64_exact_limit() - 1), &float_max(1.0)).unwrap();
+        assert!(err.contains("beyond"));
+    }
+
+    #[test]
+    fn float_field_integer_bound_at_f64_precision_limit_compares() {
+        let err = validate_for_type(
+            "f",
+            &FieldType::Float,
+            &int_min(f64_exact_limit()),
+            &float_max(1.0),
+        )
+        .unwrap();
         assert!(err.contains("greater than"));
     }
 

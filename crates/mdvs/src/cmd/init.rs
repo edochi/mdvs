@@ -143,6 +143,9 @@ pub fn run(
         infer_start.elapsed().as_millis() as u64,
     ));
     schema.emit_dropped_warnings();
+    for field in &schema.fields {
+        field.emit_inexact_widening_warning();
+    }
 
     let total_files = scanned.files.len();
     info!(fields = schema.fields.len(), "schema inferred");

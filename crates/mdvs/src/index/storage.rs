@@ -1,4 +1,5 @@
 use crate::discover::field_type::FieldType;
+use crate::num::i64_to_f64_exact;
 use crate::schema::config::MdvsToml;
 use crate::schema::json_schema::dsl_to_canonical;
 use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig};
@@ -185,7 +186,16 @@ fn build_array(values: &[Option<&Value>], ft: &FieldType) -> ArrayRef {
         FieldType::Float => {
             let arr: Float64Array = values
                 .iter()
-                .map(|v| v.and_then(|v| v.as_f64().or_else(|| v.as_i64().map(|i| i as f64))))
+                .map(|v| {
+                    v.and_then(|v| match v {
+                        // `as_f64` on an integer-backed number rounds silently,
+                        // so integers go through the exact conversion and
+                        // become null when they have no exact f64 equivalent.
+                        Value::Number(n) if n.is_f64() => n.as_f64(),
+                        Value::Number(n) => n.as_i64().and_then(i64_to_f64_exact),
+                        _ => None,
+                    })
+                })
                 .collect();
             Arc::new(arr)
         }
@@ -532,6 +542,18 @@ pub struct FileIndexEntry {
 mod tests {
     use super::*;
     use arrow::array::Array;
+    use serde_json::json;
+
+    #[test]
+    fn float_column_stores_unrepresentable_integer_as_null() {
+        let exact = json!(1);
+        // 2^53 + 1, the smallest positive integer with no exact f64 equivalent.
+        let beyond = json!(i64::try_from(crate::num::F64_EXACT_INT_LIMIT).unwrap() + 1);
+        let values = [Some(&exact), Some(&beyond)];
+        let arr = build_array(&values, &FieldType::Float);
+        let floats = arr.as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_eq!(floats.iter().collect::<Vec<_>>(), vec![Some(1.0), None]);
+    }
 
     // ------------------------------------------------------------------------
     // TODO-0097 step 5: dotted-name leaves → nested Arrow Struct columns

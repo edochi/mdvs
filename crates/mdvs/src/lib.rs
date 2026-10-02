@@ -21,6 +21,8 @@ pub mod cmd;
 pub mod discover;
 /// Chunking, embedding, storage, and backend abstraction.
 pub mod index;
+/// Checked numeric conversions that never lose precision silently.
+pub(crate) mod num;
 /// Outcome types for all pipeline steps and commands.
 pub mod outcome;
 /// Output formatting types and the `CommandOutput` trait.

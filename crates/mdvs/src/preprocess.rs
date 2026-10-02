@@ -11,6 +11,7 @@
 //! configure them manually.
 
 use crate::discover::field_type::FieldType;
+use crate::num::i64_to_f64_exact;
 use crate::schema::config::{MdvsToml, TomlField};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -166,18 +167,24 @@ fn coerce_to_string(value: &Value, field_type: &FieldType) -> Option<Value> {
 
 /// Convert integer-backed numbers to f64-backed numbers for Float / Array(Float)
 /// fields. Returns `None` when no conversion is needed.
+///
+/// Integers whose magnitude exceeds 2^53 have no exact f64 equivalent and are
+/// left as integers; [`strict_subtype_check`] reports them as type errors.
 fn widen_int_to_float(value: &Value, field_type: &FieldType) -> Option<Value> {
     match (field_type, value) {
         (FieldType::Float, Value::Number(n)) if n.is_i64() => n
             .as_i64()
-            .and_then(|i| serde_json::Number::from_f64(i as f64).map(Value::Number)),
+            .and_then(i64_to_f64_exact)
+            .and_then(serde_json::Number::from_f64)
+            .map(Value::Number),
         (FieldType::Array(inner), Value::Array(arr)) if matches!(**inner, FieldType::Float) => {
             let widened: Vec<Value> = arr
                 .iter()
                 .map(|elem| match elem {
                     Value::Number(n) if n.is_i64() => n
                         .as_i64()
-                        .and_then(|i| serde_json::Number::from_f64(i as f64))
+                        .and_then(i64_to_f64_exact)
+                        .and_then(serde_json::Number::from_f64)
                         .map_or_else(|| elem.clone(), Value::Number),
                     _ => elem.clone(),
                 })
@@ -185,6 +192,17 @@ fn widen_int_to_float(value: &Value, field_type: &FieldType) -> Option<Value> {
             Some(Value::Array(widened))
         }
         _ => None,
+    }
+}
+
+/// Whether `value` is an integer-backed number that widening cannot turn into
+/// an exactly equal f64 (magnitude above 2^53, including u64 beyond i64).
+pub(crate) fn is_unwidenable_integer(value: &Value) -> bool {
+    match value {
+        Value::Number(n) if n.is_i64() || n.is_u64() => {
+            n.as_i64().and_then(i64_to_f64_exact).is_none()
+        }
+        _ => false,
     }
 }
 
@@ -210,28 +228,44 @@ pub(crate) fn strict_subtype_check(
     field_type: &FieldType,
     value: &Value,
 ) -> Option<String> {
-    // Float strict: reject integer-backed numbers unless widen_int_to_float
-    // is opted in.
-    if matches!(field_type, FieldType::Float)
-        && !field.preprocess.contains(&ValueStage::WidenIntToFloat)
-        && matches!(value, Value::Number(n) if n.is_i64() || n.is_u64())
-    {
-        return Some("got Integer".to_string());
+    let widens = field.preprocess.contains(&ValueStage::WidenIntToFloat);
+
+    if matches!(field_type, FieldType::Float) {
+        // Float strict: reject integer-backed numbers unless widen_int_to_float
+        // is opted in. Even when it is, an integer beyond 2^53 cannot widen
+        // exactly and is rejected rather than silently rounded.
+        if !widens && matches!(value, Value::Number(n) if n.is_i64() || n.is_u64()) {
+            return Some("got Integer".to_string());
+        }
+        if widens && is_unwidenable_integer(value) {
+            return Some(format!(
+                "got Integer {value} beyond ±2^53, which has no exact Float equivalent"
+            ));
+        }
     }
 
     // Array(Float) strict: reject if any element is integer-backed unless
-    // widen_int_to_float is opted in.
+    // widen_int_to_float is opted in; with it, reject elements beyond 2^53.
     if let FieldType::Array(inner) = field_type
         && matches!(**inner, FieldType::Float)
-        && !field.preprocess.contains(&ValueStage::WidenIntToFloat)
         && let Value::Array(arr) = value
     {
-        let bad = arr.iter().enumerate().find_map(|(i, elem)| match elem {
-            Value::Number(n) if n.is_i64() || n.is_u64() => Some(i),
-            _ => None,
-        });
-        if let Some(i) = bad {
-            return Some(format!("got Integer at index {i}"));
+        if !widens {
+            let bad = arr.iter().enumerate().find_map(|(i, elem)| match elem {
+                Value::Number(n) if n.is_i64() || n.is_u64() => Some(i),
+                _ => None,
+            });
+            if let Some(i) = bad {
+                return Some(format!("got Integer at index {i}"));
+            }
+        } else if let Some((i, elem)) = arr
+            .iter()
+            .enumerate()
+            .find(|(_, elem)| is_unwidenable_integer(elem))
+        {
+            return Some(format!(
+                "got Integer {elem} at index {i} beyond ±2^53, which has no exact Float equivalent"
+            ));
         }
     }
 
@@ -469,6 +503,70 @@ mod tests {
         let r = widen_int_to_float(&json!(42), &FieldType::Float).unwrap();
         // The serde_json::Number internal representation differs but value is same
         assert_eq!(r.as_f64(), Some(42.0));
+    }
+
+    /// 2^53, the largest magnitude at which every integer is an exact f64.
+    fn f64_exact_limit() -> i64 {
+        i64::try_from(crate::num::F64_EXACT_INT_LIMIT).unwrap()
+    }
+
+    #[test]
+    fn widen_int_to_float_widens_at_precision_limit() {
+        let r = widen_int_to_float(&json!(f64_exact_limit()), &FieldType::Float).unwrap();
+        assert!(r.is_f64());
+        assert_eq!(r.as_i64(), None);
+        assert_eq!(r, json!(9_007_199_254_740_992.0));
+    }
+
+    #[test]
+    fn widen_int_to_float_skips_int_beyond_precision_limit() {
+        let r = widen_int_to_float(&json!(f64_exact_limit() + 1), &FieldType::Float);
+        assert!(r.is_none());
+    }
+
+    #[test]
+    fn widen_int_to_float_keeps_array_element_beyond_precision_limit() {
+        let arr_float = FieldType::Array(Box::new(FieldType::Float));
+        let r = widen_int_to_float(&json!([1, f64_exact_limit() + 1]), &arr_float).unwrap();
+        assert_eq!(r, json!([1.0, f64_exact_limit() + 1]));
+    }
+
+    #[test]
+    fn strict_check_rejects_int_beyond_precision_limit_when_widening() {
+        let field = float_field("score", vec![ValueStage::WidenIntToFloat]);
+        let result = strict_subtype_check(&field, &FieldType::Float, &json!(f64_exact_limit() + 1));
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn strict_check_rejects_array_element_beyond_precision_limit_when_widening() {
+        let field = array_float_field("scores", vec![ValueStage::WidenIntToFloat]);
+        let arr_float = FieldType::Array(Box::new(FieldType::Float));
+        let result = strict_subtype_check(&field, &arr_float, &json!([1, f64_exact_limit() + 1]));
+        assert!(result.is_some_and(|d| d.contains("index 1")));
+    }
+
+    #[test]
+    fn strict_check_rejects_negative_int_beyond_precision_limit_when_widening() {
+        let field = float_field("score", vec![ValueStage::WidenIntToFloat]);
+        let result =
+            strict_subtype_check(&field, &FieldType::Float, &json!(-f64_exact_limit() - 1));
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn strict_check_rejects_u64_beyond_i64_when_widening() {
+        let field = float_field("score", vec![ValueStage::WidenIntToFloat]);
+        let result = strict_subtype_check(&field, &FieldType::Float, &json!(u64::MAX));
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn strict_check_rejects_u64_array_element_beyond_i64_when_widening() {
+        let field = array_float_field("scores", vec![ValueStage::WidenIntToFloat]);
+        let arr_float = FieldType::Array(Box::new(FieldType::Float));
+        let result = strict_subtype_check(&field, &arr_float, &json!([0.5, u64::MAX]));
+        assert!(result.is_some_and(|d| d.contains("index 1")));
     }
 
     #[test]
