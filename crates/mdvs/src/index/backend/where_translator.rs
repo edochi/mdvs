@@ -148,7 +148,7 @@ fn walk_expr(
     // Pre-rewrite check: is this whole node an array-field comparison we
     // should convert to array_has(...)? If so, replace it and capture the
     // before/after pair for the translation note.
-    if let Some(new_expr) = try_array_rewrite(expr, ctx)? {
+    if let Some(new_expr) = try_array_rewrite(expr, ctx) {
         let original = expr.to_string();
         let rewritten = new_expr.to_string();
         rewrites.push(WhereRewrite {
@@ -342,14 +342,14 @@ fn qualify_compound(parts: &mut Vec<Ident>, ctx: &WalkCtx) -> anyhow::Result<()>
 
 /// If `expr` is an array-field equality (`=`, `!=`, `IN`, `NOT IN`) against
 /// scalar literals, return the rewritten `array_has(...)` form. Otherwise
-/// return `Ok(None)`.
-fn try_array_rewrite(expr: &Expr, ctx: &WalkCtx) -> anyhow::Result<Option<Expr>> {
+/// return `None`.
+fn try_array_rewrite(expr: &Expr, ctx: &WalkCtx) -> Option<Expr> {
     match expr {
         Expr::BinaryOp { left, op, right } => {
             let is_eq = matches!(op, BinaryOperator::Eq);
             let is_neq = matches!(op, BinaryOperator::NotEq);
             if !is_eq && !is_neq {
-                return Ok(None);
+                return None;
             }
             // Identify which side is the array-field identifier and which is
             // the scalar literal. Both orderings supported.
@@ -360,35 +360,26 @@ fn try_array_rewrite(expr: &Expr, ctx: &WalkCtx) -> anyhow::Result<Option<Expr>>
             } else if let (Some(f), Some(l)) = (array_field_name(right, ctx), as_literal(left)) {
                 (f, l)
             } else {
-                return Ok(None);
+                return None;
             };
             let array_has = make_array_has(&field_name, literal);
-            Ok(Some(if is_eq { array_has } else { negate(array_has) }))
+            Some(if is_eq { array_has } else { negate(array_has) })
         }
         Expr::InList {
             expr: e,
             list,
             negated,
         } => {
-            let Some(field_name) = array_field_name(e, ctx) else {
-                return Ok(None);
-            };
+            let field_name = array_field_name(e, ctx)?;
             // Every list entry must be a scalar literal — if any isn't, fall
             // back to the un-rewritten clause (Lance will error if needed).
             let mut literals = Vec::with_capacity(list.len());
             for item in list {
-                let Some(lit) = as_literal(item) else {
-                    return Ok(None);
-                };
-                literals.push(lit);
+                literals.push(as_literal(item)?);
             }
-            // `literals` is guaranteed non-empty here: the early returns
-            // above bail out on empty / non-literal IN lists. `pop` returns
-            // None only when the source is empty.
+            // An empty list yields no rewrite.
             let mut iter = literals.into_iter();
-            let Some(first_lit) = iter.next() else {
-                return Ok(None);
-            };
+            let first_lit = iter.next()?;
             // Build (array_has(f, v1) OR array_has(f, v2) OR ...).
             let first = make_array_has(&field_name, first_lit);
             let or_chain = iter.fold(first, |acc, lit| Expr::BinaryOp {
@@ -396,13 +387,13 @@ fn try_array_rewrite(expr: &Expr, ctx: &WalkCtx) -> anyhow::Result<Option<Expr>>
                 op: BinaryOperator::Or,
                 right: Box::new(make_array_has(&field_name, lit)),
             });
-            Ok(Some(if *negated {
+            Some(if *negated {
                 Expr::Nested(Box::new(negate(Expr::Nested(Box::new(or_chain)))))
             } else {
                 or_chain
-            }))
+            })
         }
-        _ => Ok(None),
+        _ => None,
     }
 }
 

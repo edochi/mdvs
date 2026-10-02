@@ -31,11 +31,6 @@ module_name_repetitions = "allow"
 
 # TEMPORARY: lints that still fire; this block shrinks wave by wave per TODO-0197.
 # wave 6 — signatures
-needless_pass_by_value = "allow"
-unnecessary_wraps = "allow"
-trivially_copy_pass_by_ref = "allow"
-ref_option = "allow"
 fn_params_excessive_bools = "allow"
-implicit_hasher = "allow"
 # wave 7 — function size
 too_many_lines = "allow"

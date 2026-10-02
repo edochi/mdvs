@@ -221,10 +221,12 @@ pub async fn run(
                 None
             } else if args.with.is_empty() {
                 // Bare reinfer / no --with → heuristic default
-                let max_cat = args.max_categories.unwrap_or(config.fields.max_categories);
+                let max_cat = args
+                    .max_categories
+                    .unwrap_or(config.fields.max_categories());
                 let min_rep = args
                     .min_repetition
-                    .unwrap_or(config.fields.min_category_repetition);
+                    .unwrap_or(config.fields.min_category_repetition());
                 infer_constraints(inf, max_cat, min_rep)
             } else {
                 // Explicit kinds → force-infer each

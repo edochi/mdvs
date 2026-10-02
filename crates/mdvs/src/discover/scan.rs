@@ -87,13 +87,14 @@ struct EngineParse {
 
 /// Parse a file's frontmatter + body with `gray_matter` using the given
 /// `Matter` instance. The `Pod` is converted to `serde_json::Value` and
-/// validated (top-level must be an object, NaN/inf rejected). Returns
-/// `None` when `gray_matter` itself fails to parse — caller falls back to
-/// bare-file handling for backward compatibility.
+/// validated (top-level must be an object, NaN/inf rejected). Always
+/// returns a parse: when `gray_matter` itself rejects the content, the
+/// result carries no data, the raw text as body, and an error message that
+/// surfaces as `FrontmatterUnrepresentable`.
 fn parse_via_gray_matter<E: gray_matter::engine::Engine>(
     matter: &Matter<E>,
     raw: &str,
-) -> Option<(EngineParse, Option<String>)> {
+) -> (EngineParse, Option<String>) {
     let parsed = match matter.parse::<Pod>(raw) {
         Ok(p) => p,
         Err(e) => {
@@ -102,13 +103,13 @@ fn parse_via_gray_matter<E: gray_matter::engine::Engine>(
             // a recognized leading delimiter — caller resolved an
             // engine for it — so this is a real validation error, not
             // a bare file. Surface it as `FrontmatterUnrepresentable`.
-            return Some((
+            return (
                 EngineParse {
                     data: None,
                     body: raw.to_string(),
                 },
                 Some(format!("invalid frontmatter: {e}")),
-            ));
+            );
         }
     };
     let (data, error): (Option<Value>, Option<String>) = match parsed.data {
@@ -131,13 +132,13 @@ fn parse_via_gray_matter<E: gray_matter::engine::Engine>(
             }
         },
     };
-    Some((
+    (
         EngineParse {
             data,
             body: parsed.content,
         },
         error,
-    ))
+    )
 }
 
 /// Parse JSON frontmatter using `serde_json::Deserializer` directly.
@@ -357,8 +358,8 @@ impl ScannedFiles {
             // All three branches return a uniform `(EngineParse, error)`
             // so the downstream safety + assembly logic is unified.
             let parsed = match engine {
-                FrontmatterEngine::Yaml => parse_via_gray_matter(&yaml_matter, &raw),
-                FrontmatterEngine::Toml => parse_via_gray_matter(&toml_matter, &raw),
+                FrontmatterEngine::Yaml => Some(parse_via_gray_matter(&yaml_matter, &raw)),
+                FrontmatterEngine::Toml => Some(parse_via_gray_matter(&toml_matter, &raw)),
                 FrontmatterEngine::Json => parse_json_native(&raw),
             };
             let Some((parsed, frontmatter_error)) = parsed else {

@@ -1043,8 +1043,8 @@ mod tests {
                     constraints: None,
                     preprocess: vec![],
                 }],
-                max_categories: 10,
-                min_category_repetition: 3,
+                max_categories: None,
+                min_category_repetition: None,
             },
         }
     }

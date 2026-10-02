@@ -368,8 +368,8 @@ mod tests {
             fields: FieldsConfig {
                 ignore,
                 field: fields,
-                max_categories: 10,
-                min_category_repetition: 3,
+                max_categories: None,
+                min_category_repetition: None,
             },
             embedding_model: None,
             chunking: None,
@@ -802,8 +802,8 @@ mod tests {
                     constraints: None,
                     preprocess: vec![],
                 }],
-                max_categories: 10,
-                min_category_repetition: 3,
+                max_categories: None,
+                min_category_repetition: None,
             },
             embedding_model: None,
             chunking: None,
@@ -1744,20 +1744,23 @@ mod tests {
     }
 
     /// Run schema against instance, map all errors, return the resulting kinds.
-    fn mapped_kinds(schema: serde_json::Value, instance: serde_json::Value) -> Vec<ViolationKind> {
-        let validator = jsonschema::validator_for(&schema).expect("schema compiles");
+    fn mapped_kinds(
+        schema: &serde_json::Value,
+        instance: &serde_json::Value,
+    ) -> Vec<ViolationKind> {
+        let validator = jsonschema::validator_for(schema).expect("schema compiles");
         let f = dummy_field(FieldTypeSerde::Scalar("String".into()));
         validator
-            .iter_errors(&instance)
-            .map(|err| map_validation_error(&err, &instance, &f).kind)
+            .iter_errors(instance)
+            .map(|err| map_validation_error(&err, instance, &f).kind)
             .collect()
     }
 
     #[test]
     fn map_required_to_missing_required() {
         let kinds = mapped_kinds(
-            serde_json::json!({"type": "object", "required": ["x"], "properties": {"x": {"type": "string"}}}),
-            serde_json::json!({}),
+            &serde_json::json!({"type": "object", "required": ["x"], "properties": {"x": {"type": "string"}}}),
+            &serde_json::json!({}),
         );
         assert_eq!(kinds, vec![ViolationKind::MissingRequired]);
     }
@@ -1765,23 +1768,26 @@ mod tests {
     #[test]
     fn map_additional_properties_to_disallowed() {
         let kinds = mapped_kinds(
-            serde_json::json!({"type": "object", "properties": {}, "additionalProperties": false}),
-            serde_json::json!({"rogue": 1}),
+            &serde_json::json!({"type": "object", "properties": {}, "additionalProperties": false}),
+            &serde_json::json!({"rogue": 1}),
         );
         assert_eq!(kinds, vec![ViolationKind::Disallowed]);
     }
 
     #[test]
     fn map_type_string_got_integer_to_wrong_type() {
-        let kinds = mapped_kinds(serde_json::json!({"type": "string"}), serde_json::json!(42));
+        let kinds = mapped_kinds(
+            &serde_json::json!({"type": "string"}),
+            &serde_json::json!(42),
+        );
         assert_eq!(kinds, vec![ViolationKind::WrongType]);
     }
 
     #[test]
     fn map_type_object_got_array_to_wrong_type() {
         let kinds = mapped_kinds(
-            serde_json::json!({"type": "object"}),
-            serde_json::json!([1, 2]),
+            &serde_json::json!({"type": "object"}),
+            &serde_json::json!([1, 2]),
         );
         assert_eq!(kinds, vec![ViolationKind::WrongType]);
     }
@@ -1789,8 +1795,8 @@ mod tests {
     #[test]
     fn map_type_string_got_null_to_null_not_allowed() {
         let kinds = mapped_kinds(
-            serde_json::json!({"type": "string"}),
-            serde_json::json!(null),
+            &serde_json::json!({"type": "string"}),
+            &serde_json::json!(null),
         );
         assert_eq!(kinds, vec![ViolationKind::NullNotAllowed]);
     }
@@ -1798,8 +1804,8 @@ mod tests {
     #[test]
     fn map_type_union_no_violation_for_null_when_listed() {
         let kinds = mapped_kinds(
-            serde_json::json!({"type": ["string", "null"]}),
-            serde_json::json!(null),
+            &serde_json::json!({"type": ["string", "null"]}),
+            &serde_json::json!(null),
         );
         assert!(kinds.is_empty());
     }
@@ -1807,8 +1813,8 @@ mod tests {
     #[test]
     fn map_enum_to_invalid_category() {
         let kinds = mapped_kinds(
-            serde_json::json!({"enum": ["draft", "published", "archived"]}),
-            serde_json::json!("scheduled"),
+            &serde_json::json!({"enum": ["draft", "published", "archived"]}),
+            &serde_json::json!("scheduled"),
         );
         assert_eq!(kinds, vec![ViolationKind::InvalidCategory]);
     }
@@ -1816,8 +1822,8 @@ mod tests {
     #[test]
     fn map_const_to_invalid_category() {
         let kinds = mapped_kinds(
-            serde_json::json!({"const": "fixed"}),
-            serde_json::json!("other"),
+            &serde_json::json!({"const": "fixed"}),
+            &serde_json::json!("other"),
         );
         assert_eq!(kinds, vec![ViolationKind::InvalidCategory]);
     }
@@ -1825,8 +1831,8 @@ mod tests {
     #[test]
     fn map_minimum_to_out_of_range() {
         let kinds = mapped_kinds(
-            serde_json::json!({"type": "integer", "minimum": 0}),
-            serde_json::json!(-1),
+            &serde_json::json!({"type": "integer", "minimum": 0}),
+            &serde_json::json!(-1),
         );
         assert_eq!(kinds, vec![ViolationKind::OutOfRange]);
     }
@@ -1834,8 +1840,8 @@ mod tests {
     #[test]
     fn map_maximum_to_out_of_range() {
         let kinds = mapped_kinds(
-            serde_json::json!({"type": "integer", "maximum": 100}),
-            serde_json::json!(150),
+            &serde_json::json!({"type": "integer", "maximum": 100}),
+            &serde_json::json!(150),
         );
         assert_eq!(kinds, vec![ViolationKind::OutOfRange]);
     }
@@ -1843,8 +1849,8 @@ mod tests {
     #[test]
     fn map_exclusive_minimum_to_out_of_range() {
         let kinds = mapped_kinds(
-            serde_json::json!({"type": "number", "exclusiveMinimum": 0}),
-            serde_json::json!(0),
+            &serde_json::json!({"type": "number", "exclusiveMinimum": 0}),
+            &serde_json::json!(0),
         );
         assert_eq!(kinds, vec![ViolationKind::OutOfRange]);
     }
@@ -1852,8 +1858,8 @@ mod tests {
     #[test]
     fn map_exclusive_maximum_to_out_of_range() {
         let kinds = mapped_kinds(
-            serde_json::json!({"type": "number", "exclusiveMaximum": 1}),
-            serde_json::json!(1),
+            &serde_json::json!({"type": "number", "exclusiveMaximum": 1}),
+            &serde_json::json!(1),
         );
         assert_eq!(kinds, vec![ViolationKind::OutOfRange]);
     }
@@ -1861,8 +1867,8 @@ mod tests {
     #[test]
     fn map_multiple_of_to_out_of_range() {
         let kinds = mapped_kinds(
-            serde_json::json!({"type": "integer", "multipleOf": 5}),
-            serde_json::json!(7),
+            &serde_json::json!({"type": "integer", "multipleOf": 5}),
+            &serde_json::json!(7),
         );
         assert_eq!(kinds, vec![ViolationKind::OutOfRange]);
     }
@@ -1870,8 +1876,8 @@ mod tests {
     #[test]
     fn map_min_length_to_out_of_range() {
         let kinds = mapped_kinds(
-            serde_json::json!({"type": "string", "minLength": 3}),
-            serde_json::json!("ab"),
+            &serde_json::json!({"type": "string", "minLength": 3}),
+            &serde_json::json!("ab"),
         );
         assert_eq!(kinds, vec![ViolationKind::OutOfRange]);
     }
@@ -1879,8 +1885,8 @@ mod tests {
     #[test]
     fn map_max_length_to_out_of_range() {
         let kinds = mapped_kinds(
-            serde_json::json!({"type": "string", "maxLength": 5}),
-            serde_json::json!("too long"),
+            &serde_json::json!({"type": "string", "maxLength": 5}),
+            &serde_json::json!("too long"),
         );
         assert_eq!(kinds, vec![ViolationKind::OutOfRange]);
     }
@@ -1889,8 +1895,8 @@ mod tests {
     fn map_pattern_to_wrong_type() {
         // Pattern mismatch ≈ value isn't shaped right for the field's purpose.
         let kinds = mapped_kinds(
-            serde_json::json!({"type": "string", "pattern": "^[A-Z]+$"}),
-            serde_json::json!("lowercase"),
+            &serde_json::json!({"type": "string", "pattern": "^[A-Z]+$"}),
+            &serde_json::json!("lowercase"),
         );
         assert_eq!(kinds, vec![ViolationKind::WrongType]);
     }
@@ -1898,8 +1904,8 @@ mod tests {
     #[test]
     fn map_min_items_to_out_of_range() {
         let kinds = mapped_kinds(
-            serde_json::json!({"type": "array", "minItems": 2}),
-            serde_json::json!([1]),
+            &serde_json::json!({"type": "array", "minItems": 2}),
+            &serde_json::json!([1]),
         );
         assert_eq!(kinds, vec![ViolationKind::OutOfRange]);
     }
@@ -1907,8 +1913,8 @@ mod tests {
     #[test]
     fn map_max_items_to_out_of_range() {
         let kinds = mapped_kinds(
-            serde_json::json!({"type": "array", "maxItems": 2}),
-            serde_json::json!([1, 2, 3]),
+            &serde_json::json!({"type": "array", "maxItems": 2}),
+            &serde_json::json!([1, 2, 3]),
         );
         assert_eq!(kinds, vec![ViolationKind::OutOfRange]);
     }
@@ -1916,8 +1922,8 @@ mod tests {
     #[test]
     fn map_unique_items_to_out_of_range() {
         let kinds = mapped_kinds(
-            serde_json::json!({"type": "array", "uniqueItems": true}),
-            serde_json::json!([1, 2, 2]),
+            &serde_json::json!({"type": "array", "uniqueItems": true}),
+            &serde_json::json!([1, 2, 2]),
         );
         assert_eq!(kinds, vec![ViolationKind::OutOfRange]);
     }
@@ -1925,8 +1931,8 @@ mod tests {
     #[test]
     fn map_array_item_type_error_to_wrong_type() {
         let kinds = mapped_kinds(
-            serde_json::json!({"type": "array", "items": {"type": "string"}}),
-            serde_json::json!(["ok", 42, "also ok"]),
+            &serde_json::json!({"type": "array", "items": {"type": "string"}}),
+            &serde_json::json!(["ok", 42, "also ok"]),
         );
         assert_eq!(kinds, vec![ViolationKind::WrongType]);
     }
@@ -1934,8 +1940,8 @@ mod tests {
     #[test]
     fn map_nested_property_type_error() {
         let kinds = mapped_kinds(
-            serde_json::json!({"type": "object", "properties": {"draft": {"type": "boolean"}}}),
-            serde_json::json!({"draft": "yes please"}),
+            &serde_json::json!({"type": "object", "properties": {"draft": {"type": "boolean"}}}),
+            &serde_json::json!({"draft": "yes please"}),
         );
         assert_eq!(kinds, vec![ViolationKind::WrongType]);
     }
@@ -1943,7 +1949,7 @@ mod tests {
     #[test]
     fn map_multiple_violations_in_one_document() {
         let kinds = mapped_kinds(
-            serde_json::json!({
+            &serde_json::json!({
                 "type": "object",
                 "required": ["title"],
                 "properties": {
@@ -1951,7 +1957,7 @@ mod tests {
                     "draft": {"type": "boolean"}
                 }
             }),
-            serde_json::json!({"draft": "yes please"}),
+            &serde_json::json!({"draft": "yes please"}),
         );
         // Both Required (missing title) and Type (draft) should be mapped.
         assert!(kinds.contains(&ViolationKind::MissingRequired));

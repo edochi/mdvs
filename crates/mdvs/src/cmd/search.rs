@@ -390,8 +390,8 @@ mod tests {
             fields: FieldsConfig {
                 ignore: vec![],
                 field: vec![],
-                max_categories: 10,
-                min_category_repetition: 3,
+                max_categories: None,
+                min_category_repetition: None,
             },
             embedding_model: Some(EmbeddingModelConfig {
                 provider: "mock".into(),

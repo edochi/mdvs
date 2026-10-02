@@ -113,33 +113,36 @@ pub struct FieldsConfig {
     #[serde(default, rename = "field")]
     pub field: Vec<TomlField>,
     /// Maximum distinct values for a field to be auto-inferred as categorical.
-    #[serde(
-        default = "default_max_categories",
-        skip_serializing_if = "is_default_max_categories"
-    )]
-    pub max_categories: usize,
+    /// `None` means the key is absent and [`DEFAULT_MAX_CATEGORIES`] applies;
+    /// read it through [`FieldsConfig::max_categories`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_categories: Option<usize>,
     /// Minimum average repetition (occurrences / distinct) for categorical inference.
-    #[serde(
-        default = "default_min_category_repetition",
-        skip_serializing_if = "is_default_min_category_repetition"
-    )]
-    pub min_category_repetition: usize,
+    /// `None` means the key is absent and [`DEFAULT_MIN_CATEGORY_REPETITION`]
+    /// applies; read it through [`FieldsConfig::min_category_repetition`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_category_repetition: Option<usize>,
 }
 
-fn default_max_categories() -> usize {
-    10
-}
+/// Maximum distinct values for categorical inference when `mdvs.toml` sets none.
+pub const DEFAULT_MAX_CATEGORIES: usize = 10;
 
-fn is_default_max_categories(v: &usize) -> bool {
-    *v == default_max_categories()
-}
+/// Minimum average repetition for categorical inference when `mdvs.toml` sets none.
+pub const DEFAULT_MIN_CATEGORY_REPETITION: usize = 3;
 
-fn default_min_category_repetition() -> usize {
-    3
-}
+impl FieldsConfig {
+    /// The effective categorical distinct-value cap: the configured value, or
+    /// [`DEFAULT_MAX_CATEGORIES`] when the key is absent.
+    pub fn max_categories(&self) -> usize {
+        self.max_categories.unwrap_or(DEFAULT_MAX_CATEGORIES)
+    }
 
-fn is_default_min_category_repetition(v: &usize) -> bool {
-    *v == default_min_category_repetition()
+    /// The effective categorical repetition floor: the configured value, or
+    /// [`DEFAULT_MIN_CATEGORY_REPETITION`] when the key is absent.
+    pub fn min_category_repetition(&self) -> usize {
+        self.min_category_repetition
+            .unwrap_or(DEFAULT_MIN_CATEGORY_REPETITION)
+    }
 }
 
 /// Top-level representation of `mdvs.toml`, the single source of truth for
@@ -204,8 +207,8 @@ impl MdvsToml {
             fields: FieldsConfig {
                 ignore,
                 field: fields,
-                max_categories: default_max_categories(),
-                min_category_repetition: default_min_category_repetition(),
+                max_categories: None,
+                min_category_repetition: None,
             },
         }
     }
@@ -223,22 +226,22 @@ impl MdvsToml {
                 field: schema
                     .fields
                     .iter()
-                    .map(|f| {
-                        let max_cat = default_max_categories();
-                        let min_rep = default_min_category_repetition();
-                        TomlField {
-                            name: f.name.clone(),
-                            field_type: FieldTypeSerde::from(&f.field_type),
-                            allowed: f.allowed.clone(),
-                            required: f.required.clone(),
-                            nullable: f.nullable,
-                            constraints: infer_constraints(f, max_cat, min_rep),
-                            preprocess: f.preprocess.clone(),
-                        }
+                    .map(|f| TomlField {
+                        name: f.name.clone(),
+                        field_type: FieldTypeSerde::from(&f.field_type),
+                        allowed: f.allowed.clone(),
+                        required: f.required.clone(),
+                        nullable: f.nullable,
+                        constraints: infer_constraints(
+                            f,
+                            DEFAULT_MAX_CATEGORIES,
+                            DEFAULT_MIN_CATEGORY_REPETITION,
+                        ),
+                        preprocess: f.preprocess.clone(),
                     })
                     .collect(),
-                max_categories: default_max_categories(),
-                min_category_repetition: default_min_category_repetition(),
+                max_categories: None,
+                min_category_repetition: None,
             },
             embedding_model: None,
             chunking: None,
@@ -632,8 +635,8 @@ mod tests {
             fields: FieldsConfig {
                 ignore: vec![],
                 field: fields,
-                max_categories: 10,
-                min_category_repetition: 3,
+                max_categories: None,
+                min_category_repetition: None,
             },
             embedding_model: Some(EmbeddingModelConfig {
                 provider: "model2vec".into(),
@@ -700,8 +703,8 @@ mod tests {
                         preprocess: vec![],
                     },
                 ],
-                max_categories: 10,
-                min_category_repetition: 3,
+                max_categories: None,
+                min_category_repetition: None,
             },
             embedding_model: Some(EmbeddingModelConfig {
                 provider: "model2vec".into(),
@@ -872,6 +875,23 @@ default_limit = 10
     }
 
     #[test]
+    fn from_inferred_omits_threshold_keys() {
+        let schema = InferredSchema {
+            fields: vec![],
+            dropped: vec![],
+        };
+        let scan = ScanConfig {
+            glob: "**".into(),
+            include_bare_files: false,
+            skip_gitignore: false,
+            frontmatter_format: FrontmatterFormat::Auto,
+        };
+        let toml_str = toml::to_string(&MdvsToml::from_inferred(&schema, scan)).unwrap();
+        assert!(!toml_str.contains("max_categories"));
+        assert!(!toml_str.contains("min_category_repetition"));
+    }
+
+    #[test]
     fn from_inferred_schema_only() {
         let schema = InferredSchema {
             fields: vec![],
@@ -976,8 +996,8 @@ default_limit = 10
             fields: FieldsConfig {
                 ignore: vec![],
                 field: vec![],
-                max_categories: 10,
-                min_category_repetition: 3,
+                max_categories: None,
+                min_category_repetition: None,
             },
             embedding_model: None,
             chunking: None,
@@ -2005,8 +2025,8 @@ max_categories = 15
 min_category_repetition = 3
 "#;
         let parsed: MdvsToml = toml::from_str(toml_str).unwrap();
-        assert_eq!(parsed.fields.max_categories, 15);
-        assert_eq!(parsed.fields.min_category_repetition, 3);
+        assert_eq!(parsed.fields.max_categories(), 15);
+        assert_eq!(parsed.fields.min_category_repetition(), 3);
     }
 
     #[test]
@@ -2019,8 +2039,13 @@ include_bare_files = false
 [fields]
 "#;
         let parsed: MdvsToml = toml::from_str(toml_str).unwrap();
-        assert_eq!(parsed.fields.max_categories, 10);
-        assert_eq!(parsed.fields.min_category_repetition, 3);
+        assert_eq!(parsed.fields.max_categories, None);
+        assert_eq!(parsed.fields.min_category_repetition, None);
+        assert_eq!(parsed.fields.max_categories(), DEFAULT_MAX_CATEGORIES);
+        assert_eq!(
+            parsed.fields.min_category_repetition(),
+            DEFAULT_MIN_CATEGORY_REPETITION
+        );
     }
 
     #[test]
@@ -2029,6 +2054,19 @@ include_bare_files = false
         let toml_str = toml::to_string(&doc).unwrap();
         assert!(!toml_str.contains("max_categories"));
         assert!(!toml_str.contains("min_category_repetition"));
+    }
+
+    #[test]
+    fn configured_thresholds_serialized() {
+        let max_categories = DEFAULT_MAX_CATEGORIES + 5;
+        let mut doc = full_toml(vec![]);
+        doc.fields.max_categories = Some(max_categories);
+        doc.fields.min_category_repetition = Some(DEFAULT_MIN_CATEGORY_REPETITION);
+        let toml_str = toml::to_string(&doc).unwrap();
+        assert!(toml_str.contains(&format!("max_categories = {max_categories}")));
+        assert!(toml_str.contains(&format!(
+            "min_category_repetition = {DEFAULT_MIN_CATEGORY_REPETITION}"
+        )));
     }
 
     #[test]

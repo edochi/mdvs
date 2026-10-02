@@ -67,7 +67,7 @@ impl ValueStage {
 
     /// Apply this stage to a value. Returns `None` if no transformation
     /// applied — the caller keeps the input as-is.
-    fn apply(&self, value: &Value, field_type: &FieldType) -> Option<Value> {
+    fn apply(self, value: &Value, field_type: &FieldType) -> Option<Value> {
         match self {
             ValueStage::CoerceToString => coerce_to_string(value, field_type),
             ValueStage::WidenIntToFloat => widen_int_to_float(value, field_type),
@@ -612,8 +612,8 @@ mod tests {
             fields: FieldsConfig {
                 ignore: vec![],
                 field: vec![string_field("title", vec![])],
-                max_categories: 10,
-                min_category_repetition: 3,
+                max_categories: None,
+                min_category_repetition: None,
             },
             embedding_model: None,
             chunking: None,
@@ -643,8 +643,8 @@ mod tests {
             fields: FieldsConfig {
                 ignore: vec![],
                 field: vec![string_field("title", vec![ValueStage::CoerceToString])],
-                max_categories: 10,
-                min_category_repetition: 3,
+                max_categories: None,
+                min_category_repetition: None,
             },
             embedding_model: None,
             chunking: None,
@@ -674,8 +674,8 @@ mod tests {
             fields: FieldsConfig {
                 ignore: vec![],
                 field: vec![float_field("score", vec![ValueStage::WidenIntToFloat])],
-                max_categories: 10,
-                min_category_repetition: 3,
+                max_categories: None,
+                min_category_repetition: None,
             },
             embedding_model: None,
             chunking: None,
@@ -705,8 +705,8 @@ mod tests {
             fields: FieldsConfig {
                 ignore: vec![],
                 field: vec![array_string_field("tags", vec![ValueStage::CoerceToString])],
-                max_categories: 10,
-                min_category_repetition: 3,
+                max_categories: None,
+                min_category_repetition: None,
             },
             embedding_model: None,
             chunking: None,

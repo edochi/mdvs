@@ -154,7 +154,7 @@ impl ConstraintKind {
                 categories::validate_for_type(field_name, field_type, values)
             }
             ConstraintKind::Range { min, max } => {
-                range::validate_for_type(field_name, field_type, min, max)
+                range::validate_for_type(field_name, field_type, min.as_ref(), max.as_ref())
             }
             ConstraintKind::Length { min, max } => {
                 length::validate_for_type(field_name, field_type, *min, *max)
