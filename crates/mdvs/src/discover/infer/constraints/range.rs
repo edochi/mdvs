@@ -2,6 +2,7 @@
 
 use crate::discover::field_type::FieldType;
 use crate::discover::infer::InferredField;
+use crate::num::i64_to_f64_exact;
 
 /// Infer min and max bounds from observed numeric values.
 ///
@@ -23,26 +24,41 @@ pub fn infer(field: &InferredField) -> Option<(toml::Value, toml::Value)> {
         _ => return None,
     };
 
-    let nums: Vec<f64> = field
-        .distinct_values
-        .iter()
-        .filter_map(serde_json::Value::as_f64)
-        .collect();
-
-    if nums.is_empty() {
-        return None;
-    }
-
-    let min = nums.iter().copied().fold(f64::INFINITY, f64::min);
-    let max = nums.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-
     if is_float {
+        // `as_f64` rounds integer-backed values silently, so integers go
+        // through the exact conversion. An integer beyond ±2^53 has no exact
+        // f64 bound, so no range is inferred.
+        let nums: Vec<f64> = field
+            .distinct_values
+            .iter()
+            .filter_map(|v| match v {
+                serde_json::Value::Number(n) => Some(n),
+                _ => None,
+            })
+            .map(|n| {
+                if n.is_f64() {
+                    n.as_f64()
+                } else {
+                    n.as_i64().and_then(i64_to_f64_exact)
+                }
+            })
+            .collect::<Option<_>>()?;
+        let min = nums.iter().copied().reduce(f64::min)?;
+        let max = nums.iter().copied().reduce(f64::max)?;
         Some((toml::Value::Float(min), toml::Value::Float(max)))
     } else {
-        Some((
-            toml::Value::Integer(min as i64),
-            toml::Value::Integer(max as i64),
-        ))
+        // Integer bounds are computed in i64 so values beyond 2^53 keep every
+        // digit. A number that does not fit in i64 (a large unsigned value)
+        // cannot be written as a TOML integer bound, so no range is inferred.
+        let nums: Vec<i64> = field
+            .distinct_values
+            .iter()
+            .filter(|v| v.is_number())
+            .map(serde_json::Value::as_i64)
+            .collect::<Option<_>>()?;
+        let min = nums.iter().copied().min()?;
+        let max = nums.iter().copied().max()?;
+        Some((toml::Value::Integer(min), toml::Value::Integer(max)))
     }
 }
 
@@ -144,6 +160,47 @@ mod tests {
     fn infer_empty_values_returns_none() {
         let f = make_field("x", FieldType::Integer, vec![]);
         assert!(infer(&f).is_none());
+    }
+
+    /// 2^53 + 1, the smallest positive integer an f64 cannot represent.
+    fn beyond_f64_exact() -> i64 {
+        i64::try_from(crate::num::F64_EXACT_INT_LIMIT).unwrap() + 1
+    }
+
+    #[test]
+    fn infer_integer_range_keeps_values_beyond_f64_precision() {
+        let f = make_field(
+            "id",
+            FieldType::Integer,
+            vec![json!(1), json!(beyond_f64_exact())],
+        );
+        let (min, max) = infer(&f).unwrap();
+        assert_eq!(min, toml::Value::Integer(1));
+        assert_eq!(max, toml::Value::Integer(beyond_f64_exact()));
+    }
+
+    #[test]
+    fn infer_integer_range_skips_values_beyond_i64() {
+        let f = make_field("id", FieldType::Integer, vec![json!(1), json!(u64::MAX)]);
+        assert!(infer(&f).is_none());
+    }
+
+    #[test]
+    fn infer_float_range_skips_integers_beyond_f64_precision() {
+        let f = make_field(
+            "score",
+            FieldType::Float,
+            vec![json!(0.5), json!(beyond_f64_exact())],
+        );
+        assert!(infer(&f).is_none());
+    }
+
+    #[test]
+    fn infer_float_range_keeps_integers_within_f64_precision() {
+        let f = make_field("score", FieldType::Float, vec![json!(0.5), json!(3)]);
+        let (min, max) = infer(&f).unwrap();
+        assert_eq!(min, toml::Value::Float(0.5));
+        assert_eq!(max, toml::Value::Float(3.0));
     }
 
     #[test]
