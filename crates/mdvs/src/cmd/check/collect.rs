@@ -78,10 +78,12 @@ pub(super) fn map_validation_error(
     field: &TomlField,
 ) -> MappedViolation {
     use ValidationErrorKind as E;
+    use ViolationKind as K;
 
     // Resolve the actual offending instance — for top-level errors it's the
     // value we passed; for `items` errors it's at `instance_path` index N.
     let instance = resolve_instance_path(value, &err.instance_path().to_string());
+    let got = |kind, rule| value_violation(kind, rule, instance);
 
     match err.kind() {
         E::Type { .. } => {
@@ -113,76 +115,22 @@ pub(super) fn map_validation_error(
         // array bounds), the rule string carries the constraint and the
         // detail carries just the offending value as `got <json>`. Avoids
         // duplicating the rule in every detail line.
-        E::Enum { options } => MappedViolation {
-            kind: ViolationKind::InvalidCategory,
-            rule: format!("enum {options}"),
-            detail: Some(format!("got {instance}")),
-        },
-        E::Constant { expected_value } => MappedViolation {
-            kind: ViolationKind::InvalidCategory,
-            rule: format!("const {expected_value}"),
-            detail: Some(format!("got {instance}")),
-        },
-        E::Minimum { limit } => MappedViolation {
-            kind: ViolationKind::OutOfRange,
-            rule: format!("minimum {limit}"),
-            detail: Some(format!("got {instance}")),
-        },
-        E::Maximum { limit } => MappedViolation {
-            kind: ViolationKind::OutOfRange,
-            rule: format!("maximum {limit}"),
-            detail: Some(format!("got {instance}")),
-        },
-        E::ExclusiveMinimum { limit } => MappedViolation {
-            kind: ViolationKind::OutOfRange,
-            rule: format!("exclusiveMinimum {limit}"),
-            detail: Some(format!("got {instance}")),
-        },
-        E::ExclusiveMaximum { limit } => MappedViolation {
-            kind: ViolationKind::OutOfRange,
-            rule: format!("exclusiveMaximum {limit}"),
-            detail: Some(format!("got {instance}")),
-        },
-        E::MultipleOf { multiple_of } => MappedViolation {
-            kind: ViolationKind::OutOfRange,
-            rule: format!("multipleOf {multiple_of}"),
-            detail: Some(format!("got {instance}")),
-        },
-        E::MinLength { limit } => MappedViolation {
-            kind: ViolationKind::OutOfRange,
-            rule: format!("minLength {limit}"),
-            detail: Some(format!("got {instance}")),
-        },
-        E::MaxLength { limit } => MappedViolation {
-            kind: ViolationKind::OutOfRange,
-            rule: format!("maxLength {limit}"),
-            detail: Some(format!("got {instance}")),
-        },
-        E::Pattern { pattern } => MappedViolation {
-            kind: ViolationKind::WrongType,
-            rule: format!("pattern {pattern}"),
-            detail: Some(format!("got {instance}")),
-        },
-        E::Format { format } => MappedViolation {
-            kind: ViolationKind::WrongType,
-            rule: format!("format {format}"),
-            detail: Some(format!("got {instance}")),
-        },
-        E::MinItems { limit } => MappedViolation {
-            kind: ViolationKind::OutOfRange,
-            rule: format!("minItems {limit}"),
-            detail: Some(format!("got {instance}")),
-        },
-        E::MaxItems { limit } => MappedViolation {
-            kind: ViolationKind::OutOfRange,
-            rule: format!("maxItems {limit}"),
-            detail: Some(format!("got {instance}")),
-        },
-        E::UniqueItems => MappedViolation {
-            kind: ViolationKind::OutOfRange,
-            rule: "uniqueItems".to_string(),
-            detail: Some(format!("got {instance}")),
-        },
+        E::Enum { options } => got(K::InvalidCategory, format!("enum {options}")),
+        E::Constant { expected_value } => {
+            got(K::InvalidCategory, format!("const {expected_value}"))
+        }
+        E::Minimum { limit } => got(K::OutOfRange, format!("minimum {limit}")),
+        E::Maximum { limit } => got(K::OutOfRange, format!("maximum {limit}")),
+        E::ExclusiveMinimum { limit } => got(K::OutOfRange, format!("exclusiveMinimum {limit}")),
+        E::ExclusiveMaximum { limit } => got(K::OutOfRange, format!("exclusiveMaximum {limit}")),
+        E::MultipleOf { multiple_of } => got(K::OutOfRange, format!("multipleOf {multiple_of}")),
+        E::MinLength { limit } => got(K::OutOfRange, format!("minLength {limit}")),
+        E::MaxLength { limit } => got(K::OutOfRange, format!("maxLength {limit}")),
+        E::Pattern { pattern } => got(K::WrongType, format!("pattern {pattern}")),
+        E::Format { format } => got(K::WrongType, format!("format {format}")),
+        E::MinItems { limit } => got(K::OutOfRange, format!("minItems {limit}")),
+        E::MaxItems { limit } => got(K::OutOfRange, format!("maxItems {limit}")),
+        E::UniqueItems => got(K::OutOfRange, "uniqueItems".to_string()),
         // Variants below should be unreachable in practice: validate_mdvs_schema
         // (the gate) rejects every schema that could trigger them upstream.
         // We bucket them defensively so the binary doesn't panic — bug reports
@@ -213,6 +161,17 @@ pub(super) fn map_validation_error(
             ),
             detail: Some(err.to_string()),
         },
+    }
+}
+
+/// Build the [`MappedViolation`] for a value-comparing error: `rule` names
+/// the violated constraint and the detail is the offending value as
+/// `got <json>`.
+fn value_violation(kind: ViolationKind, rule: String, instance: &Value) -> MappedViolation {
+    MappedViolation {
+        kind,
+        rule,
+        detail: Some(format!("got {instance}")),
     }
 }
 

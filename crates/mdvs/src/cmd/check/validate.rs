@@ -18,7 +18,7 @@ use super::field_meta::{FieldMeta, FieldValidators, build_field_metas};
 use crate::discover::scan::ScannedFiles;
 use crate::output::{NewField, ViolatingFile, ViolationKind};
 use crate::preprocess::Pipeline;
-use crate::schema::config::MdvsToml;
+use crate::schema::config::{MdvsToml, TomlField};
 use jsonschema::error::ValidationErrorKind;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -30,6 +30,54 @@ use tracing::{info, instrument};
 /// these errors appear at the top of the output.
 const FRONTMATTER_FIELD_SENTINEL: &str = "<frontmatter>";
 
+/// Per-run lookups shared by the field-value and required-field passes,
+/// built once per [`validate`] call.
+struct ValidationContext<'a> {
+    /// Declared fields by (dotted) name.
+    field_map: HashMap<&'a str, &'a TomlField>,
+    /// Per-field precomputed metadata (compiled `GlobSet`s for allowed and
+    /// required, `FieldType` conversion) so the inner (field, file) loop
+    /// avoids redundant `Glob::new` / `FieldType::try_from` calls.
+    field_metas: HashMap<String, FieldMeta>,
+    /// Field names excluded from new-field discovery.
+    ignore_set: HashSet<&'a str>,
+    /// Compiled per-field jsonschema validators.
+    validators: FieldValidators,
+    /// Stage-2 preprocessor pipeline applied before validation.
+    pipeline: Pipeline,
+    /// Per-file path strings, index-aligned with `scanned.files`, so
+    /// `display().to_string()` doesn't run inside the inner loops.
+    file_paths: Vec<String>,
+}
+
+impl<'a> ValidationContext<'a> {
+    /// Build every lookup the validation passes need from the config and
+    /// the scanned corpus.
+    ///
+    /// # Errors
+    ///
+    /// Fails when a field's jsonschema validator cannot be compiled.
+    fn build(scanned: &ScannedFiles, config: &'a MdvsToml) -> anyhow::Result<Self> {
+        Ok(ValidationContext {
+            field_map: config
+                .fields
+                .field
+                .iter()
+                .map(|f| (f.name.as_str(), f))
+                .collect(),
+            ignore_set: config.fields.ignore.iter().map(String::as_str).collect(),
+            validators: FieldValidators::build(config)?,
+            pipeline: Pipeline::for_config(config),
+            field_metas: build_field_metas(config),
+            file_paths: scanned
+                .files
+                .iter()
+                .map(|f| f.path.display().to_string())
+                .collect(),
+        })
+    }
+}
+
 /// Validate scanned files against the schema in `mdvs.toml`. Reusable core
 /// called by both `mdvs check` (its `run`) and the build pipeline.
 #[instrument(name = "validate", skip_all)]
@@ -40,43 +88,14 @@ pub fn validate(
 ) -> anyhow::Result<CheckResult> {
     info!(files = scanned.files.len(), "validating frontmatter");
 
-    let field_map: HashMap<&str, _> = config
-        .fields
-        .field
-        .iter()
-        .map(|f| (f.name.as_str(), f))
-        .collect();
-    let ignore_set: HashSet<&str> = config.fields.ignore.iter().map(String::as_str).collect();
-    let validators = FieldValidators::build(config)?;
-    let pipeline = Pipeline::for_config(config);
-    // Per-field precomputed metadata (compiled GlobSets for allowed/required,
-    // FieldType conversion) so the inner (field, file) loop avoids tens of
-    // thousands of redundant `Glob::new`/`FieldType::try_from` calls.
-    let field_metas = build_field_metas(config);
-    // Per-file path strings, precomputed so `display().to_string()` doesn't
-    // run inside the inner loop of `check_required_fields`.
-    let file_paths: Vec<String> = scanned
-        .files
-        .iter()
-        .map(|f| f.path.display().to_string())
-        .collect();
+    let ctx = ValidationContext::build(scanned, config)?;
 
     let mut violations: HashMap<ViolationKey, Vec<ViolatingFile>> = HashMap::new();
     let mut new_field_paths: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
 
     check_frontmatter_errors(scanned, &mut violations);
-    check_field_values(
-        scanned,
-        &file_paths,
-        &field_map,
-        &field_metas,
-        &ignore_set,
-        &validators,
-        &pipeline,
-        &mut violations,
-        &mut new_field_paths,
-    );
-    check_required_fields(scanned, &file_paths, config, &field_metas, &mut violations);
+    check_field_values(scanned, &ctx, &mut violations, &mut new_field_paths);
+    check_required_fields(scanned, config, &ctx, &mut violations);
 
     let field_violations = collect_violations(violations);
     let new_fields = collect_new_fields(new_field_paths, verbose);
@@ -119,20 +138,14 @@ fn check_frontmatter_errors(
 /// (type, null-vs-nullable, enum, range, length, pattern, array bounds) are
 /// delegated to a per-field `jsonschema::Validator`. Stage-2 preprocessors
 /// (configured per-field) run before validation.
-#[allow(clippy::too_many_arguments)]
 fn check_field_values(
     scanned: &ScannedFiles,
-    file_paths: &[String],
-    field_map: &HashMap<&str, &crate::schema::config::TomlField>,
-    field_metas: &HashMap<String, FieldMeta>,
-    ignore_set: &HashSet<&str>,
-    validators: &FieldValidators,
-    pipeline: &Pipeline,
+    ctx: &ValidationContext<'_>,
     violations: &mut HashMap<ViolationKey, Vec<ViolatingFile>>,
     new_field_paths: &mut BTreeMap<String, Vec<PathBuf>>,
 ) {
     for (file_idx, file) in scanned.files.iter().enumerate() {
-        let file_path_str = file_paths[file_idx].as_str();
+        let file_path_str = ctx.file_paths[file_idx].as_str();
 
         let Some(frontmatter) = file.data.as_ref() else {
             continue;
@@ -147,13 +160,13 @@ fn check_field_values(
         // field names may be dotted (TODO-0097 step 1+) and refer to nested
         // leaves. `navigate_dotted` walks the YAML's nested Object structure
         // to retrieve the leaf value.
-        for (field_name, toml_field) in field_map {
+        for (field_name, toml_field) in &ctx.field_map {
             let Some(value) = navigate_dotted(frontmatter, field_name) else {
                 // Absent — handled by `check_required_fields`.
                 continue;
             };
 
-            let meta = field_metas.get(*field_name);
+            let meta = ctx.field_metas.get(*field_name);
 
             // Disallowed: field present at a path not in allowed.
             // Use the precompiled GlobSet.
@@ -196,10 +209,10 @@ fn check_field_values(
             //
             // Run the Stage-2 preprocessor pipeline first; the
             // resulting value is what jsonschema validates against.
-            let preprocessed = pipeline.apply_to_value(toml_field, value);
+            let preprocessed = ctx.pipeline.apply_to_value(toml_field, value);
             let validation_value = preprocessed.as_ref();
 
-            if let Some(validator) = validators.get(field_name) {
+            if let Some(validator) = ctx.validators.get(field_name) {
                 // Fast path: most (field, file) pairs are clean. Skip the
                 // error-collection allocation when the value is valid.
                 if validator.is_valid(validation_value) {
@@ -236,10 +249,10 @@ fn check_field_values(
         let mut leaves: Vec<(String, &Value)> = Vec::new();
         crate::discover::infer::collect_leaves(frontmatter, &mut leaves);
         for (leaf_path, _) in leaves {
-            if ignore_set.contains(leaf_path.as_str()) {
+            if ctx.ignore_set.contains(leaf_path.as_str()) {
                 continue;
             }
-            if field_map.contains_key(leaf_path.as_str()) {
+            if ctx.field_map.contains_key(leaf_path.as_str()) {
                 continue;
             }
             new_field_paths
@@ -258,21 +271,20 @@ fn check_field_values(
 /// as missing — the leaf can't exist when its parent doesn't.
 fn check_required_fields(
     scanned: &ScannedFiles,
-    file_paths: &[String],
     config: &MdvsToml,
-    field_metas: &HashMap<String, FieldMeta>,
+    ctx: &ValidationContext<'_>,
     violations: &mut HashMap<ViolationKey, Vec<ViolatingFile>>,
 ) {
     for toml_field in &config.fields.field {
         if toml_field.required.is_empty() {
             continue;
         }
-        let Some(meta) = field_metas.get(toml_field.name.as_str()) else {
+        let Some(meta) = ctx.field_metas.get(toml_field.name.as_str()) else {
             continue;
         };
 
         for (file_idx, file) in scanned.files.iter().enumerate() {
-            if !meta.required.is_match(file_paths[file_idx].as_str()) {
+            if !meta.required.is_match(ctx.file_paths[file_idx].as_str()) {
                 continue;
             }
 

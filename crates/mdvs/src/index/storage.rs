@@ -258,69 +258,89 @@ fn build_array(values: &[Option<&Value>], ft: &FieldType) -> anyhow::Result<Arra
                 .collect();
             Ok(Arc::new(raw.with_timezone(Arc::from("UTC"))))
         }
-        FieldType::Array(inner) => {
-            let mut offsets: Vec<i32> = vec![0];
-            let mut child_values: Vec<Option<&Value>> = Vec::new();
-            let mut nulls: Vec<bool> = Vec::new();
-            for v in values {
-                if let Some(arr) = v.and_then(|v| v.as_array()) {
-                    for elem in arr {
-                        child_values.push(Some(elem));
-                    }
-                    let offset = i32::try_from(child_values.len()).with_context(|| {
-                        format!(
-                            "list column holds {} values, beyond the Arrow list offset limit of {}",
-                            child_values.len(),
-                            i32::MAX
-                        )
-                    })?;
-                    offsets.push(offset);
-                    nulls.push(true);
-                } else {
-                    // `offsets` is seeded with `vec![0]`, so `.last()`
-                    // is always Some here. The `unwrap_or(&0)` fallback
-                    // preserves correctness if a future refactor breaks
-                    // that invariant.
-                    offsets.push(*offsets.last().unwrap_or(&0));
-                    nulls.push(false);
-                }
+        FieldType::Array(inner) => build_list_array(values, inner),
+        FieldType::Object(fields) => build_struct_array(values, fields),
+    }
+}
+
+/// Build an Arrow `ListArray` whose elements are typed by `inner`; non-array
+/// values become null list entries.
+///
+/// # Errors
+///
+/// Fails when the list holds more child values than Arrow's `i32` list
+/// offsets can address.
+fn build_list_array(values: &[Option<&Value>], inner: &FieldType) -> anyhow::Result<ArrayRef> {
+    let mut offsets: Vec<i32> = vec![0];
+    let mut child_values: Vec<Option<&Value>> = Vec::new();
+    let mut nulls: Vec<bool> = Vec::new();
+    for v in values {
+        if let Some(arr) = v.and_then(|v| v.as_array()) {
+            for elem in arr {
+                child_values.push(Some(elem));
             }
-            let child_array = build_array(&child_values, inner)?;
-            let inner_dt: DataType = inner.as_ref().into();
-            Ok(Arc::new(ListArray::new(
-                Arc::new(Field::new("item", inner_dt, true)),
-                OffsetBuffer::new(offsets.into()),
-                child_array,
-                Some(NullBuffer::from(nulls)),
-            )))
-        }
-        FieldType::Object(fields) => {
-            let nulls: Vec<bool> = values
-                .iter()
-                .map(|v| v.and_then(|v| v.as_object()).is_some())
-                .collect();
-            let children: Vec<(Arc<Field>, ArrayRef)> = fields
-                .iter()
-                .map(|(name, sub_ft)| {
-                    let sub_values: Vec<Option<&Value>> = values
-                        .iter()
-                        .map(|v| v.and_then(|v| v.get(name.as_str())))
-                        .collect();
-                    let sub_dt: DataType = sub_ft.into();
-                    Ok((
-                        Arc::new(Field::new(name, sub_dt, true)),
-                        build_array(&sub_values, sub_ft)?,
-                    ))
-                })
-                .collect::<anyhow::Result<_>>()?;
-            let (child_fields, child_arrays): (Vec<_>, Vec<_>) = children.into_iter().unzip();
-            Ok(Arc::new(StructArray::new(
-                child_fields.into(),
-                child_arrays,
-                Some(NullBuffer::from(nulls)),
-            )))
+            let offset = i32::try_from(child_values.len()).with_context(|| {
+                format!(
+                    "list column holds {} values, beyond the Arrow list offset limit of {}",
+                    child_values.len(),
+                    i32::MAX
+                )
+            })?;
+            offsets.push(offset);
+            nulls.push(true);
+        } else {
+            // `offsets` is seeded with `vec![0]`, so `.last()`
+            // is always Some here. The `unwrap_or(&0)` fallback
+            // preserves correctness if a future refactor breaks
+            // that invariant.
+            offsets.push(*offsets.last().unwrap_or(&0));
+            nulls.push(false);
         }
     }
+    let child_array = build_array(&child_values, inner)?;
+    let inner_dt: DataType = inner.into();
+    Ok(Arc::new(ListArray::new(
+        Arc::new(Field::new("item", inner_dt, true)),
+        OffsetBuffer::new(offsets.into()),
+        child_array,
+        Some(NullBuffer::from(nulls)),
+    )))
+}
+
+/// Build an Arrow `StructArray` with one child per entry of `fields`;
+/// non-object values become null struct entries.
+///
+/// # Errors
+///
+/// Propagates list-offset overflow from any nested list child.
+fn build_struct_array(
+    values: &[Option<&Value>],
+    fields: &BTreeMap<String, FieldType>,
+) -> anyhow::Result<ArrayRef> {
+    let nulls: Vec<bool> = values
+        .iter()
+        .map(|v| v.and_then(|v| v.as_object()).is_some())
+        .collect();
+    let children: Vec<(Arc<Field>, ArrayRef)> = fields
+        .iter()
+        .map(|(name, sub_ft)| {
+            let sub_values: Vec<Option<&Value>> = values
+                .iter()
+                .map(|v| v.and_then(|v| v.get(name.as_str())))
+                .collect();
+            let sub_dt: DataType = sub_ft.into();
+            Ok((
+                Arc::new(Field::new(name, sub_dt, true)),
+                build_array(&sub_values, sub_ft)?,
+            ))
+        })
+        .collect::<anyhow::Result<_>>()?;
+    let (child_fields, child_arrays): (Vec<_>, Vec<_>) = children.into_iter().unzip();
+    Ok(Arc::new(StructArray::new(
+        child_fields.into(),
+        child_arrays,
+        Some(NullBuffer::from(nulls)),
+    )))
 }
 
 // ============================================================================
