@@ -3,7 +3,7 @@ mod search;
 mod where_translator;
 
 pub use search::SearchResults;
-pub use where_translator::WhereRewrite;
+pub use where_translator::{WhereNaming, WhereRewrite};
 
 use crate::discover::field_type::FieldType;
 use crate::index::storage::{
@@ -44,6 +44,23 @@ pub enum SearchMode {
     /// Vector + BM25 fused by reciprocal rank fusion (default).
     #[default]
     Hybrid,
+}
+
+/// What to search for: the query text, how many files to return, an
+/// optional `--where` SQL filter over frontmatter fields, and the retrieval
+/// mode.
+#[derive(Debug, Clone, Copy)]
+pub struct SearchQuery<'a> {
+    /// Natural-language query text (embedded for semantic / hybrid, matched
+    /// by BM25 for full-text / hybrid).
+    pub text: &'a str,
+    /// Maximum number of files to return; `0` returns no hits.
+    pub limit: usize,
+    /// Optional `--where` SQL clause, written against frontmatter field
+    /// names.
+    pub where_clause: Option<&'a str>,
+    /// Retrieval mode.
+    pub mode: SearchMode,
 }
 
 /// A single search result with its relevance score.
@@ -167,30 +184,14 @@ impl Backend {
     }
 
     #[instrument(name = "search_index", skip_all)]
-    #[allow(clippy::too_many_arguments)]
     pub async fn search(
         &self,
+        query: &SearchQuery<'_>,
         query_embedding: Option<Vec<f32>>,
-        query_text: &str,
-        mode: SearchMode,
-        where_clause: Option<&str>,
-        limit: usize,
-        internal_prefix: &str,
-        aliases: &std::collections::HashMap<String, String>,
+        naming: &WhereNaming<'_>,
     ) -> anyhow::Result<SearchResults> {
         match self {
-            Backend::Lance(b) => {
-                b.search(
-                    query_embedding,
-                    query_text,
-                    mode,
-                    where_clause,
-                    limit,
-                    internal_prefix,
-                    aliases,
-                )
-                .await
-            }
+            Backend::Lance(b) => b.search(query, query_embedding, naming).await,
         }
     }
 
@@ -638,13 +639,17 @@ mod tests {
         // Query vector close to rust.md's embedding
         let results = backend
             .search(
+                &SearchQuery {
+                    text: "rust",
+                    limit: 10,
+                    where_clause: None,
+                    mode: SearchMode::Semantic,
+                },
                 Some(vec![1.0, 0.0, 0.0, 0.0]),
-                "rust",
-                SearchMode::Semantic,
-                None,
-                10,
-                "",
-                &std::collections::HashMap::new(),
+                &WhereNaming {
+                    internal_prefix: "",
+                    aliases: &std::collections::HashMap::new(),
+                },
             )
             .await
             .unwrap();

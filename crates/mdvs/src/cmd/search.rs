@@ -1,4 +1,4 @@
-use crate::index::backend::{Backend, SearchMode};
+use crate::index::backend::{Backend, SearchMode, SearchQuery, WhereNaming};
 use crate::index::embed::{Embedder, ModelConfig};
 use crate::index::storage::BuildMetadata;
 use crate::outcome::commands::SearchOutcome;
@@ -278,9 +278,16 @@ pub async fn run(
         return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
     };
     let backend = Backend::lance(path);
-    let (prefix, aliases) = match &cfg.search {
-        Some(sc) => (sc.internal_prefix.as_str(), &sc.aliases),
-        None => ("", &std::collections::HashMap::new()),
+    let empty_aliases = std::collections::HashMap::new();
+    let naming = match &cfg.search {
+        Some(sc) => WhereNaming {
+            internal_prefix: sc.internal_prefix.as_str(),
+            aliases: &sc.aliases,
+        },
+        None => WhereNaming {
+            internal_prefix: "",
+            aliases: &empty_aliases,
+        },
     };
 
     if let Some(w) = where_clause
@@ -293,13 +300,14 @@ pub async fn run(
     let search_start = Instant::now();
     let results = match backend
         .search(
+            &SearchQuery {
+                text: query,
+                limit,
+                where_clause,
+                mode,
+            },
             query_embedding,
-            query,
-            mode,
-            where_clause,
-            limit,
-            prefix,
-            aliases,
+            &naming,
         )
         .await
     {
@@ -592,13 +600,17 @@ mod tests {
 
         let hits = backend
             .search(
+                &SearchQuery {
+                    text: "rust programming",
+                    limit: 1,
+                    where_clause: None,
+                    mode: SearchMode::Semantic,
+                },
                 Some(query_embedding),
-                "rust programming",
-                SearchMode::Semantic,
-                None,
-                1,
-                "",
-                &std::collections::HashMap::new(),
+                &WhereNaming {
+                    internal_prefix: "",
+                    aliases: &std::collections::HashMap::new(),
+                },
             )
             .await
             .unwrap();
@@ -620,13 +632,17 @@ mod tests {
 
         let hits = backend
             .search(
+                &SearchQuery {
+                    text: "cooking recipes",
+                    limit: 10,
+                    where_clause: Some("draft = false"),
+                    mode: SearchMode::Semantic,
+                },
                 Some(query_embedding),
-                "cooking recipes",
-                SearchMode::Semantic,
-                Some("draft = false"),
-                10,
-                "",
-                &std::collections::HashMap::new(),
+                &WhereNaming {
+                    internal_prefix: "",
+                    aliases: &std::collections::HashMap::new(),
+                },
             )
             .await
             .unwrap();

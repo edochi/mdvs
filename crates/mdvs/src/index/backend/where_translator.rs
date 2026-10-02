@@ -58,6 +58,19 @@ pub struct WhereRewrite {
     pub rewritten: String,
 }
 
+/// How the `--where` translator resolves names that collide with the
+/// table's internal columns: the prefix that marks a reference as an internal
+/// column, plus per-column alias names. Both come from the `[search]` section
+/// of `mdvs.toml`; an empty prefix and no aliases mean bare names resolve to
+/// internal columns unless they are frontmatter fields.
+#[derive(Debug, Clone, Copy)]
+pub struct WhereNaming<'a> {
+    /// Prefix that marks a `--where` identifier as an internal column.
+    pub internal_prefix: &'a str,
+    /// Internal column name to the alias the user writes for it.
+    pub aliases: &'a HashMap<String, String>,
+}
+
 /// Result of translating a `--where` clause.
 #[derive(Debug, Clone)]
 pub struct TranslatedWhere {
