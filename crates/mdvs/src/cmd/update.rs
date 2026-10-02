@@ -425,6 +425,7 @@ fn force_categorical(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cmd::init::{InitOptions, InitScanFlags};
     use crate::outcome::commands::UpdateOutcome;
     use crate::schema::config::MdvsToml;
     use std::fs;
@@ -452,7 +453,19 @@ mod tests {
     }
 
     fn init_no_build(dir: &Path) {
-        let step = crate::cmd::init::run(dir, "**", false, false, true, false, false, None, None);
+        let step = crate::cmd::init::run(
+            dir,
+            "**",
+            InitOptions {
+                scan: InitScanFlags {
+                    ignore_bare_files: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            None,
+            None,
+        );
         assert!(!crate::step::has_failed(&step));
     }
 
@@ -661,11 +674,13 @@ mod tests {
         let step = crate::cmd::init::run(
             tmp.path(),
             "**",
-            false,
-            false,
-            true,
-            false,
-            false,
+            InitOptions {
+                scan: InitScanFlags {
+                    ignore_bare_files: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             None,
             None,
         );

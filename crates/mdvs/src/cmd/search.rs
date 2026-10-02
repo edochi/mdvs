@@ -338,6 +338,7 @@ pub async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cmd::init::{InitOptions, InitScanFlags};
     use crate::index::embed::{Embedder, ModelConfig};
     use crate::outcome::commands::SearchOutcome;
     use crate::schema::config::{FieldsConfig, MdvsToml, SearchConfig, UpdateConfig};
@@ -415,7 +416,19 @@ mod tests {
     }
 
     async fn init_and_build(dir: &Path) {
-        let step = crate::cmd::init::run(dir, "**", false, false, true, false, false, None, None);
+        let step = crate::cmd::init::run(
+            dir,
+            "**",
+            InitOptions {
+                scan: InitScanFlags {
+                    ignore_bare_files: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            None,
+            None,
+        );
         assert!(!crate::step::has_failed(&step));
         swap_to_mock_embedder(dir);
         let output = crate::cmd::build::run(dir, None, None, None, false, true, false).await;

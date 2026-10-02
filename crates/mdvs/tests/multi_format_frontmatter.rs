@@ -7,6 +7,7 @@
 //! prove the command-level pipeline (scan → infer → write toml → reload
 //! → validate) produces sensible results across formats.
 
+use mdvs::cmd::init::{InitOptions, InitScanFlags};
 use mdvs::cmd::{check, init};
 use mdvs::outcome::Outcome;
 use mdvs::schema::config::MdvsToml;
@@ -45,14 +46,17 @@ fn copy_dir(src: &Path, dest: &Path) {
 /// reloaded `MdvsToml`.
 fn run_init(path: &Path) -> MdvsToml {
     let result = init::run(
-        path, "**",  // glob
-        false, // force
-        false, // dry_run
-        false, // ignore_bare_files
-        true,  // skip_gitignore
-        false, // verbose
-        None,  // schema override
-        None,  // default_output_format
+        path,
+        "**",
+        InitOptions {
+            scan: InitScanFlags {
+                skip_gitignore: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        None, // schema override
+        None, // default_output_format
     );
     assert!(
         result.result.is_ok(),

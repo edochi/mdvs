@@ -12,37 +12,63 @@ use std::path::Path;
 use std::time::Instant;
 use tracing::{info, instrument};
 
+/// Switches for [`run`], mirroring the `mdvs init` flags.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct InitOptions {
+    /// Overwrite an existing `mdvs.toml` instead of refusing (`--force`).
+    pub force: bool,
+    /// Report what would be written without writing anything (`--dry-run`).
+    pub dry_run: bool,
+    /// How init scans the vault.
+    pub scan: InitScanFlags,
+}
+
+/// How init scans the vault. Each flag is persisted to the generated
+/// `[scan]` section.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct InitScanFlags {
+    /// Leave files without frontmatter out of the scan
+    /// (`--ignore-bare-files`, persisted as `include_bare_files = false`).
+    pub ignore_bare_files: bool,
+    /// Do not read `.gitignore` patterns during the scan
+    /// (`--skip-gitignore`, persisted as `skip_gitignore = true`).
+    pub skip_gitignore: bool,
+}
+
 /// Scan a directory, infer frontmatter schema, and write `mdvs.toml`.
 /// Schema-only — no model download, no embedding, no `.mdvs/` created.
 ///
 /// When `schema` is `Some(path)`, scanning + inference are skipped: the
 /// schema file is loaded, validated against the mdvs subset, translated to
-/// DSL fields, and written directly. The `glob`, `ignore_bare_files`, and
-/// `skip_gitignore` parameters still configure the resulting `[scan]` section.
+/// DSL fields, and written directly. `glob` and `opts.scan` still configure
+/// the resulting `[scan]` section.
 ///
 /// **Flag persistence.** Any flag the user passes to `init` that maps to a
 /// config field is persisted to the generated `mdvs.toml` — that includes
 /// `glob`, `ignore_bare_files`, `skip_gitignore`, and `default_output_format`
 /// (the global `--output` flag). Flags that don't have a config equivalent
-/// (`--force`, `--dry-run`, `--from-jsonschema`, `--verbose`, `--logs`)
+/// (`--force`, `--dry-run`, `--from-jsonschema`, `--logs`)
 /// remain one-shot modifiers. The rule: if you cared enough to pass a flag
 /// to `init`, you almost certainly want it to be the project default — so
 /// it ends up in the file. When the flag is absent the corresponding field
 /// is left unset (no `default_output_format` line at all), letting the
 /// global default win.
 #[instrument(name = "init", skip_all)]
-#[allow(clippy::too_many_arguments)] // CLI surface; a struct would just defer the same fields
 pub fn run(
     path: &Path,
     glob: &str,
-    force: bool,
-    dry_run: bool,
-    ignore_bare_files: bool,
-    skip_gitignore: bool,
-    _verbose: bool,
+    opts: InitOptions,
     schema: Option<&Path>,
     default_output_format: Option<OutputFormat>,
 ) -> CommandResult {
+    let InitOptions {
+        force,
+        dry_run,
+        scan: InitScanFlags {
+            ignore_bare_files,
+            skip_gitignore,
+        },
+    } = opts;
     let start = Instant::now();
     let mut steps = Vec::new();
 
@@ -344,11 +370,13 @@ mod tests {
         let step = run(
             tmp.path(),
             "**",
-            false,
-            false,
-            false,
-            true,
-            false,
+            InitOptions {
+                scan: InitScanFlags {
+                    skip_gitignore: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             None,
             None,
         );
@@ -370,11 +398,14 @@ mod tests {
         let step = run(
             tmp.path(),
             "**",
-            false,
-            true,
-            false,
-            true,
-            false,
+            InitOptions {
+                dry_run: true,
+                scan: InitScanFlags {
+                    skip_gitignore: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             None,
             None,
         );
@@ -392,11 +423,13 @@ mod tests {
         let step = run(
             tmp.path(),
             "**",
-            false,
-            false,
-            false,
-            true,
-            false,
+            InitOptions {
+                scan: InitScanFlags {
+                    skip_gitignore: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             None,
             None,
         );
@@ -405,11 +438,13 @@ mod tests {
         let step = run(
             tmp.path(),
             "**",
-            false,
-            false,
-            false,
-            true,
-            false,
+            InitOptions {
+                scan: InitScanFlags {
+                    skip_gitignore: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             None,
             None,
         );
@@ -424,11 +459,13 @@ mod tests {
         let step = run(
             tmp.path(),
             "**",
-            false,
-            false,
-            false,
-            true,
-            false,
+            InitOptions {
+                scan: InitScanFlags {
+                    skip_gitignore: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             None,
             None,
         );
@@ -437,11 +474,14 @@ mod tests {
         let step = run(
             tmp.path(),
             "**",
-            true,
-            false,
-            false,
-            true,
-            false,
+            InitOptions {
+                force: true,
+                scan: InitScanFlags {
+                    skip_gitignore: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             None,
             None,
         );
@@ -459,11 +499,13 @@ mod tests {
         let step = run(
             tmp.path(),
             "**",
-            false,
-            false,
-            false,
-            true,
-            false,
+            InitOptions {
+                scan: InitScanFlags {
+                    skip_gitignore: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             None,
             None,
         );
@@ -472,11 +514,14 @@ mod tests {
         let step = run(
             tmp.path(),
             "**",
-            true,
-            false,
-            false,
-            true,
-            false,
+            InitOptions {
+                force: true,
+                scan: InitScanFlags {
+                    skip_gitignore: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             None,
             None,
         );
@@ -492,11 +537,13 @@ mod tests {
         let step = run(
             tmp.path(),
             "empty/**",
-            false,
-            false,
-            false,
-            true,
-            false,
+            InitOptions {
+                scan: InitScanFlags {
+                    skip_gitignore: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             None,
             None,
         );
@@ -509,7 +556,19 @@ mod tests {
         let file = tmp.path().join("not-a-dir");
         fs::write(&file, "hello").unwrap();
 
-        let step = run(&file, "**", false, false, false, true, false, None, None);
+        let step = run(
+            &file,
+            "**",
+            InitOptions {
+                scan: InitScanFlags {
+                    skip_gitignore: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            None,
+            None,
+        );
         assert!(crate::step::has_failed(&step));
     }
 
@@ -521,11 +580,13 @@ mod tests {
         let step = run(
             tmp.path(),
             "**",
-            false,
-            false,
-            false,
-            true,
-            false,
+            InitOptions {
+                scan: InitScanFlags {
+                    skip_gitignore: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             None,
             None,
         );
@@ -556,11 +617,13 @@ mod tests {
         let step = run(
             tmp.path(),
             "**",
-            false,
-            false,
-            false,
-            true,
-            false,
+            InitOptions {
+                scan: InitScanFlags {
+                    skip_gitignore: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             None,
             None,
         );
@@ -605,11 +668,13 @@ mod tests {
         let step = run(
             tmp.path(),
             "**",
-            false,
-            false,
-            false,
-            true,
-            false,
+            InitOptions {
+                scan: InitScanFlags {
+                    skip_gitignore: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             Some(&schema_path),
             None,
         );
@@ -636,11 +701,14 @@ mod tests {
         let step = run(
             tmp.path(),
             "**",
-            false,
-            true,
-            false,
-            true,
-            false,
+            InitOptions {
+                dry_run: true,
+                scan: InitScanFlags {
+                    skip_gitignore: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             Some(&schema_path),
             None,
         );
@@ -658,11 +726,13 @@ mod tests {
         let step = run(
             tmp.path(),
             "**",
-            false,
-            false,
-            false,
-            true,
-            false,
+            InitOptions {
+                scan: InitScanFlags {
+                    skip_gitignore: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             Some(&schema_path),
             None,
         );
@@ -680,11 +750,13 @@ mod tests {
         let step = run(
             tmp.path(),
             "**",
-            false,
-            false,
-            false,
-            true,
-            false,
+            InitOptions {
+                scan: InitScanFlags {
+                    skip_gitignore: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             Some(&schema_path),
             None,
         );
@@ -702,11 +774,14 @@ mod tests {
         let step = run(
             tmp.path(),
             "**",
-            true,
-            false,
-            false,
-            true,
-            false,
+            InitOptions {
+                force: true,
+                scan: InitScanFlags {
+                    skip_gitignore: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             Some(&schema_path),
             None,
         );
@@ -725,11 +800,13 @@ mod tests {
         let step = run(
             tmp.path(),
             "**",
-            false,
-            false,
-            false,
-            true,
-            false,
+            InitOptions {
+                scan: InitScanFlags {
+                    skip_gitignore: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             None,
             Some(OutputFormat::Markdown),
         );
@@ -751,11 +828,13 @@ mod tests {
         let step = run(
             tmp.path(),
             "**",
-            false,
-            false,
-            false,
-            true,
-            false,
+            InitOptions {
+                scan: InitScanFlags {
+                    skip_gitignore: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             None,
             None,
         );
@@ -777,11 +856,13 @@ mod tests {
         let step = run(
             tmp.path(),
             "**",
-            false,
-            false,
-            false,
-            true,
-            false,
+            InitOptions {
+                scan: InitScanFlags {
+                    skip_gitignore: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             None,
             Some(OutputFormat::Markdown),
         );
@@ -791,11 +872,8 @@ mod tests {
         let step = run(
             tmp.path(),
             "**",
-            true, // force
-            false,
-            false,
-            true,
-            false,
+            InitOptions { force: true, dry_run: // force
+            false, scan: InitScanFlags { skip_gitignore: true, ..Default::default() } },
             None,
             Some(OutputFormat::Json),
         );
@@ -816,11 +894,13 @@ mod tests {
         let step = run(
             tmp.path(),
             "**",
-            false,
-            false,
-            false,
-            true,
-            false,
+            InitOptions {
+                scan: InitScanFlags {
+                    skip_gitignore: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             Some(&schema_path),
             Some(OutputFormat::Json),
         );

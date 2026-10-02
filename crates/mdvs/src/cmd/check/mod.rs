@@ -325,6 +325,7 @@ fn matches_any_glob(patterns: &[String], path: &str) -> bool {
 mod tests {
     use super::collect::map_validation_error;
     use super::*;
+    use crate::cmd::init::{InitOptions, InitScanFlags};
     use crate::outcome::commands::CheckOutcome;
     use crate::schema::config::{FieldsConfig, TomlField, UpdateConfig};
     use crate::schema::shared::{FrontmatterFormat, ScanConfig};
@@ -1319,11 +1320,13 @@ mod tests {
         let init_step = crate::cmd::init::run(
             tmp.path(),
             "**",
-            false,
-            false,
-            true,
-            false,
-            false,
+            InitOptions {
+                scan: InitScanFlags {
+                    ignore_bare_files: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             None,
             None,
         );
@@ -1362,11 +1365,13 @@ mod tests {
         let init_step = crate::cmd::init::run(
             tmp.path(),
             "**",
-            false,
-            false,
-            true,
-            false,
-            false,
+            InitOptions {
+                scan: InitScanFlags {
+                    ignore_bare_files: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             None,
             None,
         );
@@ -1411,11 +1416,13 @@ mod tests {
         let init_step = crate::cmd::init::run(
             tmp.path(),
             "**",
-            false,
-            false,
-            true,
-            false,
-            false,
+            InitOptions {
+                scan: InitScanFlags {
+                    ignore_bare_files: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             None,
             None,
         );

@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use mdvs::cmd::init::{InitOptions, InitScanFlags};
 use mdvs::output::OutputFormat;
 use mdvs::schema::config::MdvsToml;
 use std::path::{Path, PathBuf};
@@ -256,11 +257,14 @@ async fn main() -> anyhow::Result<()> {
             let result = mdvs::cmd::init::run(
                 &path,
                 &glob,
-                force,
-                dry_run,
-                ignore_bare_files,
-                skip_gitignore,
-                cli.verbose,
+                InitOptions {
+                    force,
+                    dry_run,
+                    scan: InitScanFlags {
+                        ignore_bare_files,
+                        skip_gitignore,
+                    },
+                },
                 schema.as_deref(),
                 cli.output,
             );

@@ -682,6 +682,7 @@ pub async fn build_core(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cmd::init::{InitOptions, InitScanFlags};
     use crate::schema::config::MdvsToml;
     use crate::step::StepError;
     use std::collections::{HashMap, HashSet};
@@ -730,11 +731,11 @@ mod tests {
         let init_out = crate::cmd::init::run(
             tmp.path(),
             "**",
-            false,
-            false,
-            true,  // include bare files
-            false, // skip_gitignore
-            false, // verbose
+            InitOptions {
+                scan: InitScanFlags { ignore_bare_files: true, skip_gitignore: // include bare files
+            false },
+                ..Default::default()
+            }, // verbose
             None,
             None,
         );
@@ -794,11 +795,13 @@ mod tests {
         let init_out = crate::cmd::init::run(
             tmp.path(),
             "**",
-            false,
-            false,
-            true,
-            false,
-            false,
+            InitOptions {
+                scan: InitScanFlags {
+                    ignore_bare_files: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             None,
             None,
         );
@@ -878,11 +881,11 @@ mod tests {
         let output = crate::cmd::init::run(
             tmp.path(),
             "**",
-            false,
-            false,
-            true,  // ignore bare files
-            false, // skip_gitignore
-            false, // verbose
+            InitOptions {
+                scan: InitScanFlags { ignore_bare_files: true, skip_gitignore: // ignore bare files
+            false },
+                ..Default::default()
+            }, // verbose
             None,
             None,
         );
@@ -935,11 +938,13 @@ mod tests {
         let output = crate::cmd::init::run(
             tmp.path(),
             "**",
-            false,
-            false,
-            true,
-            false, // skip_gitignore
-            false, // verbose
+            InitOptions {
+                scan: InitScanFlags {
+                    ignore_bare_files: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            }, // verbose
             None,
             None,
         );
@@ -1000,11 +1005,13 @@ mod tests {
         let output = crate::cmd::init::run(
             tmp.path(),
             "**",
-            false,
-            false,
-            true,
-            false, // skip_gitignore
-            false, // verbose
+            InitOptions {
+                scan: InitScanFlags {
+                    ignore_bare_files: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            }, // verbose
             None,
             None,
         );
@@ -1037,11 +1044,13 @@ mod tests {
         let output = crate::cmd::init::run(
             tmp.path(),
             "**",
-            false,
-            false,
-            true,
-            false, // skip_gitignore
-            false, // verbose
+            InitOptions {
+                scan: InitScanFlags {
+                    ignore_bare_files: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            }, // verbose
             None,
             None,
         );
@@ -1087,11 +1096,13 @@ mod tests {
         let output = crate::cmd::init::run(
             tmp.path(),
             "**",
-            false,
-            false,
-            true,
-            false, // skip_gitignore
-            false, // verbose
+            InitOptions {
+                scan: InitScanFlags {
+                    ignore_bare_files: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            }, // verbose
             None,
             None,
         );
@@ -1125,11 +1136,13 @@ mod tests {
         let init_output = crate::cmd::init::run(
             tmp.path(),
             "**",
-            false,
-            false,
-            true,
-            false, // skip_gitignore
-            false, // verbose
+            InitOptions {
+                scan: InitScanFlags {
+                    ignore_bare_files: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            }, // verbose
             None,
             None,
         );
@@ -1153,11 +1166,13 @@ mod tests {
         let init_output = crate::cmd::init::run(
             tmp.path(),
             "**",
-            false,
-            false,
-            true,
-            false, // skip_gitignore
-            false, // verbose
+            InitOptions {
+                scan: InitScanFlags {
+                    ignore_bare_files: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            }, // verbose
             None,
             None,
         );
@@ -1186,11 +1201,13 @@ mod tests {
         let init_output = crate::cmd::init::run(
             tmp.path(),
             "**",
-            false,
-            false,
-            true,
-            false, // skip_gitignore
-            false, // verbose
+            InitOptions {
+                scan: InitScanFlags {
+                    ignore_bare_files: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            }, // verbose
             None,
             None,
         );
@@ -1477,11 +1494,13 @@ mod tests {
         let init_output = crate::cmd::init::run(
             tmp.path(),
             "**",
-            false,
-            false,
-            true,
-            false, // skip_gitignore
-            false, // verbose
+            InitOptions {
+                scan: InitScanFlags {
+                    ignore_bare_files: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            }, // verbose
             None,
             None,
         );
@@ -1521,11 +1540,13 @@ mod tests {
         let init_output = crate::cmd::init::run(
             tmp.path(),
             "**",
-            false,
-            false,
-            true,
-            false, // skip_gitignore
-            false, // verbose
+            InitOptions {
+                scan: InitScanFlags {
+                    ignore_bare_files: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            }, // verbose
             None,
             None,
         );
@@ -1577,11 +1598,13 @@ mod tests {
         let init_output = crate::cmd::init::run(
             tmp.path(),
             "**",
-            false,
-            false,
-            true,
-            false, // skip_gitignore
-            false, // verbose
+            InitOptions {
+                scan: InitScanFlags {
+                    ignore_bare_files: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            }, // verbose
             None,
             None,
         );
@@ -1652,11 +1675,13 @@ mod tests {
         let init_output = crate::cmd::init::run(
             tmp.path(),
             "**",
-            false,
-            false,
-            true,
-            false, // skip_gitignore
-            false, // verbose
+            InitOptions {
+                scan: InitScanFlags {
+                    ignore_bare_files: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            }, // verbose
             None,
             None,
         );
@@ -1694,11 +1719,13 @@ mod tests {
         let init_output = crate::cmd::init::run(
             tmp.path(),
             "**",
-            false,
-            false,
-            true,
-            false, // skip_gitignore
-            false, // verbose
+            InitOptions {
+                scan: InitScanFlags {
+                    ignore_bare_files: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            }, // verbose
             None,
             None,
         );
@@ -1737,11 +1764,13 @@ mod tests {
         let init_output = crate::cmd::init::run(
             tmp.path(),
             "**",
-            false,
-            false,
-            true,
-            false, // skip_gitignore
-            false, // verbose
+            InitOptions {
+                scan: InitScanFlags {
+                    ignore_bare_files: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            }, // verbose
             None,
             None,
         );
@@ -1810,11 +1839,13 @@ mod tests {
         let init_step = crate::cmd::init::run(
             tmp.path(),
             "**",
-            false,
-            false,
-            true,
-            false,
-            false,
+            InitOptions {
+                scan: InitScanFlags {
+                    ignore_bare_files: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             None,
             None,
         );
@@ -1870,11 +1901,13 @@ mod tests {
         let init_step = crate::cmd::init::run(
             tmp.path(),
             "**",
-            false,
-            false,
-            true,
-            false,
-            false,
+            InitOptions {
+                scan: InitScanFlags {
+                    ignore_bare_files: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             None,
             None,
         );
