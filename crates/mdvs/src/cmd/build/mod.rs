@@ -27,7 +27,7 @@ use crate::schema::config::{BuildConfig, SearchConfig};
 #[cfg(test)]
 #[allow(unused_imports)]
 use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig};
-use crate::step::{CommandResult, ErrorKind, StepEntry};
+use crate::step::{CommandResult, ErrorKind, StepEntry, elapsed_ms};
 #[cfg(test)]
 #[allow(unused_imports)]
 use config_mutate::DEFAULT_CHUNK_SIZE;
@@ -70,7 +70,7 @@ pub async fn run(
                     Outcome::ReadConfig(ReadConfigOutcome {
                         config_path: config_path_buf.display().to_string(),
                     }),
-                    config_start.elapsed().as_millis() as u64,
+                    elapsed_ms(config_start),
                 ));
                 Some(cfg)
             }
@@ -78,7 +78,7 @@ pub async fn run(
                 steps.push(StepEntry::err(
                     ErrorKind::User,
                     format!("mdvs.toml is invalid: {e} — fix the file or run 'mdvs init --force'"),
-                    config_start.elapsed().as_millis() as u64,
+                    elapsed_ms(config_start),
                 ));
                 None
             }
@@ -87,7 +87,7 @@ pub async fn run(
             steps.push(StepEntry::err(
                 ErrorKind::User,
                 e.to_string(),
-                config_start.elapsed().as_millis() as u64,
+                elapsed_ms(config_start),
             ));
             None
         }
@@ -130,7 +130,7 @@ pub async fn run(
     CommandResult {
         steps,
         result: Ok(Outcome::Build(Box::new(build_outcome))),
-        elapsed_ms: start.elapsed().as_millis() as u64,
+        elapsed_ms: elapsed_ms(start),
     }
 }
 
@@ -168,7 +168,7 @@ pub async fn build_core(
                     files_found: s.files.len(),
                     glob: config.scan.glob.clone(),
                 }),
-                scan_start.elapsed().as_millis() as u64,
+                elapsed_ms(scan_start),
             ));
             s
         }
@@ -176,7 +176,7 @@ pub async fn build_core(
             steps.push(StepEntry::err(
                 ErrorKind::Application,
                 e.to_string(),
-                scan_start.elapsed().as_millis() as u64,
+                elapsed_ms(scan_start),
             ));
             return Err(());
         }
@@ -190,7 +190,7 @@ pub async fn build_core(
             Outcome::Infer(InferOutcome {
                 fields_inferred: schema.fields.len(),
             }),
-            infer_start.elapsed().as_millis() as u64,
+            elapsed_ms(infer_start),
         ));
         schema.emit_dropped_warnings();
 
@@ -227,7 +227,7 @@ pub async fn build_core(
                             config_path: config_path.display().to_string(),
                             fields_written: config.fields.field.len(),
                         }),
-                        write_start.elapsed().as_millis() as u64,
+                        elapsed_ms(write_start),
                     ));
                     // Re-read to pick up normalized TOML
                     if let Ok(c) = MdvsToml::read(config_path) {
@@ -238,7 +238,7 @@ pub async fn build_core(
                     steps.push(StepEntry::err(
                         ErrorKind::Application,
                         e.to_string(),
-                        write_start.elapsed().as_millis() as u64,
+                        elapsed_ms(write_start),
                     ));
                     return Err(());
                 }
@@ -263,7 +263,7 @@ pub async fn build_core(
             steps.push(StepEntry::err(
                 ErrorKind::Application,
                 e.to_string(),
-                validate_start.elapsed().as_millis() as u64,
+                elapsed_ms(validate_start),
             ));
             return Err(());
         }
@@ -274,7 +274,7 @@ pub async fn build_core(
             violations: check_result.field_violations.clone(),
             new_fields: check_result.new_fields.clone(),
         }),
-        validate_start.elapsed().as_millis() as u64,
+        elapsed_ms(validate_start),
     ));
     let violations = check_result.field_violations;
     let new_fields = check_result.new_fields;
@@ -385,7 +385,7 @@ pub async fn build_core(
                 unchanged: 0,
                 removed: 0,
             }),
-            classify_start.elapsed().as_millis() as u64,
+            elapsed_ms(classify_start),
         ));
         ClassifyData {
             full_rebuild: true,
@@ -438,7 +438,7 @@ pub async fn build_core(
                 unchanged: unchanged_count,
                 removed: removed_count,
             }),
-            classify_start.elapsed().as_millis() as u64,
+            elapsed_ms(classify_start),
         ));
         ClassifyData {
             full_rebuild: false,
@@ -465,7 +465,7 @@ pub async fn build_core(
                             model_name: embedding.name.clone(),
                             dimension: emb.dimension(),
                         }),
-                        model_start.elapsed().as_millis() as u64,
+                        elapsed_ms(model_start),
                     ));
                     Some(emb)
                 }
@@ -473,7 +473,7 @@ pub async fn build_core(
                     steps.push(StepEntry::err(
                         ErrorKind::Application,
                         e.to_string(),
-                        model_start.elapsed().as_millis() as u64,
+                        elapsed_ms(model_start),
                     ));
                     None
                 }
@@ -482,7 +482,7 @@ pub async fn build_core(
                 steps.push(StepEntry::err(
                     ErrorKind::Application,
                     e.to_string(),
-                    model_start.elapsed().as_millis() as u64,
+                    elapsed_ms(model_start),
                 ));
                 None
             }
@@ -559,7 +559,7 @@ pub async fn build_core(
                 files_embedded: classify_data.needs_embedding.len(),
                 chunks_produced: embed_chunk_rows.len(),
             }),
-            embed_start.elapsed().as_millis() as u64,
+            elapsed_ms(embed_start),
         ));
         Some(EmbedFilesData {
             chunk_rows: embed_chunk_rows,
@@ -643,14 +643,14 @@ pub async fn build_core(
                     files_written,
                     chunks_written,
                 }),
-                write_start.elapsed().as_millis() as u64,
+                elapsed_ms(write_start),
             ));
         }
         Err(e) => {
             steps.push(StepEntry::err(
                 ErrorKind::Application,
                 e.to_string(),
-                write_start.elapsed().as_millis() as u64,
+                elapsed_ms(write_start),
             ));
             return Err(());
         }

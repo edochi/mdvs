@@ -7,7 +7,7 @@ use crate::schema::config::MdvsToml;
 use crate::schema::json_schema::{canonical_to_dsl, validate_mdvs_schema};
 use crate::schema::load::load_schema;
 use crate::schema::shared::{FieldTypeSerde, FrontmatterFormat, ScanConfig};
-use crate::step::{CommandResult, ErrorKind, StepEntry};
+use crate::step::{CommandResult, ErrorKind, StepEntry, elapsed_ms};
 use std::path::Path;
 use std::time::Instant;
 use tracing::{info, instrument};
@@ -112,7 +112,7 @@ pub fn run(
                     files_found: s.files.len(),
                     glob: scan_config.glob.clone(),
                 }),
-                scan_start.elapsed().as_millis() as u64,
+                elapsed_ms(scan_start),
             ));
             s
         }
@@ -120,7 +120,7 @@ pub fn run(
             steps.push(StepEntry::err(
                 ErrorKind::Application,
                 e.to_string(),
-                scan_start.elapsed().as_millis() as u64,
+                elapsed_ms(scan_start),
             ));
             return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
         }
@@ -140,7 +140,7 @@ pub fn run(
         Outcome::Infer(InferOutcome {
             fields_inferred: schema.fields.len(),
         }),
-        infer_start.elapsed().as_millis() as u64,
+        elapsed_ms(infer_start),
     ));
     schema.emit_dropped_warnings();
     for field in &schema.fields {
@@ -171,14 +171,14 @@ pub fn run(
                         config_path: config_path.display().to_string(),
                         fields_written: schema.fields.len(),
                     }),
-                    write_start.elapsed().as_millis() as u64,
+                    elapsed_ms(write_start),
                 ));
             }
             Err(e) => {
                 steps.push(StepEntry::err(
                     ErrorKind::Application,
                     e.to_string(),
-                    write_start.elapsed().as_millis() as u64,
+                    elapsed_ms(write_start),
                 ));
             }
         }
@@ -192,7 +192,7 @@ pub fn run(
             fields,
             dry_run,
         }))),
-        elapsed_ms: start.elapsed().as_millis() as u64,
+        elapsed_ms: elapsed_ms(start),
     }
 }
 
@@ -281,14 +281,14 @@ fn init_from_schema(
                         config_path: config_path.display().to_string(),
                         fields_written: total_fields,
                     }),
-                    write_start.elapsed().as_millis() as u64,
+                    elapsed_ms(write_start),
                 ));
             }
             Err(e) => {
                 steps.push(StepEntry::err(
                     ErrorKind::Application,
                     e.to_string(),
-                    write_start.elapsed().as_millis() as u64,
+                    elapsed_ms(write_start),
                 ));
             }
         }
@@ -302,7 +302,7 @@ fn init_from_schema(
             fields: fields_for_outcome,
             dry_run,
         }))),
-        elapsed_ms: start.elapsed().as_millis() as u64,
+        elapsed_ms: elapsed_ms(start),
     }
 }
 

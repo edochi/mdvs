@@ -7,7 +7,7 @@ use crate::output::{ChangedField, FieldChange, RemovedField};
 use crate::schema::config::{MdvsToml, TomlField};
 use crate::schema::constraints::Constraints;
 use crate::schema::shared::FieldTypeSerde;
-use crate::step::{CommandResult, ErrorKind, StepEntry};
+use crate::step::{CommandResult, ErrorKind, StepEntry, elapsed_ms};
 use std::collections::HashMap;
 use std::path::Path;
 use std::time::Instant;
@@ -109,7 +109,7 @@ pub async fn run(
                     Outcome::ReadConfig(ReadConfigOutcome {
                         config_path: config_path_buf.display().to_string(),
                     }),
-                    config_start.elapsed().as_millis() as u64,
+                    elapsed_ms(config_start),
                 ));
                 cfg
             }
@@ -117,7 +117,7 @@ pub async fn run(
                 steps.push(StepEntry::err(
                     ErrorKind::User,
                     format!("mdvs.toml is invalid: {e} — fix the file or run 'mdvs init --force'"),
-                    config_start.elapsed().as_millis() as u64,
+                    elapsed_ms(config_start),
                 ));
                 return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
             }
@@ -126,7 +126,7 @@ pub async fn run(
             steps.push(StepEntry::err(
                 ErrorKind::User,
                 e.to_string(),
-                config_start.elapsed().as_millis() as u64,
+                elapsed_ms(config_start),
             ));
             return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
         }
@@ -155,7 +155,7 @@ pub async fn run(
                     files_found: s.files.len(),
                     glob: config.scan.glob.clone(),
                 }),
-                scan_start.elapsed().as_millis() as u64,
+                elapsed_ms(scan_start),
             ));
             s
         }
@@ -163,7 +163,7 @@ pub async fn run(
             steps.push(StepEntry::err(
                 ErrorKind::Application,
                 e.to_string(),
-                scan_start.elapsed().as_millis() as u64,
+                elapsed_ms(scan_start),
             ));
             return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
         }
@@ -176,7 +176,7 @@ pub async fn run(
         Outcome::Infer(InferOutcome {
             fields_inferred: schema.fields.len(),
         }),
-        infer_start.elapsed().as_millis() as u64,
+        elapsed_ms(infer_start),
     ));
     schema.emit_dropped_warnings();
 
@@ -345,14 +345,14 @@ pub async fn run(
                         config_path: write_path.display().to_string(),
                         fields_written: config.fields.field.len(),
                     }),
-                    write_start.elapsed().as_millis() as u64,
+                    elapsed_ms(write_start),
                 ));
             }
             Err(e) => {
                 steps.push(StepEntry::err(
                     ErrorKind::Application,
                     e.to_string(),
-                    write_start.elapsed().as_millis() as u64,
+                    elapsed_ms(write_start),
                 ));
                 return CommandResult::failed(
                     steps,
@@ -374,7 +374,7 @@ pub async fn run(
             unchanged,
             dry_run,
         }))),
-        elapsed_ms: start.elapsed().as_millis() as u64,
+        elapsed_ms: elapsed_ms(start),
     }
 }
 

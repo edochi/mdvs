@@ -4,7 +4,7 @@ use crate::outcome::commands::InfoOutcome;
 use crate::outcome::{Outcome, ReadConfigOutcome, ReadIndexOutcome, ScanOutcome};
 use crate::output::{FieldHint, field_hints};
 use crate::schema::config::MdvsToml;
-use crate::step::{CommandResult, ErrorKind, StepEntry};
+use crate::step::{CommandResult, ErrorKind, StepEntry, elapsed_ms};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -74,7 +74,7 @@ pub async fn run(path: &Path, _verbose: bool) -> CommandResult {
                     Outcome::ReadConfig(ReadConfigOutcome {
                         config_path: config_path_buf.display().to_string(),
                     }),
-                    config_start.elapsed().as_millis() as u64,
+                    elapsed_ms(config_start),
                 ));
                 Some(cfg)
             }
@@ -82,7 +82,7 @@ pub async fn run(path: &Path, _verbose: bool) -> CommandResult {
                 steps.push(StepEntry::err(
                     ErrorKind::User,
                     format!("mdvs.toml is invalid: {e} — fix the file or run 'mdvs init --force'"),
-                    config_start.elapsed().as_millis() as u64,
+                    elapsed_ms(config_start),
                 ));
                 None
             }
@@ -91,7 +91,7 @@ pub async fn run(path: &Path, _verbose: bool) -> CommandResult {
             steps.push(StepEntry::err(
                 ErrorKind::User,
                 e.to_string(),
-                config_start.elapsed().as_millis() as u64,
+                elapsed_ms(config_start),
             ));
             None
         }
@@ -110,7 +110,7 @@ pub async fn run(path: &Path, _verbose: bool) -> CommandResult {
                     files_found: s.files.len(),
                     glob: config.scan.glob.clone(),
                 }),
-                scan_start.elapsed().as_millis() as u64,
+                elapsed_ms(scan_start),
             ));
             Some(s)
         }
@@ -118,7 +118,7 @@ pub async fn run(path: &Path, _verbose: bool) -> CommandResult {
             steps.push(StepEntry::err(
                 ErrorKind::Application,
                 e.to_string(),
-                scan_start.elapsed().as_millis() as u64,
+                elapsed_ms(scan_start),
             ));
             None
         }
@@ -137,7 +137,7 @@ pub async fn run(path: &Path, _verbose: bool) -> CommandResult {
                     files_indexed: stats.files_indexed,
                     chunks: stats.chunks,
                 }),
-                index_start.elapsed().as_millis() as u64,
+                elapsed_ms(index_start),
             ));
             Some((metadata, stats))
         } else {
@@ -147,7 +147,7 @@ pub async fn run(path: &Path, _verbose: bool) -> CommandResult {
                     files_indexed: 0,
                     chunks: 0,
                 }),
-                index_start.elapsed().as_millis() as u64,
+                elapsed_ms(index_start),
             ));
             None
         }
@@ -158,7 +158,7 @@ pub async fn run(path: &Path, _verbose: bool) -> CommandResult {
                 files_indexed: 0,
                 chunks: 0,
             }),
-            index_start.elapsed().as_millis() as u64,
+            elapsed_ms(index_start),
         ));
         None
     };
@@ -224,7 +224,7 @@ pub async fn run(path: &Path, _verbose: bool) -> CommandResult {
             ignored_fields: config.fields.ignore.clone(),
             index,
         }))),
-        elapsed_ms: start.elapsed().as_millis() as u64,
+        elapsed_ms: elapsed_ms(start),
     }
 }
 

@@ -10,7 +10,7 @@ use crate::outcome::Outcome;
 use crate::outcome::commands::export_jsonschema::{ExportFormat, ExportJsonschemaOutcome};
 use crate::schema::config::MdvsToml;
 use crate::schema::json_schema::dsl_to_canonical;
-use crate::step::{CommandResult, ErrorKind, StepEntry};
+use crate::step::{CommandResult, ErrorKind, StepEntry, elapsed_ms};
 use std::fs;
 use std::path::Path;
 use std::time::Instant;
@@ -98,7 +98,7 @@ pub fn run(path: &Path, format: ExportFormat, output_file: Option<&Path>) -> Com
                 ignore_exported,
             },
         ))),
-        elapsed_ms: start.elapsed().as_millis() as u64,
+        elapsed_ms: elapsed_ms(start),
     }
 }
 

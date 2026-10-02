@@ -7,7 +7,7 @@ use crate::outcome::{
     ReadIndexOutcome,
 };
 use crate::schema::config::MdvsToml;
-use crate::step::{CommandResult, ErrorKind, StepEntry};
+use crate::step::{CommandResult, ErrorKind, StepEntry, elapsed_ms};
 use std::path::Path;
 use std::time::Instant;
 use tracing::instrument;
@@ -59,7 +59,7 @@ pub async fn run(
                     Outcome::ReadConfig(ReadConfigOutcome {
                         config_path: config_path_buf.display().to_string(),
                     }),
-                    config_start.elapsed().as_millis() as u64,
+                    elapsed_ms(config_start),
                 ));
                 Some(cfg)
             }
@@ -67,7 +67,7 @@ pub async fn run(
                 steps.push(StepEntry::err(
                     ErrorKind::User,
                     format!("mdvs.toml is invalid: {e} — fix the file or run 'mdvs init --force'"),
-                    config_start.elapsed().as_millis() as u64,
+                    elapsed_ms(config_start),
                 ));
                 None
             }
@@ -76,7 +76,7 @@ pub async fn run(
             steps.push(StepEntry::err(
                 ErrorKind::User,
                 e.to_string(),
-                config_start.elapsed().as_millis() as u64,
+                elapsed_ms(config_start),
             ));
             None
         }
@@ -135,7 +135,7 @@ pub async fn run(
                             files_indexed: stats.files_indexed,
                             chunks: stats.chunks,
                         }),
-                        index_start.elapsed().as_millis() as u64,
+                        elapsed_ms(index_start),
                     ));
                     Some(IndexData { metadata })
                 } else {
@@ -145,7 +145,7 @@ pub async fn run(
                             files_indexed: 0,
                             chunks: 0,
                         }),
-                        index_start.elapsed().as_millis() as u64,
+                        elapsed_ms(index_start),
                     ));
                     None
                 }
@@ -156,7 +156,7 @@ pub async fn run(
                         files_indexed: 0,
                         chunks: 0,
                     }),
-                    index_start.elapsed().as_millis() as u64,
+                    elapsed_ms(index_start),
                 ));
                 None
             }
@@ -231,7 +231,7 @@ pub async fn run(
                                 model_name: emb_config.name.clone(),
                                 dimension: emb.dimension(),
                             }),
-                            model_start.elapsed().as_millis() as u64,
+                            elapsed_ms(model_start),
                         ));
                         emb
                     }
@@ -239,7 +239,7 @@ pub async fn run(
                         steps.push(StepEntry::err(
                             ErrorKind::Application,
                             e.to_string(),
-                            model_start.elapsed().as_millis() as u64,
+                            elapsed_ms(model_start),
                         ));
                         return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
                     }
@@ -248,7 +248,7 @@ pub async fn run(
                     steps.push(StepEntry::err(
                         ErrorKind::Application,
                         e.to_string(),
-                        model_start.elapsed().as_millis() as u64,
+                        elapsed_ms(model_start),
                     ));
                     return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
                 }
@@ -262,7 +262,7 @@ pub async fn run(
             Outcome::EmbedQuery(EmbedQueryOutcome {
                 query: query.to_string(),
             }),
-            embed_start.elapsed().as_millis() as u64,
+            elapsed_ms(embed_start),
         ));
         Some(qe)
     };
@@ -306,7 +306,7 @@ pub async fn run(
         Ok(r) => {
             steps.push(StepEntry::ok(
                 Outcome::ExecuteSearch(ExecuteSearchOutcome { hits: r.hits.len() }),
-                search_start.elapsed().as_millis() as u64,
+                elapsed_ms(search_start),
             ));
             r
         }
@@ -314,7 +314,7 @@ pub async fn run(
             steps.push(StepEntry::err(
                 ErrorKind::Application,
                 e.to_string(),
-                search_start.elapsed().as_millis() as u64,
+                elapsed_ms(search_start),
             ));
             return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
         }
@@ -331,7 +331,7 @@ pub async fn run(
             limit,
             where_rewrites: results.where_rewrites,
         }))),
-        elapsed_ms: start.elapsed().as_millis() as u64,
+        elapsed_ms: elapsed_ms(start),
     }
 }
 

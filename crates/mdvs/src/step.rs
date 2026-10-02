@@ -9,7 +9,7 @@ use crate::output::OutputFormat;
 use crate::render::{format_markdown, format_pretty};
 use serde::ser::SerializeMap;
 use serde::{Serialize, Serializer};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// A process step that completed successfully.
 #[derive(Debug)]
@@ -138,7 +138,7 @@ impl CommandResult {
                 kind: ErrorKind::Application,
                 message: msg,
             }),
-            elapsed_ms: start.elapsed().as_millis() as u64,
+            elapsed_ms: elapsed_ms(start),
         }
     }
 
@@ -147,7 +147,7 @@ impl CommandResult {
         Self {
             steps,
             result: Err(StepError { kind, message }),
-            elapsed_ms: start.elapsed().as_millis() as u64,
+            elapsed_ms: elapsed_ms(start),
         }
     }
 
@@ -189,6 +189,16 @@ impl CommandResult {
 }
 
 // --- Free functions ---
+
+/// Milliseconds elapsed since `start`, saturating at `u64::MAX`.
+pub fn elapsed_ms(start: Instant) -> u64 {
+    duration_ms(start.elapsed())
+}
+
+/// Whole milliseconds in `duration`, saturating at `u64::MAX`.
+fn duration_ms(duration: Duration) -> u64 {
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+}
 
 /// Returns `true` if the command or any step failed.
 pub fn has_failed(result: &CommandResult) -> bool {
@@ -295,6 +305,12 @@ mod tests {
     use super::*;
     use crate::outcome::{CleanOutcome, DeleteIndexOutcome, Outcome};
     use std::path::PathBuf;
+
+    /// Upper bound on the milliseconds a just-taken `Instant` can report.
+    #[test]
+    fn duration_ms_saturates_beyond_u64() {
+        assert_eq!(duration_ms(Duration::from_secs(u64::MAX)), u64::MAX);
+    }
 
     #[test]
     fn step_entry_ok() {

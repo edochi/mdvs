@@ -15,7 +15,7 @@ use crate::schema::config::{MdvsToml, TomlField};
 use crate::schema::json_schema::{canonical_to_dsl, validate_mdvs_schema};
 use crate::schema::load::load_schema;
 use crate::schema::shared::FieldTypeSerde;
-use crate::step::{CommandResult, ErrorKind, StepEntry};
+use crate::step::{CommandResult, ErrorKind, StepEntry, elapsed_ms};
 use serde::Serialize;
 use std::collections::HashSet;
 use std::path::Path;
@@ -102,7 +102,7 @@ pub fn run(
                 Outcome::ReadConfig(ReadConfigOutcome {
                     config_path: reported_path,
                 }),
-                config_start.elapsed().as_millis() as u64,
+                elapsed_ms(config_start),
             ));
             cfg
         }
@@ -110,7 +110,7 @@ pub fn run(
             steps.push(StepEntry::err(
                 ErrorKind::User,
                 e.to_string(),
-                config_start.elapsed().as_millis() as u64,
+                elapsed_ms(config_start),
             ));
             return CommandResult::failed_from_steps(steps, start);
         }
@@ -129,7 +129,7 @@ pub fn run(
                     files_found: s.files.len(),
                     glob: config.scan.glob.clone(),
                 }),
-                scan_start.elapsed().as_millis() as u64,
+                elapsed_ms(scan_start),
             ));
             s
         }
@@ -137,7 +137,7 @@ pub fn run(
             steps.push(StepEntry::err(
                 ErrorKind::Application,
                 e.to_string(),
-                scan_start.elapsed().as_millis() as u64,
+                elapsed_ms(scan_start),
             ));
             return CommandResult::failed_from_steps(steps, start);
         }
@@ -152,7 +152,7 @@ pub fn run(
             Outcome::Infer(InferOutcome {
                 fields_inferred: schema.fields.len(),
             }),
-            infer_start.elapsed().as_millis() as u64,
+            elapsed_ms(infer_start),
         ));
         schema.emit_dropped_warnings();
 
@@ -193,7 +193,7 @@ pub fn run(
                             config_path: config_path_buf.display().to_string(),
                             fields_written: config.fields.field.len(),
                         }),
-                        write_start.elapsed().as_millis() as u64,
+                        elapsed_ms(write_start),
                     ));
                     // Re-read to pick up normalized TOML
                     match MdvsToml::read(&config_path_buf) {
@@ -205,7 +205,7 @@ pub fn run(
                     steps.push(StepEntry::err(
                         ErrorKind::Application,
                         e.to_string(),
-                        write_start.elapsed().as_millis() as u64,
+                        elapsed_ms(write_start),
                     ));
                     return CommandResult::failed(
                         steps,
@@ -228,7 +228,7 @@ pub fn run(
             steps.push(StepEntry::err(
                 ErrorKind::Application,
                 e.to_string(),
-                validate_start.elapsed().as_millis() as u64,
+                elapsed_ms(validate_start),
             ));
             return CommandResult::failed(
                 steps,
@@ -246,7 +246,7 @@ pub fn run(
             violations: check_result.field_violations.clone(),
             new_fields: check_result.new_fields.clone(),
         }),
-        validate_start.elapsed().as_millis() as u64,
+        elapsed_ms(validate_start),
     ));
 
     // Build command outcome
@@ -257,7 +257,7 @@ pub fn run(
             violations: check_result.field_violations,
             new_fields: check_result.new_fields,
         }))),
-        elapsed_ms: start.elapsed().as_millis() as u64,
+        elapsed_ms: elapsed_ms(start),
     }
 }
 

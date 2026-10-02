@@ -30,10 +30,6 @@ similar_names = "allow"
 module_name_repetitions = "allow"
 
 # TEMPORARY: lints that still fire; this block shrinks wave by wave per TODO-0197.
-# wave 5 — casts
-cast_possible_truncation = "allow"
-cast_possible_wrap = "allow"
-cast_precision_loss = "allow"
 # wave 6 — signatures
 needless_pass_by_value = "allow"
 unnecessary_wraps = "allow"
