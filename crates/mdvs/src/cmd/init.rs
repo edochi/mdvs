@@ -1,7 +1,6 @@
-use crate::discover::infer::InferredSchema;
-use crate::discover::scan::ScannedFiles;
+use crate::cmd::steps::{infer_step, scan_step};
 use crate::outcome::commands::InitOutcome;
-use crate::outcome::{InferOutcome, Outcome, ScanOutcome, WriteConfigOutcome};
+use crate::outcome::{Outcome, WriteConfigOutcome};
 use crate::output::{DiscoveredField, OutputFormat};
 use crate::schema::config::MdvsToml;
 use crate::schema::json_schema::{canonical_to_dsl, validate_mdvs_schema};
@@ -118,57 +117,31 @@ pub fn run(
 
     // Schema-driven init: skip scan + infer, load+validate+translate, write.
     if let Some(schema_path) = schema {
-        return init_from_schema(
+        let outcome = init_from_schema(
             path,
-            &config_path,
             scan_config,
             schema_path,
             dry_run,
             default_output_format,
-            steps,
-            start,
+            &mut steps,
         );
+        return match outcome {
+            Ok(outcome) => init_result(steps, outcome, start),
+            Err(()) => CommandResult::failed_from_steps(steps, start),
+        };
     }
-    // 1. Scan — calls ScannedFiles::scan() directly
-    let scan_start = Instant::now();
-    let scanned = match ScannedFiles::scan(path, &scan_config) {
-        Ok(s) => {
-            steps.push(StepEntry::ok(
-                Outcome::Scan(ScanOutcome {
-                    files_found: s.files.len(),
-                    glob: scan_config.glob.clone(),
-                }),
-                elapsed_ms(scan_start),
-            ));
-            s
-        }
-        Err(e) => {
-            steps.push(StepEntry::err(
-                ErrorKind::Application,
-                e.to_string(),
-                elapsed_ms(scan_start),
-            ));
-            return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
-        }
+
+    let Ok(scanned) = scan_step(path, &scan_config, &mut steps) else {
+        return CommandResult::failed_from_steps(steps, start);
     };
 
-    // 2. Infer
     if scanned.files.is_empty() {
         let msg = format!("no markdown files found in '{}'", path.display());
         steps.push(StepEntry::err(ErrorKind::User, msg.clone(), 0));
         return CommandResult::failed(steps, ErrorKind::User, msg, start);
     }
 
-    // 2b. Infer — InferredSchema::infer() is infallible
-    let infer_start = Instant::now();
-    let schema = InferredSchema::infer(&scanned);
-    steps.push(StepEntry::ok(
-        Outcome::Infer(InferOutcome {
-            fields_inferred: schema.fields.len(),
-        }),
-        elapsed_ms(infer_start),
-    ));
-    schema.emit_dropped_warnings();
+    let schema = infer_step(&scanned, &mut steps);
     for field in &schema.fields {
         field.emit_inexact_widening_warning();
     }
@@ -183,63 +156,92 @@ pub fn run(
         .map(|f| f.to_discovered(total_files, true))
         .collect();
 
-    // 3. Write config — MdvsToml::from_inferred() + write() directly
-    if dry_run {
-        steps.push(StepEntry::skipped());
-    } else {
-        let write_start = Instant::now();
-        let mut toml_doc = MdvsToml::from_inferred(&schema, scan_config);
-        toml_doc.default_output_format = default_output_format;
-        match toml_doc.write(&config_path) {
-            Ok(()) => {
-                steps.push(StepEntry::ok(
-                    Outcome::WriteConfig(WriteConfigOutcome {
-                        config_path: config_path.display().to_string(),
-                        fields_written: schema.fields.len(),
-                    }),
-                    elapsed_ms(write_start),
-                ));
-            }
-            Err(e) => {
-                steps.push(StepEntry::err(
-                    ErrorKind::Application,
-                    e.to_string(),
-                    elapsed_ms(write_start),
-                ));
-            }
-        }
-    }
+    write_config_step(
+        &config_path,
+        schema.fields.len(),
+        dry_run,
+        &mut steps,
+        || {
+            let mut toml_doc = MdvsToml::from_inferred(&schema, scan_config);
+            toml_doc.default_output_format = default_output_format;
+            toml_doc
+        },
+    );
 
+    let outcome = InitOutcome {
+        path: path.to_path_buf(),
+        files_scanned: total_files,
+        fields,
+        dry_run,
+    };
+    init_result(steps, outcome, start)
+}
+
+/// Wrap a successful init outcome into the command result.
+fn init_result(steps: Vec<StepEntry>, outcome: InitOutcome, start: Instant) -> CommandResult {
     CommandResult {
         steps,
-        result: Ok(Outcome::Init(Box::new(InitOutcome {
-            path: path.to_path_buf(),
-            files_scanned: total_files,
-            fields,
-            dry_run,
-        }))),
+        result: Ok(Outcome::Init(Box::new(outcome))),
         elapsed_ms: elapsed_ms(start),
+    }
+}
+
+/// Write the generated config, or push a skipped step under `--dry-run`.
+///
+/// `build` constructs the config inside the timed step. A write failure is
+/// recorded as a failed step but does not fail the init command.
+fn write_config_step(
+    config_path: &Path,
+    fields_written: usize,
+    dry_run: bool,
+    steps: &mut Vec<StepEntry>,
+    build: impl FnOnce() -> MdvsToml,
+) {
+    if dry_run {
+        steps.push(StepEntry::skipped());
+        return;
+    }
+    let write_start = Instant::now();
+    let mut toml_doc = build();
+    match toml_doc.write(config_path) {
+        Ok(()) => {
+            steps.push(StepEntry::ok(
+                Outcome::WriteConfig(WriteConfigOutcome {
+                    config_path: config_path.display().to_string(),
+                    fields_written,
+                }),
+                elapsed_ms(write_start),
+            ));
+        }
+        Err(e) => {
+            steps.push(StepEntry::err(
+                ErrorKind::Application,
+                e.to_string(),
+                elapsed_ms(write_start),
+            ));
+        }
     }
 }
 
 /// Schema-driven init: load the schema, validate it against the mdvs subset,
 /// translate to DSL fields, build the `MdvsToml`, write it.
-#[allow(clippy::too_many_arguments)]
+///
+/// On failure the error step is pushed and `Err(())` is returned.
 fn init_from_schema(
     path: &Path,
-    config_path: &Path,
     scan_config: ScanConfig,
     schema_path: &Path,
     dry_run: bool,
     default_output_format: Option<OutputFormat>,
-    mut steps: Vec<StepEntry>,
-    start: Instant,
-) -> CommandResult {
+    steps: &mut Vec<StepEntry>,
+) -> Result<InitOutcome, ()> {
+    let config_path = path.join("mdvs.toml");
+
     let canonical = match load_schema(schema_path) {
         Ok(v) => v,
         Err(e) => {
             steps.push(StepEntry::err(ErrorKind::User, e.to_string(), 0));
-            return CommandResult::failed_from_steps(steps, start);
+            return Err(());
         }
     };
 
@@ -252,7 +254,7 @@ fn init_from_schema(
             ),
             0,
         ));
-        return CommandResult::failed_from_steps(steps, start);
+        return Err(());
     }
 
     let import = match canonical_to_dsl(&canonical) {
@@ -263,7 +265,7 @@ fn init_from_schema(
                 format!("cannot import schema '{}': {e}", schema_path.display()),
                 0,
             ));
-            return CommandResult::failed_from_steps(steps, start);
+            return Err(());
         }
     };
 
@@ -293,43 +295,19 @@ fn init_from_schema(
         })
         .collect();
 
-    if dry_run {
-        steps.push(StepEntry::skipped());
-    } else {
-        let write_start = Instant::now();
+    write_config_step(&config_path, total_fields, dry_run, steps, || {
         let mut toml_doc = MdvsToml::default_with_fields(import.fields, import.ignore);
         toml_doc.scan = scan_config;
         toml_doc.default_output_format = default_output_format;
-        match toml_doc.write(config_path) {
-            Ok(()) => {
-                steps.push(StepEntry::ok(
-                    Outcome::WriteConfig(WriteConfigOutcome {
-                        config_path: config_path.display().to_string(),
-                        fields_written: total_fields,
-                    }),
-                    elapsed_ms(write_start),
-                ));
-            }
-            Err(e) => {
-                steps.push(StepEntry::err(
-                    ErrorKind::Application,
-                    e.to_string(),
-                    elapsed_ms(write_start),
-                ));
-            }
-        }
-    }
+        toml_doc
+    });
 
-    CommandResult {
-        steps,
-        result: Ok(Outcome::Init(Box::new(InitOutcome {
-            path: path.to_path_buf(),
-            files_scanned: 0,
-            fields: fields_for_outcome,
-            dry_run,
-        }))),
-        elapsed_ms: elapsed_ms(start),
-    }
+    Ok(InitOutcome {
+        path: path.to_path_buf(),
+        files_scanned: 0,
+        fields: fields_for_outcome,
+        dry_run,
+    })
 }
 
 #[cfg(test)]

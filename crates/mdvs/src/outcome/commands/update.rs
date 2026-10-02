@@ -23,7 +23,8 @@ pub struct UpdateOutcome {
 }
 
 impl UpdateOutcome {
-    fn has_changes(&self) -> bool {
+    /// Whether any field was added, changed, or removed.
+    pub(crate) fn has_changes(&self) -> bool {
         !self.added.is_empty() || !self.changed.is_empty() || !self.removed.is_empty()
     }
 }

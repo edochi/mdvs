@@ -4,20 +4,15 @@ mod validate;
 
 pub use validate::validate;
 
-use crate::discover::infer::InferredSchema;
-use crate::discover::scan::ScannedFiles;
+use crate::cmd::steps::{auto_update_step, scan_step};
 use crate::outcome::commands::CheckOutcome;
-use crate::outcome::{
-    InferOutcome, Outcome, ReadConfigOutcome, ScanOutcome, ValidateOutcome, WriteConfigOutcome,
-};
+use crate::outcome::{Outcome, ReadConfigOutcome, ValidateOutcome};
 use crate::output::{FieldViolation, NewField};
-use crate::schema::config::{MdvsToml, TomlField};
+use crate::schema::config::MdvsToml;
 use crate::schema::json_schema::{canonical_to_dsl, validate_mdvs_schema};
 use crate::schema::load::load_schema;
-use crate::schema::shared::FieldTypeSerde;
 use crate::step::{CommandResult, ErrorKind, StepEntry, elapsed_ms};
 use serde::Serialize;
-use std::collections::HashSet;
 use std::path::Path;
 use std::time::Instant;
 use tracing::instrument;
@@ -96,7 +91,7 @@ pub fn run(
         Some(p) => p.display().to_string(),
         None => config_path_buf.display().to_string(),
     };
-    let config = match resolve_check_config(&config_path_buf, schema_override) {
+    let mut config = match resolve_check_config(&config_path_buf, schema_override) {
         Ok(cfg) => {
             steps.push(StepEntry::ok(
                 Outcome::ReadConfig(ReadConfigOutcome {
@@ -121,104 +116,22 @@ pub fn run(
     let no_update = no_update || schema_override.is_some();
 
     // 2. Scan (once — shared between auto-update and validate)
-    let scan_start = Instant::now();
-    let scanned = match ScannedFiles::scan(path, &config.scan) {
-        Ok(s) => {
-            steps.push(StepEntry::ok(
-                Outcome::Scan(ScanOutcome {
-                    files_found: s.files.len(),
-                    glob: config.scan.glob.clone(),
-                }),
-                elapsed_ms(scan_start),
-            ));
-            s
-        }
-        Err(e) => {
-            steps.push(StepEntry::err(
-                ErrorKind::Application,
-                e.to_string(),
-                elapsed_ms(scan_start),
-            ));
-            return CommandResult::failed_from_steps(steps, start);
-        }
+    let Ok(scanned) = scan_step(path, &config.scan, &mut steps) else {
+        return CommandResult::failed_from_steps(steps, start);
     };
 
     // 3. Auto-update: infer new fields, write config if changed
     let should_update = !no_update && config.check.as_ref().is_some_and(|c| c.auto_update);
-    let config = if should_update {
-        let infer_start = Instant::now();
-        let schema = InferredSchema::infer(&scanned);
-        steps.push(StepEntry::ok(
-            Outcome::Infer(InferOutcome {
-                fields_inferred: schema.fields.len(),
-            }),
-            elapsed_ms(infer_start),
-        ));
-        schema.emit_dropped_warnings();
-
-        // Find truly new fields (not in config, not ignored)
-        let existing: HashSet<&str> = config
-            .fields
-            .field
-            .iter()
-            .map(|f| f.name.as_str())
-            .collect();
-        let new_toml_fields: Vec<TomlField> = schema
-            .fields
-            .iter()
-            .filter(|f| !existing.contains(f.name.as_str()))
-            .filter(|f| !config.fields.ignore.contains(&f.name))
-            .inspect(|f| f.emit_inexact_widening_warning())
-            .map(|f| TomlField {
-                name: f.name.clone(),
-                field_type: FieldTypeSerde::from(&f.field_type),
-                allowed: f.allowed.clone(),
-                required: f.required.clone(),
-                nullable: f.nullable,
-                constraints: None,
-                preprocess: f.preprocess.clone(),
-            })
-            .collect();
-
-        if new_toml_fields.is_empty() {
-            config
-        } else {
-            let mut config = config;
-            config.fields.field.extend(new_toml_fields);
-            let write_start = Instant::now();
-            match config.write(&config_path_buf) {
-                Ok(()) => {
-                    steps.push(StepEntry::ok(
-                        Outcome::WriteConfig(WriteConfigOutcome {
-                            config_path: config_path_buf.display().to_string(),
-                            fields_written: config.fields.field.len(),
-                        }),
-                        elapsed_ms(write_start),
-                    ));
-                    // Re-read to pick up normalized TOML
-                    match MdvsToml::read(&config_path_buf) {
-                        Ok(c) => c,
-                        Err(_) => config,
-                    }
-                }
-                Err(e) => {
-                    steps.push(StepEntry::err(
-                        ErrorKind::Application,
-                        e.to_string(),
-                        elapsed_ms(write_start),
-                    ));
-                    return CommandResult::failed(
-                        steps,
-                        ErrorKind::Application,
-                        "auto-update failed to write config".into(),
-                        start,
-                    );
-                }
-            }
-        }
-    } else {
-        config
-    };
+    if should_update
+        && auto_update_step(&mut config, &config_path_buf, &scanned, &mut steps).is_err()
+    {
+        return CommandResult::failed(
+            steps,
+            ErrorKind::Application,
+            "auto-update failed to write config".into(),
+            start,
+        );
+    }
 
     // 4. Validate
     let validate_start = std::time::Instant::now();
@@ -328,7 +241,7 @@ mod tests {
     use crate::cmd::init::{InitOptions, InitScanFlags};
     use crate::outcome::commands::CheckOutcome;
     use crate::schema::config::{FieldsConfig, TomlField, UpdateConfig};
-    use crate::schema::shared::{FrontmatterFormat, ScanConfig};
+    use crate::schema::shared::{FieldTypeSerde, FrontmatterFormat, ScanConfig};
     use std::fs;
 
     fn unwrap_check(result: &CommandResult) -> &CheckOutcome {

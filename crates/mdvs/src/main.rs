@@ -363,13 +363,8 @@ async fn main() -> anyhow::Result<()> {
         } => {
             let reinfer_args = subcommand.map(|UpdateCommand::Reinfer(args)| args);
             let effective_dry_run = dry_run || reinfer_args.as_ref().is_some_and(|a| a.dry_run);
-            let result = mdvs::cmd::update::run(
-                &path,
-                reinfer_args.as_ref(),
-                effective_dry_run,
-                cli.verbose,
-            )
-            .await;
+            let result =
+                mdvs::cmd::update::run(&path, reinfer_args.as_ref(), effective_dry_run).await;
             let failed = mdvs::step::has_failed(&result);
             let verbose = cli.verbose || failed;
             let format = resolve_output_format(cli.output, &path);
@@ -410,7 +405,7 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
         Command::Info { path } => {
-            let result = mdvs::cmd::info::run(&path, cli.verbose).await;
+            let result = mdvs::cmd::info::run(&path).await;
             let failed = mdvs::step::has_failed(&result);
             let verbose = cli.verbose || failed;
             let format = resolve_output_format(cli.output, &path);
