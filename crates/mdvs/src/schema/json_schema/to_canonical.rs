@@ -100,11 +100,10 @@ pub(super) fn intermediate_object_schema() -> Value {
 }
 
 fn field_to_subschema(field: &TomlField) -> Value {
-    let ft = match FieldType::try_from(&field.field_type) {
-        Ok(ft) => ft,
-        // Unparseable types are caught by `MdvsToml::validate()` before this
-        // function is reachable. If we get here, fall through to an empty schema.
-        Err(_) => return json!({}),
+    // Unparseable types are caught by `MdvsToml::validate()` before this
+    // function is reachable. If we get here, fall through to an empty schema.
+    let Ok(ft) = FieldType::try_from(&field.field_type) else {
+        return json!({});
     };
 
     let mut subschema = type_subschema(&ft, field.nullable, field.constraints.as_ref());

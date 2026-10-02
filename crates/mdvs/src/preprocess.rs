@@ -117,14 +117,12 @@ impl Pipeline {
     /// Apply the field's Stage-2 preprocessors in declared order.
     /// Returns `Cow::Borrowed(value)` when no transformation occurs.
     pub(crate) fn apply_to_value<'a>(&self, field: &TomlField, value: &'a Value) -> Cow<'a, Value> {
-        let stages = match self.per_field.get(field.name.as_str()) {
-            Some(s) => s,
-            None => return Cow::Borrowed(value),
+        let Some(stages) = self.per_field.get(field.name.as_str()) else {
+            return Cow::Borrowed(value);
         };
 
-        let field_type = match FieldType::try_from(&field.field_type) {
-            Ok(ft) => ft,
-            Err(_) => return Cow::Borrowed(value),
+        let Ok(field_type) = FieldType::try_from(&field.field_type) else {
+            return Cow::Borrowed(value);
         };
 
         let mut current: Cow<'a, Value> = Cow::Borrowed(value);
@@ -180,8 +178,7 @@ fn widen_int_to_float(value: &Value, field_type: &FieldType) -> Option<Value> {
                     Value::Number(n) if n.is_i64() => n
                         .as_i64()
                         .and_then(|i| serde_json::Number::from_f64(i as f64))
-                        .map(Value::Number)
-                        .unwrap_or_else(|| elem.clone()),
+                        .map_or_else(|| elem.clone(), Value::Number),
                     _ => elem.clone(),
                 })
                 .collect();

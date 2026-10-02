@@ -97,11 +97,8 @@ pub async fn run(path: &Path, _verbose: bool) -> CommandResult {
         }
     };
 
-    let config = match config {
-        Some(c) => c,
-        None => {
-            return CommandResult::failed_from_steps(steps, start);
-        }
+    let Some(config) = config else {
+        return CommandResult::failed_from_steps(steps, start);
     };
 
     // 2. Scan — calls ScannedFiles::scan() directly
@@ -130,7 +127,31 @@ pub async fn run(path: &Path, _verbose: bool) -> CommandResult {
     // 3. Read index — calls Backend methods directly
     let index_start = Instant::now();
     let backend = Backend::lance(path);
-    let index_data = if !backend.exists() {
+    let index_data = if backend.exists() {
+        let build_meta = backend.read_metadata().await.ok().flatten();
+        let idx_stats = backend.stats().await.ok().flatten();
+        if let (Some(metadata), Some(stats)) = (build_meta, idx_stats) {
+            steps.push(StepEntry::ok(
+                Outcome::ReadIndex(ReadIndexOutcome {
+                    exists: true,
+                    files_indexed: stats.files_indexed,
+                    chunks: stats.chunks,
+                }),
+                index_start.elapsed().as_millis() as u64,
+            ));
+            Some((metadata, stats))
+        } else {
+            steps.push(StepEntry::ok(
+                Outcome::ReadIndex(ReadIndexOutcome {
+                    exists: false,
+                    files_indexed: 0,
+                    chunks: 0,
+                }),
+                index_start.elapsed().as_millis() as u64,
+            ));
+            None
+        }
+    } else {
         steps.push(StepEntry::ok(
             Outcome::ReadIndex(ReadIndexOutcome {
                 exists: false,
@@ -140,38 +161,11 @@ pub async fn run(path: &Path, _verbose: bool) -> CommandResult {
             index_start.elapsed().as_millis() as u64,
         ));
         None
-    } else {
-        let build_meta = backend.read_metadata().await.ok().flatten();
-        let idx_stats = backend.stats().await.ok().flatten();
-        match (build_meta, idx_stats) {
-            (Some(metadata), Some(stats)) => {
-                steps.push(StepEntry::ok(
-                    Outcome::ReadIndex(ReadIndexOutcome {
-                        exists: true,
-                        files_indexed: stats.files_indexed,
-                        chunks: stats.chunks,
-                    }),
-                    index_start.elapsed().as_millis() as u64,
-                ));
-                Some((metadata, stats))
-            }
-            _ => {
-                steps.push(StepEntry::ok(
-                    Outcome::ReadIndex(ReadIndexOutcome {
-                        exists: false,
-                        files_indexed: 0,
-                        chunks: 0,
-                    }),
-                    index_start.elapsed().as_millis() as u64,
-                ));
-                None
-            }
-        }
     };
 
     // Build InfoOutcome from config + scanned + index_data
     let empty_files = Vec::new();
-    let files = scanned.as_ref().map(|s| &s.files).unwrap_or(&empty_files);
+    let files = scanned.as_ref().map_or(&empty_files, |s| &s.files);
     let total_files = files.len();
 
     let field_counts: HashMap<String, usize> = {

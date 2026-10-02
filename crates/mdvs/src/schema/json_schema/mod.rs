@@ -50,7 +50,7 @@ pub(crate) fn is_intermediate_object(v: &Value) -> bool {
         return false;
     };
     obj.get("type") == Some(&Value::String("object".into()))
-        && obj.get("properties").map(Value::is_object).unwrap_or(false)
+        && obj.get("properties").is_some_and(Value::is_object)
         && !obj.contains_key("x-mdvs")
 }
 

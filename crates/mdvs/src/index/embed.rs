@@ -383,7 +383,7 @@ mod mock_tests {
         let model_config = ModelConfig::try_from(&cfg).unwrap();
         match model_config {
             ModelConfig::Mock { dim } => assert_eq!(dim, 128),
-            other => panic!("expected Mock, got {other:?}"),
+            other @ ModelConfig::Model2Vec { .. } => panic!("expected Mock, got {other:?}"),
         }
     }
 
@@ -398,7 +398,7 @@ mod mock_tests {
         let model_config = ModelConfig::try_from(&cfg).unwrap();
         match model_config {
             ModelConfig::Mock { dim } => assert_eq!(dim, 256),
-            other => panic!("expected Mock, got {other:?}"),
+            other @ ModelConfig::Model2Vec { .. } => panic!("expected Mock, got {other:?}"),
         }
     }
 }

@@ -176,7 +176,7 @@ impl ConstraintKind {
         field_name: &str,
         _field_type: &FieldType,
     ) -> Option<String> {
-        use ConstraintKind::*;
+        use ConstraintKind::{Categories, Length, Pattern, Range};
         match (self, other) {
             (Categories(_), Categories(_)) => Some(format!(
                 "field '{field_name}': duplicate categories constraint"

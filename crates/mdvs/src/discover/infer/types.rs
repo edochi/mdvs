@@ -96,9 +96,8 @@ pub fn infer_field_types(scanned: &ScannedFiles) -> BTreeMap<String, FieldTypeIn
     //              (matching build's serialization at storage.rs)
     //   Other    → no change (can't arise from array+scalar widening)
     for (name, ft) in &types {
-        let vals = match distinct.get_mut(name) {
-            Some(v) => v,
-            None => continue,
+        let Some(vals) = distinct.get_mut(name) else {
+            continue;
         };
 
         match ft {

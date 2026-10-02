@@ -92,9 +92,8 @@ pub async fn run(
             None
         }
     };
-    let mut config = match config {
-        Some(c) => c,
-        None => return CommandResult::failed_from_steps(std::mem::take(&mut steps), start),
+    let Some(mut config) = config else {
+        return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
     };
 
     let should_update = !no_update && config.build.as_ref().is_some_and(|b| b.auto_update);
@@ -115,7 +114,7 @@ pub async fn run(
     }
 
     // 3. Core build pipeline (scan → auto-update → validate → classify → embed → write)
-    let (build_outcome, _embedder) = match build_core(
+    let Ok((build_outcome, _embedder)) = build_core(
         path,
         &mut config,
         &config_path_buf,
@@ -124,9 +123,8 @@ pub async fn run(
         &mut steps,
     )
     .await
-    {
-        Ok(result) => result,
-        Err(()) => return CommandResult::failed_from_steps(std::mem::take(&mut steps), start),
+    else {
+        return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
     };
 
     CommandResult {
@@ -311,27 +309,21 @@ pub async fn build_core(
         }
     };
 
-    let embedding = match config.embedding_model.as_ref() {
-        Some(e) => e,
-        None => {
-            steps.push(StepEntry::err(
-                ErrorKind::User,
-                "missing [embedding_model] in mdvs.toml".into(),
-                0,
-            ));
-            return Err(());
-        }
+    let Some(embedding) = config.embedding_model.as_ref() else {
+        steps.push(StepEntry::err(
+            ErrorKind::User,
+            "missing [embedding_model] in mdvs.toml".into(),
+            0,
+        ));
+        return Err(());
     };
-    let chunking = match config.chunking.as_ref() {
-        Some(c) => c,
-        None => {
-            steps.push(StepEntry::err(
-                ErrorKind::User,
-                "missing [chunking] in mdvs.toml".into(),
-                0,
-            ));
-            return Err(());
-        }
+    let Some(chunking) = config.chunking.as_ref() else {
+        steps.push(StepEntry::err(
+            ErrorKind::User,
+            "missing [chunking] in mdvs.toml".into(),
+            0,
+        ));
+        return Err(());
     };
     let backend = Backend::lance(path);
     let config_change_error =
@@ -507,12 +499,12 @@ pub async fn build_core(
             Some(emb) => match backend.embedding_dimension().await {
                 Ok(Some(existing_dim)) => {
                     let model_dim = emb.dimension() as i32;
-                    if existing_dim != model_dim {
+                    if existing_dim == model_dim {
+                        None
+                    } else {
                         Some(format!(
                             "dimension mismatch: model produces {model_dim}-dim embeddings but existing index has {existing_dim}-dim"
                         ))
-                    } else {
-                        None
                     }
                 }
                 Ok(None) => None,

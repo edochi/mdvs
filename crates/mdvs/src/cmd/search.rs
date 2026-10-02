@@ -125,7 +125,31 @@ pub async fn run(
         Some(_) => {
             let index_start = Instant::now();
             let backend = Backend::lance(path);
-            if !backend.exists() {
+            if backend.exists() {
+                let build_meta = backend.read_metadata().await.ok().flatten();
+                let idx_stats = backend.stats().await.ok().flatten();
+                if let (Some(metadata), Some(stats)) = (build_meta, idx_stats) {
+                    steps.push(StepEntry::ok(
+                        Outcome::ReadIndex(ReadIndexOutcome {
+                            exists: true,
+                            files_indexed: stats.files_indexed,
+                            chunks: stats.chunks,
+                        }),
+                        index_start.elapsed().as_millis() as u64,
+                    ));
+                    Some(IndexData { metadata })
+                } else {
+                    steps.push(StepEntry::ok(
+                        Outcome::ReadIndex(ReadIndexOutcome {
+                            exists: false,
+                            files_indexed: 0,
+                            chunks: 0,
+                        }),
+                        index_start.elapsed().as_millis() as u64,
+                    ));
+                    None
+                }
+            } else {
                 steps.push(StepEntry::ok(
                     Outcome::ReadIndex(ReadIndexOutcome {
                         exists: false,
@@ -135,33 +159,6 @@ pub async fn run(
                     index_start.elapsed().as_millis() as u64,
                 ));
                 None
-            } else {
-                let build_meta = backend.read_metadata().await.ok().flatten();
-                let idx_stats = backend.stats().await.ok().flatten();
-                match (build_meta, idx_stats) {
-                    (Some(metadata), Some(stats)) => {
-                        steps.push(StepEntry::ok(
-                            Outcome::ReadIndex(ReadIndexOutcome {
-                                exists: true,
-                                files_indexed: stats.files_indexed,
-                                chunks: stats.chunks,
-                            }),
-                            index_start.elapsed().as_millis() as u64,
-                        ));
-                        Some(IndexData { metadata })
-                    }
-                    _ => {
-                        steps.push(StepEntry::ok(
-                            Outcome::ReadIndex(ReadIndexOutcome {
-                                exists: false,
-                                files_indexed: 0,
-                                chunks: 0,
-                            }),
-                            index_start.elapsed().as_millis() as u64,
-                        ));
-                        None
-                    }
-                }
             }
         }
         None => {
@@ -177,7 +174,9 @@ pub async fn run(
         }
         (_, _, None) => Some("index not found (run `mdvs build` first)".to_string()),
         (_, Some(emb), Some(data)) => {
-            if data.metadata.embedding_model != *emb {
+            if data.metadata.embedding_model == *emb {
+                None
+            } else {
                 Some(format!(
                     "model mismatch: config has '{}' (rev {:?}) but index was built with '{}' (rev {:?}) — run 'mdvs build' to rebuild",
                     emb.name,
@@ -185,8 +184,6 @@ pub async fn run(
                     data.metadata.embedding_model.name,
                     data.metadata.embedding_model.revision,
                 ))
-            } else {
-                None
             }
         }
     };

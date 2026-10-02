@@ -245,22 +245,19 @@ fn build_array(values: &[Option<&Value>], ft: &FieldType) -> ArrayRef {
             let mut child_values: Vec<Option<&Value>> = Vec::new();
             let mut nulls: Vec<bool> = Vec::new();
             for v in values {
-                match v.and_then(|v| v.as_array()) {
-                    Some(arr) => {
-                        for elem in arr {
-                            child_values.push(Some(elem));
-                        }
-                        offsets.push(child_values.len() as i32);
-                        nulls.push(true);
+                if let Some(arr) = v.and_then(|v| v.as_array()) {
+                    for elem in arr {
+                        child_values.push(Some(elem));
                     }
-                    None => {
-                        // `offsets` is seeded with `vec![0]`, so `.last()`
-                        // is always Some here. The `unwrap_or(&0)` fallback
-                        // preserves correctness if a future refactor breaks
-                        // that invariant.
-                        offsets.push(*offsets.last().unwrap_or(&0));
-                        nulls.push(false);
-                    }
+                    offsets.push(child_values.len() as i32);
+                    nulls.push(true);
+                } else {
+                    // `offsets` is seeded with `vec![0]`, so `.last()`
+                    // is always Some here. The `unwrap_or(&0)` fallback
+                    // preserves correctness if a future refactor breaks
+                    // that invariant.
+                    offsets.push(*offsets.last().unwrap_or(&0));
+                    nulls.push(false);
                 }
             }
             let child_array = build_array(&child_values, inner);
@@ -442,10 +439,7 @@ pub fn build_index_batch(
     let end_line_arr: Int32Array = chunks.iter().map(|c| Some(c.end_line)).collect();
     let chunk_text_arr: StringArray = chunks.iter().map(|c| Some(c.chunk_text.as_str())).collect();
 
-    let dimension = chunks
-        .first()
-        .map(|c| c.embedding.len() as i32)
-        .unwrap_or(0);
+    let dimension = chunks.first().map_or(0, |c| c.embedding.len() as i32);
     let flat_values: Vec<f32> = chunks
         .iter()
         .flat_map(|c| c.embedding.iter().copied())
@@ -544,6 +538,10 @@ mod tests {
     // ------------------------------------------------------------------------
 
     #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "float values are stored without arithmetic, so they must come back bit-exact"
+    )]
     fn dotted_leaves_produce_nested_struct_columns() {
         // Three leaves: one flat, two under a shared `cal.baseline` parent.
         // The resulting `data` Struct should have a top-level `title` Utf8
@@ -638,6 +636,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "float values are stored without arithmetic, so they must come back bit-exact"
+    )]
     fn dotted_leaves_handle_partial_intermediate() {
         // File has `cal.baseline` but only `intensity`, not `wavelength`.
         // Both leaves are declared. The Struct exists; wavelength is null.

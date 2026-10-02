@@ -38,12 +38,13 @@ fn walk(v: &Toml, placeholder: &str, path_stack: &mut Vec<String>) -> Result<Jso
 
         Toml::Integer(i) => Ok(Json::Number((*i).into())),
 
-        Toml::Float(f) => match serde_json::Number::from_f64(*f) {
-            Some(n) => Ok(Json::Number(n)),
-            // `Number::from_f64` only rejects NaN / ±Inf — classify the
-            // failure mode for the user-facing error rather than panicking
-            // on a now-impossible-by-construction `expect`.
-            None => {
+        Toml::Float(f) => {
+            if let Some(n) = serde_json::Number::from_f64(*f) {
+                Ok(Json::Number(n))
+            } else {
+                // `Number::from_f64` only rejects NaN / ±Inf — classify the
+                // failure mode for the user-facing error rather than panicking
+                // on a now-impossible-by-construction `expect`.
                 let kind = if f.is_nan() {
                     "NaN"
                 } else if *f > 0.0 {
@@ -56,7 +57,7 @@ fn walk(v: &Toml, placeholder: &str, path_stack: &mut Vec<String>) -> Result<Jso
                     kind,
                 })
             }
-        },
+        }
 
         Toml::Boolean(b) => Ok(Json::Bool(*b)),
 

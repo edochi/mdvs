@@ -27,7 +27,7 @@ pub enum WithKind {
 
 /// Whether two `WithKind` values conflict on the same field.
 fn with_kinds_conflict(a: WithKind, b: WithKind) -> bool {
-    use WithKind::*;
+    use WithKind::{Categorical, Range};
     matches!((a, b), (Categorical, Range) | (Range, Categorical))
 }
 

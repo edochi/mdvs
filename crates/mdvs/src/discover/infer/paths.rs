@@ -200,7 +200,7 @@ impl DirectoryTree {
             .traverse(&self.arena)
             .filter_map(|edge| match edge {
                 NodeEdge::End(id) => Some(id),
-                _ => None,
+                NodeEdge::Start(_) => None,
             })
             .collect();
 
@@ -257,7 +257,7 @@ impl DirectoryTree {
             .traverse(&self.arena)
             .filter_map(|edge| match edge {
                 NodeEdge::End(id) => Some(id),
-                _ => None,
+                NodeEdge::Start(_) => None,
             })
             .collect();
 

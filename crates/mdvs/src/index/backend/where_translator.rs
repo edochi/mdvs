@@ -170,15 +170,18 @@ fn walk_expr(
             walk_expr(left, ctx, rewrites)?;
             walk_expr(right, ctx, rewrites)
         }
-        Expr::UnaryOp { expr: inner, .. } => walk_expr(inner, ctx, rewrites),
-        Expr::Nested(inner) => walk_expr(inner, ctx, rewrites),
-        Expr::IsNull(inner) | Expr::IsNotNull(inner) => walk_expr(inner, ctx, rewrites),
-        Expr::IsTrue(inner)
+        // Single-child expressions: recurse into the one operand.
+        Expr::UnaryOp { expr: inner, .. }
+        | Expr::Nested(inner)
+        | Expr::IsNull(inner)
+        | Expr::IsNotNull(inner)
+        | Expr::IsTrue(inner)
         | Expr::IsNotTrue(inner)
         | Expr::IsFalse(inner)
         | Expr::IsNotFalse(inner)
         | Expr::IsUnknown(inner)
-        | Expr::IsNotUnknown(inner) => walk_expr(inner, ctx, rewrites),
+        | Expr::IsNotUnknown(inner)
+        | Expr::Cast { expr: inner, .. } => walk_expr(inner, ctx, rewrites),
         Expr::Between {
             expr: e, low, high, ..
         } => {
@@ -195,11 +198,8 @@ fn walk_expr(
         }
         Expr::Like {
             expr: e, pattern, ..
-        } => {
-            walk_expr(e, ctx, rewrites)?;
-            walk_expr(pattern, ctx, rewrites)
         }
-        Expr::ILike {
+        | Expr::ILike {
             expr: e, pattern, ..
         } => {
             walk_expr(e, ctx, rewrites)?;
@@ -222,7 +222,10 @@ fn walk_expr(
             }
             Ok(())
         }
-        Expr::Cast { expr: inner, .. } => walk_expr(inner, ctx, rewrites),
+        #[expect(
+            clippy::match_same_arms,
+            reason = "literals are leaves; the wildcard below is a pass-through gap that may later reject"
+        )]
         Expr::Value(_) | Expr::TypedString { .. } => Ok(()),
         // Other variants (subqueries, CASE, INTERVAL, JSON ops, array
         // constructors, etc.) we don't touch — anything user-written that

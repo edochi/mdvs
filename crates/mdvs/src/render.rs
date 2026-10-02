@@ -65,7 +65,7 @@ fn format_pretty_block(block: &Block, out: &mut String, indent: usize) {
                     }
                     let mut table = builder.build();
                     let w = term_width();
-                    let header_offset = if headers.is_some() { 1 } else { 0 };
+                    let header_offset = usize::from(headers.is_some());
                     table.with(Style::rounded());
 
                     // Insert detail rows as Panels (spanning rows that don't

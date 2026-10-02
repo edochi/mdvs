@@ -149,8 +149,9 @@ impl FieldChange {
     pub fn format_old_new(&self) -> (String, String) {
         match self {
             FieldChange::Type { old, new } => (old.clone(), new.clone()),
-            FieldChange::Allowed { old, new } => (format_globs(old), format_globs(new)),
-            FieldChange::Required { old, new } => (format_globs(old), format_globs(new)),
+            FieldChange::Allowed { old, new } | FieldChange::Required { old, new } => {
+                (format_globs(old), format_globs(new))
+            }
             FieldChange::Nullable { old, new } => (old.to_string(), new.to_string()),
         }
     }

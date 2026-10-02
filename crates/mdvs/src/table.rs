@@ -12,9 +12,7 @@ pub use tabled::builder::Builder;
 
 /// Detect terminal width, falling back to 80 columns.
 pub fn term_width() -> usize {
-    terminal_size::terminal_size()
-        .map(|(terminal_size::Width(w), _)| w as usize)
-        .unwrap_or(80)
+    terminal_size::terminal_size().map_or(80, |(terminal_size::Width(w), _)| w as usize)
 }
 
 /// Apply compact table style: rounded borders, no internal horizontal lines,

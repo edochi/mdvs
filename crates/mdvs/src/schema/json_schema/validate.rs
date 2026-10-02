@@ -102,9 +102,9 @@ enum Location {
 }
 
 fn walk(node: &Value, location: Location) -> Result<(), String> {
-    let obj = match node.as_object() {
-        Some(o) => o,
-        None => return Ok(()), // Boolean schemas (true/false) and scalars allowed inside enum/const/etc.
+    // Boolean schemas (true/false) and scalars allowed inside enum/const/etc.
+    let Some(obj) = node.as_object() else {
+        return Ok(());
     };
 
     for (key, value) in obj {

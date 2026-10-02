@@ -259,21 +259,20 @@ impl ScannedFiles {
             .filter(|e| e.file_type().is_some_and(|ft| ft.is_file()))
             .filter(|e| is_markdown_path(e.path()))
         {
+            /// Files above this size are skipped to prevent OOM.
+            const MAX_FILE_SIZE: u64 = 100 * 1024 * 1024;
+
             let abs_path = entry.path();
-            let rel_path = match abs_path.strip_prefix(root) {
-                Ok(p) => p.to_path_buf(),
-                Err(_) => {
-                    warn!(path = %abs_path.display(), "file is outside root directory, skipping");
-                    continue;
-                }
+            let Ok(rel_path) = abs_path.strip_prefix(root) else {
+                warn!(path = %abs_path.display(), "file is outside root directory, skipping");
+                continue;
             };
+            let rel_path = rel_path.to_path_buf();
 
             if !matcher.is_match(&rel_path) {
                 continue;
             }
 
-            // Skip files larger than 100MB to prevent OOM
-            const MAX_FILE_SIZE: u64 = 100 * 1024 * 1024;
             match fs::metadata(abs_path) {
                 Ok(meta) if meta.len() > MAX_FILE_SIZE => {
                     warn!(

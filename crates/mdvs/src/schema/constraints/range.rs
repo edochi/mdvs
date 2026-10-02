@@ -87,13 +87,13 @@ fn validate_bound_type(
 ) -> Option<String> {
     match (element_type, bound) {
         // Integer field: only integer bounds allowed.
-        (FieldType::Integer, toml::Value::Integer(_)) => None,
+        // Float field: integer or float bounds (widened to f64).
+        (FieldType::Integer, toml::Value::Integer(_))
+        | (FieldType::Float, toml::Value::Integer(_) | toml::Value::Float(_)) => None,
         (FieldType::Integer, toml::Value::Float(_)) => Some(format!(
             "field '{field_name}': {bound_name} is a float but field type is Integer \
              — use an integer bound",
         )),
-        // Float field: integer or float bounds (widened to f64).
-        (FieldType::Float, toml::Value::Integer(_) | toml::Value::Float(_)) => None,
         // Non-numeric bound value.
         _ => Some(format!(
             "field '{field_name}': {bound_name} must be a numeric value, got {}",
