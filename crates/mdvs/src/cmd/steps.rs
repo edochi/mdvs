@@ -1,12 +1,14 @@
 use crate::discover::infer::InferredSchema;
 use crate::discover::scan::ScannedFiles;
 use crate::index::backend::{Backend, IndexStats};
+use crate::index::embed::{Embedder, ModelConfig};
 use crate::index::storage::BuildMetadata;
 use crate::outcome::{
-    InferOutcome, Outcome, ReadConfigOutcome, ReadIndexOutcome, ScanOutcome, WriteConfigOutcome,
+    InferOutcome, LoadModelOutcome, Outcome, ReadConfigOutcome, ReadIndexOutcome, ScanOutcome,
+    WriteConfigOutcome,
 };
 use crate::schema::config::{MdvsToml, TomlField};
-use crate::schema::shared::{FieldTypeSerde, ScanConfig};
+use crate::schema::shared::{EmbeddingModelConfig, FieldTypeSerde, ScanConfig};
 use crate::step::{ErrorKind, StepEntry, elapsed_ms};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -199,4 +201,35 @@ pub(crate) async fn read_index_step(
         elapsed_ms(index_start),
     ));
     index_data
+}
+
+/// Load the embedding model described by `embedding`, timed as one step.
+///
+/// Both an unsupported model configuration and a failed load are reported as
+/// application errors carrying the underlying message.
+pub(crate) fn load_model_step(
+    embedding: &EmbeddingModelConfig,
+    steps: &mut Vec<StepEntry>,
+) -> Result<Embedder, ()> {
+    let model_start = Instant::now();
+    match ModelConfig::try_from(embedding).and_then(|mc| Embedder::load(&mc)) {
+        Ok(embedder) => {
+            steps.push(StepEntry::ok(
+                Outcome::LoadModel(LoadModelOutcome {
+                    model_name: embedding.name.clone(),
+                    dimension: embedder.dimension(),
+                }),
+                elapsed_ms(model_start),
+            ));
+            Ok(embedder)
+        }
+        Err(e) => {
+            steps.push(StepEntry::err(
+                ErrorKind::Application,
+                e.to_string(),
+                elapsed_ms(model_start),
+            ));
+            Err(())
+        }
+    }
 }

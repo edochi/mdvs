@@ -1,5 +1,7 @@
 use clap::{Parser, Subcommand};
 use mdvs::cmd::init::{InitOptions, InitScanFlags};
+use mdvs::cmd::search::SearchOptions;
+use mdvs::index::backend::SearchQuery;
 use mdvs::output::OutputFormat;
 use mdvs::schema::config::MdvsToml;
 use std::path::{Path, PathBuf};
@@ -319,13 +321,16 @@ async fn main() -> anyhow::Result<()> {
         } => {
             let result = mdvs::cmd::search::run(
                 &path,
-                &query,
-                limit,
-                where_clause.as_deref(),
-                mode,
-                no_update,
-                no_build,
-                cli.verbose,
+                SearchQuery {
+                    text: &query,
+                    limit,
+                    where_clause: where_clause.as_deref(),
+                    mode,
+                },
+                SearchOptions {
+                    no_update,
+                    no_build,
+                },
             )
             .await;
             let failed = mdvs::step::has_failed(&result);
