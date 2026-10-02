@@ -55,25 +55,37 @@ pub struct MockEmbedder {
     dim: usize,
 }
 
+/// Bytes per hash word the mock embedder maps to one vector component.
+#[cfg(any(test, feature = "testing-mocks"))]
+const MOCK_WORD_BYTES: usize = 2;
+
+/// Offset that centers mock vector components (in `[0, 1]`) around zero.
+#[cfg(any(test, feature = "testing-mocks"))]
+const MOCK_VALUE_CENTER: f32 = 0.5;
+
 #[cfg(any(test, feature = "testing-mocks"))]
 impl MockEmbedder {
     fn new(dim: usize) -> Self {
         Self { dim }
     }
 
+    /// Deterministic pseudo-random vector for `text`: each xxh3 hash is split
+    /// into four little-endian u16 words, each mapped into `[-0.5, 0.5]`.
     fn encode(&self, text: &str) -> Vec<f32> {
         let mut out = Vec::with_capacity(self.dim);
         let mut counter: u64 = 0;
         while out.len() < self.dim {
-            let seed = xxhash_rust::xxh3::xxh3_64_with_seed(text.as_bytes(), counter);
-            for shift in 0..2 {
-                if out.len() >= self.dim {
-                    break;
-                }
-                let word = (seed >> (shift * 32)) as u32;
-                // Map u32 to [-0.5, 0.5] — always finite, centered around 0.
-                out.push((word as f32) / (u32::MAX as f32) - 0.5);
-            }
+            let seed = xxhash_rust::xxh3::xxh3_64_with_seed(text.as_bytes(), counter).to_le_bytes();
+            let remaining = self.dim - out.len();
+            let (words, _) = seed.as_chunks::<MOCK_WORD_BYTES>();
+            out.extend(
+                words
+                    .iter()
+                    .map(|word| u16::from_le_bytes(*word))
+                    .take(remaining)
+                    // Map u16 to [-0.5, 0.5] — always finite, centered around 0.
+                    .map(|word| f32::from(word) / f32::from(u16::MAX) - MOCK_VALUE_CENTER),
+            );
             counter += 1;
         }
         out
@@ -344,6 +356,25 @@ mod mock_tests {
         let emb = embedder.embed("hello").await;
         assert_eq!(emb.len(), 256);
         assert!(emb.iter().all(|v| v.is_finite()));
+    }
+
+    /// A dimension that is not a multiple of the four words in one hash.
+    const ODD_DIM: usize = 7;
+
+    #[tokio::test]
+    async fn mock_embed_fills_dimension_not_multiple_of_hash_words() {
+        let embedder = mock_embedder(ODD_DIM);
+        let emb = embedder.embed("hello").await;
+        assert_eq!(emb.len(), ODD_DIM);
+    }
+
+    #[tokio::test]
+    async fn mock_values_are_centered_within_half_unit() {
+        let embedder = mock_embedder(256);
+        let emb = embedder.embed("hello").await;
+        assert!(emb.iter().all(|v| v.abs() <= MOCK_VALUE_CENTER));
+        assert!(emb.iter().any(|v| *v < 0.0));
+        assert!(emb.iter().any(|v| *v > 0.0));
     }
 
     #[tokio::test]

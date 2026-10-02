@@ -499,8 +499,10 @@ pub async fn build_core(
         match &embedder {
             Some(emb) => match backend.embedding_dimension().await {
                 Ok(Some(existing_dim)) => {
-                    let model_dim = emb.dimension() as i32;
-                    if existing_dim == model_dim {
+                    let model_dim = emb.dimension();
+                    // A stored dimension that is not a valid usize can never
+                    // match the model, so it counts as a mismatch.
+                    if usize::try_from(existing_dim).ok() == Some(model_dim) {
                         None
                     } else {
                         Some(format!(
@@ -539,7 +541,13 @@ pub async fn build_core(
         let mut embed_chunk_rows = Vec::new();
         let mut details = Vec::new();
         for fte in &classify_data.needs_embedding {
-            let crs = embed_file(&fte.file_id, fte.scanned, max_chunk_size, emb).await;
+            let crs = match embed_file(&fte.file_id, fte.scanned, max_chunk_size, emb).await {
+                Ok(crs) => crs,
+                Err(e) => {
+                    steps.push(StepEntry::err(ErrorKind::Application, format!("{e:#}"), 0));
+                    return Err(());
+                }
+            };
             details.push(BuildFileDetail {
                 filename: fte.scanned.path.display().to_string(),
                 chunks: crs.len(),

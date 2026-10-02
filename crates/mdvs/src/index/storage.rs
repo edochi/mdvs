@@ -3,6 +3,7 @@ use crate::num::i64_to_f64_exact;
 use crate::schema::config::MdvsToml;
 use crate::schema::json_schema::dsl_to_canonical;
 use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig};
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use xxhash_rust::xxh3::xxh3_64;
@@ -173,15 +174,22 @@ impl BuildMetadata {
 // Arrow array builder (recursive, from JSON + FieldType)
 // ============================================================================
 
-fn build_array(values: &[Option<&Value>], ft: &FieldType) -> ArrayRef {
+/// Build an Arrow array for `values` typed by `ft`, recursing into lists and
+/// structs.
+///
+/// # Errors
+///
+/// Fails when a list column holds more child values than Arrow's `i32` list
+/// offsets can address.
+fn build_array(values: &[Option<&Value>], ft: &FieldType) -> anyhow::Result<ArrayRef> {
     match ft {
         FieldType::Boolean => {
             let arr: BooleanArray = values.iter().map(|v| v.and_then(Value::as_bool)).collect();
-            Arc::new(arr)
+            Ok(Arc::new(arr))
         }
         FieldType::Integer => {
             let arr: Int64Array = values.iter().map(|v| v.and_then(Value::as_i64)).collect();
-            Arc::new(arr)
+            Ok(Arc::new(arr))
         }
         FieldType::Float => {
             let arr: Float64Array = values
@@ -197,7 +205,7 @@ fn build_array(values: &[Option<&Value>], ft: &FieldType) -> ArrayRef {
                     })
                 })
                 .collect();
-            Arc::new(arr)
+            Ok(Arc::new(arr))
         }
         FieldType::String => {
             let arr: StringArray = values
@@ -210,7 +218,7 @@ fn build_array(values: &[Option<&Value>], ft: &FieldType) -> ArrayRef {
                     })
                 })
                 .collect();
-            Arc::new(arr)
+            Ok(Arc::new(arr))
         }
         FieldType::Date => {
             // Parse JSON strings as RFC 3339 full-date (`YYYY-MM-DD`) and
@@ -232,7 +240,7 @@ fn build_array(values: &[Option<&Value>], ft: &FieldType) -> ArrayRef {
                         .map(|d| d.num_days_from_ce() - EPOCH_DAYS_FROM_CE)
                 })
                 .collect();
-            Arc::new(arr)
+            Ok(Arc::new(arr))
         }
         FieldType::DateTime => {
             // Parse RFC 3339 datetimes and store as Arrow Timestamp(ms, UTC).
@@ -248,7 +256,7 @@ fn build_array(values: &[Option<&Value>], ft: &FieldType) -> ArrayRef {
                         .map(|dt| dt.with_timezone(&chrono::Utc).timestamp_millis())
                 })
                 .collect();
-            Arc::new(raw.with_timezone(Arc::from("UTC")))
+            Ok(Arc::new(raw.with_timezone(Arc::from("UTC"))))
         }
         FieldType::Array(inner) => {
             let mut offsets: Vec<i32> = vec![0];
@@ -259,7 +267,14 @@ fn build_array(values: &[Option<&Value>], ft: &FieldType) -> ArrayRef {
                     for elem in arr {
                         child_values.push(Some(elem));
                     }
-                    offsets.push(child_values.len() as i32);
+                    let offset = i32::try_from(child_values.len()).with_context(|| {
+                        format!(
+                            "list column holds {} values, beyond the Arrow list offset limit of {}",
+                            child_values.len(),
+                            i32::MAX
+                        )
+                    })?;
+                    offsets.push(offset);
                     nulls.push(true);
                 } else {
                     // `offsets` is seeded with `vec![0]`, so `.last()`
@@ -270,14 +285,14 @@ fn build_array(values: &[Option<&Value>], ft: &FieldType) -> ArrayRef {
                     nulls.push(false);
                 }
             }
-            let child_array = build_array(&child_values, inner);
+            let child_array = build_array(&child_values, inner)?;
             let inner_dt: DataType = inner.as_ref().into();
-            Arc::new(ListArray::new(
+            Ok(Arc::new(ListArray::new(
                 Arc::new(Field::new("item", inner_dt, true)),
                 OffsetBuffer::new(offsets.into()),
                 child_array,
                 Some(NullBuffer::from(nulls)),
-            ))
+            )))
         }
         FieldType::Object(fields) => {
             let nulls: Vec<bool> = values
@@ -292,18 +307,18 @@ fn build_array(values: &[Option<&Value>], ft: &FieldType) -> ArrayRef {
                         .map(|v| v.and_then(|v| v.get(name.as_str())))
                         .collect();
                     let sub_dt: DataType = sub_ft.into();
-                    (
+                    Ok((
                         Arc::new(Field::new(name, sub_dt, true)),
-                        build_array(&sub_values, sub_ft),
-                    )
+                        build_array(&sub_values, sub_ft)?,
+                    ))
                 })
-                .collect();
+                .collect::<anyhow::Result<_>>()?;
             let (child_fields, child_arrays): (Vec<_>, Vec<_>) = children.into_iter().unzip();
-            Arc::new(StructArray::new(
+            Ok(Arc::new(StructArray::new(
                 child_fields.into(),
                 child_arrays,
                 Some(NullBuffer::from(nulls)),
-            ))
+            )))
         }
     }
 }
@@ -339,7 +354,7 @@ pub fn build_files_batch(
     // each file's whole frontmatter Value as the per-row value.
     let storage_ft = transpose_to_storage_type(schema_fields);
     let values: Vec<Option<&Value>> = files.iter().map(|f| f.frontmatter.as_ref()).collect();
-    let data_arr = build_array(&values, &storage_ft);
+    let data_arr = build_array(&values, &storage_ft)?;
     let data_struct_type: DataType = (&storage_ft).into();
 
     let schema = Schema::new(vec![
@@ -449,7 +464,16 @@ pub fn build_index_batch(
     let end_line_arr: Int32Array = chunks.iter().map(|c| Some(c.end_line)).collect();
     let chunk_text_arr: StringArray = chunks.iter().map(|c| Some(c.chunk_text.as_str())).collect();
 
-    let dimension = chunks.first().map_or(0, |c| c.embedding.len() as i32);
+    let dimension = match chunks.first() {
+        Some(c) => i32::try_from(c.embedding.len()).with_context(|| {
+            format!(
+                "embedding dimension {} exceeds the Arrow fixed-size list limit of {}",
+                c.embedding.len(),
+                i32::MAX
+            )
+        })?,
+        None => 0,
+    };
     let flat_values: Vec<f32> = chunks
         .iter()
         .flat_map(|c| c.embedding.iter().copied())
@@ -476,7 +500,7 @@ pub fn build_index_batch(
     // data Struct, one (possibly null) frontmatter Value per chunk's file
     let storage_ft = transpose_to_storage_type(schema_fields);
     let data_values: Vec<Option<&Value>> = parents.iter().map(|f| f.frontmatter.as_ref()).collect();
-    let data_arr = build_array(&data_values, &storage_ft);
+    let data_arr = build_array(&data_values, &storage_ft)?;
     let data_struct_type: DataType = (&storage_ft).into();
 
     let schema = Schema::new(vec![
@@ -550,7 +574,7 @@ mod tests {
         // 2^53 + 1, the smallest positive integer with no exact f64 equivalent.
         let beyond = json!(i64::try_from(crate::num::F64_EXACT_INT_LIMIT).unwrap() + 1);
         let values = [Some(&exact), Some(&beyond)];
-        let arr = build_array(&values, &FieldType::Float);
+        let arr = build_array(&values, &FieldType::Float).unwrap();
         let floats = arr.as_any().downcast_ref::<Float64Array>().unwrap();
         assert_eq!(floats.iter().collect::<Vec<_>>(), vec![Some(1.0), None]);
     }

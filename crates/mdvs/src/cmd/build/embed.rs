@@ -10,6 +10,7 @@ use crate::index::chunk::{Chunks, extract_plain_text};
 use crate::index::embed::Embedder;
 use crate::index::storage::ChunkRow;
 use crate::output::BuildFileDetail;
+use anyhow::Context;
 
 /// Data produced by the embed files step.
 pub(super) struct EmbedFilesData {
@@ -20,12 +21,17 @@ pub(super) struct EmbedFilesData {
 }
 
 /// Chunk, extract plain text, embed, and produce chunk rows for a single file.
+///
+/// # Errors
+///
+/// Fails when a chunk index or line number does not fit the index's `i32`
+/// columns.
 pub(super) async fn embed_file(
     file_id: &str,
     file: &ScannedFile,
     max_chunk_size: usize,
     embedder: &Embedder,
-) -> Vec<ChunkRow> {
+) -> anyhow::Result<Vec<ChunkRow>> {
     let chunks = Chunks::new(&file.content, max_chunk_size);
     let plain_texts: Vec<String> = chunks
         .iter()
@@ -42,14 +48,35 @@ pub(super) async fn embed_file(
         .iter()
         .zip(embeddings)
         .zip(plain_texts)
-        .map(|((chunk, embedding), chunk_text)| ChunkRow {
-            chunk_id: uuid::Uuid::new_v4().to_string(),
-            file_id: file_id.to_string(),
-            chunk_index: chunk.chunk_index as i32,
-            start_line: (chunk.start_line + file.body_line_offset) as i32,
-            end_line: (chunk.end_line + file.body_line_offset) as i32,
-            chunk_text,
-            embedding,
+        .map(|((chunk, embedding), chunk_text)| {
+            let path = file.path.display();
+            let start = chunk.start_line + file.body_line_offset;
+            let end = chunk.end_line + file.body_line_offset;
+            Ok(ChunkRow {
+                chunk_id: uuid::Uuid::new_v4().to_string(),
+                file_id: file_id.to_string(),
+                chunk_index: i32::try_from(chunk.chunk_index).with_context(|| {
+                    format!(
+                        "{path}: chunk index {} exceeds the index limit of {}",
+                        chunk.chunk_index,
+                        i32::MAX
+                    )
+                })?,
+                start_line: i32::try_from(start).with_context(|| {
+                    format!(
+                        "{path}: chunk start line {start} exceeds the index limit of {}",
+                        i32::MAX
+                    )
+                })?,
+                end_line: i32::try_from(end).with_context(|| {
+                    format!(
+                        "{path}: chunk end line {end} exceeds the index limit of {}",
+                        i32::MAX
+                    )
+                })?,
+                chunk_text,
+                embedding,
+            })
         })
         .collect()
 }
