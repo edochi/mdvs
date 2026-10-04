@@ -84,8 +84,8 @@ Pipeline stages with the key type at each boundary:
 9. **Embedding** — plain text → dense vector via model2vec → `Vec<f32>`
    (`index/embed.rs:34`)
 10. **Storage** — write to the single `.mdvs/index.lance/` dataset via one of
-    three paths in `cmd/build/write.rs::write_index_step`: skip (no delta + not
-    full rebuild), full overwrite (`Backend::write_index` →
+    three paths chosen by `cmd/build/write.rs::WritePlan::decide`: skip (no
+    delta + not full rebuild), full overwrite (`Backend::write_index` →
     `create_table(...).mode(Overwrite)`), or incremental
     (`Backend::write_index_incremental` → delete rows by file_id + append +
     refresh metadata + optimize). One row per chunk in either persist path.
@@ -584,13 +584,14 @@ Build uses content hashing to avoid re-embedding unchanged files (`cmd/build/`):
    - **Removed** — in index but not in scan
 3. **Skip model** — if no files need embedding, model loading is skipped
    entirely.
-4. **Three-way write** — `write::write_index_step` dispatches the persist step:
-   - **Skip** when not a full rebuild AND `removed_count == 0` AND
-     `new_chunks_count == 0`. The skip predicate uses chunk count (not file
-     count) because empty-body files like Hugo `_index.md` are always classified
-     as needing embedding but produce zero chunks. Returns
-     `WriteOutcome::Skipped`, recorded as a `StepEntry::Skipped` (silent in text
-     output, `"status": "skipped"` in JSON).
+4. **Three-way write** — `write::WritePlan::decide` chooses the persist path and
+   `write::write_index_step` carries it out:
+   - **Skip** when not a full rebuild AND `removed_count == 0` AND no new chunk
+     rows were embedded. The skip predicate uses chunk rows (not file count)
+     because empty-body files like Hugo `_index.md` are always classified as
+     needing embedding but produce zero chunks. `WritePlan::Skip` is recorded as
+     a `StepEntry::Skipped` (silent in text output, `"status": "skipped"` in
+     JSON).
    - **Full overwrite** when `full_rebuild` is true (first build or `--force`) —
      `Backend::write_index` calls `create_table(...).mode(Overwrite)` and
      rebuilds the FTS + (above 10k chunks) IVF-PQ indexes inside the new table.

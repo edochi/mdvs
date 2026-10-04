@@ -268,7 +268,7 @@ mod tests {
         );
         assert!(!crate::step::has_failed(&step));
         swap_to_mock_embedder(dir);
-        let output = crate::cmd::build::run(dir, None, None, None, false, true, false).await;
+        let output = crate::cmd::build::run(dir, None, None, None, false, true).await;
         assert!(!crate::step::has_failed(&output));
     }
 

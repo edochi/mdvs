@@ -31,14 +31,16 @@ drive it directly and read the per-phase `StepEntry` timings.
    `needs_embedding == 0`.
 8. **Chunk + embed** — for each new/edited file: `Chunks::new(body, max_chars)`
    → `embedder.embed_batch(texts)` → `Vec<ChunkRow>`
-9. **Merge** — combine retained chunks (from unchanged files) with new chunks
-10. **Write** — `cmd::build::write::write_index_step` dispatches across three
-    paths:
+9. **Plan the write** — `cmd::build::write::WritePlan::decide` turns the
+   classification and the new chunk rows into a `WritePlan`: `Skip`,
+   `Overwrite { file_rows, chunk_rows }`, or
+   `Incremental { file_ids_to_clear, file_rows, new_chunk_rows }`.
+10. **Write** — `cmd::build::write::write_index_step` carries out the plan:
     - **Skip** when no files were removed AND no new chunks were produced AND
-      it's not a full rebuild. Returns `WriteOutcome::Skipped`; the step appears
-      as `Skipped` in the rendered output. The skip predicate uses
-      `new_chunks_count` (not file count) because empty-body files like Hugo
-      `_index.md` always classify as needing embedding but produce zero chunks.
+      it's not a full rebuild. The step appears as `Skipped` in the rendered
+      output. The skip predicate uses the new chunk rows (not file count)
+      because empty-body files like Hugo `_index.md` always classify as needing
+      embedding but produce zero chunks.
     - **Full overwrite** when `full_rebuild` is true (first build or `--force`)
       — `LanceBackend::write_index()` recreates the table via
       `CreateTableMode::Overwrite` and rebuilds the FTS + (above 10k chunks)

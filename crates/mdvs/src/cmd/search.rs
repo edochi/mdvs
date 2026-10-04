@@ -350,7 +350,7 @@ mod tests {
 
     async fn init_and_build(dir: &Path) {
         init_with_mock_embedder(dir);
-        let output = crate::cmd::build::run(dir, None, None, None, false, true, false).await;
+        let output = crate::cmd::build::run(dir, None, None, None, false, true).await;
         assert!(!crate::step::has_failed(&output));
     }
 

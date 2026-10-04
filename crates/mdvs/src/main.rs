@@ -294,7 +294,6 @@ async fn main() -> anyhow::Result<()> {
                 set_chunk_size,
                 force,
                 no_update,
-                cli.verbose,
             )
             .await;
             let failed = mdvs::step::has_failed(&result);
