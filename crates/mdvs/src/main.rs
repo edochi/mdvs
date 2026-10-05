@@ -1,10 +1,19 @@
 use clap::{Parser, Subcommand};
 use mdvs::cmd::init::{InitOptions, InitScanFlags};
+use mdvs::cmd::scaffold::ScaffoldCommand;
 use mdvs::cmd::search::SearchOptions;
 use mdvs::index::backend::SearchQuery;
+use mdvs::outcome::commands::export_jsonschema::ExportFormat;
 use mdvs::output::OutputFormat;
 use mdvs::schema::config::MdvsToml;
+use mdvs::step::{CommandResult, has_failed, has_violations};
 use std::path::{Path, PathBuf};
+use std::process::ExitCode;
+use tracing_subscriber::EnvFilter;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_tree::HierarchicalLayer;
+use tracing_tree::time::Uptime;
 
 /// Stderr logging level for `--logs`.
 #[derive(Clone, clap::ValueEnum)]
@@ -152,7 +161,7 @@ enum Command {
         path: PathBuf,
         /// Output format
         #[arg(long, value_enum, default_value = "json")]
-        format: mdvs::outcome::commands::export_jsonschema::ExportFormat,
+        format: ExportFormat,
         /// Write to this file instead of stdout
         #[arg(long, value_name = "PATH")]
         output_file: Option<PathBuf>,
@@ -164,7 +173,7 @@ enum Command {
     /// pipe into the right file under the harness's config dir.
     Scaffold {
         #[command(subcommand)]
-        subcommand: mdvs::cmd::scaffold::ScaffoldCommand,
+        subcommand: ScaffoldCommand,
     },
     /// Agent-harness hook runtime — called by `PostToolUse` hooks.
     ///
@@ -222,31 +231,212 @@ fn resolve_output_format(cli_flag: Option<OutputFormat>, project_path: &Path) ->
     OutputFormat::Pretty
 }
 
+/// Exit code for a command that failed to run to completion.
+const EXIT_FAILURE: u8 = 2;
+
+/// Exit code for a command that ran but found validation violations.
+const EXIT_VIOLATIONS: u8 = 1;
+
+/// How [`finish`] turns a command's result into output and an exit code.
+#[derive(Clone, Copy)]
+enum Finish {
+    /// Render the result. Exit with [`EXIT_FAILURE`] on failure, 0 otherwise.
+    Plain,
+    /// Render the result. Exit with [`EXIT_FAILURE`] on failure,
+    /// [`EXIT_VIOLATIONS`] on violations, 0 otherwise.
+    ReportViolations,
+    /// Render the result only on failure, because on success the command
+    /// already wrote its payload to stdout and a trailing summary would make
+    /// that output unparseable. Exit codes as for [`Finish::Plain`].
+    QuietOnSuccess,
+}
+
+/// Render `result` to stdout and map it to the process exit code.
+///
+/// Output is verbose when `--verbose` is set or the command failed. The
+/// format comes from [`resolve_output_format`] for the project at `path`.
+fn finish(
+    result: &CommandResult,
+    path: &Path,
+    cli: &Cli,
+    mode: Finish,
+) -> anyhow::Result<ExitCode> {
+    let failed = has_failed(result);
+    let render = match mode {
+        Finish::Plain | Finish::ReportViolations => true,
+        Finish::QuietOnSuccess => failed,
+    };
+    if render {
+        let verbose = cli.verbose || failed;
+        let format = resolve_output_format(cli.output, path);
+        print!("{}", result.render(&format, verbose)?);
+    }
+    if failed {
+        return Ok(ExitCode::from(EXIT_FAILURE));
+    }
+    let violations = match mode {
+        Finish::ReportViolations => has_violations(result),
+        Finish::Plain | Finish::QuietOnSuccess => false,
+    };
+    if violations {
+        return Ok(ExitCode::from(EXIT_VIOLATIONS));
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Install the hierarchical stderr logger at the level chosen by `--logs`.
+fn init_tracing(level: &LogLevel) {
+    let filter = match level {
+        LogLevel::Info => "mdvs=info",
+        LogLevel::Debug => "mdvs=debug",
+        LogLevel::Trace => "mdvs=trace",
+    };
+    tracing_subscriber::registry()
+        .with(EnvFilter::new(filter))
+        .with(
+            HierarchicalLayer::new(2)
+                .with_targets(false)
+                .with_writer(std::io::stderr)
+                .with_timer(Uptime::default()),
+        )
+        .init();
+}
+
+fn run_init(
+    cli: &Cli,
+    path: &Path,
+    glob: &str,
+    opts: InitOptions,
+    schema: Option<&Path>,
+) -> anyhow::Result<ExitCode> {
+    let result = mdvs::cmd::init::run(path, glob, opts, schema, cli.output);
+    finish(&result, path, cli, Finish::Plain)
+}
+
+async fn run_build(
+    cli: &Cli,
+    path: &Path,
+    set_model: Option<&str>,
+    set_revision: Option<&str>,
+    set_chunk_size: Option<usize>,
+    force: bool,
+    no_update: bool,
+) -> anyhow::Result<ExitCode> {
+    let result = mdvs::cmd::build::run(
+        path,
+        set_model,
+        set_revision,
+        set_chunk_size,
+        force,
+        no_update,
+    )
+    .await;
+    finish(&result, path, cli, Finish::ReportViolations)
+}
+
+async fn run_search(
+    cli: &Cli,
+    path: &Path,
+    query: SearchQuery<'_>,
+    opts: SearchOptions,
+) -> anyhow::Result<ExitCode> {
+    let result = mdvs::cmd::search::run(path, query, opts).await;
+    finish(&result, path, cli, Finish::Plain)
+}
+
+fn run_check(
+    cli: &Cli,
+    path: &Path,
+    no_update: bool,
+    schema: Option<&Path>,
+) -> anyhow::Result<ExitCode> {
+    let result = mdvs::cmd::check::run(path, no_update, cli.verbose, schema);
+    finish(&result, path, cli, Finish::ReportViolations)
+}
+
+async fn run_update(
+    cli: &Cli,
+    path: &Path,
+    dry_run: bool,
+    subcommand: Option<&UpdateCommand>,
+) -> anyhow::Result<ExitCode> {
+    let reinfer_args = subcommand.map(|UpdateCommand::Reinfer(args)| args);
+    let effective_dry_run = dry_run || reinfer_args.is_some_and(|a| a.dry_run);
+    let result = mdvs::cmd::update::run(path, reinfer_args, effective_dry_run).await;
+    finish(&result, path, cli, Finish::Plain)
+}
+
+async fn run_clean(cli: &Cli, path: &Path) -> anyhow::Result<ExitCode> {
+    let result = mdvs::cmd::clean::run(path).await;
+    finish(&result, path, cli, Finish::Plain)
+}
+
+async fn run_info(cli: &Cli, path: &Path) -> anyhow::Result<ExitCode> {
+    let result = mdvs::cmd::info::run(path).await;
+    finish(&result, path, cli, Finish::Plain)
+}
+
+fn run_export_jsonschema(
+    cli: &Cli,
+    path: &Path,
+    format: ExportFormat,
+    output_file: Option<&Path>,
+) -> anyhow::Result<ExitCode> {
+    let result = mdvs::cmd::export_jsonschema::run(path, format, output_file);
+    // Writing to stdout already emitted the schema, so the summary is
+    // suppressed to keep the captured output parseable. Writing to a file
+    // prints the human / JSON summary normally.
+    let mode = if output_file.is_some() {
+        Finish::Plain
+    } else {
+        Finish::QuietOnSuccess
+    };
+    finish(&result, path, cli, mode)
+}
+
+/// Scaffold subcommands write straight to stdout / stderr and do not
+/// produce a `CommandResult`.
+fn run_scaffold(subcommand: &ScaffoldCommand) -> anyhow::Result<ExitCode> {
+    let stdout = std::io::stdout();
+    let stderr = std::io::stderr();
+    let mut out = stdout.lock();
+    let mut err = stderr.lock();
+    match subcommand {
+        ScaffoldCommand::Skill { platform } => {
+            mdvs::cmd::scaffold::skill::run(&mut out, &mut err, platform.as_deref())?;
+        }
+        ScaffoldCommand::Snippet { platform } => {
+            mdvs::cmd::scaffold::snippet::run(&mut out, &mut err, platform.as_deref())?;
+        }
+        ScaffoldCommand::Hook { platform } => {
+            mdvs::cmd::scaffold::hook::run(&mut out, &mut err, platform)?;
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Hook subcommands write a platform envelope to stdout and do not produce
+/// a `CommandResult`.
+fn run_hook(subcommand: &HookCommand) -> anyhow::Result<ExitCode> {
+    match subcommand {
+        HookCommand::Handle { platform, kind } => {
+            let stdin = std::io::stdin();
+            let mut stdout = std::io::stdout();
+            mdvs::cmd::hook::handle::run(stdin.lock(), &mut stdout, platform, *kind)?;
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> anyhow::Result<ExitCode> {
     let cli = Cli::parse();
 
-    if let Some(ref level) = cli.logs {
-        use tracing_subscriber::layer::SubscriberExt;
-        use tracing_subscriber::util::SubscriberInitExt;
-
-        let filter = match level {
-            LogLevel::Info => "mdvs=info",
-            LogLevel::Debug => "mdvs=debug",
-            LogLevel::Trace => "mdvs=trace",
-        };
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::EnvFilter::new(filter))
-            .with(
-                tracing_tree::HierarchicalLayer::new(2)
-                    .with_targets(false)
-                    .with_writer(std::io::stderr)
-                    .with_timer(tracing_tree::time::Uptime::default()),
-            )
-            .init();
+    if let Some(level) = &cli.logs {
+        init_tracing(level);
     }
 
-    match cli.command {
+    match &cli.command {
         Command::Init {
             path,
             glob,
@@ -256,28 +446,15 @@ async fn main() -> anyhow::Result<()> {
             skip_gitignore,
             schema,
         } => {
-            let result = mdvs::cmd::init::run(
-                &path,
-                &glob,
-                InitOptions {
-                    force,
-                    dry_run,
-                    scan: InitScanFlags {
-                        ignore_bare_files,
-                        skip_gitignore,
-                    },
+            let opts = InitOptions {
+                force: *force,
+                dry_run: *dry_run,
+                scan: InitScanFlags {
+                    ignore_bare_files: *ignore_bare_files,
+                    skip_gitignore: *skip_gitignore,
                 },
-                schema.as_deref(),
-                cli.output,
-            );
-            let failed = mdvs::step::has_failed(&result);
-            let verbose = cli.verbose || failed;
-            let format = resolve_output_format(cli.output, &path);
-            print!("{}", result.render(&format, verbose)?);
-            if failed {
-                std::process::exit(2);
-            }
-            Ok(())
+            };
+            run_init(&cli, path, glob, opts, schema.as_deref())
         }
         Command::Build {
             path,
@@ -287,27 +464,16 @@ async fn main() -> anyhow::Result<()> {
             force,
             no_update,
         } => {
-            let result = mdvs::cmd::build::run(
-                &path,
+            run_build(
+                &cli,
+                path,
                 set_model.as_deref(),
                 set_revision.as_deref(),
-                set_chunk_size,
-                force,
-                no_update,
+                *set_chunk_size,
+                *force,
+                *no_update,
             )
-            .await;
-            let failed = mdvs::step::has_failed(&result);
-            let violations = mdvs::step::has_violations(&result);
-            let verbose = cli.verbose || failed;
-            let format = resolve_output_format(cli.output, &path);
-            print!("{}", result.render(&format, verbose)?);
-            if failed {
-                std::process::exit(2);
-            }
-            if violations {
-                std::process::exit(1);
-            }
-            Ok(())
+            .await
         }
         Command::Search {
             query,
@@ -318,136 +484,37 @@ async fn main() -> anyhow::Result<()> {
             no_update,
             no_build,
         } => {
-            let result = mdvs::cmd::search::run(
-                &path,
-                SearchQuery {
-                    text: &query,
-                    limit,
-                    where_clause: where_clause.as_deref(),
-                    mode,
-                },
-                SearchOptions {
-                    no_update,
-                    no_build,
-                },
-            )
-            .await;
-            let failed = mdvs::step::has_failed(&result);
-            let verbose = cli.verbose || failed;
-            let format = resolve_output_format(cli.output, &path);
-            print!("{}", result.render(&format, verbose)?);
-            if failed {
-                std::process::exit(2);
-            }
-            Ok(())
+            let query = SearchQuery {
+                text: query,
+                limit: *limit,
+                where_clause: where_clause.as_deref(),
+                mode: *mode,
+            };
+            let opts = SearchOptions {
+                no_update: *no_update,
+                no_build: *no_build,
+            };
+            run_search(&cli, path, query, opts).await
         }
         Command::Check {
             path,
             no_update,
             schema,
-        } => {
-            let result = mdvs::cmd::check::run(&path, no_update, cli.verbose, schema.as_deref());
-            let failed = mdvs::step::has_failed(&result);
-            let violations = mdvs::step::has_violations(&result);
-            let verbose = cli.verbose || failed;
-            let format = resolve_output_format(cli.output, &path);
-            print!("{}", result.render(&format, verbose)?);
-            if failed {
-                std::process::exit(2);
-            }
-            if violations {
-                std::process::exit(1);
-            }
-            Ok(())
-        }
+        } => run_check(&cli, path, *no_update, schema.as_deref()),
         Command::Update {
             path,
             dry_run,
             subcommand,
-        } => {
-            let reinfer_args = subcommand.map(|UpdateCommand::Reinfer(args)| args);
-            let effective_dry_run = dry_run || reinfer_args.as_ref().is_some_and(|a| a.dry_run);
-            let result =
-                mdvs::cmd::update::run(&path, reinfer_args.as_ref(), effective_dry_run).await;
-            let failed = mdvs::step::has_failed(&result);
-            let verbose = cli.verbose || failed;
-            let format = resolve_output_format(cli.output, &path);
-            print!("{}", result.render(&format, verbose)?);
-            if failed {
-                std::process::exit(2);
-            }
-            Ok(())
-        }
-        Command::Clean { path } => {
-            let result = mdvs::cmd::clean::run(&path).await;
-            let failed = mdvs::step::has_failed(&result);
-            let verbose = cli.verbose || failed;
-            let format = resolve_output_format(cli.output, &path);
-            print!("{}", result.render(&format, verbose)?);
-            if failed {
-                std::process::exit(2);
-            }
-            Ok(())
-        }
-        Command::Scaffold { subcommand } => {
-            use mdvs::cmd::scaffold::ScaffoldCommand;
-            let stdout = std::io::stdout();
-            let stderr = std::io::stderr();
-            let mut out = stdout.lock();
-            let mut err = stderr.lock();
-            match subcommand {
-                ScaffoldCommand::Skill { platform } => {
-                    mdvs::cmd::scaffold::skill::run(&mut out, &mut err, platform.as_deref())?;
-                }
-                ScaffoldCommand::Snippet { platform } => {
-                    mdvs::cmd::scaffold::snippet::run(&mut out, &mut err, platform.as_deref())?;
-                }
-                ScaffoldCommand::Hook { platform } => {
-                    mdvs::cmd::scaffold::hook::run(&mut out, &mut err, &platform)?;
-                }
-            }
-            Ok(())
-        }
-        Command::Info { path } => {
-            let result = mdvs::cmd::info::run(&path).await;
-            let failed = mdvs::step::has_failed(&result);
-            let verbose = cli.verbose || failed;
-            let format = resolve_output_format(cli.output, &path);
-            print!("{}", result.render(&format, verbose)?);
-            if failed {
-                std::process::exit(2);
-            }
-            Ok(())
-        }
+        } => run_update(&cli, path, *dry_run, subcommand.as_ref()).await,
+        Command::Clean { path } => run_clean(&cli, path).await,
+        Command::Info { path } => run_info(&cli, path).await,
         Command::ExportJsonschema {
             path,
             format,
             output_file,
-        } => {
-            let result = mdvs::cmd::export_jsonschema::run(&path, format, output_file.as_deref());
-            let failed = mdvs::step::has_failed(&result);
-            // When writing to stdout the command already emitted the schema;
-            // suppress the summary line so the captured output is parseable.
-            // When writing to a file (or on failure), print the human/JSON
-            // summary normally.
-            if output_file.is_some() || failed {
-                let verbose = cli.verbose || failed;
-                let format = resolve_output_format(cli.output, &path);
-                print!("{}", result.render(&format, verbose)?);
-            }
-            if failed {
-                std::process::exit(2);
-            }
-            Ok(())
-        }
-        Command::Hook { subcommand } => match subcommand {
-            HookCommand::Handle { platform, kind } => {
-                let stdin = std::io::stdin();
-                let mut stdout = std::io::stdout();
-                mdvs::cmd::hook::handle::run(stdin.lock(), &mut stdout, &platform, kind)?;
-                Ok(())
-            }
-        },
+        } => run_export_jsonschema(&cli, path, *format, output_file.as_deref()),
+        Command::Scaffold { subcommand } => run_scaffold(subcommand),
+        Command::Hook { subcommand } => run_hook(subcommand),
     }
 }
 

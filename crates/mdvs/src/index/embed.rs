@@ -94,14 +94,12 @@ impl MockEmbedder {
 
 /// Loaded embedding model, ready to produce vectors.
 ///
-/// The size disparity between `Model2Vec` (~1.2 KB, owns a `StaticModel`)
-/// and `Mock` (~8 bytes) is intentional — `Mock` only exists in test /
-/// feature-gated builds and the indirection of `Box<StaticModel>` would
-/// add a heap allocation to every embed call on the hot prod path.
-#[allow(clippy::large_enum_variant)]
+/// The `StaticModel` is boxed so the enum stays pointer-sized next to the
+/// small `Mock` variant. The box is allocated once when the model loads;
+/// embedding calls only follow the pointer.
 pub enum Embedder {
     /// A Model2Vec static model (CPU-only, no GPU required).
-    Model2Vec(StaticModel),
+    Model2Vec(Box<StaticModel>),
     /// Deterministic mock embedder for hermetic tests.
     #[cfg(any(test, feature = "testing-mocks"))]
     Mock(MockEmbedder),
@@ -115,7 +113,7 @@ impl Embedder {
             ModelConfig::Model2Vec { model_id, revision } => {
                 let model = StaticModel::from_pretrained(model_id, revision.as_deref(), None, None)
                     .map_err(|e| anyhow::anyhow!("failed to load model '{model_id}': {e}"))?;
-                Ok(Embedder::Model2Vec(model))
+                Ok(Embedder::Model2Vec(Box::new(model)))
             }
             #[cfg(any(test, feature = "testing-mocks"))]
             ModelConfig::Mock { dim } => Ok(Embedder::Mock(MockEmbedder::new(*dim))),

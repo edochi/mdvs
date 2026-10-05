@@ -8,6 +8,7 @@
 //! property name.
 
 use crate::discover::field_type::FieldType;
+use crate::preprocess::ValueStage;
 use crate::schema::config::TomlField;
 use crate::schema::constraints::Constraints;
 use serde_json::{Map, Value};
@@ -115,7 +116,11 @@ fn field_from_subschema(name: &str, sub: &Map<String, Value>) -> Result<TomlFiel
     };
     let constraints = extract_constraints(name, constraint_source, nullable)?;
 
-    let (allowed, required, preprocess) = extract_x_mdvs(name, sub)?;
+    let XMdvs {
+        allowed,
+        required,
+        preprocess,
+    } = extract_x_mdvs(name, sub)?;
 
     Ok(TomlField {
         name: name.into(),
@@ -289,16 +294,29 @@ fn extract_constraints(
     Ok(Some(c))
 }
 
+/// The path-scoping and preprocessing settings carried in a property's
+/// `x-mdvs` block.
+struct XMdvs {
+    /// Globs of files where the field may appear.
+    allowed: Vec<String>,
+    /// Globs of files where the field must appear.
+    required: Vec<String>,
+    /// Value stages applied before validation.
+    preprocess: Vec<ValueStage>,
+}
+
 /// Inverse of `build_x_mdvs`: extract `allowed` / `required` / `preprocess`
 /// from the property's `x-mdvs` block.
 /// Defaults: `allowed = ["**"]`, `required = []`, `preprocess = []`.
-#[allow(clippy::type_complexity)] // 3-tuple is the natural shape; one struct just for this would obscure usage
-fn extract_x_mdvs(
-    name: &str,
-    sub: &Map<String, Value>,
-) -> Result<(Vec<String>, Vec<String>, Vec<crate::preprocess::ValueStage>), String> {
+fn extract_x_mdvs(name: &str, sub: &Map<String, Value>) -> Result<XMdvs, String> {
     let xm = match sub.get("x-mdvs") {
-        None => return Ok((vec!["**".into()], vec![], vec![])),
+        None => {
+            return Ok(XMdvs {
+                allowed: vec!["**".into()],
+                required: vec![],
+                preprocess: vec![],
+            });
+        }
         Some(v) => v
             .as_object()
             .ok_or_else(|| format!("property '{name}': 'x-mdvs' must be an object"))?,
@@ -318,10 +336,14 @@ fn extract_x_mdvs(
     };
     let preprocess = match xm.get("preprocess") {
         None => vec![],
-        Some(v) => serde_json::from_value::<Vec<crate::preprocess::ValueStage>>(v.clone())
+        Some(v) => serde_json::from_value::<Vec<ValueStage>>(v.clone())
             .map_err(|e| format!("property '{name}': invalid 'x-mdvs.preprocess' entry: {e}"))?,
     };
-    Ok((allowed, required, preprocess))
+    Ok(XMdvs {
+        allowed,
+        required,
+        preprocess,
+    })
 }
 
 fn string_array(v: &Value) -> Option<Vec<String>> {
