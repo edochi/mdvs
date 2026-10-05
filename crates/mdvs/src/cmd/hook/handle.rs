@@ -5,19 +5,22 @@
 //! non-blocking by design: violations and tips surface to the agent /
 //! user; mdvs never rejects an edit at the harness layer.
 
-use std::collections::HashMap;
-use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    io::{Read, Write},
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
-use crate::cmd::check;
-use crate::cmd::hook::HookKind;
-use crate::discover::scan::is_markdown_path;
-use crate::output::OutputFormat;
-use crate::scaffold::{HooksConfig, Platform, template};
-use crate::step;
+use crate::{
+    cmd::{check, hook::HookKind},
+    discover::scan::is_markdown_path,
+    output::OutputFormat,
+    scaffold::{HooksConfig, Platform, template},
+    step,
+};
 
 /// Maximum number of lines to send through the user-visible `systemMessage`
 /// channel. The agent channel (`additionalContext`) stays uncapped — the
@@ -118,8 +121,10 @@ fn handle_validate<W: Write>(
     // expect an edit to silently write new fields into the schema).
     let result = check::run(
         &vault_root,
-        /* no_update */ true,
-        /* verbose */ false,
+        // no_update
+        true,
+        // verbose
+        false,
         None,
     );
 
@@ -299,10 +304,12 @@ fn build_envelope(hooks: &HooksConfig, agent_msg: &str, user_msg: Option<&str>) 
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use serde_json::Value;
     use std::io::Cursor;
+
+    use serde_json::Value;
     use tempfile::TempDir;
+
+    use super::*;
 
     /// Build a minimal mdvs vault in `dir`: an `mdvs.toml` with one
     /// categorical `status` field, plus one markdown file.

@@ -2,8 +2,10 @@
 
 use serde::Serialize;
 
-use crate::block::{Block, Render, TableStyle};
-use crate::output::{ChangedField, DiscoveredField, RemovedField, format_file_count, format_hints};
+use crate::{
+    block::{Block, Render, TableStyle},
+    output::{ChangedField, DiscoveredField, RemovedField, format_file_count, format_hints},
+};
 
 /// Full outcome for the update command.
 #[derive(Debug, Serialize)]

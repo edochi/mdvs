@@ -3,12 +3,11 @@
 //! Provides two table styles — compact (no internal lines) and record (detail row
 //! spanning all columns) — both using rounded borders and auto-sized to terminal width.
 
+pub use tabled::builder::Builder;
 use tabled::settings::{
     Modify, object::Cell, peaker::PriorityMax, span::ColumnSpan, style::Style,
     themes::BorderCorrection, width::Width,
 };
-
-pub use tabled::builder::Builder;
 
 /// Column count assumed when the terminal width cannot be detected (output
 /// piped or redirected): the classic 80-column terminal.

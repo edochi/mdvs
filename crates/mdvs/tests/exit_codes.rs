@@ -4,9 +4,11 @@
 //! Scripts and agent hooks branch on the exit code: 0 means clean, 1 means
 //! the command ran and found violations, 2 means the command itself failed.
 
-use std::fs;
-use std::path::Path;
-use std::process::{Command, Output};
+use std::{
+    fs,
+    path::Path,
+    process::{Command, Output},
+};
 
 /// Exit code for a clean run.
 const EXIT_OK: i32 = 0;

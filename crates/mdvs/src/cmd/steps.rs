@@ -1,18 +1,26 @@
-use crate::discover::infer::InferredSchema;
-use crate::discover::scan::ScannedFiles;
-use crate::index::backend::{Backend, IndexStats};
-use crate::index::embed::{Embedder, ModelConfig};
-use crate::index::storage::BuildMetadata;
-use crate::outcome::{
-    InferOutcome, LoadModelOutcome, Outcome, ReadConfigOutcome, ReadIndexOutcome, ScanOutcome,
-    WriteConfigOutcome,
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+    time::Instant,
 };
-use crate::schema::config::{MdvsToml, TomlField};
-use crate::schema::shared::{EmbeddingModelConfig, FieldTypeSerde, ScanConfig};
-use crate::step::{ErrorKind, StepEntry, elapsed_ms};
-use std::collections::HashSet;
-use std::path::{Path, PathBuf};
-use std::time::Instant;
+
+use crate::{
+    discover::{infer::InferredSchema, scan::ScannedFiles},
+    index::{
+        backend::{Backend, IndexStats},
+        embed::{Embedder, ModelConfig},
+        storage::BuildMetadata,
+    },
+    outcome::{
+        InferOutcome, LoadModelOutcome, Outcome, ReadConfigOutcome, ReadIndexOutcome, ScanOutcome,
+        WriteConfigOutcome,
+    },
+    schema::{
+        config::{MdvsToml, TomlField},
+        shared::{EmbeddingModelConfig, FieldTypeSerde, ScanConfig},
+    },
+    step::{ErrorKind, StepEntry, elapsed_ms},
+};
 
 // Each helper times its own work, pushes exactly one step entry per phase it
 // runs, and on failure returns `Err(())` after pushing the error step. The

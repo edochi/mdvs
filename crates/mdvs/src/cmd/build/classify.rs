@@ -5,14 +5,21 @@
 //! existing chunks), and removed (drop existing chunks). The result feeds
 //! the embed and write steps in [`super::build_core`].
 
-use crate::discover::scan::{ScannedFile, ScannedFiles};
-use crate::index::backend::Backend;
-use crate::index::storage::{ChunkRow, FileIndexEntry, content_hash};
-use crate::outcome::{ClassifyOutcome, Outcome};
-use crate::output::BuildFileDetail;
-use crate::step::{ErrorKind, StepEntry, elapsed_ms};
-use std::collections::{HashMap, HashSet};
-use std::time::Instant;
+use std::{
+    collections::{HashMap, HashSet},
+    time::Instant,
+};
+
+use crate::{
+    discover::scan::{ScannedFile, ScannedFiles},
+    index::{
+        backend::Backend,
+        storage::{ChunkRow, FileIndexEntry, content_hash},
+    },
+    outcome::{ClassifyOutcome, Outcome},
+    output::BuildFileDetail,
+    step::{ErrorKind, StepEntry, elapsed_ms},
+};
 
 /// A file that needs chunking and embedding.
 pub(super) struct FileToEmbed<'a> {

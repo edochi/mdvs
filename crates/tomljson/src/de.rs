@@ -1,7 +1,10 @@
-use crate::TomlJsonOptions;
-use crate::error::{Error, Result};
 use serde_json::Value as Json;
 use toml::Value as Toml;
+
+use crate::{
+    TomlJsonOptions,
+    error::{Error, Result},
+};
 
 /// Decode a TOML string to a JSON value.
 ///

@@ -2,28 +2,33 @@ mod read;
 mod search;
 mod where_translator;
 
-pub use search::SearchResults;
-pub use where_translator::{WhereNaming, WhereRewrite};
+use std::path::{Path, PathBuf};
 
-use crate::discover::field_type::FieldType;
-use crate::index::storage::{
-    BuildMetadata, COL_CHUNK_TEXT, COL_EMBEDDING, COL_FILE_ID, ChunkRow, FileIndexEntry, FileRow,
-    build_index_batch,
-};
 use anyhow::Context;
 use arrow::array::{
     Float32Array, Int32Array, RecordBatch, RecordBatchIterator, RecordBatchReader, StringArray,
 };
-use lancedb::DistanceType;
-use lancedb::connection::LanceFileVersion;
-use lancedb::database::CreateTableMode;
-use lancedb::database::listing::{ListingDatabaseOptions, NewTableConfig};
-use lancedb::index::Index;
-use lancedb::index::scalar::FtsIndexBuilder;
-use lancedb::index::vector::IvfPqIndexBuilder;
+use lancedb::{
+    DistanceType,
+    connection::LanceFileVersion,
+    database::{
+        CreateTableMode,
+        listing::{ListingDatabaseOptions, NewTableConfig},
+    },
+    index::{Index, scalar::FtsIndexBuilder, vector::IvfPqIndexBuilder},
+};
+pub use search::SearchResults;
 use serde::Serialize;
-use std::path::{Path, PathBuf};
 use tracing::instrument;
+pub use where_translator::{WhereNaming, WhereRewrite};
+
+use crate::{
+    discover::field_type::FieldType,
+    index::storage::{
+        BuildMetadata, COL_CHUNK_TEXT, COL_EMBEDDING, COL_FILE_ID, ChunkRow, FileIndexEntry,
+        FileRow, build_index_batch,
+    },
+};
 
 /// Name of the single denormalized Lance table.
 const LANCE_TABLE: &str = "index";
@@ -451,8 +456,7 @@ pub(super) fn f32_col<'a>(batch: &'a RecordBatch, name: &str) -> anyhow::Result<
 
 #[cfg(test)]
 mod tests {
-    use super::search::translate_where_to_struct;
-    use super::*;
+    use super::{search::translate_where_to_struct, *};
     use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig};
 
     fn test_schema_fields() -> Vec<(String, FieldType)> {

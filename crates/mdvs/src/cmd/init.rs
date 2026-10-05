@@ -1,15 +1,19 @@
-use crate::cmd::steps::{infer_step, scan_step};
-use crate::outcome::commands::InitOutcome;
-use crate::outcome::{Outcome, WriteConfigOutcome};
-use crate::output::{DiscoveredField, OutputFormat};
-use crate::schema::config::MdvsToml;
-use crate::schema::json_schema::{canonical_to_dsl, validate_mdvs_schema};
-use crate::schema::load::load_schema;
-use crate::schema::shared::{FieldTypeSerde, FrontmatterFormat, ScanConfig};
-use crate::step::{CommandResult, ErrorKind, StepEntry, elapsed_ms};
-use std::path::Path;
-use std::time::Instant;
+use std::{path::Path, time::Instant};
+
 use tracing::{info, instrument};
+
+use crate::{
+    cmd::steps::{infer_step, scan_step},
+    outcome::{Outcome, WriteConfigOutcome, commands::InitOutcome},
+    output::{DiscoveredField, OutputFormat},
+    schema::{
+        config::MdvsToml,
+        json_schema::{canonical_to_dsl, validate_mdvs_schema},
+        load::load_schema,
+        shared::{FieldTypeSerde, FrontmatterFormat, ScanConfig},
+    },
+    step::{CommandResult, ErrorKind, StepEntry, elapsed_ms},
+};
 
 /// Switches for [`run`], mirroring the `mdvs init` flags.
 #[derive(Debug, Default, Clone, Copy)]
@@ -312,11 +316,10 @@ fn init_from_schema(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::outcome::Outcome;
-    use crate::output::FieldHint;
-    use crate::step::CommandResult;
     use std::fs;
+
+    use super::*;
+    use crate::{outcome::Outcome, output::FieldHint, step::CommandResult};
 
     fn unwrap_init(result: &CommandResult) -> &InitOutcome {
         match &result.result {

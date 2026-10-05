@@ -1,17 +1,22 @@
-use crate::discover::field_type::FieldType;
-use crate::discover::infer::{InferredSchema, infer_constraints};
-use crate::output::OutputFormat;
-use crate::preprocess::ValueStage;
-use crate::schema::constraints::Constraints;
-use crate::schema::shared::{
-    ChunkingConfig, EmbeddingModelConfig, FieldTypeSerde, FrontmatterFormat, ScanConfig,
-};
+use std::{collections::HashMap, fs, io, path::Path};
+
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::fs;
-use std::io;
-use std::path::Path;
 use tracing::instrument;
+
+use crate::{
+    discover::{
+        field_type::FieldType,
+        infer::{InferredSchema, infer_constraints},
+    },
+    output::OutputFormat,
+    preprocess::ValueStage,
+    schema::{
+        constraints::Constraints,
+        shared::{
+            ChunkingConfig, EmbeddingModelConfig, FieldTypeSerde, FrontmatterFormat, ScanConfig,
+        },
+    },
+};
 
 /// Placeholder for future update-specific settings.
 /// Currently empty — `[update]` section is hidden from toml when default.
@@ -610,11 +615,10 @@ fn reorder_field_keys(table: &mut toml_edit::Table) {
 
 #[cfg(test)]
 mod tests {
+    use std::{collections::BTreeMap, path::PathBuf};
+
     use super::*;
-    use crate::discover::field_type::FieldType;
-    use crate::discover::infer::InferredField;
-    use std::collections::BTreeMap;
-    use std::path::PathBuf;
+    use crate::discover::{field_type::FieldType, infer::InferredField};
 
     fn default_update() -> UpdateConfig {
         UpdateConfig {}

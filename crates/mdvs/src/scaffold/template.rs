@@ -29,8 +29,7 @@
 //! live in `platform.toml` as data, not in Rust. Adding a new harness
 //! with a novel envelope shape is one toml file.
 
-use std::collections::HashMap;
-use std::hash::BuildHasher;
+use std::{collections::HashMap, hash::BuildHasher};
 
 use serde_json::{Map, Value};
 
@@ -46,9 +45,9 @@ pub fn substitute<S: BuildHasher>(
         Value::String(s) => match parse_marker(s) {
             Some(name) => match vars.get(name) {
                 Some(Some(value)) => Value::String(value.clone()),
-                _ => Value::Null, // sentinel; only reachable if substitute is
-                                  // called with a bare-marker root. Callers
-                                  // walking objects/arrays prune before recursion.
+                _ => Value::Null, /* sentinel; only reachable if substitute is
+                                   * called with a bare-marker root. Callers
+                                   * walking objects/arrays prune before recursion. */
             },
             None => Value::String(s.clone()),
         },
@@ -100,8 +99,9 @@ fn should_prune<S: BuildHasher>(value: &Value, vars: &HashMap<&str, Option<Strin
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     fn vars(pairs: &[(&'static str, Option<&str>)]) -> HashMap<&'static str, Option<String>> {
         pairs

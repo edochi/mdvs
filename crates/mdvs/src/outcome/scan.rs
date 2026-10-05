@@ -2,8 +2,10 @@
 
 use serde::Serialize;
 
-use crate::block::{Block, Render};
-use crate::output::format_file_count;
+use crate::{
+    block::{Block, Render},
+    output::format_file_count,
+};
 
 /// Full outcome for the scan step.
 #[derive(Debug, Serialize)]

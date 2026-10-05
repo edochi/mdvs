@@ -9,20 +9,25 @@
 //! `Array(Float)` references (lance-encoding 6.0 panics on them — see
 //! TODO-0159), and leaves quoted literals untouched.
 
-use super::where_translator::{WhereNaming, WhereRewrite};
-use super::{LanceBackend, SearchHit, SearchMode, SearchQuery, f32_col, i32_col, str_col};
+use std::collections::HashMap;
+
+use arrow::{array::RecordBatch, datatypes::DataType};
+use futures::TryStreamExt;
+use lance_index::scalar::FullTextSearchQuery;
+use lancedb::{
+    DistanceType,
+    query::{ExecutableQuery, QueryBase, Select},
+    table::Table,
+};
+
+use super::{
+    LanceBackend, SearchHit, SearchMode, SearchQuery, f32_col, i32_col, str_col,
+    where_translator::{WhereNaming, WhereRewrite},
+};
 use crate::index::storage::{
     COL_BUILT_AT, COL_CHUNK_ID, COL_CHUNK_INDEX, COL_CHUNK_TEXT, COL_CONTENT_HASH, COL_EMBEDDING,
     COL_END_LINE, COL_FILE_ID, COL_FILEPATH, COL_START_LINE,
 };
-use arrow::array::RecordBatch;
-use arrow::datatypes::DataType;
-use futures::TryStreamExt;
-use lance_index::scalar::FullTextSearchQuery;
-use lancedb::DistanceType;
-use lancedb::query::{ExecutableQuery, QueryBase, Select};
-use lancedb::table::Table;
-use std::collections::HashMap;
 
 /// Over-fetch multiplier for chunk→file dedupe: to surface N files we pull
 /// roughly N×factor chunk-level hits, since several chunks may share a file.

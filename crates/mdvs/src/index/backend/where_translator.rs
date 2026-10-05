@@ -37,12 +37,14 @@
 use std::collections::{HashMap, HashSet};
 
 use serde::Serialize;
-use sqlparser::ast::{
-    BinaryOperator, Expr, FunctionArg, FunctionArgExpr, FunctionArgumentList, FunctionArguments,
-    Ident, ObjectName, ObjectNamePart, UnaryOperator,
+use sqlparser::{
+    ast::{
+        BinaryOperator, Expr, FunctionArg, FunctionArgExpr, FunctionArgumentList,
+        FunctionArguments, Ident, ObjectName, ObjectNamePart, UnaryOperator,
+    },
+    dialect::GenericDialect,
+    parser::Parser,
 };
-use sqlparser::dialect::GenericDialect;
-use sqlparser::parser::Parser;
 
 use super::search::{RESERVED_COLS, SQL_KEYWORDS};
 

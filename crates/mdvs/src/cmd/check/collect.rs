@@ -9,14 +9,16 @@
 //! `super::validate::check_field_values` for every error the validator
 //! emits.
 
-use crate::discover::field_type::FieldType;
-use crate::output::{FieldViolation, ViolatingFile, ViolationKind};
-use crate::schema::config::TomlField;
-use crate::schema::shared::FieldTypeSerde;
-use jsonschema::ValidationError;
-use jsonschema::error::ValidationErrorKind;
-use serde_json::Value;
 use std::collections::HashMap;
+
+use jsonschema::{ValidationError, error::ValidationErrorKind};
+use serde_json::Value;
+
+use crate::{
+    discover::field_type::FieldType,
+    output::{FieldViolation, ViolatingFile, ViolationKind},
+    schema::{config::TomlField, shared::FieldTypeSerde},
+};
 
 /// Accumulator key for grouping violations by field, kind, and rule.
 #[derive(PartialEq, Eq, Hash)]

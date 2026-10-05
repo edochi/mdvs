@@ -5,13 +5,15 @@
 //! the inferred schema. Arrays (including arrays of objects) stay inline per
 //! TODO-0097 scope decisions.
 
-use crate::discover::field_type::FieldType;
-use crate::discover::infer::collect_leaves;
-use crate::discover::scan::ScannedFiles;
+use std::{
+    collections::{BTreeMap, HashMap, HashSet},
+    path::PathBuf,
+};
+
 use serde_json::Value;
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::path::PathBuf;
 use tracing::instrument;
+
+use crate::discover::{field_type::FieldType, infer::collect_leaves, scan::ScannedFiles};
 
 /// Widened type and file list for a single frontmatter field.
 #[derive(Debug)]
@@ -175,9 +177,10 @@ fn collect_distinct_values(
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
     use crate::discover::scan::{ScannedFile, ScannedFiles};
-    use serde_json::json;
 
     fn sf(path: &str, data: Option<Value>) -> ScannedFile {
         ScannedFile {

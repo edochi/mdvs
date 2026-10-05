@@ -1,8 +1,9 @@
 //! Range constraint inference — compute min/max from observed numeric values.
 
-use crate::discover::field_type::FieldType;
-use crate::discover::infer::InferredField;
-use crate::num::i64_to_f64_exact;
+use crate::{
+    discover::{field_type::FieldType, infer::InferredField},
+    num::i64_to_f64_exact,
+};
 
 /// Infer min and max bounds from observed numeric values.
 ///
@@ -64,9 +65,10 @@ pub fn infer(field: &InferredField) -> Option<(toml::Value, toml::Value)> {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
     use crate::num::F64_EXACT_INT_LIMIT_I64;
-    use serde_json::json;
 
     fn make_field(name: &str, ft: FieldType, distinct: Vec<serde_json::Value>) -> InferredField {
         let count = distinct.len();

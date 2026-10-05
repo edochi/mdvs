@@ -1,13 +1,19 @@
-use crate::schema::shared::{FrontmatterFormat, ScanConfig};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
+
 use anyhow::Context;
 use globset::Glob;
-use gray_matter::engine::{TOML, YAML};
-use gray_matter::{Matter, Pod};
+use gray_matter::{
+    Matter, Pod,
+    engine::{TOML, YAML},
+};
 use ignore::WalkBuilder;
 use serde_json::Value;
-use std::fs;
-use std::path::{Path, PathBuf};
 use tracing::{info, instrument, warn};
+
+use crate::schema::shared::{FrontmatterFormat, ScanConfig};
 
 const MAX_NESTING_DEPTH: usize = 50;
 const MAX_FIELD_COUNT: usize = 1000;

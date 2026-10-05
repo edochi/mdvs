@@ -1,9 +1,11 @@
 //! Categorical inference — heuristic detection of categorical fields.
 
-use crate::discover::field_type::FieldType;
-use crate::discover::infer::InferredField;
-use crate::schema::constraints::Constraints;
 use serde_json::Value;
+
+use crate::{
+    discover::{field_type::FieldType, infer::InferredField},
+    schema::constraints::Constraints,
+};
 
 /// Apply the categorical heuristic to an inferred field and return constraints
 /// if it qualifies. A field is categorical when:
@@ -74,8 +76,9 @@ fn cmp_toml_values(a: &toml::Value, b: &toml::Value) -> std::cmp::Ordering {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     fn make_field(
         name: &str,

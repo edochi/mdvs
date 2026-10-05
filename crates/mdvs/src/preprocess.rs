@@ -10,13 +10,16 @@
 //! Stage 2 entries based on observed type-widening events; users can also
 //! configure them manually.
 
-use crate::discover::field_type::FieldType;
-use crate::num::i64_to_f64_exact;
-use crate::schema::config::{MdvsToml, TomlField};
+use std::{borrow::Cow, collections::HashMap};
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::borrow::Cow;
-use std::collections::HashMap;
+
+use crate::{
+    discover::field_type::FieldType,
+    num::i64_to_f64_exact,
+    schema::config::{MdvsToml, TomlField},
+};
 
 /// Per-field value preprocessor.
 ///
@@ -333,10 +336,10 @@ fn needs_widen_int_to_float(observed: &[FieldType], final_type: &FieldType) -> b
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::num::F64_EXACT_INT_LIMIT_I64;
-    use crate::schema::shared::FieldTypeSerde;
     use serde_json::json;
+
+    use super::*;
+    use crate::{num::F64_EXACT_INT_LIMIT_I64, schema::shared::FieldTypeSerde};
 
     fn string_field(name: &str, preprocess: Vec<ValueStage>) -> TomlField {
         TomlField {
@@ -601,8 +604,10 @@ mod tests {
 
     #[test]
     fn pipeline_no_preprocess_returns_borrowed() {
-        use crate::schema::config::{FieldsConfig, UpdateConfig};
-        use crate::schema::shared::{FrontmatterFormat, ScanConfig};
+        use crate::schema::{
+            config::{FieldsConfig, UpdateConfig},
+            shared::{FrontmatterFormat, ScanConfig},
+        };
         let toml = MdvsToml {
             default_output_format: None,
             scan: ScanConfig {
@@ -632,8 +637,10 @@ mod tests {
 
     #[test]
     fn pipeline_applies_coerce_to_string() {
-        use crate::schema::config::{FieldsConfig, UpdateConfig};
-        use crate::schema::shared::{FrontmatterFormat, ScanConfig};
+        use crate::schema::{
+            config::{FieldsConfig, UpdateConfig},
+            shared::{FrontmatterFormat, ScanConfig},
+        };
         let toml = MdvsToml {
             default_output_format: None,
             scan: ScanConfig {
@@ -663,8 +670,10 @@ mod tests {
 
     #[test]
     fn pipeline_applies_widen_int_to_float() {
-        use crate::schema::config::{FieldsConfig, UpdateConfig};
-        use crate::schema::shared::{FrontmatterFormat, ScanConfig};
+        use crate::schema::{
+            config::{FieldsConfig, UpdateConfig},
+            shared::{FrontmatterFormat, ScanConfig},
+        };
         let toml = MdvsToml {
             default_output_format: None,
             scan: ScanConfig {
@@ -694,8 +703,10 @@ mod tests {
 
     #[test]
     fn pipeline_array_string_per_element() {
-        use crate::schema::config::{FieldsConfig, UpdateConfig};
-        use crate::schema::shared::{FrontmatterFormat, ScanConfig};
+        use crate::schema::{
+            config::{FieldsConfig, UpdateConfig},
+            shared::{FrontmatterFormat, ScanConfig},
+        };
         let toml = MdvsToml {
             default_output_format: None,
             scan: ScanConfig {

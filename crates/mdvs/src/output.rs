@@ -1,6 +1,6 @@
+use std::{fmt, path::PathBuf};
+
 use serde::{Deserialize, Serialize};
-use std::fmt;
-use std::path::PathBuf;
 
 /// Controls how command output is rendered.
 ///

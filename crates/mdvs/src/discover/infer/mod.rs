@@ -15,18 +15,20 @@ pub mod constraints;
 mod paths;
 mod types;
 
+use std::path::PathBuf;
+
 pub use constraints::infer_constraints;
 pub use paths::{DirectoryTree, FieldPaths};
+use serde_json::Value;
+use tracing::{info, instrument};
 pub use types::{FieldTypeInfo, infer_field_types};
 
-use crate::discover::field_type::FieldType;
-use crate::discover::scan::ScannedFiles;
-use crate::output::DiscoveredField;
-use crate::preprocess::{ValueStage, infer_value_stages, is_unwidenable_integer};
-use crate::schema::shared::FieldTypeSerde;
-use serde_json::Value;
-use std::path::PathBuf;
-use tracing::{info, instrument};
+use crate::{
+    discover::{field_type::FieldType, scan::ScannedFiles},
+    output::DiscoveredField,
+    preprocess::{ValueStage, infer_value_stages, is_unwidenable_integer},
+    schema::shared::FieldTypeSerde,
+};
 
 /// Most inexact integer values listed in one widening warning.
 const MAX_LISTED_INEXACT_VALUES: usize = 3;
@@ -313,10 +315,13 @@ fn contains_object_inside_array(ft: &FieldType) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::discover::scan::{ScannedFile, ScannedFiles};
-    use crate::num::F64_EXACT_INT_LIMIT_I64;
     use serde_json::json;
+
+    use super::*;
+    use crate::{
+        discover::scan::{ScannedFile, ScannedFiles},
+        num::F64_EXACT_INT_LIMIT_I64,
+    };
 
     fn sf(path: &str, data: Option<Value>, content: &str) -> ScannedFile {
         ScannedFile {

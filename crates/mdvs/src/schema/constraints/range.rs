@@ -4,8 +4,7 @@
 //! translator in `schema/json_schema.rs`. This module only checks that the
 //! constraint is well-formed at config load time.
 
-use crate::discover::field_type::FieldType;
-use crate::num::i64_to_f64_exact;
+use crate::{discover::field_type::FieldType, num::i64_to_f64_exact};
 
 /// Check that `min`/`max` are applicable to `field_type` and well-formed.
 ///
@@ -162,9 +161,10 @@ fn format_toml_num(v: &toml::Value) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
     use crate::num::F64_EXACT_INT_LIMIT_I64;
-    use std::collections::BTreeMap;
 
     // -- helpers --
 

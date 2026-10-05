@@ -3,34 +3,38 @@ mod config_mutate;
 mod embed;
 mod write;
 
-use crate::cmd::steps::{auto_update_step, read_config_step, scan_step};
-use crate::discover::field_type::FieldType;
-use crate::discover::scan::ScannedFiles;
-use crate::index::backend::Backend;
-use crate::index::embed::Embedder;
-use crate::index::storage::{BuildMetadata, compute_schema_hash};
-use crate::outcome::commands::BuildOutcome;
-use crate::outcome::{Outcome, ValidateOutcome};
-use crate::output::{BuildFileDetail, NewField};
-use crate::schema::config::MdvsToml;
+use std::{path::Path, time::Instant};
+
+use classify::{ClassifyData, classify_step};
+#[cfg(test)]
+use config_mutate::DEFAULT_CHUNK_SIZE;
+use config_mutate::detect_config_changes;
+pub(crate) use config_mutate::mutate_config;
+use embed::{embed_step, load_embedder_step};
+use tracing::instrument;
+use write::{WritePlan, file_rows, write_index_step};
+
 // Imported for tests' `use super::*;` — tests construct full MdvsToml
 // fixtures and need this section type, which production code here does
 // not use.
 #[cfg(test)]
 use crate::schema::config::SearchConfig;
-use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig};
-use crate::step::{CommandResult, ErrorKind, StepEntry, elapsed_ms};
-#[cfg(test)]
-use config_mutate::DEFAULT_CHUNK_SIZE;
-use std::path::Path;
-use std::time::Instant;
-use tracing::instrument;
-
-use classify::{ClassifyData, classify_step};
-use config_mutate::detect_config_changes;
-pub(crate) use config_mutate::mutate_config;
-use embed::{embed_step, load_embedder_step};
-use write::{WritePlan, file_rows, write_index_step};
+use crate::{
+    cmd::steps::{auto_update_step, read_config_step, scan_step},
+    discover::{field_type::FieldType, scan::ScannedFiles},
+    index::{
+        backend::Backend,
+        embed::Embedder,
+        storage::{BuildMetadata, compute_schema_hash},
+    },
+    outcome::{Outcome, ValidateOutcome, commands::BuildOutcome},
+    output::{BuildFileDetail, NewField},
+    schema::{
+        config::MdvsToml,
+        shared::{ChunkingConfig, EmbeddingModelConfig},
+    },
+    step::{CommandResult, ErrorKind, StepEntry, elapsed_ms},
+};
 
 // ============================================================================
 // run()
@@ -326,12 +330,17 @@ fn build_outcome(
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        collections::{HashMap, HashSet},
+        fs,
+    };
+
     use super::*;
-    use crate::cmd::init::{InitOptions, InitScanFlags};
-    use crate::schema::config::MdvsToml;
-    use crate::step::StepError;
-    use std::collections::{HashMap, HashSet};
-    use std::fs;
+    use crate::{
+        cmd::init::{InitOptions, InitScanFlags},
+        schema::config::MdvsToml,
+        step::StepError,
+    };
 
     fn unwrap_build(result: &CommandResult) -> &BuildOutcome {
         match &result.result {
@@ -614,8 +623,10 @@ mod tests {
     /// Test helper: replace the Lance index with a single chunk whose
     /// embedding has dimension 2, preserving the existing build metadata.
     async fn overwrite_index_with_bad_dimension(root: &std::path::Path) {
-        use crate::discover::field_type::FieldType;
-        use crate::index::storage::{ChunkRow, FileRow};
+        use crate::{
+            discover::field_type::FieldType,
+            index::storage::{ChunkRow, FileRow},
+        };
         let backend = Backend::lance(root);
         let meta = backend.read_metadata().await.unwrap().unwrap();
         let schema_fields = vec![("title".to_string(), FieldType::String)];

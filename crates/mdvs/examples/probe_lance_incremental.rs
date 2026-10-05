@@ -12,14 +12,19 @@
 //!   3. Delete API behavior + cost.
 //!   4. Optimize cost on a 22k-chunk K8s-scale table.
 
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    time::Instant,
+};
+
 use anyhow::Context;
 use arrow::array::{Array, RecordBatch, StringArray};
 use futures::TryStreamExt;
-use lancedb::query::{ExecutableQuery, QueryBase, Select};
-use lancedb::table::OptimizeAction;
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::time::Instant;
+use lancedb::{
+    query::{ExecutableQuery, QueryBase, Select},
+    table::OptimizeAction,
+};
 
 const LANCE_TABLE: &str = "index";
 

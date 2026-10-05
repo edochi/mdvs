@@ -2,20 +2,23 @@ mod collect;
 mod field_meta;
 mod validate;
 
+use std::{path::Path, time::Instant};
+
+use serde::Serialize;
+use tracing::instrument;
 pub use validate::validate;
 
-use crate::cmd::steps::{auto_update_step, scan_step};
-use crate::outcome::commands::CheckOutcome;
-use crate::outcome::{Outcome, ReadConfigOutcome, ValidateOutcome};
-use crate::output::{FieldViolation, NewField};
-use crate::schema::config::MdvsToml;
-use crate::schema::json_schema::{canonical_to_dsl, validate_mdvs_schema};
-use crate::schema::load::load_schema;
-use crate::step::{CommandResult, ErrorKind, StepEntry, elapsed_ms};
-use serde::Serialize;
-use std::path::Path;
-use std::time::Instant;
-use tracing::instrument;
+use crate::{
+    cmd::steps::{auto_update_step, scan_step},
+    outcome::{Outcome, ReadConfigOutcome, ValidateOutcome, commands::CheckOutcome},
+    output::{FieldViolation, NewField},
+    schema::{
+        config::MdvsToml,
+        json_schema::{canonical_to_dsl, validate_mdvs_schema},
+        load::load_schema,
+    },
+    step::{CommandResult, ErrorKind, StepEntry, elapsed_ms},
+};
 
 // ============================================================================
 // CheckResult — kept for build compatibility during migration
@@ -203,16 +206,21 @@ fn resolve_check_config(
 
 #[cfg(test)]
 mod tests {
-    use super::collect::map_validation_error;
-    use super::*;
-    use crate::cmd::init::{InitOptions, InitScanFlags};
-    use crate::num::F64_EXACT_INT_LIMIT_I64;
-    use crate::outcome::commands::CheckOutcome;
-    use crate::output::ViolationKind;
-    use crate::schema::config::{FieldsConfig, TomlField, UpdateConfig};
-    use crate::schema::shared::{FieldTypeSerde, FrontmatterFormat, ScanConfig};
-    use globset::Glob;
     use std::fs;
+
+    use globset::Glob;
+
+    use super::{collect::map_validation_error, *};
+    use crate::{
+        cmd::init::{InitOptions, InitScanFlags},
+        num::F64_EXACT_INT_LIMIT_I64,
+        outcome::commands::CheckOutcome,
+        output::ViolationKind,
+        schema::{
+            config::{FieldsConfig, TomlField, UpdateConfig},
+            shared::{FieldTypeSerde, FrontmatterFormat, ScanConfig},
+        },
+    };
 
     /// Kept for the unit tests that exercise the glob-matching semantics
     /// directly. Production code uses `FieldMeta.allowed` / `FieldMeta.required`

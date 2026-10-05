@@ -5,13 +5,16 @@
 //! top-level `map.keys()`. The tree's `all` / `any` sets become per-leaf
 //! presence sets; glob inference runs per-leaf-path.
 
-use crate::discover::infer::collect_leaves;
-use crate::discover::scan::ScannedFiles;
+use std::{
+    collections::{BTreeMap, HashMap, HashSet},
+    path::{Path, PathBuf},
+};
+
 use indextree::{Arena, NodeEdge, NodeId};
 use serde_json::Value;
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::path::{Path, PathBuf};
 use tracing::instrument;
+
+use crate::discover::{infer::collect_leaves, scan::ScannedFiles};
 
 /// Inferred glob patterns for a field's allowed and required paths.
 #[derive(Debug, Clone, PartialEq, Eq)]

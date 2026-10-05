@@ -6,16 +6,20 @@
 //! and decodes batches into in-memory structs). The write path is in
 //! [`super`] (`mod.rs`); the search path is in [`super::search`].
 
+use std::collections::HashSet;
+
+use arrow::{
+    array::{Array, FixedSizeListArray, Float32Array, RecordBatch},
+    datatypes::DataType,
+};
+use futures::TryStreamExt;
+use lancedb::query::{ExecutableQuery, QueryBase, Select};
+
 use super::{IndexStats, LanceBackend, i32_col, str_col};
 use crate::index::storage::{
     BuildMetadata, COL_CHUNK_ID, COL_CHUNK_INDEX, COL_CHUNK_TEXT, COL_CONTENT_HASH, COL_EMBEDDING,
     COL_END_LINE, COL_FILE_ID, COL_FILEPATH, COL_START_LINE, ChunkRow, FileIndexEntry,
 };
-use arrow::array::{Array, FixedSizeListArray, Float32Array, RecordBatch};
-use arrow::datatypes::DataType;
-use futures::TryStreamExt;
-use lancedb::query::{ExecutableQuery, QueryBase, Select};
-use std::collections::HashSet;
 
 impl LanceBackend {
     pub(super) async fn read_metadata(&self) -> anyhow::Result<Option<BuildMetadata>> {

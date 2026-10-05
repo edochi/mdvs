@@ -10,9 +10,9 @@
 //! `init --from-jsonschema` and `check --jsonschema` gate the loaded value
 //! against the mdvs subset before using it.
 
+use std::{fs, path::Path};
+
 use serde_json::Value;
-use std::fs;
-use std::path::Path;
 
 /// Load a schema file and parse it according to its extension.
 ///
@@ -47,9 +47,10 @@ pub(crate) fn load_schema(path: &Path) -> anyhow::Result<Value> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
     use tempfile::TempDir;
+
+    use super::*;
 
     fn write(dir: &TempDir, name: &str, content: &str) -> std::path::PathBuf {
         let path = dir.path().join(name);

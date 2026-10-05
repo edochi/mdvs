@@ -6,9 +6,11 @@
 //! later runs must stay silent. These tests run the real binary so they can
 //! observe stderr.
 
-use std::fs;
-use std::path::Path;
-use std::process::{Command, Output};
+use std::{
+    fs,
+    path::Path,
+    process::{Command, Output},
+};
 
 /// Substring every inexact-widening warning line carries.
 const WARNING_MARKER: &str = "widens integers to Float";

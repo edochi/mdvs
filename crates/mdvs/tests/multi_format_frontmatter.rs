@@ -7,12 +7,19 @@
 //! prove the command-level pipeline (scan → infer → write toml → reload
 //! → validate) produces sensible results across formats.
 
-use mdvs::cmd::init::{InitOptions, InitScanFlags};
-use mdvs::cmd::{check, init};
-use mdvs::outcome::Outcome;
-use mdvs::schema::config::MdvsToml;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
+
+use mdvs::{
+    cmd::{
+        check, init,
+        init::{InitOptions, InitScanFlags},
+    },
+    outcome::Outcome,
+    schema::config::MdvsToml,
+};
 use tempfile::TempDir;
 
 /// Copy a fixture vault into a fresh tempdir so tests can mutate state

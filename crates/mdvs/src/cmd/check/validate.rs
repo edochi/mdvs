@@ -12,18 +12,26 @@
 //! 4. [`super::collect::collect_violations`] — sort the accumulator into
 //!    the byte-stable `Vec<FieldViolation>` `mdvs check` emits.
 
-use super::CheckResult;
-use super::collect::{MappedViolation, ViolationKey, collect_violations, map_validation_error};
-use super::field_meta::{FieldMeta, FieldValidators, build_field_metas};
-use crate::discover::scan::ScannedFiles;
-use crate::output::{NewField, ViolatingFile, ViolationKind};
-use crate::preprocess::Pipeline;
-use crate::schema::config::{MdvsToml, TomlField};
+use std::{
+    collections::{BTreeMap, HashMap, HashSet},
+    path::PathBuf,
+};
+
 use jsonschema::error::ValidationErrorKind;
 use serde_json::Value;
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::path::PathBuf;
 use tracing::{info, instrument};
+
+use super::{
+    CheckResult,
+    collect::{MappedViolation, ViolationKey, collect_violations, map_validation_error},
+    field_meta::{FieldMeta, FieldValidators, build_field_metas},
+};
+use crate::{
+    discover::scan::ScannedFiles,
+    output::{NewField, ViolatingFile, ViolationKind},
+    preprocess::Pipeline,
+    schema::config::{MdvsToml, TomlField},
+};
 
 /// Sentinel field name for document-level violations (e.g.
 /// `FrontmatterUnrepresentable`). Sorts before alphabetic field names so

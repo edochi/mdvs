@@ -14,8 +14,9 @@ mod length;
 mod pattern;
 mod range;
 
-use crate::discover::field_type::FieldType;
 use serde::{Deserialize, Serialize};
+
+use crate::discover::field_type::FieldType;
 
 // ---------------------------------------------------------------------------
 // Serde layer

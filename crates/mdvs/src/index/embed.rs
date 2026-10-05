@@ -1,8 +1,9 @@
-use crate::schema::shared::EmbeddingModelConfig;
+use std::{fs, path::PathBuf};
+
 use model2vec_rs::model::StaticModel;
-use std::fs;
-use std::path::PathBuf;
 use tracing::instrument;
+
+use crate::schema::shared::EmbeddingModelConfig;
 
 /// Resolved embedding model configuration, ready for loading.
 #[derive(Debug, Clone)]

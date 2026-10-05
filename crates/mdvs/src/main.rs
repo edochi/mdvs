@@ -1,19 +1,23 @@
+use std::{
+    path::{Path, PathBuf},
+    process::ExitCode,
+};
+
 use clap::{Parser, Subcommand};
-use mdvs::cmd::init::{InitOptions, InitScanFlags};
-use mdvs::cmd::scaffold::ScaffoldCommand;
-use mdvs::cmd::search::SearchOptions;
-use mdvs::index::backend::SearchQuery;
-use mdvs::outcome::commands::export_jsonschema::ExportFormat;
-use mdvs::output::OutputFormat;
-use mdvs::schema::config::MdvsToml;
-use mdvs::step::{CommandResult, has_failed, has_violations};
-use std::path::{Path, PathBuf};
-use std::process::ExitCode;
-use tracing_subscriber::EnvFilter;
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
-use tracing_tree::HierarchicalLayer;
-use tracing_tree::time::Uptime;
+use mdvs::{
+    cmd::{
+        init::{InitOptions, InitScanFlags},
+        scaffold::ScaffoldCommand,
+        search::SearchOptions,
+    },
+    index::backend::SearchQuery,
+    outcome::commands::export_jsonschema::ExportFormat,
+    output::OutputFormat,
+    schema::config::MdvsToml,
+    step::{CommandResult, has_failed, has_violations},
+};
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_tree::{HierarchicalLayer, time::Uptime};
 
 /// Stderr logging level for `--logs`.
 #[derive(Clone, clap::ValueEnum)]
@@ -520,9 +524,11 @@ async fn main() -> anyhow::Result<ExitCode> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::fs;
+
     use tempfile::TempDir;
+
+    use super::*;
 
     fn write_config_with_default(dir: &Path, default: &str) {
         let toml = format!(

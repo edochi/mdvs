@@ -5,15 +5,20 @@
 //! The backend-side `write_index` / `write_index_incremental`
 //! implementations live in [`crate::index::backend`].
 
-use super::classify::ClassifyData;
-use crate::discover::field_type::FieldType;
-use crate::discover::scan::ScannedFiles;
-use crate::index::backend::Backend;
-use crate::index::storage::{BuildMetadata, ChunkRow, FileRow, content_hash};
-use crate::outcome::{Outcome, WriteIndexOutcome};
-use crate::step::{ErrorKind, StepEntry, elapsed_ms};
-use anyhow::Context;
 use std::time::Instant;
+
+use anyhow::Context;
+
+use super::classify::ClassifyData;
+use crate::{
+    discover::{field_type::FieldType, scan::ScannedFiles},
+    index::{
+        backend::Backend,
+        storage::{BuildMetadata, ChunkRow, FileRow, content_hash},
+    },
+    outcome::{Outcome, WriteIndexOutcome},
+    step::{ErrorKind, StepEntry, elapsed_ms},
+};
 
 /// How the index write persists this build.
 pub(super) enum WritePlan<'a> {
@@ -172,11 +177,10 @@ pub(super) async fn write_index_step(
 
 #[cfg(test)]
 mod tests {
+    use std::{collections::HashMap, path::PathBuf};
+
     use super::*;
-    use crate::cmd::build::classify::FileToEmbed;
-    use crate::discover::scan::ScannedFile;
-    use std::collections::HashMap;
-    use std::path::PathBuf;
+    use crate::{cmd::build::classify::FileToEmbed, discover::scan::ScannedFile};
 
     fn scanned_file(path: &str, body: &str) -> ScannedFile {
         ScannedFile {

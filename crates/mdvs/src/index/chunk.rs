@@ -21,6 +21,7 @@ pub struct Chunks(Vec<Chunk>);
 
 impl std::ops::Deref for Chunks {
     type Target = Vec<Chunk>;
+
     fn deref(&self) -> &Self::Target {
         &self.0
     }

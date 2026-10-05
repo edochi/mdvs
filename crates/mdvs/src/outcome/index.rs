@@ -2,8 +2,10 @@
 
 use serde::Serialize;
 
-use crate::block::{Block, Render};
-use crate::output::{format_file_count, format_size};
+use crate::{
+    block::{Block, Render},
+    output::{format_file_count, format_size},
+};
 
 /// Full outcome for the `delete_index` step.
 #[derive(Debug, Serialize)]

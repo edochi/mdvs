@@ -15,10 +15,9 @@ mod to_canonical;
 mod validate;
 
 pub(crate) use from_canonical::canonical_to_dsl;
+use serde_json::Value;
 pub(crate) use to_canonical::dsl_to_canonical;
 pub(crate) use validate::validate_mdvs_schema;
-
-use serde_json::Value;
 
 /// True if the value is the exact shape produced by
 /// `to_canonical::intermediate_object_schema` (or its post-population
@@ -37,12 +36,14 @@ pub(crate) fn is_intermediate_object(v: &Value) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::to_canonical::JSON_SCHEMA_DRAFT;
-    use super::*;
-    use crate::schema::config::{FieldsConfig, MdvsToml, TomlField, UpdateConfig};
-    use crate::schema::constraints::Constraints;
-    use crate::schema::shared::{FieldTypeSerde, FrontmatterFormat, ScanConfig};
     use serde_json::json;
+
+    use super::{to_canonical::JSON_SCHEMA_DRAFT, *};
+    use crate::schema::{
+        config::{FieldsConfig, MdvsToml, TomlField, UpdateConfig},
+        constraints::Constraints,
+        shared::{FieldTypeSerde, FrontmatterFormat, ScanConfig},
+    };
 
     fn empty_toml() -> MdvsToml {
         MdvsToml {

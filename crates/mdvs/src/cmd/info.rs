@@ -1,18 +1,21 @@
-use crate::cmd::steps::{read_config_step, read_index_step, scan_step};
-use crate::discover::scan::ScannedFile;
-use crate::index::backend::{Backend, IndexStats};
-use crate::index::storage::BuildMetadata;
-use crate::outcome::Outcome;
-use crate::outcome::commands::InfoOutcome;
-use crate::output::{FieldHint, field_hints};
-use crate::schema::config::MdvsToml;
-use crate::step::{CommandResult, elapsed_ms};
+use std::{collections::HashMap, path::Path, time::Instant};
+
 use serde::Serialize;
 use serde_json::Value;
-use std::collections::HashMap;
-use std::path::Path;
-use std::time::Instant;
 use tracing::instrument;
+
+use crate::{
+    cmd::steps::{read_config_step, read_index_step, scan_step},
+    discover::scan::ScannedFile,
+    index::{
+        backend::{Backend, IndexStats},
+        storage::BuildMetadata,
+    },
+    outcome::{Outcome, commands::InfoOutcome},
+    output::{FieldHint, field_hints},
+    schema::config::MdvsToml,
+    step::{CommandResult, elapsed_ms},
+};
 
 /// A single field definition for info display.
 #[derive(Debug, Serialize)]
@@ -152,15 +155,20 @@ fn index_info(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::cmd::init::{InitOptions, InitScanFlags};
-    use crate::outcome::Outcome;
-    use crate::schema::config::{FieldsConfig, MdvsToml, SearchConfig, UpdateConfig};
-    use crate::schema::shared::{
-        ChunkingConfig, EmbeddingModelConfig, FieldTypeSerde, FrontmatterFormat, ScanConfig,
-    };
-    use crate::step::CommandResult;
     use std::fs;
+
+    use super::*;
+    use crate::{
+        cmd::init::{InitOptions, InitScanFlags},
+        outcome::Outcome,
+        schema::{
+            config::{FieldsConfig, MdvsToml, SearchConfig, UpdateConfig},
+            shared::{
+                ChunkingConfig, EmbeddingModelConfig, FieldTypeSerde, FrontmatterFormat, ScanConfig,
+            },
+        },
+        step::CommandResult,
+    };
 
     fn unwrap_info(result: &CommandResult) -> &InfoOutcome {
         match &result.result {

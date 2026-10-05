@@ -1,17 +1,23 @@
-use crate::cmd::build::{build_core, mutate_config};
-use crate::cmd::steps::{load_model_step, read_config_step, read_index_step};
-use crate::index::backend::{Backend, SearchMode, SearchQuery, SearchResults, WhereNaming};
-use crate::index::embed::Embedder;
-use crate::index::storage::BuildMetadata;
-use crate::outcome::commands::SearchOutcome;
-use crate::outcome::{EmbedQueryOutcome, ExecuteSearchOutcome, LoadModelOutcome, Outcome};
-use crate::schema::config::MdvsToml;
-use crate::schema::shared::EmbeddingModelConfig;
-use crate::step::{CommandResult, ErrorKind, StepEntry, elapsed_ms};
-use std::collections::HashMap;
-use std::path::Path;
-use std::time::Instant;
+use std::{collections::HashMap, path::Path, time::Instant};
+
 use tracing::instrument;
+
+use crate::{
+    cmd::{
+        build::{build_core, mutate_config},
+        steps::{load_model_step, read_config_step, read_index_step},
+    },
+    index::{
+        backend::{Backend, SearchMode, SearchQuery, SearchResults, WhereNaming},
+        embed::Embedder,
+        storage::BuildMetadata,
+    },
+    outcome::{
+        EmbedQueryOutcome, ExecuteSearchOutcome, LoadModelOutcome, Outcome, commands::SearchOutcome,
+    },
+    schema::{config::MdvsToml, shared::EmbeddingModelConfig},
+    step::{CommandResult, ErrorKind, StepEntry, elapsed_ms},
+};
 
 /// Flags controlling the automatic build that `search` may run first.
 #[derive(Debug, Default, Clone, Copy)]
@@ -243,17 +249,21 @@ async fn execute_search_step(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::cmd::init::{InitOptions, InitScanFlags};
-    use crate::index::embed::{Embedder, ModelConfig};
-    use crate::outcome::commands::SearchOutcome;
-    use crate::schema::config::{FieldsConfig, MdvsToml, SearchConfig, UpdateConfig};
-    use crate::schema::shared::{
-        ChunkingConfig, EmbeddingModelConfig, FrontmatterFormat, ScanConfig,
-    };
-    use crate::step::{ProcessStep, StepError};
     use std::fs;
+
     use tempfile::TempDir;
+
+    use super::*;
+    use crate::{
+        cmd::init::{InitOptions, InitScanFlags},
+        index::embed::{Embedder, ModelConfig},
+        outcome::commands::SearchOutcome,
+        schema::{
+            config::{FieldsConfig, MdvsToml, SearchConfig, UpdateConfig},
+            shared::{ChunkingConfig, EmbeddingModelConfig, FrontmatterFormat, ScanConfig},
+        },
+        step::{ProcessStep, StepError},
+    };
 
     /// Search the index as it is: no automatic build, no schema update.
     const NO_AUTO: SearchOptions = SearchOptions {

@@ -7,13 +7,14 @@
 //! accepted. Anything else errors with a clear message pointing at the
 //! property name.
 
-use crate::discover::field_type::FieldType;
-use crate::preprocess::ValueStage;
-use crate::schema::config::TomlField;
-use crate::schema::constraints::Constraints;
 use serde_json::{Map, Value};
 
 use super::is_intermediate_object;
+use crate::{
+    discover::field_type::FieldType,
+    preprocess::ValueStage,
+    schema::{config::TomlField, constraints::Constraints},
+};
 
 /// Output of [`canonical_to_dsl`]: the per-property fields plus any
 /// empty-schema entries that map to the `[fields].ignore` list.

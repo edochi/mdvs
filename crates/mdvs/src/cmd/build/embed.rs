@@ -5,19 +5,25 @@
 //! and produces [`ChunkRow`]s ready to write. Called from
 //! [`super::build_core`].
 
-use super::classify::{ClassifyData, FileToEmbed};
-use crate::cmd::steps::load_model_step;
-use crate::discover::scan::ScannedFile;
-use crate::index::backend::Backend;
-use crate::index::chunk::{Chunks, extract_plain_text};
-use crate::index::embed::Embedder;
-use crate::index::storage::ChunkRow;
-use crate::outcome::{EmbedFilesOutcome, Outcome};
-use crate::output::BuildFileDetail;
-use crate::schema::shared::EmbeddingModelConfig;
-use crate::step::{ErrorKind, StepEntry, elapsed_ms};
-use anyhow::Context;
 use std::time::Instant;
+
+use anyhow::Context;
+
+use super::classify::{ClassifyData, FileToEmbed};
+use crate::{
+    cmd::steps::load_model_step,
+    discover::scan::ScannedFile,
+    index::{
+        backend::Backend,
+        chunk::{Chunks, extract_plain_text},
+        embed::Embedder,
+        storage::ChunkRow,
+    },
+    outcome::{EmbedFilesOutcome, Outcome},
+    output::BuildFileDetail,
+    schema::shared::EmbeddingModelConfig,
+    step::{ErrorKind, StepEntry, elapsed_ms},
+};
 
 /// Data produced by the embed files step.
 pub(super) struct EmbedFilesData {

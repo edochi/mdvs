@@ -1,10 +1,15 @@
-use crate::index::backend::Backend;
-use crate::outcome::commands::CleanOutcome;
-use crate::outcome::{DeleteIndexOutcome, Outcome};
-use crate::step::{CommandResult, ErrorKind, StepEntry, elapsed_ms};
-use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::{
+    path::{Path, PathBuf},
+    time::Instant,
+};
+
 use tracing::instrument;
+
+use crate::{
+    index::backend::Backend,
+    outcome::{DeleteIndexOutcome, Outcome, commands::CleanOutcome},
+    step::{CommandResult, ErrorKind, StepEntry, elapsed_ms},
+};
 
 /// Count files and sum their sizes in a directory (recursively).
 fn walk_dir_stats(dir: &Path) -> anyhow::Result<(usize, u64)> {
@@ -105,10 +110,10 @@ pub async fn run(path: &Path) -> CommandResult {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::outcome::Outcome;
-    use crate::step::CommandResult;
     use std::fs;
+
+    use super::*;
+    use crate::{outcome::Outcome, step::CommandResult};
 
     fn unwrap_clean(result: &CommandResult) -> &CleanOutcome {
         match &result.result {

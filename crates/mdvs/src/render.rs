@@ -5,17 +5,21 @@
 //! Adding a new output format means writing one function here — no command
 //! code changes needed.
 
-use tabled::Table;
-use tabled::settings::{
-    Modify, Panel,
-    object::{Column, Rows},
-    style::{LineText, Style},
-    themes::BorderCorrection,
-    width::Width,
+use tabled::{
+    Table,
+    settings::{
+        Modify, Panel,
+        object::{Column, Rows},
+        style::{LineText, Style},
+        themes::BorderCorrection,
+        width::Width,
+    },
 };
 
-use crate::block::{Block, TableStyle};
-use crate::table::{Builder, style_compact, term_width};
+use crate::{
+    block::{Block, TableStyle},
+    table::{Builder, style_compact, term_width},
+};
 
 /// Format blocks as terminal-friendly pretty output with box-drawing tables.
 pub fn format_pretty(blocks: &[Block]) -> String {

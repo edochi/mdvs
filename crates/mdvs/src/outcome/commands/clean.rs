@@ -4,8 +4,10 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 
-use crate::block::{Block, Render, TableStyle};
-use crate::output::format_size;
+use crate::{
+    block::{Block, Render, TableStyle},
+    output::format_size,
+};
 
 /// Full outcome for the clean command.
 #[derive(Debug, Serialize)]

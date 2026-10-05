@@ -1,17 +1,22 @@
-use crate::cmd::steps::{infer_step, read_config_step, scan_step};
-use crate::discover::infer::constraints::{infer_constraints, infer_range};
-use crate::discover::infer::{InferredField, InferredSchema};
-use crate::outcome::commands::UpdateOutcome;
-use crate::outcome::{Outcome, WriteConfigOutcome};
-use crate::output::{ChangedField, FieldChange, RemovedField};
-use crate::schema::config::{FieldsConfig, TomlField};
-use crate::schema::constraints::Constraints;
-use crate::schema::shared::FieldTypeSerde;
-use crate::step::{CommandResult, ErrorKind, StepEntry, elapsed_ms};
-use std::collections::HashMap;
-use std::path::Path;
-use std::time::Instant;
+use std::{collections::HashMap, path::Path, time::Instant};
+
 use tracing::{info, instrument};
+
+use crate::{
+    cmd::steps::{infer_step, read_config_step, scan_step},
+    discover::infer::{
+        InferredField, InferredSchema,
+        constraints::{infer_constraints, infer_range},
+    },
+    outcome::{Outcome, WriteConfigOutcome, commands::UpdateOutcome},
+    output::{ChangedField, FieldChange, RemovedField},
+    schema::{
+        config::{FieldsConfig, TomlField},
+        constraints::Constraints,
+        shared::FieldTypeSerde,
+    },
+    step::{CommandResult, ErrorKind, StepEntry, elapsed_ms},
+};
 
 /// Constraint kinds selectable via `--with`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
@@ -339,8 +344,7 @@ fn diff_field(old: &TomlField, new: &TomlField) -> Vec<FieldChange> {
 fn force_categorical(
     field: &crate::discover::infer::InferredField,
 ) -> Option<crate::schema::constraints::Constraints> {
-    use crate::discover::field_type::FieldType;
-    use crate::schema::constraints::Constraints;
+    use crate::{discover::field_type::FieldType, schema::constraints::Constraints};
 
     let applicable = match &field.field_type {
         FieldType::String | FieldType::Integer => true,
@@ -378,12 +382,15 @@ fn force_categorical(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::cmd::init::{InitOptions, InitScanFlags};
-    use crate::discover::field_type::FieldType;
-    use crate::outcome::commands::UpdateOutcome;
-    use crate::schema::config::MdvsToml;
     use std::fs;
+
+    use super::*;
+    use crate::{
+        cmd::init::{InitOptions, InitScanFlags},
+        discover::field_type::FieldType,
+        outcome::commands::UpdateOutcome,
+        schema::config::MdvsToml,
+    };
 
     fn unwrap_update(result: &CommandResult) -> &UpdateOutcome {
         match &result.result {

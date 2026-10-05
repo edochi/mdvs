@@ -3,13 +3,16 @@
 //! Every command returns a `CommandResult` with a flat list of process steps
 //! and a final result. No recursive nesting — steps are always leaf entries.
 
-use crate::block::{Block, Render};
-use crate::outcome::Outcome;
-use crate::output::OutputFormat;
-use crate::render::{format_markdown, format_pretty};
-use serde::ser::SerializeMap;
-use serde::{Serialize, Serializer};
 use std::time::{Duration, Instant};
+
+use serde::{Serialize, Serializer, ser::SerializeMap};
+
+use crate::{
+    block::{Block, Render},
+    outcome::Outcome,
+    output::OutputFormat,
+    render::{format_markdown, format_pretty},
+};
 
 /// A process step that completed successfully.
 #[derive(Debug)]
@@ -302,9 +305,10 @@ impl Serialize for StepEntry {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
     use crate::outcome::{CleanOutcome, DeleteIndexOutcome, Outcome};
-    use std::path::PathBuf;
 
     #[test]
     fn duration_ms_saturates_beyond_u64() {
@@ -552,8 +556,10 @@ mod tests {
 
     #[test]
     fn has_violations_in_result() {
-        use crate::outcome::CheckOutcome;
-        use crate::output::{FieldViolation, ViolatingFile, ViolationKind};
+        use crate::{
+            outcome::CheckOutcome,
+            output::{FieldViolation, ViolatingFile, ViolationKind},
+        };
 
         let result = CommandResult {
             steps: vec![],
@@ -577,8 +583,10 @@ mod tests {
 
     #[test]
     fn has_violations_in_step() {
-        use crate::outcome::ValidateOutcome;
-        use crate::output::{FieldViolation, ViolatingFile, ViolationKind};
+        use crate::{
+            outcome::ValidateOutcome,
+            output::{FieldViolation, ViolatingFile, ViolationKind},
+        };
 
         let result = CommandResult {
             steps: vec![StepEntry::ok(

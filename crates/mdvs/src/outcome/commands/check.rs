@@ -2,8 +2,10 @@
 
 use serde::Serialize;
 
-use crate::block::{Block, Render, TableStyle};
-use crate::output::{FieldViolation, NewField, ViolationKind, format_file_count};
+use crate::{
+    block::{Block, Render, TableStyle},
+    output::{FieldViolation, NewField, ViolationKind, format_file_count},
+};
 
 /// Full outcome for the check command.
 #[derive(Debug, Serialize)]

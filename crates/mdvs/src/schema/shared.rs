@@ -1,9 +1,12 @@
+use std::{collections::BTreeMap, fmt};
+
+use serde::{
+    Deserialize, Serialize,
+    de::{self, Deserializer, Visitor},
+    ser::Serializer,
+};
+
 use crate::discover::field_type::FieldType;
-use serde::de::{self, Deserializer, Visitor};
-use serde::ser::Serializer;
-use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
-use std::fmt;
 
 /// Serde-friendly representation of `FieldType` for TOML.
 ///
@@ -244,12 +247,15 @@ impl<'de> Deserialize<'de> for FieldTypeSerde {
         struct V;
         impl Visitor<'_> for V {
             type Value = FieldTypeSerde;
+
             fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 write!(f, "a type expression string like \"Array(String)\"")
             }
+
             fn visit_str<E: de::Error>(self, s: &str) -> Result<Self::Value, E> {
                 FieldTypeSerde::parse(s).map_err(E::custom)
             }
+
             fn visit_string<E: de::Error>(self, s: String) -> Result<Self::Value, E> {
                 FieldTypeSerde::parse(&s).map_err(E::custom)
             }

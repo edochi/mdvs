@@ -1,23 +1,32 @@
-use crate::discover::field_type::FieldType;
-use crate::num::i64_to_f64_exact;
-use crate::schema::config::MdvsToml;
-use crate::schema::json_schema::dsl_to_canonical;
-use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+};
+
 use anyhow::Context;
+use arrow::{
+    array::{
+        ArrayRef, BooleanArray, Date32Array, FixedSizeListArray, Float32Array, Float64Array,
+        Int32Array, Int64Array, ListArray, StringArray, StructArray, TimestampMicrosecondArray,
+        TimestampMillisecondArray,
+    },
+    buffer::{NullBuffer, OffsetBuffer},
+    datatypes::{DataType, Field, Schema, TimeUnit},
+    record_batch::RecordBatch,
+};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use serde_json::Value;
 use xxhash_rust::xxh3::xxh3_64;
 
-use arrow::array::{
-    ArrayRef, BooleanArray, Date32Array, FixedSizeListArray, Float32Array, Float64Array,
-    Int32Array, Int64Array, ListArray, StringArray, StructArray, TimestampMicrosecondArray,
-    TimestampMillisecondArray,
+use crate::{
+    discover::field_type::FieldType,
+    num::i64_to_f64_exact,
+    schema::{
+        config::MdvsToml,
+        json_schema::dsl_to_canonical,
+        shared::{ChunkingConfig, EmbeddingModelConfig},
+    },
 };
-use arrow::buffer::{NullBuffer, OffsetBuffer};
-use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
-use arrow::record_batch::RecordBatch;
-use serde_json::Value;
-use std::sync::Arc;
 
 /// File ID column on each chunk row (duplicated per chunk).
 pub const COL_FILE_ID: &str = "file_id";
@@ -584,10 +593,11 @@ pub struct FileIndexEntry {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::num::F64_EXACT_INT_LIMIT_I64;
     use arrow::array::Array;
     use serde_json::json;
+
+    use super::*;
+    use crate::num::F64_EXACT_INT_LIMIT_I64;
 
     #[test]
     fn float_column_stores_unrepresentable_integer_as_null() {
@@ -1037,8 +1047,10 @@ mod tests {
     // ------------------------------------------------------------------------
 
     fn sample_toml() -> MdvsToml {
-        use crate::schema::config::{FieldsConfig, TomlField, UpdateConfig};
-        use crate::schema::shared::{FieldTypeSerde, FrontmatterFormat, ScanConfig};
+        use crate::schema::{
+            config::{FieldsConfig, TomlField, UpdateConfig},
+            shared::{FieldTypeSerde, FrontmatterFormat, ScanConfig},
+        };
         MdvsToml {
             default_output_format: None,
             scan: ScanConfig {
@@ -1080,8 +1092,7 @@ mod tests {
 
     #[test]
     fn schema_hash_changes_when_field_added() {
-        use crate::schema::config::TomlField;
-        use crate::schema::shared::FieldTypeSerde;
+        use crate::schema::{config::TomlField, shared::FieldTypeSerde};
         let mut t = sample_toml();
         let h1 = compute_schema_hash(&t);
         t.fields.field.push(TomlField {

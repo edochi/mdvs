@@ -10,12 +10,16 @@
 //!   each leaf property; intermediate Object nodes carry no `x-mdvs`.
 //! - No root-level `required` array — requirement is path-scoped.
 
-use crate::discover::field_type::FieldType;
-use crate::schema::config::{MdvsToml, TomlField};
-use crate::schema::constraints::Constraints;
 use serde_json::{Map, Value, json};
 
 use super::is_intermediate_object;
+use crate::{
+    discover::field_type::FieldType,
+    schema::{
+        config::{MdvsToml, TomlField},
+        constraints::Constraints,
+    },
+};
 
 /// JSON Schema 2020-12 `$schema` URI.
 pub(super) const JSON_SCHEMA_DRAFT: &str = "https://json-schema.org/draft/2020-12/schema";
