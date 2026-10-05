@@ -16,9 +16,9 @@ Before releasing, verify:
 1. **All tests pass:**
 
 ```bash
-cargo test
-cargo clippy -- -D warnings
-cargo fmt --check
+cargo test --features testing-mocks
+cargo clippy --all-targets --features testing-mocks -- -D warnings
+just fmt-check
 ```
 
 2. **Main branch is clean and up to date:**

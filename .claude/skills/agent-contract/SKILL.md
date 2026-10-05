@@ -34,10 +34,12 @@ rather than writing probe files into the shared tree.
 
 ## 2. Formatting
 
-- **Rust:** run `cargo fmt` after `cargo clippy`. The committed source is
-  `cargo fmt`-canonical, so formatting should touch only what you changed. If
-  `cargo fmt` rewrites a file you did not touch, stop and report it rather than
-  shipping the unrelated churn.
+- **Rust:** run `just fmt` after `cargo clippy` — never plain `cargo fmt`, which
+  uses stable rustfmt and ignores the unstable options in `rustfmt.toml`.
+  `just fmt` runs the nightly pinned in `rustfmt-toolchain`. The committed
+  source is `just fmt`-canonical, so formatting should touch only what you
+  changed. If it rewrites a file you did not touch, stop and report it rather
+  than shipping the unrelated churn.
 - **Markdown:** hard-wrapped at 80 columns by prettier. Never wrap by hand — run
   `just fmt-md <file>` on each markdown file you touched. Paths listed in
   `.prettierignore` (fixtures, `example_kb/`, the changelog) are exempt: their
@@ -97,7 +99,7 @@ Run all of these from the repo root, in this order:
 
     cargo test --features testing-mocks
     cargo clippy --all-targets --features testing-mocks -- -D warnings
-    cargo fmt
+    just fmt
     just lint-ast
     just check-md <each .md file you touched>
 

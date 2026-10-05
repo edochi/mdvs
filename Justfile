@@ -7,6 +7,17 @@ book:
 lint-ast:
     ast-grep scan
 
+# Nightly toolchain for rustfmt — rustfmt.toml uses unstable options. Bump deliberately.
+rustfmt_toolchain := `cat rustfmt-toolchain`
+
+# Format Rust with the pinned nightly rustfmt
+fmt:
+    cargo +{{ rustfmt_toolchain }} fmt
+
+# Check Rust formatting without rewriting (what CI runs)
+fmt-check:
+    cargo +{{ rustfmt_toolchain }} fmt --check
+
 # Keep in sync with .pre-commit-config.yaml.
 prettier := "npx --yes prettier@3.6.2"
 
