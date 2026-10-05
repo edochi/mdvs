@@ -189,18 +189,21 @@ Classification in `cmd/build.rs` compares scanned files against the index:
 
 ### Write Strategy
 
-`cmd/build/write.rs::write_index_step` selects one of three paths based on the
-classification result:
+`cmd/build/write.rs::WritePlan::decide` picks one of three paths from the
+classification result and the newly embedded chunks, returning a `WritePlan`
+(`Skip`, `Overwrite { file_rows, chunk_rows }`, or
+`Incremental { file_ids_to_clear, file_rows, new_chunk_rows }`).
+`write_index_step` then carries the plan out and records the step.
 
 **Skip** — when the build is not a full rebuild AND no files were removed AND no
-new chunks were produced. Returns `WriteOutcome::Skipped`; no Lance dataset
-write happens. The skip predicate uses chunk count (not file count) because
-empty-body files (e.g. Hugo `_index.md`) are always classified as needing
-embedding but produce zero chunks.
+new chunks were produced. `WritePlan::Skip` is recorded as a skipped step; no
+Lance dataset write happens. The skip predicate uses chunk count (not file
+count) because empty-body files (e.g. Hugo `_index.md`) are always classified as
+needing embedding but produce zero chunks.
 
-**Full overwrite** — when `full_rebuild` is true (first build or `--force`).
-`Backend::write_index` builds one Arrow `RecordBatch` from the retained + new
-chunks combined and calls
+**Full overwrite** — when `full_rebuild` is true (first build or `--force`). A
+full rebuild retains no chunks, so the newly embedded chunks are the whole
+table. `Backend::write_index` builds one Arrow `RecordBatch` from them and calls
 `Connection::create_table(...).mode(CreateTableMode::Overwrite)`. The FTS index
 on `chunk_text` and, above 10k chunks, the IVF-PQ vector index on `embedding`
 are rebuilt inside the new table.
@@ -208,11 +211,11 @@ are rebuilt inside the new table.
 **Incremental** — when there is a delta to persist but the table already exists.
 `Backend::write_index_incremental` opens the existing table,
 `delete("file_id IN (...)")` for `file_ids_to_clear` (= new + edited + removed
-file_ids), `add(new_chunks_batch)` for the freshly embedded chunks (the slice
-past `retained_chunks_count`), calls `NativeTable::replace_schema_metadata` to
-refresh the `BuildMetadata` keys, and runs `optimize(OptimizeAction::All)` so
-the existing FTS + vector indexes incorporate the delta without a full rebuild.
-The retained chunks already in the table are left in place — no rewrite.
+file_ids), `add(new_chunks_batch)` for the freshly embedded chunks (each joined
+with its file row), calls `NativeTable::replace_schema_metadata` to refresh the
+`BuildMetadata` keys, and runs `optimize(OptimizeAction::All)` so the existing
+FTS + vector indexes incorporate the delta without a full rebuild. The retained
+chunks already in the table are left in place — no rewrite.
 
 Model loading is skipped entirely when `needs_embedding == 0` (all files
 unchanged). The write itself is skipped under the further condition above.
@@ -237,10 +240,9 @@ Key methods:
   `create_table(...).mode(Overwrite)`, then `build_indexes()`. Used on the first
   build and whenever `--force` is passed.
 - `write_index_incremental()` — delta path: opens the existing table, deletes
-  the rows for `file_ids_to_clear`, appends the new-chunks slice, refreshes the
-  schema metadata via `NativeTable::replace_schema_metadata`, and runs
-  `optimize(All)` so FTS + vector indexes pick up the delta without a full
-  rebuild.
+  the rows for `file_ids_to_clear`, appends the new chunks, refreshes the schema
+  metadata via `NativeTable::replace_schema_metadata`, and runs `optimize(All)`
+  so FTS + vector indexes pick up the delta without a full rebuild.
 - `read_metadata()` (parses `BuildMetadata` from the Lance table-level kv),
   `read_file_index()` (lightweight projection for classification),
   `read_chunk_rows()` (full chunk rows for retained-file pass-through),

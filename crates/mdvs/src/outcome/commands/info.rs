@@ -2,9 +2,11 @@
 
 use serde::Serialize;
 
-use crate::block::{Block, Render, TableStyle};
-use crate::cmd::info::{IndexInfo, InfoField};
-use crate::output::format_hints;
+use crate::{
+    block::{Block, Render, TableStyle},
+    cmd::info::{IndexInfo, InfoField},
+    output::format_hints,
+};
 
 /// Full outcome for the info command.
 #[derive(Debug, Serialize)]

@@ -1,17 +1,22 @@
-use crate::discover::infer::InferredSchema;
-use crate::discover::infer::constraints::{infer_constraints, infer_range};
-use crate::discover::scan::ScannedFiles;
-use crate::outcome::commands::UpdateOutcome;
-use crate::outcome::{InferOutcome, Outcome, ReadConfigOutcome, ScanOutcome, WriteConfigOutcome};
-use crate::output::{ChangedField, FieldChange, RemovedField};
-use crate::schema::config::{MdvsToml, TomlField};
-use crate::schema::constraints::Constraints;
-use crate::schema::shared::FieldTypeSerde;
-use crate::step::{CommandResult, ErrorKind, StepEntry};
-use std::collections::HashMap;
-use std::path::Path;
-use std::time::Instant;
+use std::{collections::HashMap, path::Path, time::Instant};
+
 use tracing::{info, instrument};
+
+use crate::{
+    cmd::steps::{infer_step, read_config_step, scan_step},
+    discover::infer::{
+        InferredField, InferredSchema,
+        constraints::{infer_constraints, infer_range},
+    },
+    outcome::{Outcome, WriteConfigOutcome, commands::UpdateOutcome},
+    output::{ChangedField, FieldChange, RemovedField},
+    schema::{
+        config::{FieldsConfig, TomlField},
+        constraints::Constraints,
+        shared::FieldTypeSerde,
+    },
+    step::{CommandResult, ErrorKind, StepEntry, elapsed_ms},
+};
 
 /// Constraint kinds selectable via `--with`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
@@ -27,7 +32,7 @@ pub enum WithKind {
 
 /// Whether two `WithKind` values conflict on the same field.
 fn with_kinds_conflict(a: WithKind, b: WithKind) -> bool {
-    use WithKind::*;
+    use WithKind::{Categorical, Range};
     matches!((a, b), (Categorical, Range) | (Range, Categorical))
 }
 
@@ -55,81 +60,19 @@ pub struct ReinferArgs {
 /// Re-scan files, infer field changes, and update `mdvs.toml`.
 /// Pure inference — no build step.
 #[instrument(name = "update", skip_all)]
-pub async fn run(
-    path: &Path,
-    reinfer: Option<&ReinferArgs>,
-    dry_run: bool,
-    _verbose: bool,
-) -> CommandResult {
+pub async fn run(path: &Path, reinfer: Option<&ReinferArgs>, dry_run: bool) -> CommandResult {
     let start = Instant::now();
     let mut steps = Vec::new();
 
     // Pre-check: --with requires named fields, validate the kind list
-    if let Some(args) = reinfer {
-        if !args.with.is_empty() && args.fields.is_empty() {
-            return CommandResult::failed(
-                steps,
-                ErrorKind::User,
-                "--with requires named fields".into(),
-                start,
-            );
-        }
-        if args.with.contains(&WithKind::None) && args.with.len() > 1 {
-            return CommandResult::failed(
-                steps,
-                ErrorKind::User,
-                "--with=none cannot be combined with other kinds".into(),
-                start,
-            );
-        }
-        for i in 0..args.with.len() {
-            for j in (i + 1)..args.with.len() {
-                if with_kinds_conflict(args.with[i], args.with[j]) {
-                    return CommandResult::failed(
-                        steps,
-                        ErrorKind::User,
-                        format!(
-                            "--with: {:?} and {:?} are mutually exclusive",
-                            args.with[i], args.with[j]
-                        ),
-                        start,
-                    );
-                }
-            }
-        }
+    if let Some(args) = reinfer
+        && let Err(msg) = validate_with_args(args)
+    {
+        return CommandResult::failed(steps, ErrorKind::User, msg, start);
     }
 
-    // 1. Read config — MdvsToml::read() + validate() directly
-    let config_start = Instant::now();
-    let config_path_buf = path.join("mdvs.toml");
-    let mut config = match MdvsToml::read(&config_path_buf) {
-        Ok(cfg) => match cfg.validate() {
-            Ok(()) => {
-                steps.push(StepEntry::ok(
-                    Outcome::ReadConfig(ReadConfigOutcome {
-                        config_path: config_path_buf.display().to_string(),
-                    }),
-                    config_start.elapsed().as_millis() as u64,
-                ));
-                cfg
-            }
-            Err(e) => {
-                steps.push(StepEntry::err(
-                    ErrorKind::User,
-                    format!("mdvs.toml is invalid: {e} — fix the file or run 'mdvs init --force'"),
-                    config_start.elapsed().as_millis() as u64,
-                ));
-                return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
-            }
-        },
-        Err(e) => {
-            steps.push(StepEntry::err(
-                ErrorKind::User,
-                e.to_string(),
-                config_start.elapsed().as_millis() as u64,
-            ));
-            return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
-        }
+    let Ok((mut config, config_path)) = read_config_step(path, &mut steps) else {
+        return CommandResult::failed_from_steps(steps, start);
     };
 
     // Pre-check: reinfer field names exist
@@ -137,7 +80,7 @@ pub async fn run(
         for name in &args.fields {
             if !config.fields.field.iter().any(|f| f.name == *name) {
                 return CommandResult::failed(
-                    std::mem::take(&mut steps),
+                    steps,
                     ErrorKind::User,
                     format!("field '{name}' is not in mdvs.toml"),
                     start,
@@ -146,56 +89,116 @@ pub async fn run(
         }
     }
 
-    // 2. Scan — ScannedFiles::scan() directly
-    let scan_start = Instant::now();
-    let scanned = match ScannedFiles::scan(path, &config.scan) {
-        Ok(s) => {
-            steps.push(StepEntry::ok(
-                Outcome::Scan(ScanOutcome {
-                    files_found: s.files.len(),
-                    glob: config.scan.glob.clone(),
-                }),
-                scan_start.elapsed().as_millis() as u64,
-            ));
-            s
-        }
-        Err(e) => {
-            steps.push(StepEntry::err(
-                ErrorKind::Application,
-                e.to_string(),
-                scan_start.elapsed().as_millis() as u64,
-            ));
-            return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
-        }
+    let Ok(scanned) = scan_step(path, &config.scan, &mut steps) else {
+        return CommandResult::failed_from_steps(steps, start);
     };
 
-    // 3. Infer — InferredSchema::infer() is infallible
-    let infer_start = Instant::now();
-    let schema = InferredSchema::infer(&scanned);
-    steps.push(StepEntry::ok(
-        Outcome::Infer(InferOutcome {
-            fields_inferred: schema.fields.len(),
-        }),
-        infer_start.elapsed().as_millis() as u64,
-    ));
-    schema.emit_dropped_warnings();
+    let schema = infer_step(&scanned, &mut steps);
 
-    let total_files = scanned.files.len();
+    let existing = std::mem::take(&mut config.fields.field);
+    let (new_fields, outcome) = plan_update(
+        existing,
+        &config.fields,
+        &schema,
+        reinfer,
+        scanned.files.len(),
+        dry_run,
+    );
 
-    // --- Field comparison logic ---
+    info!(
+        added = outcome.added.len(),
+        changed = outcome.changed.len(),
+        removed = outcome.removed.len(),
+        "update complete"
+    );
+
+    // Write config (Skipped if dry_run or no changes)
+    if dry_run || !outcome.has_changes() {
+        steps.push(StepEntry::skipped());
+    } else {
+        let write_start = Instant::now();
+        config.fields.field = new_fields;
+
+        match config.write(&config_path) {
+            Ok(()) => {
+                steps.push(StepEntry::ok(
+                    Outcome::WriteConfig(WriteConfigOutcome {
+                        config_path: config_path.display().to_string(),
+                        fields_written: config.fields.field.len(),
+                    }),
+                    elapsed_ms(write_start),
+                ));
+            }
+            Err(e) => {
+                steps.push(StepEntry::err(
+                    ErrorKind::Application,
+                    e.to_string(),
+                    elapsed_ms(write_start),
+                ));
+                return CommandResult::failed(
+                    steps,
+                    ErrorKind::Application,
+                    "failed to write config".into(),
+                    start,
+                );
+            }
+        }
+    }
+
+    CommandResult {
+        steps,
+        result: Ok(Outcome::Update(Box::new(outcome))),
+        elapsed_ms: elapsed_ms(start),
+    }
+}
+
+/// Check the `--with` list of a reinfer invocation for usage errors.
+///
+/// Returns the user-facing message for the first problem found.
+fn validate_with_args(args: &ReinferArgs) -> Result<(), String> {
+    if !args.with.is_empty() && args.fields.is_empty() {
+        return Err("--with requires named fields".into());
+    }
+    if args.with.contains(&WithKind::None) && args.with.len() > 1 {
+        return Err("--with=none cannot be combined with other kinds".into());
+    }
+    for (i, &a) in args.with.iter().enumerate() {
+        for &b in &args.with[i + 1..] {
+            if with_kinds_conflict(a, b) {
+                return Err(format!("--with: {a:?} and {b:?} are mutually exclusive"));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Compare the inferred schema against the existing field definitions.
+///
+/// Returns the full field list to write (protected fields followed by
+/// inferred ones) and the outcome describing the difference. Fields named
+/// for reinfer (or all of them for a bare reinfer) are targets that
+/// inference may change or remove; the rest are protected and kept as-is.
+/// Without reinfer, every existing field is protected and only new fields
+/// are added. `fields` supplies the ignore list and categorical thresholds.
+fn plan_update(
+    existing: Vec<TomlField>,
+    fields: &FieldsConfig,
+    schema: &InferredSchema,
+    reinfer: Option<&ReinferArgs>,
+    files_scanned: usize,
+    dry_run: bool,
+) -> (Vec<TomlField>, UpdateOutcome) {
     let reinfer_all = reinfer.is_some_and(|a| a.fields.is_empty());
     let reinfer_fields: Vec<String> = reinfer.map(|a| a.fields.clone()).unwrap_or_default();
 
     let (protected, targets): (Vec<TomlField>, Vec<TomlField>) = if reinfer_all {
-        (vec![], config.fields.field.drain(..).collect())
+        (vec![], existing)
     } else if !reinfer_fields.is_empty() {
-        config
-            .fields
-            .field
-            .drain(..)
+        existing
+            .into_iter()
             .partition(|f| !reinfer_fields.contains(&f.name))
     } else {
-        (config.fields.field.drain(..).collect(), vec![])
+        (existing, vec![])
     };
 
     let old_fields: HashMap<&str, &TomlField> =
@@ -210,60 +213,18 @@ pub async fn run(
         if protected.iter().any(|f| f.name == inf.name) {
             continue;
         }
-        if config.fields.ignore.contains(&inf.name) {
+        if fields.ignore.contains(&inf.name) {
             continue;
         }
+        inf.emit_inexact_widening_warning();
 
-        let new_type = FieldTypeSerde::from(&inf.field_type);
-        let constraints = if let Some(args) = reinfer {
-            if args.with.contains(&WithKind::None) {
-                None
-            } else if args.with.is_empty() {
-                // Bare reinfer / no --with → heuristic default
-                let max_cat = args.max_categories.unwrap_or(config.fields.max_categories);
-                let min_rep = args
-                    .min_repetition
-                    .unwrap_or(config.fields.min_category_repetition);
-                infer_constraints(inf, max_cat, min_rep)
-            } else {
-                // Explicit kinds → force-infer each
-                let mut c = Constraints::default();
-                for kind in &args.with {
-                    match kind {
-                        WithKind::Categorical => {
-                            if let Some(forced) = force_categorical(inf) {
-                                c.categories = forced.categories;
-                            }
-                        }
-                        WithKind::Range => {
-                            if let Some(r) = infer_range(inf) {
-                                c.min = r.min;
-                                c.max = r.max;
-                            }
-                        }
-                        // `None` is filtered out upstream by the
-                        // `args.with.contains(&WithKind::None)` branch.
-                        // If a future caller bypasses that, fall through
-                        // silently rather than panic.
-                        WithKind::None => {}
-                    }
-                }
-                if c == Constraints::default() {
-                    None
-                } else {
-                    Some(c)
-                }
-            }
-        } else {
-            None
-        };
         let toml_field = TomlField {
             name: inf.name.clone(),
-            field_type: new_type.clone(),
+            field_type: FieldTypeSerde::from(&inf.field_type),
             allowed: inf.allowed.clone(),
             required: inf.required.clone(),
             nullable: inf.nullable,
-            constraints,
+            constraints: reinfer.and_then(|args| constraints_for(args, inf, fields)),
             preprocess: inf.preprocess.clone(),
         };
 
@@ -271,42 +232,16 @@ pub async fn run(
             if **old_field == toml_field {
                 unchanged += 1;
             } else {
-                let mut changes = Vec::new();
-                if old_field.field_type != toml_field.field_type {
-                    changes.push(FieldChange::Type {
-                        old: old_field.field_type.to_string(),
-                        new: new_type.to_string(),
-                    });
-                }
-                if old_field.allowed != toml_field.allowed {
-                    changes.push(FieldChange::Allowed {
-                        old: old_field.allowed.clone(),
-                        new: toml_field.allowed.clone(),
-                    });
-                }
-                if old_field.required != toml_field.required {
-                    changes.push(FieldChange::Required {
-                        old: old_field.required.clone(),
-                        new: toml_field.required.clone(),
-                    });
-                }
-                if old_field.nullable != toml_field.nullable {
-                    changes.push(FieldChange::Nullable {
-                        old: old_field.nullable,
-                        new: toml_field.nullable,
-                    });
-                }
                 changed.push(ChangedField {
                     name: inf.name.clone(),
-                    changes,
+                    changes: diff_field(old_field, &toml_field),
                 });
             }
-            new_fields.push(toml_field);
         } else {
             // Always collect full detail (verbose=true) — the full outcome carries everything
-            added.push(inf.to_discovered(total_files, true));
-            new_fields.push(toml_field);
+            added.push(inf.to_discovered(files_scanned, true));
         }
+        new_fields.push(toml_field);
     }
 
     let mut removed: Vec<RemovedField> = old_fields
@@ -320,61 +255,88 @@ pub async fn run(
         .collect();
     removed.sort_by(|a, b| a.name.cmp(&b.name));
 
-    info!(
-        added = added.len(),
-        changed = changed.len(),
-        removed = removed.len(),
-        "update complete"
-    );
+    let outcome = UpdateOutcome {
+        files_scanned,
+        added,
+        changed,
+        removed,
+        unchanged,
+        dry_run,
+    };
+    (new_fields, outcome)
+}
 
-    let has_changes = !added.is_empty() || !changed.is_empty() || !removed.is_empty();
-
-    // 4. Write config (Skipped if dry_run or no changes)
-    if dry_run || !has_changes {
-        steps.push(StepEntry::skipped());
-    } else {
-        let write_start = Instant::now();
-        let write_path = path.join("mdvs.toml");
-        config.fields.field = new_fields;
-
-        match config.write(&write_path) {
-            Ok(()) => {
-                steps.push(StepEntry::ok(
-                    Outcome::WriteConfig(WriteConfigOutcome {
-                        config_path: write_path.display().to_string(),
-                        fields_written: config.fields.field.len(),
-                    }),
-                    write_start.elapsed().as_millis() as u64,
-                ));
+/// Constraints for a reinferred field, according to `--with`.
+///
+/// `none` strips constraints; no `--with` runs the categorical heuristic
+/// (with the command-line overrides falling back to the config's
+/// thresholds); explicit kinds force-infer each one.
+fn constraints_for(
+    args: &ReinferArgs,
+    inf: &InferredField,
+    fields: &FieldsConfig,
+) -> Option<Constraints> {
+    if args.with.contains(&WithKind::None) {
+        return None;
+    }
+    if args.with.is_empty() {
+        let max_cat = args.max_categories.unwrap_or(fields.max_categories());
+        let min_rep = args
+            .min_repetition
+            .unwrap_or(fields.min_category_repetition());
+        return infer_constraints(inf, max_cat, min_rep);
+    }
+    let mut c = Constraints::default();
+    for kind in &args.with {
+        match kind {
+            WithKind::Categorical => {
+                if let Some(forced) = force_categorical(inf) {
+                    c.categories = forced.categories;
+                }
             }
-            Err(e) => {
-                steps.push(StepEntry::err(
-                    ErrorKind::Application,
-                    e.to_string(),
-                    write_start.elapsed().as_millis() as u64,
-                ));
-                return CommandResult::failed(
-                    steps,
-                    ErrorKind::Application,
-                    "failed to write config".into(),
-                    start,
-                );
+            WithKind::Range => {
+                if let Some(r) = infer_range(inf) {
+                    c.min = r.min;
+                    c.max = r.max;
+                }
             }
+            // `None` is handled by the early return above. If a future
+            // caller bypasses that, fall through silently rather than panic.
+            WithKind::None => {}
         }
     }
+    (c != Constraints::default()).then_some(c)
+}
 
-    CommandResult {
-        steps,
-        result: Ok(Outcome::Update(Box::new(UpdateOutcome {
-            files_scanned: total_files,
-            added,
-            changed,
-            removed,
-            unchanged,
-            dry_run,
-        }))),
-        elapsed_ms: start.elapsed().as_millis() as u64,
+/// The per-attribute changes between an existing field and its reinferred
+/// definition. Constraint and preprocess changes are not itemized.
+fn diff_field(old: &TomlField, new: &TomlField) -> Vec<FieldChange> {
+    let mut changes = Vec::new();
+    if old.field_type != new.field_type {
+        changes.push(FieldChange::Type {
+            old: old.field_type.to_string(),
+            new: new.field_type.to_string(),
+        });
     }
+    if old.allowed != new.allowed {
+        changes.push(FieldChange::Allowed {
+            old: old.allowed.clone(),
+            new: new.allowed.clone(),
+        });
+    }
+    if old.required != new.required {
+        changes.push(FieldChange::Required {
+            old: old.required.clone(),
+            new: new.required.clone(),
+        });
+    }
+    if old.nullable != new.nullable {
+        changes.push(FieldChange::Nullable {
+            old: old.nullable,
+            new: new.nullable,
+        });
+    }
+    changes
 }
 
 /// Force categorical constraints on a field: collect all distinct values as categories
@@ -382,8 +344,7 @@ pub async fn run(
 fn force_categorical(
     field: &crate::discover::infer::InferredField,
 ) -> Option<crate::schema::constraints::Constraints> {
-    use crate::discover::field_type::FieldType;
-    use crate::schema::constraints::Constraints;
+    use crate::{discover::field_type::FieldType, schema::constraints::Constraints};
 
     let applicable = match &field.field_type {
         FieldType::String | FieldType::Integer => true,
@@ -421,10 +382,15 @@ fn force_categorical(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::outcome::commands::UpdateOutcome;
-    use crate::schema::config::MdvsToml;
     use std::fs;
+
+    use super::*;
+    use crate::{
+        cmd::init::{InitOptions, InitScanFlags},
+        discover::field_type::FieldType,
+        outcome::commands::UpdateOutcome,
+        schema::config::MdvsToml,
+    };
 
     fn unwrap_update(result: &CommandResult) -> &UpdateOutcome {
         match &result.result {
@@ -449,18 +415,184 @@ mod tests {
     }
 
     fn init_no_build(dir: &Path) {
-        let step = crate::cmd::init::run(dir, "**", false, false, true, false, false, None, None);
+        let step = crate::cmd::init::run(
+            dir,
+            "**",
+            InitOptions {
+                scan: InitScanFlags {
+                    ignore_bare_files: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            None,
+            None,
+        );
         assert!(!crate::step::has_failed(&step));
     }
 
     fn reinfer_args(fields: &[&str]) -> ReinferArgs {
         ReinferArgs {
-            fields: fields.iter().map(|s| s.to_string()).collect(),
+            fields: fields.iter().map(ToString::to_string).collect(),
             with: vec![],
             max_categories: None,
             min_repetition: None,
             dry_run: false,
         }
+    }
+
+    fn with_args(fields: &[&str], with: &[WithKind]) -> ReinferArgs {
+        ReinferArgs {
+            with: with.to_vec(),
+            ..reinfer_args(fields)
+        }
+    }
+
+    #[test]
+    fn validate_with_args_accepts_valid_lists() {
+        assert_eq!(validate_with_args(&with_args(&[], &[])), Ok(()));
+        assert_eq!(
+            validate_with_args(&with_args(&["a"], &[WithKind::Categorical])),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn validate_with_args_requires_named_fields() {
+        assert_eq!(
+            validate_with_args(&with_args(&[], &[WithKind::Range])),
+            Err("--with requires named fields".to_string())
+        );
+    }
+
+    #[test]
+    fn validate_with_args_rejects_none_with_others() {
+        assert_eq!(
+            validate_with_args(&with_args(&["a"], &[WithKind::None, WithKind::Range])),
+            Err("--with=none cannot be combined with other kinds".to_string())
+        );
+    }
+
+    #[test]
+    fn validate_with_args_reports_first_conflict_in_order() {
+        assert_eq!(
+            validate_with_args(&with_args(
+                &["a"],
+                &[WithKind::Range, WithKind::Range, WithKind::Categorical]
+            )),
+            Err("--with: Range and Categorical are mutually exclusive".to_string())
+        );
+        assert_eq!(
+            validate_with_args(&with_args(
+                &["a"],
+                &[WithKind::Categorical, WithKind::Range]
+            )),
+            Err("--with: Categorical and Range are mutually exclusive".to_string())
+        );
+    }
+
+    fn string_field(name: &str) -> TomlField {
+        TomlField {
+            name: name.into(),
+            field_type: FieldTypeSerde::Scalar("String".into()),
+            allowed: vec!["**".into()],
+            required: vec![],
+            nullable: false,
+            constraints: None,
+            preprocess: vec![],
+        }
+    }
+
+    #[test]
+    fn diff_field_identical_is_empty() {
+        let f = string_field("title");
+        assert!(diff_field(&f, &f).is_empty());
+    }
+
+    #[test]
+    fn diff_field_reports_type_change() {
+        let old = string_field("n");
+        let new = TomlField {
+            field_type: FieldTypeSerde::Scalar("Integer".into()),
+            ..string_field("n")
+        };
+        assert_eq!(
+            serde_json::to_value(diff_field(&old, &new)).unwrap(),
+            serde_json::json!([{"aspect": "type", "old": "String", "new": "Integer"}])
+        );
+    }
+
+    #[test]
+    fn diff_field_reports_allowed_and_required_changes_in_order() {
+        let old = string_field("t");
+        let new = TomlField {
+            allowed: vec!["blog/**".into()],
+            required: vec!["blog/**".into()],
+            ..string_field("t")
+        };
+        assert_eq!(
+            serde_json::to_value(diff_field(&old, &new)).unwrap(),
+            serde_json::json!([
+                {"aspect": "allowed", "old": ["**"], "new": ["blog/**"]},
+                {"aspect": "required", "old": [], "new": ["blog/**"]},
+            ])
+        );
+    }
+
+    /// A String field seen in `occurrences` files with the given distinct values.
+    fn inferred_string(values: &[&str], occurrences: usize) -> InferredField {
+        InferredField {
+            name: "status".into(),
+            field_type: FieldType::String,
+            files: vec![],
+            allowed: vec!["**".into()],
+            required: vec![],
+            nullable: false,
+            distinct_values: values.iter().map(|v| serde_json::json!(v)).collect(),
+            occurrence_count: occurrences,
+            preprocess: vec![],
+        }
+    }
+
+    fn default_fields_config() -> FieldsConfig {
+        FieldsConfig {
+            ignore: vec![],
+            field: vec![],
+            max_categories: None,
+            min_category_repetition: None,
+        }
+    }
+
+    /// Occurrences per distinct value, enough for the categorical heuristic.
+    const REPEATED_OCCURRENCES: usize = 20;
+
+    #[test]
+    fn constraints_for_none_strips_constraints() {
+        let inf = inferred_string(&["draft", "done"], REPEATED_OCCURRENCES);
+        let args = with_args(&["status"], &[WithKind::None]);
+        assert_eq!(constraints_for(&args, &inf, &default_fields_config()), None);
+    }
+
+    #[test]
+    fn constraints_for_empty_with_runs_heuristic() {
+        let inf = inferred_string(&["draft", "done"], REPEATED_OCCURRENCES);
+        let fields = default_fields_config();
+        let expected = infer_constraints(
+            &inf,
+            fields.max_categories(),
+            fields.min_category_repetition(),
+        );
+        assert!(expected.is_some());
+        let args = with_args(&["status"], &[]);
+        assert_eq!(constraints_for(&args, &inf, &fields), expected);
+    }
+
+    #[test]
+    fn constraints_for_explicit_kind_yielding_nothing_is_none() {
+        // Range on a String field infers no bounds, leaving the default.
+        let inf = inferred_string(&["draft", "done"], REPEATED_OCCURRENCES);
+        let args = with_args(&["status"], &[WithKind::Range]);
+        assert_eq!(constraints_for(&args, &inf, &default_fields_config()), None);
     }
 
     #[tokio::test]
@@ -469,7 +601,7 @@ mod tests {
         create_test_vault(tmp.path());
         init_no_build(tmp.path());
 
-        let step = run(tmp.path(), None, false, false).await;
+        let step = run(tmp.path(), None, false).await;
         assert!(!crate::step::has_failed(&step));
         let result = unwrap_update(&step);
 
@@ -492,7 +624,7 @@ mod tests {
         )
         .unwrap();
 
-        let step = run(tmp.path(), None, false, false).await;
+        let step = run(tmp.path(), None, false).await;
         assert!(!crate::step::has_failed(&step));
         let result = unwrap_update(&step);
 
@@ -521,7 +653,7 @@ mod tests {
         )
         .unwrap();
 
-        let step = run(tmp.path(), Some(&reinfer_args(&["tags"])), false, false).await;
+        let step = run(tmp.path(), Some(&reinfer_args(&["tags"])), false).await;
         assert!(!crate::step::has_failed(&step));
         let result = unwrap_update(&step);
 
@@ -547,7 +679,7 @@ mod tests {
         )
         .unwrap();
 
-        let step = run(tmp.path(), Some(&reinfer_args(&["tags"])), false, false).await;
+        let step = run(tmp.path(), Some(&reinfer_args(&["tags"])), false).await;
         assert!(!crate::step::has_failed(&step));
         let result = unwrap_update(&step);
 
@@ -564,13 +696,7 @@ mod tests {
         create_test_vault(tmp.path());
         init_no_build(tmp.path());
 
-        let step = run(
-            tmp.path(),
-            Some(&reinfer_args(&["nonexistent"])),
-            false,
-            false,
-        )
-        .await;
+        let step = run(tmp.path(), Some(&reinfer_args(&["nonexistent"])), false).await;
         assert!(crate::step::has_failed(&step));
     }
 
@@ -582,7 +708,7 @@ mod tests {
 
         let toml_before = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
 
-        let step = run(tmp.path(), Some(&reinfer_args(&[])), false, false).await;
+        let step = run(tmp.path(), Some(&reinfer_args(&[])), false).await;
         assert!(!crate::step::has_failed(&step));
         let result = unwrap_update(&step);
 
@@ -609,7 +735,7 @@ mod tests {
 
         let toml_before = fs::read_to_string(tmp.path().join("mdvs.toml")).unwrap();
 
-        let step = run(tmp.path(), None, true, false).await;
+        let step = run(tmp.path(), None, true).await;
         assert!(!crate::step::has_failed(&step));
         let result = unwrap_update(&step);
 
@@ -632,7 +758,7 @@ mod tests {
         )
         .unwrap();
 
-        let step = run(tmp.path(), None, false, false).await;
+        let step = run(tmp.path(), None, false).await;
         assert!(!crate::step::has_failed(&step));
         assert!(!tmp.path().join(".mdvs").exists());
     }
@@ -658,11 +784,13 @@ mod tests {
         let step = crate::cmd::init::run(
             tmp.path(),
             "**",
-            false,
-            false,
-            true,
-            false,
-            false,
+            InitOptions {
+                scan: InitScanFlags {
+                    ignore_bare_files: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             None,
             None,
         );
@@ -681,7 +809,7 @@ mod tests {
         config.scan.include_bare_files = true;
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
 
-        let step = run(tmp.path(), Some(&reinfer_args(&[])), false, false).await;
+        let step = run(tmp.path(), Some(&reinfer_args(&[])), false).await;
         assert!(!crate::step::has_failed(&step));
         let result = unwrap_update(&step);
         assert!(
@@ -710,7 +838,7 @@ mod tests {
         )
         .unwrap();
 
-        let step = run(tmp.path(), None, false, false).await;
+        let step = run(tmp.path(), None, false).await;
         assert!(!crate::step::has_failed(&step));
         let result = unwrap_update(&step);
         assert!(result.added.is_empty() && result.changed.is_empty() && result.removed.is_empty());
@@ -765,7 +893,7 @@ mod tests {
         assert!(status.constraints.is_some());
 
         // Reinfer status — should re-infer categories
-        let step = run(tmp.path(), Some(&reinfer_args(&["status"])), false, false).await;
+        let step = run(tmp.path(), Some(&reinfer_args(&["status"])), false).await;
         assert!(!crate::step::has_failed(&step));
 
         let toml = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
@@ -798,7 +926,7 @@ mod tests {
             min_repetition: None,
             dry_run: false,
         };
-        let step = run(tmp.path(), Some(&args), false, false).await;
+        let step = run(tmp.path(), Some(&args), false).await;
         assert!(!crate::step::has_failed(&step));
 
         let toml = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
@@ -826,7 +954,7 @@ mod tests {
             min_repetition: None,
             dry_run: false,
         };
-        let step = run(tmp.path(), Some(&args), false, false).await;
+        let step = run(tmp.path(), Some(&args), false).await;
         assert!(!crate::step::has_failed(&step));
 
         let toml = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
@@ -861,7 +989,7 @@ mod tests {
             min_repetition: Some(4),
             dry_run: false,
         };
-        let step = run(tmp.path(), Some(&args), false, false).await;
+        let step = run(tmp.path(), Some(&args), false).await;
         assert!(!crate::step::has_failed(&step));
 
         let toml = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
@@ -887,7 +1015,7 @@ mod tests {
             min_repetition: None,
             dry_run: false,
         };
-        let step = run(tmp.path(), Some(&args), false, false).await;
+        let step = run(tmp.path(), Some(&args), false).await;
         assert!(crate::step::has_failed(&step));
     }
 
@@ -898,7 +1026,7 @@ mod tests {
         init_no_build(tmp.path());
 
         // Reinfer status
-        let step = run(tmp.path(), Some(&reinfer_args(&["status"])), false, false).await;
+        let step = run(tmp.path(), Some(&reinfer_args(&["status"])), false).await;
         assert!(!crate::step::has_failed(&step));
 
         // Check should still pass after reinfer
@@ -927,7 +1055,7 @@ mod tests {
         assert!(status_before.constraints.is_some());
 
         // Reinfer all
-        let step = run(tmp.path(), Some(&reinfer_args(&[])), false, false).await;
+        let step = run(tmp.path(), Some(&reinfer_args(&[])), false).await;
         assert!(!crate::step::has_failed(&step));
 
         // Categories should still be present on status
@@ -962,7 +1090,7 @@ mod tests {
             min_repetition: None,
             dry_run: false,
         };
-        let step = run(tmp.path(), Some(&args), false, false).await;
+        let step = run(tmp.path(), Some(&args), false).await;
         assert!(crate::step::has_failed(&step));
     }
 
@@ -979,7 +1107,7 @@ mod tests {
             min_repetition: None,
             dry_run: false,
         };
-        let step = run(tmp.path(), Some(&args), false, false).await;
+        let step = run(tmp.path(), Some(&args), false).await;
         assert!(crate::step::has_failed(&step));
     }
 }

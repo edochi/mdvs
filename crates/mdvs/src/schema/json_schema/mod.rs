@@ -15,29 +15,9 @@ mod to_canonical;
 mod validate;
 
 pub(crate) use from_canonical::canonical_to_dsl;
+use serde_json::Value;
 pub(crate) use to_canonical::dsl_to_canonical;
 pub(crate) use validate::validate_mdvs_schema;
-
-use serde_json::Value;
-
-// Test-only imports for the round-trip and integration tests below. The
-// production code in this mod.rs (just `is_intermediate_object`) doesn't
-// need them, but the test mod's `use super::*;` pulls them in.
-#[cfg(test)]
-#[allow(unused_imports)]
-use crate::discover::field_type::FieldType;
-#[cfg(test)]
-#[allow(unused_imports)]
-use crate::schema::config::MdvsToml;
-#[cfg(test)]
-#[allow(unused_imports)]
-use crate::schema::constraints::Constraints;
-#[cfg(test)]
-#[allow(unused_imports)]
-use serde_json::{Map, json};
-#[cfg(test)]
-#[allow(unused_imports)]
-use to_canonical::JSON_SCHEMA_DRAFT;
 
 /// True if the value is the exact shape produced by
 /// `to_canonical::intermediate_object_schema` (or its post-population
@@ -50,15 +30,20 @@ pub(crate) fn is_intermediate_object(v: &Value) -> bool {
         return false;
     };
     obj.get("type") == Some(&Value::String("object".into()))
-        && obj.get("properties").map(Value::is_object).unwrap_or(false)
+        && obj.get("properties").is_some_and(Value::is_object)
         && !obj.contains_key("x-mdvs")
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::schema::config::{FieldsConfig, TomlField, UpdateConfig};
-    use crate::schema::shared::{FieldTypeSerde, FrontmatterFormat, ScanConfig};
+    use serde_json::json;
+
+    use super::{to_canonical::JSON_SCHEMA_DRAFT, *};
+    use crate::schema::{
+        config::{FieldsConfig, MdvsToml, TomlField, UpdateConfig},
+        constraints::Constraints,
+        shared::{FieldTypeSerde, FrontmatterFormat, ScanConfig},
+    };
 
     fn empty_toml() -> MdvsToml {
         MdvsToml {
@@ -74,8 +59,8 @@ mod tests {
             fields: FieldsConfig {
                 ignore: vec![],
                 field: vec![],
-                max_categories: 10,
-                min_category_repetition: 3,
+                max_categories: None,
+                min_category_repetition: None,
             },
             embedding_model: None,
             chunking: None,
@@ -623,9 +608,9 @@ mod tests {
     // Group C — gate rejects denied keywords and structures
     // ------------------------------------------------------------------------
 
-    fn assert_rejects(schema: Value, expected_substr: &str) {
+    fn assert_rejects(schema: &Value, expected_substr: &str) {
         let err =
-            validate_mdvs_schema(&schema).expect_err(&format!("expected rejection for: {schema}"));
+            validate_mdvs_schema(schema).expect_err(&format!("expected rejection for: {schema}"));
         assert!(
             err.contains(expected_substr),
             "expected error containing {expected_substr:?}, got: {err}"
@@ -635,58 +620,61 @@ mod tests {
     #[test]
     fn gate_rejects_one_of() {
         assert_rejects(
-            json!({"oneOf": [{"type": "string"}, {"type": "integer"}]}),
+            &json!({"oneOf": [{"type": "string"}, {"type": "integer"}]}),
             "'oneOf' is not supported",
         );
     }
 
     #[test]
     fn gate_rejects_any_of() {
-        assert_rejects(json!({"anyOf": []}), "'anyOf' is not supported");
+        assert_rejects(&json!({"anyOf": []}), "'anyOf' is not supported");
     }
 
     #[test]
     fn gate_rejects_all_of() {
-        assert_rejects(json!({"allOf": []}), "'allOf' is not supported");
+        assert_rejects(&json!({"allOf": []}), "'allOf' is not supported");
     }
 
     #[test]
     fn gate_rejects_not() {
-        assert_rejects(json!({"not": {}}), "'not' is not supported");
+        assert_rejects(&json!({"not": {}}), "'not' is not supported");
     }
 
     #[test]
     fn gate_rejects_if_then_else() {
-        assert_rejects(json!({"if": {}, "then": {}}), "'if' is not supported");
+        assert_rejects(&json!({"if": {}, "then": {}}), "'if' is not supported");
     }
 
     #[test]
     fn gate_rejects_ref() {
-        assert_rejects(json!({"$ref": "#/foo"}), "'$ref' is not supported");
+        assert_rejects(&json!({"$ref": "#/foo"}), "'$ref' is not supported");
     }
 
     #[test]
     fn gate_rejects_defs() {
-        assert_rejects(json!({"$defs": {}}), "'$defs' is not supported");
+        assert_rejects(&json!({"$defs": {}}), "'$defs' is not supported");
     }
 
     #[test]
     fn gate_rejects_pattern_properties() {
         assert_rejects(
-            json!({"patternProperties": {"^x": {}}}),
+            &json!({"patternProperties": {"^x": {}}}),
             "'patternProperties' is not supported",
         );
     }
 
     #[test]
     fn gate_rejects_prefix_items() {
-        assert_rejects(json!({"prefixItems": []}), "'prefixItems' is not supported");
+        assert_rejects(
+            &json!({"prefixItems": []}),
+            "'prefixItems' is not supported",
+        );
     }
 
     #[test]
     fn gate_rejects_unsupported_format() {
         assert_rejects(
-            json!({"format": "email"}),
+            &json!({"format": "email"}),
             "format 'email' is not supported",
         );
     }
@@ -698,7 +686,7 @@ mod tests {
 
     #[test]
     fn gate_rejects_non_string_format() {
-        assert_rejects(json!({"format": 42}), "'format' must be a string");
+        assert_rejects(&json!({"format": 42}), "'format' must be a string");
     }
 
     #[test]
@@ -709,7 +697,7 @@ mod tests {
     #[test]
     fn gate_rejects_unknown_root_keyword() {
         assert_rejects(
-            json!({"madeUpKeyword": true}),
+            &json!({"madeUpKeyword": true}),
             "unknown keyword 'madeUpKeyword'",
         );
     }
@@ -762,7 +750,7 @@ mod tests {
     #[test]
     fn gate_rejects_unknown_x_mdvs_subkey() {
         assert_rejects(
-            json!({
+            &json!({
                 "type": "object",
                 "properties": {
                     "title": {
@@ -779,7 +767,7 @@ mod tests {
     fn gate_rejects_property_subkey_at_root() {
         // 'allowed' is a property-level x-mdvs sub-key, not schema-level.
         assert_rejects(
-            json!({
+            &json!({
                 "type": "object",
                 "x-mdvs": {"allowed": ["**"]}
             }),
@@ -813,8 +801,8 @@ mod tests {
     // canonical_to_dsl — reverse translator (TODO-0149 step 10)
     // ------------------------------------------------------------------------
 
-    fn roundtrip(toml: MdvsToml) {
-        let canonical = dsl_to_canonical(&toml);
+    fn roundtrip(toml: &MdvsToml) {
+        let canonical = dsl_to_canonical(toml);
         let import = canonical_to_dsl(&canonical).expect("reverse translation");
         // serde_json::Map preserves insertion order on round-trip but
         // dsl_to_canonical merges fields + ignore into a single `properties`
@@ -834,7 +822,7 @@ mod tests {
 
     #[test]
     fn roundtrip_string_field() {
-        roundtrip(with_fields(vec![field(
+        roundtrip(&with_fields(vec![field(
             "title",
             FieldTypeSerde::Scalar("String".into()),
         )]));
@@ -842,7 +830,7 @@ mod tests {
 
     #[test]
     fn roundtrip_integer_field() {
-        roundtrip(with_fields(vec![field(
+        roundtrip(&with_fields(vec![field(
             "count",
             FieldTypeSerde::Scalar("Integer".into()),
         )]));
@@ -850,7 +838,7 @@ mod tests {
 
     #[test]
     fn roundtrip_float_field() {
-        roundtrip(with_fields(vec![field(
+        roundtrip(&with_fields(vec![field(
             "score",
             FieldTypeSerde::Scalar("Float".into()),
         )]));
@@ -858,7 +846,7 @@ mod tests {
 
     #[test]
     fn roundtrip_boolean_field() {
-        roundtrip(with_fields(vec![field(
+        roundtrip(&with_fields(vec![field(
             "draft",
             FieldTypeSerde::Scalar("Boolean".into()),
         )]));
@@ -868,19 +856,19 @@ mod tests {
     fn roundtrip_nullable_string() {
         let mut f = field("note", FieldTypeSerde::Scalar("String".into()));
         f.nullable = true;
-        roundtrip(with_fields(vec![f]));
+        roundtrip(&with_fields(vec![f]));
     }
 
     #[test]
     fn roundtrip_nullable_integer() {
         let mut f = field("count", FieldTypeSerde::Scalar("Integer".into()));
         f.nullable = true;
-        roundtrip(with_fields(vec![f]));
+        roundtrip(&with_fields(vec![f]));
     }
 
     #[test]
     fn roundtrip_array_of_strings() {
-        roundtrip(with_fields(vec![field(
+        roundtrip(&with_fields(vec![field(
             "tags",
             FieldTypeSerde::Array {
                 array: Box::new(FieldTypeSerde::Scalar("String".into())),
@@ -898,7 +886,7 @@ mod tests {
             ]),
             ..Default::default()
         });
-        roundtrip(with_fields(vec![f]));
+        roundtrip(&with_fields(vec![f]));
     }
 
     #[test]
@@ -914,7 +902,7 @@ mod tests {
             ]),
             ..Default::default()
         });
-        roundtrip(with_fields(vec![f]));
+        roundtrip(&with_fields(vec![f]));
     }
 
     #[test]
@@ -925,7 +913,7 @@ mod tests {
             max: Some(toml::Value::Integer(5)),
             ..Default::default()
         });
-        roundtrip(with_fields(vec![f]));
+        roundtrip(&with_fields(vec![f]));
     }
 
     #[test]
@@ -937,7 +925,7 @@ mod tests {
             pattern: Some("^[a-z0-9-]+$".into()),
             ..Default::default()
         });
-        roundtrip(with_fields(vec![f]));
+        roundtrip(&with_fields(vec![f]));
     }
 
     #[test]
@@ -945,7 +933,7 @@ mod tests {
         use crate::preprocess::ValueStage;
         let mut f = field("funding", FieldTypeSerde::Scalar("String".into()));
         f.preprocess = vec![ValueStage::CoerceToString];
-        roundtrip(with_fields(vec![f]));
+        roundtrip(&with_fields(vec![f]));
     }
 
     #[test]
@@ -965,14 +953,14 @@ mod tests {
         let mut f = field("title", FieldTypeSerde::Scalar("String".into()));
         f.allowed = vec!["blog/**".into(), "notes/**".into()];
         f.required = vec!["blog/**".into()];
-        roundtrip(with_fields(vec![f]));
+        roundtrip(&with_fields(vec![f]));
     }
 
     #[test]
     fn roundtrip_ignore_list() {
         let mut t = empty_toml();
         t.fields.ignore = vec!["internal_id".into(), "draft_meta".into()];
-        roundtrip(t);
+        roundtrip(&t);
     }
 
     #[test]
@@ -1136,7 +1124,7 @@ mod tests {
             "calibration.baseline.wavelength",
             FieldTypeSerde::Scalar("Float".into()),
         );
-        roundtrip(with_fields(vec![f]));
+        roundtrip(&with_fields(vec![f]));
     }
 
     #[test]
@@ -1146,7 +1134,7 @@ mod tests {
         f.allowed = vec!["projects/alpha/**".into()];
         f.required = vec!["projects/alpha/**".into()];
         f.preprocess = vec![ValueStage::WidenIntToFloat];
-        roundtrip(with_fields(vec![f]));
+        roundtrip(&with_fields(vec![f]));
     }
 
     #[test]
@@ -1157,7 +1145,7 @@ mod tests {
             field("cal.y", FieldTypeSerde::Scalar("Float".into())),
             field("meta.author", FieldTypeSerde::Scalar("String".into())),
         ]);
-        roundtrip(toml);
+        roundtrip(&toml);
     }
 
     #[test]
@@ -1174,7 +1162,7 @@ mod tests {
                 }),
             },
         )]);
-        roundtrip(toml);
+        roundtrip(&toml);
     }
 
     #[test]

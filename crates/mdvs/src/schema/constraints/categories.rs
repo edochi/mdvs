@@ -92,9 +92,10 @@ fn field_type_name(ft: &FieldType) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
     use crate::schema::constraints::ConstraintKind;
-    use std::collections::BTreeMap;
 
     // -- helpers --
 

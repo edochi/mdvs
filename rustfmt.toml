@@ -1,0 +1,8 @@
+# Formatting runs on the pinned nightly in `rustfmt-toolchain` (`just fmt`):
+# most options below are unstable and stable rustfmt ignores them.
+imports_granularity = "Crate"
+group_imports = "StdExternalCrate"
+reorder_impl_items = true
+normalize_doc_attributes = true
+format_code_in_doc_comments = true
+newline_style = "Unix"

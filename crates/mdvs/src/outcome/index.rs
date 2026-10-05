@@ -1,11 +1,13 @@
-//! Outcome types for index-related leaf steps (DeleteIndex, ReadIndex, WriteIndex).
+//! Outcome types for index-related leaf steps (`DeleteIndex`, `ReadIndex`, `WriteIndex`).
 
 use serde::Serialize;
 
-use crate::block::{Block, Render};
-use crate::output::{format_file_count, format_size};
+use crate::{
+    block::{Block, Render},
+    output::{format_file_count, format_size},
+};
 
-/// Full outcome for the delete_index step.
+/// Full outcome for the `delete_index` step.
 #[derive(Debug, Serialize)]
 pub struct DeleteIndexOutcome {
     /// Whether `.mdvs/` existed and was removed.
@@ -36,7 +38,7 @@ impl Render for DeleteIndexOutcome {
     }
 }
 
-/// Full outcome for the read_index step.
+/// Full outcome for the `read_index` step.
 #[derive(Debug, Serialize)]
 pub struct ReadIndexOutcome {
     /// Whether the index exists.
@@ -60,7 +62,7 @@ impl Render for ReadIndexOutcome {
     }
 }
 
-/// Full outcome for the write_index step.
+/// Full outcome for the `write_index` step.
 #[derive(Debug, Serialize)]
 pub struct WriteIndexOutcome {
     /// Number of files written.

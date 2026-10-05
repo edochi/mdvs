@@ -5,18 +5,22 @@
 //! non-blocking by design: violations and tips surface to the agent /
 //! user; mdvs never rejects an edit at the harness layer.
 
-use std::collections::HashMap;
-use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    io::{Read, Write},
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
-use crate::cmd::check;
-use crate::cmd::hook::HookKind;
-use crate::output::OutputFormat;
-use crate::scaffold::{HooksConfig, Platform, template};
-use crate::step;
+use crate::{
+    cmd::{check, hook::HookKind},
+    discover::scan::is_markdown_path,
+    output::OutputFormat,
+    scaffold::{HooksConfig, Platform, template},
+    step,
+};
 
 /// Maximum number of lines to send through the user-visible `systemMessage`
 /// channel. The agent channel (`additionalContext`) stays uncapped — the
@@ -73,7 +77,7 @@ struct HookPayload {
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct ToolInput {
-    /// Set for Edit / Write / MultiEdit tool calls — the file being changed.
+    /// Set for `Edit` / `Write` / `MultiEdit` tool calls — the file being changed.
     file_path: Option<String>,
     /// Set for Bash tool calls — the command being run.
     command: Option<String>,
@@ -97,11 +101,11 @@ fn handle_validate<W: Write>(
     platform: &Platform,
     payload: &HookPayload,
 ) -> Result<()> {
-    // Only fire on .md edits.
+    // Only fire on markdown edits, using the same rule as the scanner.
     let Some(file_path_str) = payload.tool_input.file_path.as_deref() else {
         return Ok(());
     };
-    if !file_path_str.ends_with(".md") {
+    if !is_markdown_path(Path::new(file_path_str)) {
         return Ok(());
     }
 
@@ -287,7 +291,7 @@ fn append_skill_pointer(body: &str, skill_install_path: &str) -> String {
 fn build_envelope(hooks: &HooksConfig, agent_msg: &str, user_msg: Option<&str>) -> String {
     let mut vars: HashMap<&str, Option<String>> = HashMap::new();
     vars.insert("MSG", Some(agent_msg.to_string()));
-    vars.insert("USER_MSG", user_msg.map(|s| s.to_string()));
+    vars.insert("USER_MSG", user_msg.map(ToString::to_string));
     let envelope = template::substitute(&hooks.envelope, &vars);
     envelope.to_string()
 }
@@ -298,10 +302,12 @@ fn build_envelope(hooks: &HooksConfig, agent_msg: &str, user_msg: Option<&str>) 
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use serde_json::Value;
     use std::io::Cursor;
+
+    use serde_json::Value;
     use tempfile::TempDir;
+
+    use super::*;
 
     /// Build a minimal mdvs vault in `dir`: an `mdvs.toml` with one
     /// categorical `status` field, plus one markdown file.
@@ -464,9 +470,9 @@ constraints = { categories = ["active", "archived"] }
 
     // --- build_envelope --------------------------------------------------
 
-    /// With user_msg = Some(...), Claude Code's full Claude-Code-shaped
-    /// envelope renders cleanly: PostToolUse + additionalContext +
-    /// systemMessage.
+    /// With `user_msg = Some(...)`, Claude Code's full Claude-Code-shaped
+    /// envelope renders cleanly: `PostToolUse` + `additionalContext` +
+    /// `systemMessage`.
     #[test]
     fn build_envelope_claude_code_validate_includes_both_channels() {
         let p = Platform::load("claude-code").unwrap();
@@ -481,7 +487,7 @@ constraints = { categories = ["active", "archived"] }
         assert_eq!(parsed["systemMessage"], "user body");
     }
 
-    /// With user_msg = None, the `<<USER_MSG>>` marker is pruned and the
+    /// With `user_msg = None`, the `<<USER_MSG>>` marker is pruned and the
     /// resulting envelope omits `systemMessage` entirely. The wrapper
     /// stays because its other field is still populated.
     #[test]
@@ -564,9 +570,41 @@ constraints = { categories = ["active", "archived"] }
     }
 
     #[test]
-    fn validate_silent_on_non_md_file() {
+    fn validate_reaches_markdown_extension_file() {
         let dir = TempDir::new().unwrap();
         write_fixture_vault(dir.path(), "active");
+        let file = dir.path().join("long.markdown");
+        std::fs::write(&file, "---\nstatus: bogus\n---\n# Long\n").unwrap();
+        let stdin = format!(r#"{{"tool_input":{{"file_path":"{}"}}}}"#, file.display());
+        let mut out = Vec::new();
+        run(
+            Cursor::new(stdin),
+            &mut out,
+            "claude-code",
+            HookKind::Validate,
+        )
+        .unwrap();
+        assert!(
+            !out.is_empty(),
+            "a .markdown edit should reach validation and surface its violation"
+        );
+
+        let env: Value = serde_json::from_slice(&out).unwrap();
+        let context = env["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap();
+        assert!(
+            context.contains("long.markdown"),
+            "violation should name the .markdown file: {context}"
+        );
+    }
+
+    #[test]
+    fn validate_silent_on_non_md_file() {
+        // The vault carries a violation, so any output means the extension
+        // gate let a non-markdown edit through to validation.
+        let dir = TempDir::new().unwrap();
+        write_fixture_vault(dir.path(), "bogus");
         let stdin = format!(
             r#"{{"tool_input":{{"file_path":"{}/some.rs"}}}}"#,
             dir.path().display()

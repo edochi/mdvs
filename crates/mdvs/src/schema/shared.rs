@@ -1,9 +1,12 @@
+use std::{collections::BTreeMap, fmt};
+
+use serde::{
+    Deserialize, Serialize,
+    de::{self, Deserializer, Visitor},
+    ser::Serializer,
+};
+
 use crate::discover::field_type::FieldType;
-use serde::de::{self, Deserializer, Visitor};
-use serde::ser::Serializer;
-use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
-use std::fmt;
 
 /// Serde-friendly representation of `FieldType` for TOML.
 ///
@@ -242,14 +245,17 @@ impl Serialize for FieldTypeSerde {
 impl<'de> Deserialize<'de> for FieldTypeSerde {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         struct V;
-        impl<'de> Visitor<'de> for V {
+        impl Visitor<'_> for V {
             type Value = FieldTypeSerde;
+
             fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 write!(f, "a type expression string like \"Array(String)\"")
             }
+
             fn visit_str<E: de::Error>(self, s: &str) -> Result<Self::Value, E> {
                 FieldTypeSerde::parse(s).map_err(E::custom)
             }
+
             fn visit_string<E: de::Error>(self, s: String) -> Result<Self::Value, E> {
                 FieldTypeSerde::parse(&s).map_err(E::custom)
             }
@@ -411,7 +417,7 @@ impl fmt::Display for FieldTypeSerde {
 mod tests {
     use super::*;
 
-    /// Wrapper for testing FieldTypeSerde in isolation (TOML needs a root table).
+    /// Wrapper for testing `FieldTypeSerde` in isolation (TOML needs a root table).
     #[derive(Debug, Serialize, Deserialize, PartialEq)]
     struct TypeWrapper {
         #[serde(rename = "type")]

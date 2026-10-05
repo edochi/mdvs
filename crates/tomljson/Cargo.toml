@@ -13,3 +13,6 @@ categories = ["encoding", "parser-implementations"]
 toml = "1"
 toml_writer = "1"
 serde_json = "1"
+
+[lints]
+workspace = true

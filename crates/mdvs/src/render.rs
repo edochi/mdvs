@@ -5,16 +5,21 @@
 //! Adding a new output format means writing one function here — no command
 //! code changes needed.
 
-use tabled::settings::{
-    Modify, Panel,
-    object::{Column, Rows},
-    style::{LineText, Style},
-    themes::BorderCorrection,
-    width::Width,
+use tabled::{
+    Table,
+    settings::{
+        Modify, Panel,
+        object::{Column, Rows},
+        style::{LineText, Style},
+        themes::BorderCorrection,
+        width::Width,
+    },
 };
 
-use crate::block::{Block, TableStyle};
-use crate::table::{Builder, style_compact, term_width};
+use crate::{
+    block::{Block, TableStyle},
+    table::{Builder, style_compact, term_width},
+};
 
 /// Format blocks as terminal-friendly pretty output with box-drawing tables.
 pub fn format_pretty(blocks: &[Block]) -> String {
@@ -39,122 +44,11 @@ fn format_pretty_block(block: &Block, out: &mut String, indent: usize) {
             style,
         } => {
             let table = match style {
-                TableStyle::Compact => {
-                    let mut builder = Builder::default();
-                    if let Some(hdrs) = headers {
-                        builder.push_record(hdrs.iter().map(String::as_str));
-                    }
-                    for row in rows {
-                        builder.push_record(row.iter().map(String::as_str));
-                    }
-                    let mut table = builder.build();
-                    style_compact(&mut table);
-                    table
-                }
+                TableStyle::Compact => build_compact_table(headers.as_deref(), rows),
                 TableStyle::Record { detail_rows } => {
-                    // Build table with only non-detail rows so detail text
-                    // doesn't inflate column widths
-                    let mut builder = Builder::default();
-                    if let Some(hdrs) = headers {
-                        builder.push_record(hdrs.iter().map(String::as_str));
-                    }
-                    for (i, row) in rows.iter().enumerate() {
-                        if !detail_rows.contains(&i) {
-                            builder.push_record(row.iter().map(String::as_str));
-                        }
-                    }
-                    let mut table = builder.build();
-                    let w = term_width();
-                    let header_offset = if headers.is_some() { 1 } else { 0 };
-                    table.with(Style::rounded());
-
-                    // Insert detail rows as Panels (spanning rows that don't
-                    // affect column width calculation).
-                    // Panel::horizontal(n, text) inserts a new row at position n.
-                    // We insert after the data row that precedes each detail row.
-                    let mut panels_inserted = 0;
-                    for &row_idx in detail_rows {
-                        // `detail_rows` is caller-supplied; in normal use it
-                        // indexes into `rows` and every row has at least one
-                        // column. Skip silently if either invariant fails so
-                        // a future refactor of the caller can't crash table
-                        // rendering — Panel skipping just means no detail
-                        // pane for that row.
-                        let Some(detail_text) = rows
-                            .get(row_idx)
-                            .and_then(|r| r.first())
-                            .filter(|s| !s.is_empty())
-                        else {
-                            continue;
-                        };
-                        // Count non-detail rows before this detail row
-                        let data_rows_before =
-                            (0..row_idx).filter(|i| !detail_rows.contains(i)).count();
-                        // Insert position: after the last data row + header + previously inserted panels
-                        let pos = data_rows_before + header_offset + panels_inserted;
-                        table.with(Panel::horizontal(pos, detail_text));
-                        panels_inserted += 1;
-                    }
-
-                    table.with(BorderCorrection {});
-                    // Fixed proportional column widths via per-column Modify
-                    let col_count = headers
-                        .as_ref()
-                        .map(|h| h.len())
-                        .or_else(|| rows.first().map(|r| r.len()))
-                        .unwrap_or(1);
-                    // Overhead: borders (col_count + 1 chars) + padding (2 per col)
-                    let overhead = (col_count + 1) + (col_count * 2);
-                    let available = w.saturating_sub(overhead);
-                    if col_count == 3 {
-                        // 40% / 30% / 30%
-                        let c0 = available * 40 / 100;
-                        let c1 = available * 30 / 100;
-                        let c2 = available - c0 - c1;
-                        table.with(Modify::new(Column::from(0)).with(Width::wrap(c0)));
-                        table.with(Modify::new(Column::from(1)).with(Width::wrap(c1)));
-                        table.with(Modify::new(Column::from(2)).with(Width::wrap(c2)));
-                        table.with(Modify::new(Column::from(0)).with(Width::increase(c0)));
-                        table.with(Modify::new(Column::from(1)).with(Width::increase(c1)));
-                        table.with(Modify::new(Column::from(2)).with(Width::increase(c2)));
-                    } else {
-                        // Fallback: distribute evenly
-                        let each = available / col_count.max(1);
-                        for i in 0..col_count {
-                            table.with(Modify::new(Column::from(i)).with(Width::wrap(each)));
-                            table.with(Modify::new(Column::from(i)).with(Width::increase(each)));
-                        }
-                    }
-                    table
+                    build_record_table(headers.as_deref(), rows, detail_rows)
                 }
-                TableStyle::KeyValue { title } => {
-                    let mut builder = Builder::default();
-                    for row in rows {
-                        builder.push_record(row.iter().map(String::as_str));
-                    }
-                    let mut table = builder.build();
-
-                    let w = term_width();
-                    let available = w.saturating_sub(7); // 3 borders + 4 padding
-                    let col0 = available / 3;
-                    let col1 = available - col0;
-
-                    // modern() has horizontal lines between ALL rows
-                    table.with(Style::modern());
-
-                    // Fixed 1/3 and 2/3 column widths
-                    table.with(Modify::new(Column::from(0)).with(Width::increase(col0)));
-                    table.with(Modify::new(Column::from(0)).with(Width::wrap(col0)));
-                    table.with(Modify::new(Column::from(1)).with(Width::increase(col1)));
-                    table.with(Modify::new(Column::from(1)).with(Width::wrap(col1)));
-
-                    // Item name on top border (skip if empty)
-                    if !title.is_empty() {
-                        table.with(LineText::new(format!(" {title} "), Rows::first()).offset(1));
-                    }
-
-                    table
-                }
+                TableStyle::KeyValue { title } => build_key_value_table(rows, title),
             };
 
             let rendered = table.to_string();
@@ -182,6 +76,132 @@ fn format_pretty_block(block: &Block, out: &mut String, indent: usize) {
             }
         }
     }
+}
+
+/// Build a `Compact`-style table: optional header row plus every data row.
+fn build_compact_table(headers: Option<&[String]>, rows: &[Vec<String>]) -> Table {
+    let mut builder = Builder::default();
+    if let Some(hdrs) = headers {
+        builder.push_record(hdrs.iter().map(String::as_str));
+    }
+    for row in rows {
+        builder.push_record(row.iter().map(String::as_str));
+    }
+    let mut table = builder.build();
+    style_compact(&mut table);
+    table
+}
+
+/// Build a `Record`-style table: data rows sized to the terminal, with each
+/// detail row rendered as a full-width panel below the row it follows.
+fn build_record_table(
+    headers: Option<&[String]>,
+    rows: &[Vec<String>],
+    detail_rows: &[usize],
+) -> Table {
+    // Build table with only non-detail rows so detail text
+    // doesn't inflate column widths
+    let mut builder = Builder::default();
+    if let Some(hdrs) = headers {
+        builder.push_record(hdrs.iter().map(String::as_str));
+    }
+    for (i, row) in rows.iter().enumerate() {
+        if !detail_rows.contains(&i) {
+            builder.push_record(row.iter().map(String::as_str));
+        }
+    }
+    let mut table = builder.build();
+    let w = term_width();
+    let header_offset = usize::from(headers.is_some());
+    table.with(Style::rounded());
+
+    // Insert detail rows as Panels (spanning rows that don't
+    // affect column width calculation).
+    // Panel::horizontal(n, text) inserts a new row at position n.
+    // We insert after the data row that precedes each detail row.
+    let mut panels_inserted = 0;
+    for &row_idx in detail_rows {
+        // `detail_rows` is caller-supplied; in normal use it
+        // indexes into `rows` and every row has at least one
+        // column. Skip silently if either invariant fails so
+        // a future refactor of the caller can't crash table
+        // rendering — Panel skipping just means no detail
+        // pane for that row.
+        let Some(detail_text) = rows
+            .get(row_idx)
+            .and_then(|r| r.first())
+            .filter(|s| !s.is_empty())
+        else {
+            continue;
+        };
+        // Count non-detail rows before this detail row
+        let data_rows_before = (0..row_idx).filter(|i| !detail_rows.contains(i)).count();
+        // Insert position: after the last data row + header + previously inserted panels
+        let pos = data_rows_before + header_offset + panels_inserted;
+        table.with(Panel::horizontal(pos, detail_text));
+        panels_inserted += 1;
+    }
+
+    table.with(BorderCorrection {});
+    // Fixed proportional column widths via per-column Modify
+    let col_count = headers
+        .map(<[String]>::len)
+        .or_else(|| rows.first().map(Vec::len))
+        .unwrap_or(1);
+    // Overhead: borders (col_count + 1 chars) + padding (2 per col)
+    let overhead = (col_count + 1) + (col_count * 2);
+    let available = w.saturating_sub(overhead);
+    if col_count == 3 {
+        // 40% / 30% / 30%
+        let c0 = available * 40 / 100;
+        let c1 = available * 30 / 100;
+        let c2 = available - c0 - c1;
+        table.with(Modify::new(Column::from(0)).with(Width::wrap(c0)));
+        table.with(Modify::new(Column::from(1)).with(Width::wrap(c1)));
+        table.with(Modify::new(Column::from(2)).with(Width::wrap(c2)));
+        table.with(Modify::new(Column::from(0)).with(Width::increase(c0)));
+        table.with(Modify::new(Column::from(1)).with(Width::increase(c1)));
+        table.with(Modify::new(Column::from(2)).with(Width::increase(c2)));
+    } else {
+        // Fallback: distribute evenly
+        let each = available / col_count.max(1);
+        for i in 0..col_count {
+            table.with(Modify::new(Column::from(i)).with(Width::wrap(each)));
+            table.with(Modify::new(Column::from(i)).with(Width::increase(each)));
+        }
+    }
+    table
+}
+
+/// Build a `KeyValue`-style table: two columns at 1/3 and 2/3 of the terminal
+/// width, with the item title (when non-empty) on the top border.
+fn build_key_value_table(rows: &[Vec<String>], title: &str) -> Table {
+    let mut builder = Builder::default();
+    for row in rows {
+        builder.push_record(row.iter().map(String::as_str));
+    }
+    let mut table = builder.build();
+
+    let w = term_width();
+    let available = w.saturating_sub(7); // 3 borders + 4 padding
+    let col0 = available / 3;
+    let col1 = available - col0;
+
+    // modern() has horizontal lines between ALL rows
+    table.with(Style::modern());
+
+    // Fixed 1/3 and 2/3 column widths
+    table.with(Modify::new(Column::from(0)).with(Width::increase(col0)));
+    table.with(Modify::new(Column::from(0)).with(Width::wrap(col0)));
+    table.with(Modify::new(Column::from(1)).with(Width::increase(col1)));
+    table.with(Modify::new(Column::from(1)).with(Width::wrap(col1)));
+
+    // Item name on top border (skip if empty)
+    if !title.is_empty() {
+        table.with(LineText::new(format!(" {title} "), Rows::first()).offset(1));
+    }
+
+    table
 }
 
 /// Format blocks as markdown (pipe tables, section headers).

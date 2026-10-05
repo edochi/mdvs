@@ -1,8 +1,11 @@
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, LazyLock},
+};
+
 use arrow::datatypes::{DataType, Field, Fields};
 use regex::Regex;
 use serde_json::Value;
-use std::collections::BTreeMap;
-use std::sync::{Arc, LazyLock};
 
 /// Recursive type of a frontmatter field, inferred from YAML values.
 #[derive(Debug, Clone, PartialEq)]
@@ -730,9 +733,7 @@ mod tests {
             assert_eq!(
                 FieldType::from_widen(a.clone(), b.clone()),
                 FieldType::from_widen(b.clone(), a.clone()),
-                "symmetry failed for {:?} and {:?}",
-                a,
-                b,
+                "symmetry failed for {a:?} and {b:?}",
             );
         }
     }
@@ -870,7 +871,7 @@ mod tests {
                     field_types
                         .entry(key.clone())
                         .and_modify(|existing| {
-                            *existing = FieldType::from_widen(existing.clone(), ft.clone())
+                            *existing = FieldType::from_widen(existing.clone(), ft.clone());
                         })
                         .or_insert(ft);
                 }

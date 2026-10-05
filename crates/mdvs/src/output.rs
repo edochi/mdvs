@@ -1,6 +1,6 @@
+use std::{fmt, path::PathBuf};
+
 use serde::{Deserialize, Serialize};
-use std::fmt;
-use std::path::PathBuf;
 
 /// Controls how command output is rendered.
 ///
@@ -62,7 +62,7 @@ pub fn field_hints(name: &str) -> Vec<FieldHint> {
 pub fn format_hints(hints: &[FieldHint]) -> String {
     hints
         .iter()
-        .map(|h| h.to_string())
+        .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -149,8 +149,9 @@ impl FieldChange {
     pub fn format_old_new(&self) -> (String, String) {
         match self {
             FieldChange::Type { old, new } => (old.clone(), new.clone()),
-            FieldChange::Allowed { old, new } => (format_globs(old), format_globs(new)),
-            FieldChange::Required { old, new } => (format_globs(old), format_globs(new)),
+            FieldChange::Allowed { old, new } | FieldChange::Required { old, new } => {
+                (format_globs(old), format_globs(new))
+            }
             FieldChange::Nullable { old, new } => (old.to_string(), new.to_string()),
         }
     }
@@ -253,19 +254,41 @@ pub fn format_file_count(n: usize) -> String {
     }
 }
 
+// --- Byte-size units ---
+
+/// Bytes in a kilobyte (binary, 2^10).
+const KB: u64 = 1024;
+/// Bytes in a megabyte (binary, 2^20).
+const MB: u64 = 1024 * KB;
+/// Bytes in a gigabyte (binary, 2^30).
+const GB: u64 = 1024 * MB;
+/// Tenths in one unit, for the single decimal place `format_size` prints.
+const TENTHS_PER_UNIT: u64 = 10;
+
 /// Format a byte count as human-readable size: `"256 B"`, `"1.2 KB"`, `"12.4 MB"`, `"1.1 GB"`.
+///
+/// Uses integer arithmetic only; the decimal is rounded half-up to tenths.
 pub fn format_size(bytes: u64) -> String {
-    const KB: u64 = 1024;
-    const MB: u64 = 1024 * KB;
-    const GB: u64 = 1024 * MB;
     if bytes >= GB {
-        format!("{:.1} GB", bytes as f64 / GB as f64)
+        format_scaled(bytes, GB, "GB")
     } else if bytes >= MB {
-        format!("{:.1} MB", bytes as f64 / MB as f64)
+        format_scaled(bytes, MB, "MB")
     } else if bytes >= KB {
-        format!("{:.1} KB", bytes as f64 / KB as f64)
+        format_scaled(bytes, KB, "KB")
     } else {
         format!("{bytes} B")
+    }
+}
+
+/// Render `bytes / unit` with one decimal, tenths rounded half-up and carried
+/// into the whole part when they reach a full unit (`1.96` → `2.0`).
+fn format_scaled(bytes: u64, unit: u64, label: &str) -> String {
+    let whole = bytes / unit;
+    let tenths = (bytes % unit * TENTHS_PER_UNIT + unit / 2) / unit;
+    if tenths == TENTHS_PER_UNIT {
+        format!("{}.0 {label}", whole + 1)
+    } else {
+        format!("{whole}.{tenths} {label}")
     }
 }
 
@@ -290,6 +313,19 @@ mod tests {
         assert_eq!(format_size(1024), "1.0 KB");
         assert_eq!(format_size(1_048_576), "1.0 MB");
         assert_eq!(format_size(1_073_741_824), "1.0 GB");
+    }
+
+    #[test]
+    fn format_size_rounds_tenths_half_up() {
+        // 1.25 KB is an exact tie and rounds up; 1.24 KB rounds down.
+        assert_eq!(format_size(KB + KB / 4), "1.3 KB");
+        assert_eq!(format_size(KB + KB * 24 / 100), "1.2 KB");
+    }
+
+    #[test]
+    fn format_size_carries_tenths_into_whole_part() {
+        // 1.96 GB rounds to 2.0 GB, not "1.10 GB".
+        assert_eq!(format_size(GB + GB * 96 / 100), "2.0 GB");
     }
 
     #[test]
@@ -362,7 +398,7 @@ mod tests {
     #[test]
     fn format_hints_single() {
         let s = format_hints(&[FieldHint::EscapeSingleQuotes]);
-        assert!(s.contains("'"));
+        assert!(s.contains('\''));
         assert!(s.contains("''"));
     }
 

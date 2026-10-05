@@ -1,9 +1,11 @@
 //! Categorical inference — heuristic detection of categorical fields.
 
-use crate::discover::field_type::FieldType;
-use crate::discover::infer::InferredField;
-use crate::schema::constraints::Constraints;
 use serde_json::Value;
+
+use crate::{
+    discover::{field_type::FieldType, infer::InferredField},
+    schema::constraints::Constraints,
+};
 
 /// Apply the categorical heuristic to an inferred field and return constraints
 /// if it qualifies. A field is categorical when:
@@ -54,7 +56,7 @@ fn type_supports_categories(ft: &FieldType) -> bool {
     }
 }
 
-/// Convert a serde_json::Value to a toml::Value for category storage.
+/// Convert a `serde_json::Value` to a `toml::Value` for category storage.
 fn json_to_toml_value(val: &Value) -> Option<toml::Value> {
     match val {
         Value::String(s) => Some(toml::Value::String(s.clone())),
@@ -63,7 +65,7 @@ fn json_to_toml_value(val: &Value) -> Option<toml::Value> {
     }
 }
 
-/// Compare two toml::Values for sorting (strings alphabetically, integers numerically).
+/// Compare two `toml::Value`s for sorting (strings alphabetically, integers numerically).
 fn cmp_toml_values(a: &toml::Value, b: &toml::Value) -> std::cmp::Ordering {
     match (a, b) {
         (toml::Value::String(a), toml::Value::String(b)) => a.cmp(b),
@@ -74,8 +76,9 @@ fn cmp_toml_values(a: &toml::Value, b: &toml::Value) -> std::cmp::Ordering {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     fn make_field(
         name: &str,

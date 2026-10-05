@@ -28,7 +28,17 @@ jobs:
       # in CI. Real-model tests are gated behind `#[ignore]`; see TODO-0184.
       - run: cargo test --features testing-mocks
       - run: cargo clippy --all-targets --features testing-mocks -- -D warnings
-      - run: cargo fmt --check
+
+  # rustfmt.toml uses unstable options (merged / grouped imports), so formatting
+  # is checked on the nightly pinned in `rustfmt-toolchain` — the same file the
+  # Justfile's `fmt` / `fmt-check` recipes read. Build, clippy and tests stay on
+  # the stable toolchain from rust-toolchain.toml.
+  fmt-rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: rustup toolchain install "$(cat rustfmt-toolchain)" --profile minimal --component rustfmt
+      - run: cargo "+$(cat rustfmt-toolchain)" fmt --check
 
   audit:
     runs-on: ubuntu-latest

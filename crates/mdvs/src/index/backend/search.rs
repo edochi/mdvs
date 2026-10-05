@@ -9,17 +9,25 @@
 //! `Array(Float)` references (lance-encoding 6.0 panics on them — see
 //! TODO-0159), and leaves quoted literals untouched.
 
-use super::{LanceBackend, SearchHit, SearchMode, f32_col, i32_col, str_col};
+use std::collections::HashMap;
+
+use arrow::{array::RecordBatch, datatypes::DataType};
+use futures::TryStreamExt;
+use lance_index::scalar::FullTextSearchQuery;
+use lancedb::{
+    DistanceType,
+    query::{ExecutableQuery, QueryBase, Select},
+    table::Table,
+};
+
+use super::{
+    LanceBackend, SearchHit, SearchMode, SearchQuery, f32_col, i32_col, str_col,
+    where_translator::{WhereNaming, WhereRewrite},
+};
 use crate::index::storage::{
     COL_BUILT_AT, COL_CHUNK_ID, COL_CHUNK_INDEX, COL_CHUNK_TEXT, COL_CONTENT_HASH, COL_EMBEDDING,
     COL_END_LINE, COL_FILE_ID, COL_FILEPATH, COL_START_LINE,
 };
-use arrow::array::RecordBatch;
-use arrow::datatypes::DataType;
-use futures::TryStreamExt;
-use lance_index::scalar::FullTextSearchQuery;
-use lancedb::DistanceType;
-use lancedb::query::{ExecutableQuery, QueryBase, Select};
 
 /// Over-fetch multiplier for chunk→file dedupe: to surface N files we pull
 /// roughly N×factor chunk-level hits, since several chunks may share a file.
@@ -64,28 +72,24 @@ pub(super) const SQL_KEYWORDS: &[&str] = &[
 ];
 
 impl LanceBackend {
-    /// Native LanceDB search. `mode` selects vector (`nearest_to` + cosine),
-    /// full-text (BM25 over `chunk_text`), or hybrid (both, fused by LanceDB's
-    /// default RRF reranker). Over-fetches `limit * OVER_FETCH_FACTOR`
-    /// chunk-level hits, then keeps the best-scoring chunk per `file_id`.
+    /// Native LanceDB search. `query.mode` selects vector (`nearest_to` +
+    /// cosine), full-text (BM25 over `chunk_text`), or hybrid (both, fused by
+    /// LanceDB's default RRF reranker). Over-fetches
+    /// `query.limit * OVER_FETCH_FACTOR` chunk-level hits, then keeps the
+    /// best-scoring chunk per `file_id`.
     ///
     /// `query_embedding` is required for `Semantic` and `Hybrid`; `Fulltext`
     /// runs BM25 only and ignores it. Passing `None` for a mode that needs
     /// the embedding is a programmer error.
-    #[allow(clippy::too_many_arguments)]
     pub(super) async fn search(
         &self,
+        query: &SearchQuery<'_>,
         query_embedding: Option<Vec<f32>>,
-        query_text: &str,
-        mode: SearchMode,
-        where_clause: Option<&str>,
-        limit: usize,
-        internal_prefix: &str,
-        aliases: &std::collections::HashMap<String, String>,
+        naming: &WhereNaming<'_>,
     ) -> anyhow::Result<SearchResults> {
         // `--limit 0` means no results; LanceDB rejects a zero `k`, so short-
         // circuit rather than surface a cryptic "k must be positive" error.
-        if limit == 0 {
+        if query.limit == 0 {
             return Ok(SearchResults {
                 hits: vec![],
                 where_rewrites: vec![],
@@ -98,146 +102,179 @@ impl LanceBackend {
             });
         };
 
-        let (translated, where_rewrites) = match where_clause {
-            Some(w) => {
-                let schema = table.schema().await?;
-                let data_children = data_child_names(schema.as_ref());
-                let float_lists = float_list_child_names(schema.as_ref());
-                let array_fields = array_child_names(schema.as_ref(), &float_lists);
-                let result = translate_where_to_struct(
-                    w,
-                    &data_children,
-                    &float_lists,
-                    &array_fields,
-                    internal_prefix,
-                    aliases,
-                )?;
-                (Some(result.clause), result.rewrites)
-            }
-            None => (None, vec![]),
-        };
-        let k = limit.saturating_mul(OVER_FETCH_FACTOR);
-        let fts = || FullTextSearchQuery::new(query_text.to_string());
-
-        // Project only the columns we need. Critically, this excludes the
-        // `data` Struct and `embedding` columns — fetching them via the
-        // post-vector-search "take" trips a buffer-slicing panic in Lance's
-        // encoder (lance-encoding 6.0), and we don't need them for results.
-        let projection = Select::columns(&[
-            COL_FILE_ID,
-            COL_FILEPATH,
-            COL_START_LINE,
-            COL_END_LINE,
-            COL_CHUNK_TEXT,
-        ]);
-
-        // The branches have distinct query types (VectorQuery vs Query), so
-        // each collects its own batches.
-        let batches: Vec<RecordBatch> = match mode {
-            SearchMode::Semantic => {
-                let embedding = query_embedding.ok_or_else(|| {
-                    anyhow::anyhow!("Semantic search requires query_embedding; got None")
-                })?;
-                let mut q = table
-                    .query()
-                    .select(projection)
-                    .nearest_to(embedding)?
-                    .distance_type(DistanceType::Cosine)
-                    .limit(k);
-                if let Some(w) = &translated {
-                    q = q.only_if(w);
-                }
-                q.execute().await?.try_collect().await?
-            }
-            SearchMode::Hybrid => {
-                let embedding = query_embedding.ok_or_else(|| {
-                    anyhow::anyhow!("Hybrid search requires query_embedding; got None")
-                })?;
-                let mut q = table
-                    .query()
-                    .select(projection)
-                    .nearest_to(embedding)?
-                    .distance_type(DistanceType::Cosine)
-                    .full_text_search(fts())
-                    .limit(k);
-                if let Some(w) = &translated {
-                    q = q.only_if(w);
-                }
-                q.execute().await?.try_collect().await?
-            }
-            SearchMode::Fulltext => {
-                let mut q = table
-                    .query()
-                    .select(projection)
-                    .full_text_search(fts())
-                    .limit(k);
-                if let Some(w) = &translated {
-                    q = q.only_if(w);
-                }
-                q.execute().await?.try_collect().await?
-            }
-        };
-
-        // Per-mode score column. Semantic returns cosine *distance* (lower is
-        // better → similarity = 1 - distance); the others return a score where
-        // higher is better.
-        let score_col = match mode {
-            SearchMode::Semantic => "_distance",
-            SearchMode::Fulltext => "_score",
-            SearchMode::Hybrid => "_relevance_score",
-        };
-
-        let mut best: std::collections::HashMap<String, SearchHit> =
-            std::collections::HashMap::new();
-        for batch in &batches {
-            // A zero-result hybrid query returns an empty batch whose schema
-            // omits the projected columns; skip it rather than fail the lookup.
-            if batch.num_rows() == 0 {
-                continue;
-            }
-            let file_ids = str_col(batch, COL_FILE_ID)?;
-            let filepaths = str_col(batch, COL_FILEPATH)?;
-            let start_lines = i32_col(batch, COL_START_LINE)?;
-            let end_lines = i32_col(batch, COL_END_LINE)?;
-            let chunk_texts = str_col(batch, COL_CHUNK_TEXT)?;
-            let scores = f32_col(batch, score_col)?;
-            for i in 0..batch.num_rows() {
-                let raw = scores.value(i) as f64;
-                let score = if mode == SearchMode::Semantic {
-                    1.0 - raw
-                } else {
-                    raw
-                };
-                let file_id = file_ids.value(i).to_string();
-                let entry = best.entry(file_id).or_insert_with(|| SearchHit {
-                    filename: filepaths.value(i).to_string(),
-                    score: f64::NEG_INFINITY,
-                    start_line: None,
-                    end_line: None,
-                    chunk_text: None,
-                });
-                if score > entry.score {
-                    entry.score = score;
-                    entry.filename = filepaths.value(i).to_string();
-                    entry.start_line = Some(start_lines.value(i));
-                    entry.end_line = Some(end_lines.value(i));
-                    entry.chunk_text = Some(chunk_texts.value(i).to_string());
-                }
-            }
-        }
-
-        let mut hits: Vec<SearchHit> = best.into_values().collect();
-        hits.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        hits.truncate(limit);
+        let (translated, where_rewrites) =
+            translate_where(&table, query.where_clause, naming).await?;
+        let batches = run_query(&table, query, query_embedding, translated.as_deref()).await?;
+        let hits = dedupe_best(&batches, query.mode, query.limit)?;
         Ok(SearchResults {
             hits,
             where_rewrites,
         })
     }
+}
+
+/// Translate the user's `--where` clause against the table's `data` Struct
+/// schema. Returns the rewritten SQL filter (if any) and the array-field
+/// rewrites that fired; `None` in, `(None, [])` out.
+async fn translate_where(
+    table: &Table,
+    where_clause: Option<&str>,
+    naming: &WhereNaming<'_>,
+) -> anyhow::Result<(Option<String>, Vec<WhereRewrite>)> {
+    let Some(w) = where_clause else {
+        return Ok((None, vec![]));
+    };
+    let schema = table.schema().await?;
+    let data_children = data_child_names(schema.as_ref());
+    let float_lists = float_list_child_names(schema.as_ref());
+    let array_fields = array_child_names(schema.as_ref(), &float_lists);
+    let result = translate_where_to_struct(
+        w,
+        &data_children,
+        &float_lists,
+        &array_fields,
+        naming.internal_prefix,
+        naming.aliases,
+    )?;
+    Ok((Some(result.clause), result.rewrites))
+}
+
+/// Run the mode-specific LanceDB query, fetching
+/// `query.limit * OVER_FETCH_FACTOR` chunk-level rows restricted to the
+/// result columns and, when given, the translated `--where` filter.
+async fn run_query(
+    table: &Table,
+    query: &SearchQuery<'_>,
+    query_embedding: Option<Vec<f32>>,
+    filter: Option<&str>,
+) -> anyhow::Result<Vec<RecordBatch>> {
+    let k = query.limit.saturating_mul(OVER_FETCH_FACTOR);
+    let fts = || FullTextSearchQuery::new(query.text.to_string());
+
+    // Project only the columns we need. Critically, this excludes the
+    // `data` Struct and `embedding` columns — fetching them via the
+    // post-vector-search "take" trips a buffer-slicing panic in Lance's
+    // encoder (lance-encoding 6.0), and we don't need them for results.
+    let projection = Select::columns(&[
+        COL_FILE_ID,
+        COL_FILEPATH,
+        COL_START_LINE,
+        COL_END_LINE,
+        COL_CHUNK_TEXT,
+    ]);
+
+    // The branches have distinct query types (VectorQuery vs Query), so
+    // each collects its own batches.
+    let batches: Vec<RecordBatch> = match query.mode {
+        SearchMode::Semantic => {
+            let embedding = query_embedding.ok_or_else(|| {
+                anyhow::anyhow!("Semantic search requires query_embedding; got None")
+            })?;
+            let mut q = table
+                .query()
+                .select(projection)
+                .nearest_to(embedding)?
+                .distance_type(DistanceType::Cosine)
+                .limit(k);
+            if let Some(w) = filter {
+                q = q.only_if(w);
+            }
+            q.execute().await?.try_collect().await?
+        }
+        SearchMode::Hybrid => {
+            let embedding = query_embedding.ok_or_else(|| {
+                anyhow::anyhow!("Hybrid search requires query_embedding; got None")
+            })?;
+            let mut q = table
+                .query()
+                .select(projection)
+                .nearest_to(embedding)?
+                .distance_type(DistanceType::Cosine)
+                .full_text_search(fts())
+                .limit(k);
+            if let Some(w) = filter {
+                q = q.only_if(w);
+            }
+            q.execute().await?.try_collect().await?
+        }
+        SearchMode::Fulltext => {
+            let mut q = table
+                .query()
+                .select(projection)
+                .full_text_search(fts())
+                .limit(k);
+            if let Some(w) = filter {
+                q = q.only_if(w);
+            }
+            q.execute().await?.try_collect().await?
+        }
+    };
+    Ok(batches)
+}
+
+/// Collapse chunk-level rows to one hit per `file_id`, keeping the
+/// best-scoring chunk, then sort by descending score and keep the top
+/// `limit` files.
+fn dedupe_best(
+    batches: &[RecordBatch],
+    mode: SearchMode,
+    limit: usize,
+) -> anyhow::Result<Vec<SearchHit>> {
+    // Per-mode score column. Semantic returns cosine *distance* (lower is
+    // better → similarity = 1 - distance); the others return a score where
+    // higher is better.
+    let score_col = match mode {
+        SearchMode::Semantic => "_distance",
+        SearchMode::Fulltext => "_score",
+        SearchMode::Hybrid => "_relevance_score",
+    };
+
+    let mut best: HashMap<String, SearchHit> = HashMap::new();
+    for batch in batches {
+        // A zero-result hybrid query returns an empty batch whose schema
+        // omits the projected columns; skip it rather than fail the lookup.
+        if batch.num_rows() == 0 {
+            continue;
+        }
+        let file_ids = str_col(batch, COL_FILE_ID)?;
+        let filepaths = str_col(batch, COL_FILEPATH)?;
+        let start_lines = i32_col(batch, COL_START_LINE)?;
+        let end_lines = i32_col(batch, COL_END_LINE)?;
+        let chunk_texts = str_col(batch, COL_CHUNK_TEXT)?;
+        let scores = f32_col(batch, score_col)?;
+        for i in 0..batch.num_rows() {
+            let raw = f64::from(scores.value(i));
+            let score = if mode == SearchMode::Semantic {
+                1.0 - raw
+            } else {
+                raw
+            };
+            let file_id = file_ids.value(i).to_string();
+            let entry = best.entry(file_id).or_insert_with(|| SearchHit {
+                filename: filepaths.value(i).to_string(),
+                score: f64::NEG_INFINITY,
+                start_line: None,
+                end_line: None,
+                chunk_text: None,
+            });
+            if score > entry.score {
+                entry.score = score;
+                entry.filename = filepaths.value(i).to_string();
+                entry.start_line = Some(start_lines.value(i));
+                entry.end_line = Some(end_lines.value(i));
+                entry.chunk_text = Some(chunk_texts.value(i).to_string());
+            }
+        }
+    }
+
+    let mut hits: Vec<SearchHit> = best.into_values().collect();
+    hits.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    hits.truncate(limit);
+    Ok(hits)
 }
 
 /// Search results bundled with any array-field rewrites that fired during
@@ -248,7 +285,7 @@ pub struct SearchResults {
     pub hits: Vec<SearchHit>,
     /// Array-field rewrites — empty when no `--where` clause was passed or
     /// when nothing needed rewriting.
-    pub where_rewrites: Vec<super::where_translator::WhereRewrite>,
+    pub where_rewrites: Vec<WhereRewrite>,
 }
 
 pub(super) use super::where_translator::translate_where_to_struct;

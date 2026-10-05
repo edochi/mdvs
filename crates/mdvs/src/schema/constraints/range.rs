@@ -4,7 +4,7 @@
 //! translator in `schema/json_schema.rs`. This module only checks that the
 //! constraint is well-formed at config load time.
 
-use crate::discover::field_type::FieldType;
+use crate::{discover::field_type::FieldType, num::i64_to_f64_exact};
 
 /// Check that `min`/`max` are applicable to `field_type` and well-formed.
 ///
@@ -16,8 +16,8 @@ use crate::discover::field_type::FieldType;
 pub(super) fn validate_for_type(
     field_name: &str,
     field_type: &FieldType,
-    min: &Option<toml::Value>,
-    max: &Option<toml::Value>,
+    min: Option<&toml::Value>,
+    max: Option<&toml::Value>,
 ) -> Option<String> {
     let element_type = match field_type {
         FieldType::Integer => FieldType::Integer,
@@ -57,18 +57,14 @@ pub(super) fn validate_for_type(
     }
 
     // If both present, check min <= max.
-    if let (Some(min_v), Some(max_v)) = (min, max) {
-        let min_f = toml_to_f64(min_v);
-        let max_f = toml_to_f64(max_v);
-        if let (Some(lo), Some(hi)) = (min_f, max_f)
-            && lo > hi
-        {
-            return Some(format!(
-                "field '{field_name}': min ({}) is greater than max ({})",
-                format_toml_num(min_v),
-                format_toml_num(max_v),
-            ));
-        }
+    if let (Some(min_v), Some(max_v)) = (min, max)
+        && min_exceeds_max(min_v, max_v)
+    {
+        return Some(format!(
+            "field '{field_name}': min ({}) is greater than max ({})",
+            format_toml_num(min_v),
+            format_toml_num(max_v),
+        ));
     }
 
     None
@@ -87,13 +83,21 @@ fn validate_bound_type(
 ) -> Option<String> {
     match (element_type, bound) {
         // Integer field: only integer bounds allowed.
-        (FieldType::Integer, toml::Value::Integer(_)) => None,
+        // Float field: integer or float bounds; integers widen to f64 and must
+        // therefore convert exactly.
+        (FieldType::Integer, toml::Value::Integer(_))
+        | (FieldType::Float, toml::Value::Float(_)) => None,
+        (FieldType::Float, toml::Value::Integer(n)) => match i64_to_f64_exact(*n) {
+            Some(_) => None,
+            None => Some(format!(
+                "field '{field_name}': {bound_name} ({n}) is beyond ±2^53 and has no exact \
+                 Float equivalent — use a smaller integer or a float bound",
+            )),
+        },
         (FieldType::Integer, toml::Value::Float(_)) => Some(format!(
             "field '{field_name}': {bound_name} is a float but field type is Integer \
              — use an integer bound",
         )),
-        // Float field: integer or float bounds (widened to f64).
-        (FieldType::Float, toml::Value::Integer(_) | toml::Value::Float(_)) => None,
         // Non-numeric bound value.
         _ => Some(format!(
             "field '{field_name}': {bound_name} must be a numeric value, got {}",
@@ -102,10 +106,27 @@ fn validate_bound_type(
     }
 }
 
-/// Convert a TOML value to f64 for comparison.
-fn toml_to_f64(v: &toml::Value) -> Option<f64> {
+/// Whether `min_v` is greater than `max_v`.
+///
+/// Two integer bounds compare exactly in i64; any other pair compares in f64.
+/// Integer bounds on Float fields were already checked to convert exactly, so
+/// a bound that does not convert only arises for non-numeric values, which
+/// are reported elsewhere.
+fn min_exceeds_max(min_v: &toml::Value, max_v: &toml::Value) -> bool {
+    if let (toml::Value::Integer(lo), toml::Value::Integer(hi)) = (min_v, max_v) {
+        return lo > hi;
+    }
+    matches!(
+        (bound_to_f64(min_v), bound_to_f64(max_v)),
+        (Some(lo), Some(hi)) if lo > hi
+    )
+}
+
+/// Convert a numeric TOML bound to f64; `None` for non-numeric values and for
+/// integers beyond ±2^53, which f64 cannot hold exactly.
+fn bound_to_f64(v: &toml::Value) -> Option<f64> {
     match v {
-        toml::Value::Integer(n) => Some(*n as f64),
+        toml::Value::Integer(n) => i64_to_f64_exact(*n),
         toml::Value::Float(f) => Some(*f),
         _ => None,
     }
@@ -140,25 +161,27 @@ fn format_toml_num(v: &toml::Value) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::collections::BTreeMap;
+
+    use super::*;
+    use crate::num::F64_EXACT_INT_LIMIT_I64;
 
     // -- helpers --
 
-    fn int_min(n: i64) -> Option<toml::Value> {
-        Some(toml::Value::Integer(n))
+    fn int_min(n: i64) -> toml::Value {
+        toml::Value::Integer(n)
     }
 
-    fn int_max(n: i64) -> Option<toml::Value> {
-        Some(toml::Value::Integer(n))
+    fn int_max(n: i64) -> toml::Value {
+        toml::Value::Integer(n)
     }
 
-    fn float_min(f: f64) -> Option<toml::Value> {
-        Some(toml::Value::Float(f))
+    fn float_min(f: f64) -> toml::Value {
+        toml::Value::Float(f)
     }
 
-    fn float_max(f: f64) -> Option<toml::Value> {
-        Some(toml::Value::Float(f))
+    fn float_max(f: f64) -> toml::Value {
+        toml::Value::Float(f)
     }
 
     // -----------------------------------------------------------------------
@@ -167,56 +190,99 @@ mod tests {
 
     #[test]
     fn type_integer_accepts() {
-        assert!(validate_for_type("f", &FieldType::Integer, &int_min(0), &int_max(10)).is_none());
+        assert!(
+            validate_for_type(
+                "f",
+                &FieldType::Integer,
+                Some(&int_min(0)),
+                Some(&int_max(10))
+            )
+            .is_none()
+        );
     }
 
     #[test]
     fn type_float_accepts() {
         assert!(
-            validate_for_type("f", &FieldType::Float, &float_min(0.0), &float_max(1.0)).is_none()
+            validate_for_type(
+                "f",
+                &FieldType::Float,
+                Some(&float_min(0.0)),
+                Some(&float_max(1.0))
+            )
+            .is_none()
         );
     }
 
     #[test]
     fn type_float_accepts_integer_bounds() {
-        assert!(validate_for_type("f", &FieldType::Float, &int_min(0), &int_max(100)).is_none());
+        assert!(
+            validate_for_type(
+                "f",
+                &FieldType::Float,
+                Some(&int_min(0)),
+                Some(&int_max(100))
+            )
+            .is_none()
+        );
     }
 
     #[test]
     fn type_array_integer_accepts() {
         let ft = FieldType::Array(Box::new(FieldType::Integer));
-        assert!(validate_for_type("f", &ft, &int_min(1), &int_max(10)).is_none());
+        assert!(validate_for_type("f", &ft, Some(&int_min(1)), Some(&int_max(10))).is_none());
     }
 
     #[test]
     fn type_array_float_accepts() {
         let ft = FieldType::Array(Box::new(FieldType::Float));
-        assert!(validate_for_type("f", &ft, &float_min(0.0), &float_max(1.0)).is_none());
+        assert!(
+            validate_for_type("f", &ft, Some(&float_min(0.0)), Some(&float_max(1.0))).is_none()
+        );
     }
 
     #[test]
     fn type_boolean_rejects() {
-        let err = validate_for_type("f", &FieldType::Boolean, &int_min(0), &int_max(1)).unwrap();
+        let err = validate_for_type(
+            "f",
+            &FieldType::Boolean,
+            Some(&int_min(0)),
+            Some(&int_max(1)),
+        )
+        .unwrap();
         assert!(err.contains("Boolean"));
         assert!(err.contains("does not apply"));
     }
 
     #[test]
     fn type_string_rejects() {
-        let err = validate_for_type("f", &FieldType::String, &int_min(0), &int_max(1)).unwrap();
+        let err = validate_for_type(
+            "f",
+            &FieldType::String,
+            Some(&int_min(0)),
+            Some(&int_max(1)),
+        )
+        .unwrap();
         assert!(err.contains("String"));
     }
 
     #[test]
     fn type_date_rejects() {
-        let err = validate_for_type("f", &FieldType::Date, &int_min(0), &int_max(1)).unwrap();
+        let err =
+            validate_for_type("f", &FieldType::Date, Some(&int_min(0)), Some(&int_max(1))).unwrap();
         assert!(err.contains("Date"));
         assert!(err.contains("does not apply"));
     }
 
     #[test]
     fn type_datetime_rejects() {
-        let err = validate_for_type("f", &FieldType::DateTime, &int_min(0), &int_max(1)).unwrap();
+        let err = validate_for_type(
+            "f",
+            &FieldType::DateTime,
+            Some(&int_min(0)),
+            Some(&int_max(1)),
+        )
+        .unwrap();
         assert!(err.contains("DateTime"));
         assert!(err.contains("does not apply"));
     }
@@ -224,21 +290,21 @@ mod tests {
     #[test]
     fn type_object_rejects() {
         let ft = FieldType::Object(BTreeMap::new());
-        let err = validate_for_type("f", &ft, &int_min(0), &int_max(1)).unwrap();
+        let err = validate_for_type("f", &ft, Some(&int_min(0)), Some(&int_max(1))).unwrap();
         assert!(err.contains("Object"));
     }
 
     #[test]
     fn type_array_string_rejects() {
         let ft = FieldType::Array(Box::new(FieldType::String));
-        let err = validate_for_type("f", &ft, &int_min(0), &int_max(1)).unwrap();
+        let err = validate_for_type("f", &ft, Some(&int_min(0)), Some(&int_max(1))).unwrap();
         assert!(err.contains("Array(String)"));
     }
 
     #[test]
     fn type_array_boolean_rejects() {
         let ft = FieldType::Array(Box::new(FieldType::Boolean));
-        let err = validate_for_type("f", &ft, &int_min(0), &int_max(1)).unwrap();
+        let err = validate_for_type("f", &ft, Some(&int_min(0)), Some(&int_max(1))).unwrap();
         assert!(err.contains("Array(Boolean)"));
     }
 
@@ -248,27 +314,36 @@ mod tests {
 
     #[test]
     fn integer_field_float_bound_rejects() {
-        let err = validate_for_type("f", &FieldType::Integer, &float_min(0.5), &None).unwrap();
+        let err = validate_for_type("f", &FieldType::Integer, Some(&float_min(0.5)), None).unwrap();
         assert!(err.contains("float"));
         assert!(err.contains("Integer"));
     }
 
     #[test]
     fn integer_field_float_max_rejects() {
-        let err = validate_for_type("f", &FieldType::Integer, &None, &float_max(10.5)).unwrap();
+        let err =
+            validate_for_type("f", &FieldType::Integer, None, Some(&float_max(10.5))).unwrap();
         assert!(err.contains("float"));
     }
 
     #[test]
     fn float_field_mixed_bounds_accepts() {
         // Integer min, float max on a float field — widening.
-        assert!(validate_for_type("f", &FieldType::Float, &int_min(0), &float_max(1.0)).is_none());
+        assert!(
+            validate_for_type(
+                "f",
+                &FieldType::Float,
+                Some(&int_min(0)),
+                Some(&float_max(1.0))
+            )
+            .is_none()
+        );
     }
 
     #[test]
     fn string_bound_rejects() {
-        let bad = Some(toml::Value::String("hello".into()));
-        let err = validate_for_type("f", &FieldType::Integer, &bad, &None).unwrap();
+        let bad = toml::Value::String("hello".into());
+        let err = validate_for_type("f", &FieldType::Integer, Some(&bad), None).unwrap();
         assert!(err.contains("numeric"));
     }
 
@@ -278,22 +353,111 @@ mod tests {
 
     #[test]
     fn min_greater_than_max_rejects() {
-        let err = validate_for_type("f", &FieldType::Integer, &int_min(10), &int_max(5)).unwrap();
+        let err = validate_for_type(
+            "f",
+            &FieldType::Integer,
+            Some(&int_min(10)),
+            Some(&int_max(5)),
+        )
+        .unwrap();
+        assert!(err.contains("greater than"));
+    }
+
+    #[test]
+    fn integer_field_bounds_beyond_f64_precision_compare_exactly() {
+        // As f64 both bounds round to 2^53 and would look equal.
+        let err = validate_for_type(
+            "f",
+            &FieldType::Integer,
+            Some(&int_min(F64_EXACT_INT_LIMIT_I64 + 1)),
+            Some(&int_max(F64_EXACT_INT_LIMIT_I64)),
+        )
+        .unwrap();
+        assert!(err.contains("greater than"));
+    }
+
+    #[test]
+    fn integer_field_accepts_bounds_beyond_f64_precision() {
+        assert!(
+            validate_for_type(
+                "f",
+                &FieldType::Integer,
+                Some(&int_min(-F64_EXACT_INT_LIMIT_I64 - 1)),
+                Some(&int_max(F64_EXACT_INT_LIMIT_I64 + 1)),
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn float_field_lone_integer_min_beyond_f64_precision_rejects() {
+        let err = validate_for_type(
+            "f",
+            &FieldType::Float,
+            Some(&int_min(F64_EXACT_INT_LIMIT_I64 + 1)),
+            None,
+        )
+        .unwrap();
+        assert!(err.contains("beyond"));
+    }
+
+    #[test]
+    fn float_field_integer_pair_beyond_f64_precision_rejects() {
+        let err = validate_for_type(
+            "f",
+            &FieldType::Float,
+            Some(&int_min(0)),
+            Some(&int_max(F64_EXACT_INT_LIMIT_I64 + 1)),
+        )
+        .unwrap();
+        assert!(err.contains("beyond"));
+    }
+
+    #[test]
+    fn array_float_field_mixed_bounds_beyond_f64_precision_rejects() {
+        let ft = FieldType::Array(Box::new(FieldType::Float));
+        let err = validate_for_type(
+            "f",
+            &ft,
+            Some(&int_min(-F64_EXACT_INT_LIMIT_I64 - 1)),
+            Some(&float_max(1.0)),
+        )
+        .unwrap();
+        assert!(err.contains("beyond"));
+    }
+
+    #[test]
+    fn float_field_integer_bound_at_f64_precision_limit_compares() {
+        let err = validate_for_type(
+            "f",
+            &FieldType::Float,
+            Some(&int_min(F64_EXACT_INT_LIMIT_I64)),
+            Some(&float_max(1.0)),
+        )
+        .unwrap();
         assert!(err.contains("greater than"));
     }
 
     #[test]
     fn min_equals_max_accepts() {
-        assert!(validate_for_type("f", &FieldType::Integer, &int_min(5), &int_max(5)).is_none());
+        assert!(
+            validate_for_type(
+                "f",
+                &FieldType::Integer,
+                Some(&int_min(5)),
+                Some(&int_max(5))
+            )
+            .is_none()
+        );
     }
 
     #[test]
     fn min_only_accepts() {
-        assert!(validate_for_type("f", &FieldType::Integer, &int_min(0), &None).is_none());
+        assert!(validate_for_type("f", &FieldType::Integer, Some(&int_min(0)), None).is_none());
     }
 
     #[test]
     fn max_only_accepts() {
-        assert!(validate_for_type("f", &FieldType::Integer, &None, &int_max(100)).is_none());
+        assert!(validate_for_type("f", &FieldType::Integer, None, Some(&int_max(100))).is_none());
     }
 }

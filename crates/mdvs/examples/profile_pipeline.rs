@@ -18,19 +18,18 @@
 //!    `StepEntry` mechanism the CLI's telemetry uses. This lets us see where the
 //!    auto-step overhead actually goes when `search` runs `build_core` internally.
 
+use std::{fs, path::Path, time::Instant};
+
 use anyhow::Context;
 use globset::Glob;
 use ignore::WalkBuilder;
-use mdvs::cmd::build::build_core;
-use mdvs::cmd::check;
-use mdvs::discover::infer::InferredSchema;
-use mdvs::discover::scan::ScannedFiles;
-use mdvs::outcome::Outcome;
-use mdvs::schema::config::MdvsToml;
-use mdvs::step::StepEntry;
-use std::fs;
-use std::path::Path;
-use std::time::Instant;
+use mdvs::{
+    cmd::{build::build_core, check},
+    discover::{infer::InferredSchema, scan::ScannedFiles},
+    outcome::Outcome,
+    schema::config::MdvsToml,
+    step::StepEntry,
+};
 
 const MAX_FILE_SIZE: u64 = 100 * 1024 * 1024;
 

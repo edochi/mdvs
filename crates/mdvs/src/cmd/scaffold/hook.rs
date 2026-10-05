@@ -1,4 +1,4 @@
-//! `mdvs scaffold hook` — print the per-platform PostToolUse hook config.
+//! `mdvs scaffold hook` — print the per-platform `PostToolUse` hook config.
 //!
 //! The emitted config calls `mdvs hook handle --platform <name> --kind
 //! <kind>` for each matcher. No shell scripts are generated; the runtime
@@ -9,8 +9,7 @@
 //! cases fail with a pointer message explaining the user should still
 //! install the skill and snippet via `mdvs scaffold skill|snippet`.
 
-use std::collections::HashMap;
-use std::io::Write;
+use std::{collections::HashMap, io::Write};
 
 use anyhow::{Context, Result};
 use serde_json::{Map, Value};

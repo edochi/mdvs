@@ -2,8 +2,10 @@
 
 use serde::Serialize;
 
-use crate::block::{Block, Render, TableStyle};
-use crate::index::backend::{SearchHit, WhereRewrite};
+use crate::{
+    block::{Block, Render, TableStyle},
+    index::backend::{SearchHit, WhereRewrite},
+};
 
 /// Full outcome for the search command.
 #[derive(Debug, Serialize)]

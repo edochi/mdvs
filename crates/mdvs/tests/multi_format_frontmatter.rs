@@ -7,11 +7,19 @@
 //! prove the command-level pipeline (scan → infer → write toml → reload
 //! → validate) produces sensible results across formats.
 
-use mdvs::cmd::{check, init};
-use mdvs::outcome::Outcome;
-use mdvs::schema::config::MdvsToml;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
+
+use mdvs::{
+    cmd::{
+        check, init,
+        init::{InitOptions, InitScanFlags},
+    },
+    outcome::Outcome,
+    schema::config::MdvsToml,
+};
 use tempfile::TempDir;
 
 /// Copy a fixture vault into a fresh tempdir so tests can mutate state
@@ -45,14 +53,17 @@ fn copy_dir(src: &Path, dest: &Path) {
 /// reloaded `MdvsToml`.
 fn run_init(path: &Path) -> MdvsToml {
     let result = init::run(
-        path, "**",  // glob
-        false, // force
-        false, // dry_run
-        false, // ignore_bare_files
-        true,  // skip_gitignore
-        false, // verbose
-        None,  // schema override
-        None,  // default_output_format
+        path,
+        "**",
+        InitOptions {
+            scan: InitScanFlags {
+                skip_gitignore: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        None, // schema override
+        None, // default_output_format
     );
     assert!(
         result.result.is_ok(),
@@ -136,7 +147,7 @@ fn init_infers_mixed_vault() {
     // field is present in all 3 files.
     let names: Vec<&str> = toml.fields.field.iter().map(|f| f.name.as_str()).collect();
     let mut sorted = names.clone();
-    sorted.sort();
+    sorted.sort_unstable();
     assert_eq!(sorted, vec!["author", "tags", "title", "year"]);
 
     // Each field present in 3/3 files (so `required = ["**"]` glob-style).

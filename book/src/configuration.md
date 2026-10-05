@@ -536,7 +536,7 @@ min_category_repetition = 3
 | `max_categories`          | Integer | `10`    | Max distinct values for a field to be inferred as categorical             |
 | `min_category_repetition` | Integer | `3`     | Min average repetition (occurrences / distinct) for categorical inference |
 
-These are hidden from `mdvs.toml` when set to their defaults. They only affect
+These are omitted from `mdvs.toml` unless set explicitly. They only affect
 auto-inference — manually written `categories` are unaffected.
 
 ## Example

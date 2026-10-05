@@ -1,18 +1,31 @@
-use crate::schema::shared::{FrontmatterFormat, ScanConfig};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
+
 use anyhow::Context;
 use globset::Glob;
-use gray_matter::engine::{TOML, YAML};
-use gray_matter::{Matter, Pod};
+use gray_matter::{
+    Matter, Pod,
+    engine::{TOML, YAML},
+};
 use ignore::WalkBuilder;
 use serde_json::Value;
-use std::fs;
-use std::path::{Path, PathBuf};
 use tracing::{info, instrument, warn};
+
+use crate::schema::shared::{FrontmatterFormat, ScanConfig};
 
 const MAX_NESTING_DEPTH: usize = 50;
 const MAX_FIELD_COUNT: usize = 1000;
 
-/// Which gray_matter engine to use for a given file. Internal-only; the
+/// Whether `path` names a markdown file: its extension is exactly `md` or
+/// `markdown`. The comparison is case-sensitive, so `NOTE.MD` is not a match.
+pub(crate) fn is_markdown_path(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|ext| ext == "md" || ext == "markdown")
+}
+
+/// Which `gray_matter` engine to use for a given file. Internal-only; the
 /// user-facing equivalent is [`FrontmatterFormat`] (which adds `Auto`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FrontmatterEngine {
@@ -72,21 +85,22 @@ fn forced_engine(format: FrontmatterFormat) -> Option<FrontmatterEngine> {
 
 /// Output of a single engine parse, uniform across YAML / TOML / JSON.
 /// `None` means parse failed and the file should fall back to bare-file
-/// handling (mirrors gray_matter's `Err` arm).
+/// handling (mirrors `gray_matter`'s `Err` arm).
 struct EngineParse {
     data: Option<Value>,
     body: String,
 }
 
-/// Parse a file's frontmatter + body with gray_matter using the given
+/// Parse a file's frontmatter + body with `gray_matter` using the given
 /// `Matter` instance. The `Pod` is converted to `serde_json::Value` and
-/// validated (top-level must be an object, NaN/inf rejected). Returns
-/// `None` when gray_matter itself fails to parse — caller falls back to
-/// bare-file handling for backward compatibility.
+/// validated (top-level must be an object, NaN/inf rejected). Always
+/// returns a parse: when `gray_matter` itself rejects the content, the
+/// result carries no data, the raw text as body, and an error message that
+/// surfaces as `FrontmatterUnrepresentable`.
 fn parse_via_gray_matter<E: gray_matter::engine::Engine>(
     matter: &Matter<E>,
     raw: &str,
-) -> Option<(EngineParse, Option<String>)> {
+) -> (EngineParse, Option<String>) {
     let parsed = match matter.parse::<Pod>(raw) {
         Ok(p) => p,
         Err(e) => {
@@ -95,13 +109,13 @@ fn parse_via_gray_matter<E: gray_matter::engine::Engine>(
             // a recognized leading delimiter — caller resolved an
             // engine for it — so this is a real validation error, not
             // a bare file. Surface it as `FrontmatterUnrepresentable`.
-            return Some((
+            return (
                 EngineParse {
                     data: None,
                     body: raw.to_string(),
                 },
                 Some(format!("invalid frontmatter: {e}")),
-            ));
+            );
         }
     };
     let (data, error): (Option<Value>, Option<String>) = match parsed.data {
@@ -124,19 +138,19 @@ fn parse_via_gray_matter<E: gray_matter::engine::Engine>(
             }
         },
     };
-    Some((
+    (
         EngineParse {
             data,
             body: parsed.content,
         },
         error,
-    ))
+    )
 }
 
 /// Parse JSON frontmatter using `serde_json::Deserializer` directly.
 /// Hugo-style convention: the JSON object itself starts at column 0 with
 /// `{` and ends with the matching `}`; the body follows immediately.
-/// gray_matter's `Matter::<JSON>` wraps JSON in `---` delimiters instead,
+/// `gray_matter`'s `Matter::<JSON>` wraps JSON in `---` delimiters instead,
 /// which is not the convention users expect — so we bypass it here.
 fn parse_json_native(raw: &str) -> Option<(EngineParse, Option<String>)> {
     // `StreamDeserializer::byte_offset` tells us where the first JSON
@@ -215,6 +229,21 @@ pub struct ScannedFile {
     pub body_line_offset: usize,
 }
 
+impl ScannedFile {
+    /// A file kept without parsed frontmatter: a bare file
+    /// (`frontmatter_error: None`) or one whose frontmatter could not be
+    /// used (`Some(reason)`). The body is the whole file, trimmed.
+    fn without_data(path: PathBuf, raw: &str, frontmatter_error: Option<String>) -> Self {
+        ScannedFile {
+            path,
+            data: None,
+            frontmatter_error,
+            content: raw.trim().to_string(),
+            body_line_offset: 0,
+        }
+    }
+}
+
 /// Collection of scanned markdown files from a directory walk.
 #[derive(Debug)]
 pub struct ScannedFiles {
@@ -248,29 +277,24 @@ impl ScannedFiles {
             .add_custom_ignore_filename(".mdvsignore")
             .git_ignore(!config.skip_gitignore)
             .build()
-            .filter_map(|e| e.ok())
+            .filter_map(Result::ok)
             .filter(|e| e.file_type().is_some_and(|ft| ft.is_file()))
-            .filter(|e| {
-                e.path()
-                    .extension()
-                    .is_some_and(|ext| ext == "md" || ext == "markdown")
-            })
+            .filter(|e| is_markdown_path(e.path()))
         {
+            /// Files above this size are skipped to prevent OOM.
+            const MAX_FILE_SIZE: u64 = 100 * 1024 * 1024;
+
             let abs_path = entry.path();
-            let rel_path = match abs_path.strip_prefix(root) {
-                Ok(p) => p.to_path_buf(),
-                Err(_) => {
-                    warn!(path = %abs_path.display(), "file is outside root directory, skipping");
-                    continue;
-                }
+            let Ok(rel_path) = abs_path.strip_prefix(root) else {
+                warn!(path = %abs_path.display(), "file is outside root directory, skipping");
+                continue;
             };
+            let rel_path = rel_path.to_path_buf();
 
             if !matcher.is_match(&rel_path) {
                 continue;
             }
 
-            // Skip files larger than 100MB to prevent OOM
-            const MAX_FILE_SIZE: u64 = 100 * 1024 * 1024;
             match fs::metadata(abs_path) {
                 Ok(meta) if meta.len() > MAX_FILE_SIZE => {
                     warn!(
@@ -295,123 +319,9 @@ impl ScannedFiles {
                 }
             };
 
-            // Resolve which gray_matter engine to use for this file.
-            // Auto mode probes the leading delimiter; explicit modes
-            // skip the probe but still detect leading delimiters from
-            // *other* engines to surface a clear mismatch error.
-            let detected = detect_engine(&raw);
-            let resolved_engine: Option<FrontmatterEngine> =
-                match forced_engine(config.frontmatter_format) {
-                    None => detected,
-                    Some(forced) => {
-                        // Forced-mode mismatch: file's leading delimiter
-                        // belongs to a different engine. Surface as
-                        // `FrontmatterUnrepresentable` so the user can fix
-                        // the file (or relax the config).
-                        if let Some(actual) = detected
-                            && actual != forced
-                        {
-                            files.push(ScannedFile {
-                                path: rel_path,
-                                data: None,
-                                frontmatter_error: Some(format!(
-                                    "frontmatter format mismatch: configured \
-                                 `{}` (delimiter `{}`) but file starts with \
-                                 `{}` (delimiter for `{}`)",
-                                    forced.format_name(),
-                                    forced.delimiter(),
-                                    actual.delimiter(),
-                                    actual.format_name(),
-                                )),
-                                content: raw.trim().to_string(),
-                                body_line_offset: 0,
-                            });
-                            continue;
-                        }
-                        Some(forced)
-                    }
-                };
-
-            let Some(engine) = resolved_engine else {
-                // Bare file (no recognized leading delimiter, or auto
-                // mode + empty file). Preserve existing behavior:
-                // include or filter based on `include_bare_files`.
-                if !config.include_bare_files {
-                    continue;
-                }
-                files.push(ScannedFile {
-                    path: rel_path,
-                    data: None,
-                    frontmatter_error: None,
-                    content: raw.trim().to_string(),
-                    body_line_offset: 0,
-                });
-                continue;
-            };
-
-            // Dispatch to the engine-specific parser. YAML + TOML go
-            // through gray_matter; JSON uses serde_json directly because
-            // the `{...}` convention isn't gray_matter's delimiter model.
-            // All three branches return a uniform `(EngineParse, error)`
-            // so the downstream safety + assembly logic is unified.
-            let parsed = match engine {
-                FrontmatterEngine::Yaml => parse_via_gray_matter(&yaml_matter, &raw),
-                FrontmatterEngine::Toml => parse_via_gray_matter(&toml_matter, &raw),
-                FrontmatterEngine::Json => parse_json_native(&raw),
-            };
-            let Some((parsed, frontmatter_error)) = parsed else {
-                if !config.include_bare_files {
-                    continue;
-                }
-                files.push(ScannedFile {
-                    path: rel_path,
-                    data: None,
-                    frontmatter_error: None,
-                    content: raw.trim().to_string(),
-                    body_line_offset: 0,
-                });
-                continue;
-            };
-            let data = parsed.data;
-
-            // Safety limits on frontmatter complexity
-            if let Some(ref val) = data {
-                if let Value::Object(map) = val
-                    && map.len() > MAX_FIELD_COUNT
-                {
-                    warn!(
-                        path = %rel_path.display(),
-                        fields = map.len(),
-                        "frontmatter exceeds {MAX_FIELD_COUNT} fields, skipping"
-                    );
-                    continue;
-                }
-                if !check_depth(val, MAX_NESTING_DEPTH) {
-                    warn!(
-                        path = %rel_path.display(),
-                        "frontmatter exceeds {MAX_NESTING_DEPTH} levels of nesting, skipping"
-                    );
-                    continue;
-                }
+            if let Some(file) = scan_one(rel_path, &raw, config, &yaml_matter, &toml_matter) {
+                files.push(file);
             }
-
-            // Bare files (no frontmatter and no error) are filtered when
-            // include_bare_files=false. Error files always surface — the
-            // user needs to know their YAML is broken.
-            if data.is_none() && frontmatter_error.is_none() && !config.include_bare_files {
-                continue;
-            }
-
-            let content = parsed.body.trim().to_string();
-            let body_line_offset = raw.lines().count().saturating_sub(content.lines().count());
-
-            files.push(ScannedFile {
-                path: rel_path,
-                data,
-                frontmatter_error,
-                content,
-                body_line_offset,
-            });
         }
 
         files.sort_by(|a, b| a.path.cmp(&b.path));
@@ -420,6 +330,121 @@ impl ScannedFiles {
 
         Ok(ScannedFiles { files })
     }
+}
+
+/// Parse one markdown file's frontmatter and body.
+///
+/// Returns `None` when the file is filtered out: a bare file while
+/// `include_bare_files` is off, or frontmatter over the field-count or
+/// nesting-depth safety limits. Files with unusable frontmatter are kept,
+/// carrying the reason in `frontmatter_error`.
+fn scan_one(
+    rel_path: PathBuf,
+    raw: &str,
+    config: &ScanConfig,
+    yaml_matter: &Matter<YAML>,
+    toml_matter: &Matter<TOML>,
+) -> Option<ScannedFile> {
+    // Resolve which gray_matter engine to use for this file.
+    // Auto mode probes the leading delimiter; explicit modes
+    // skip the probe but still detect leading delimiters from
+    // *other* engines to surface a clear mismatch error.
+    let detected = detect_engine(raw);
+    let resolved_engine: Option<FrontmatterEngine> = match forced_engine(config.frontmatter_format)
+    {
+        None => detected,
+        Some(forced) => {
+            // Forced-mode mismatch: file's leading delimiter
+            // belongs to a different engine. Surface as
+            // `FrontmatterUnrepresentable` so the user can fix
+            // the file (or relax the config).
+            if let Some(actual) = detected
+                && actual != forced
+            {
+                return Some(ScannedFile::without_data(
+                    rel_path,
+                    raw,
+                    Some(format!(
+                        "frontmatter format mismatch: configured \
+                                 `{}` (delimiter `{}`) but file starts with \
+                                 `{}` (delimiter for `{}`)",
+                        forced.format_name(),
+                        forced.delimiter(),
+                        actual.delimiter(),
+                        actual.format_name(),
+                    )),
+                ));
+            }
+            Some(forced)
+        }
+    };
+
+    // Bare file (no recognized leading delimiter, or auto
+    // mode + empty file). Preserve existing behavior:
+    // include or filter based on `include_bare_files`.
+    let bare = |rel_path: PathBuf| {
+        config
+            .include_bare_files
+            .then(|| ScannedFile::without_data(rel_path, raw, None))
+    };
+
+    let Some(engine) = resolved_engine else {
+        return bare(rel_path);
+    };
+
+    // Dispatch to the engine-specific parser. YAML + TOML go
+    // through gray_matter; JSON uses serde_json directly because
+    // the `{...}` convention isn't gray_matter's delimiter model.
+    // All three branches return a uniform `(EngineParse, error)`
+    // so the downstream safety + assembly logic is unified.
+    let parsed = match engine {
+        FrontmatterEngine::Yaml => Some(parse_via_gray_matter(yaml_matter, raw)),
+        FrontmatterEngine::Toml => Some(parse_via_gray_matter(toml_matter, raw)),
+        FrontmatterEngine::Json => parse_json_native(raw),
+    };
+    let Some((parsed, frontmatter_error)) = parsed else {
+        return bare(rel_path);
+    };
+    let data = parsed.data;
+
+    // Safety limits on frontmatter complexity
+    if let Some(ref val) = data {
+        if let Value::Object(map) = val
+            && map.len() > MAX_FIELD_COUNT
+        {
+            warn!(
+                path = %rel_path.display(),
+                fields = map.len(),
+                "frontmatter exceeds {MAX_FIELD_COUNT} fields, skipping"
+            );
+            return None;
+        }
+        if !check_depth(val, MAX_NESTING_DEPTH) {
+            warn!(
+                path = %rel_path.display(),
+                "frontmatter exceeds {MAX_NESTING_DEPTH} levels of nesting, skipping"
+            );
+            return None;
+        }
+    }
+
+    // Bare files (no frontmatter and no error) are filtered when
+    // include_bare_files=false. Error files always surface — the
+    // user needs to know their YAML is broken.
+    if data.is_none() && frontmatter_error.is_none() && !config.include_bare_files {
+        return None;
+    }
+
+    let content = parsed.body.trim().to_string();
+    let body_line_offset = raw.lines().count().saturating_sub(content.lines().count());
+
+    Some(ScannedFile {
+        path: rel_path,
+        data,
+        frontmatter_error,
+        content,
+        body_line_offset,
+    })
 }
 
 #[cfg(test)]

@@ -1,10 +1,10 @@
-//! Outcome types for the embed leaf steps (EmbedFiles, EmbedQuery).
+//! Outcome types for the embed leaf steps (`EmbedFiles`, `EmbedQuery`).
 
 use serde::Serialize;
 
 use crate::block::{Block, Render};
 
-/// Full outcome for the embed_files step.
+/// Full outcome for the `embed_files` step.
 #[derive(Debug, Serialize)]
 pub struct EmbedFilesOutcome {
     /// Number of files embedded.
@@ -22,7 +22,7 @@ impl Render for EmbedFilesOutcome {
     }
 }
 
-/// Full outcome for the embed_query step.
+/// Full outcome for the `embed_query` step.
 #[derive(Debug, Serialize)]
 pub struct EmbedQueryOutcome {
     /// The query string that was embedded.

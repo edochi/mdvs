@@ -13,10 +13,6 @@ pub mod scan;
 pub mod search;
 pub mod validate;
 
-use serde::Serialize;
-
-use crate::block::{Block, Render};
-
 pub use classify::ClassifyOutcome;
 pub use commands::{
     BuildOutcome, CheckOutcome, CleanOutcome, ExportJsonschemaOutcome, InfoOutcome, InitOutcome,
@@ -29,7 +25,10 @@ pub use infer::InferOutcome;
 pub use model::LoadModelOutcome;
 pub use scan::ScanOutcome;
 pub use search::ExecuteSearchOutcome;
+use serde::Serialize;
 pub use validate::ValidateOutcome;
+
+use crate::block::{Block, Render};
 
 /// Outcome for all steps and commands.
 ///
@@ -124,8 +123,9 @@ impl Outcome {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::path::PathBuf;
+
+    use super::*;
 
     #[test]
     fn outcome_render_delegates() {

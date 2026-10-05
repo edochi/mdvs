@@ -1,8 +1,8 @@
 #![warn(missing_docs)]
-// Regression gate for TODO-0180: catch new panic-emitters in non-test code
-// at PR time. Tests use `.unwrap()` / `.expect()` liberally and are
-// excluded via `cfg(not(test))`. Surviving cases in production code must
-// carry a local `#[allow(...)]` with a justifying comment.
+// Regression gate: catch new panic-emitters in non-test code at PR time.
+// Tests use `.unwrap()` / `.expect()` liberally and are excluded via
+// `cfg(not(test))`. Surviving cases in production code must carry a local
+// `#[expect(..., reason = "...")]` justifying the exception.
 #![cfg_attr(
     not(test),
     warn(clippy::unwrap_used, clippy::expect_used, clippy::panic)
@@ -21,6 +21,8 @@ pub mod cmd;
 pub mod discover;
 /// Chunking, embedding, storage, and backend abstraction.
 pub mod index;
+/// Checked numeric conversions that never lose precision silently.
+pub(crate) mod num;
 /// Outcome types for all pipeline steps and commands.
 pub mod outcome;
 /// Output formatting types and the `CommandOutput` trait.

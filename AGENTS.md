@@ -39,12 +39,17 @@ cargo test                                             # fast lane (MockEmbedder
 cargo test --features testing-mocks                    # explicit fast lane (what CI runs)
 cargo test --features testing-mocks -- --ignored       # slow lane: real-model tests (local, needs HF cache)
 cargo clippy --all-targets --features testing-mocks    # lint (matches CI)
-cargo fmt                                              # format
+just fmt                                               # format (pinned nightly rustfmt)
+just fmt-check                                         # format check (matches CI)
 ```
 
 **Always use `cargo clippy --all-targets --features testing-mocks`** — plain
 `cargo clippy` misses warnings in test code and the mock feature gate. **Run
-`cargo fmt` after `cargo clippy`.**
+`just fmt` after `cargo clippy`.** Formatting uses the nightly toolchain pinned
+in `rustfmt-toolchain`, because `rustfmt.toml` sets unstable options (merged and
+grouped imports) that stable rustfmt ignores; plain `cargo fmt` does not apply
+them. Install it once with
+`rustup toolchain install $(cat rustfmt-toolchain) --profile minimal --component rustfmt`.
 
 The `testing-mocks` feature gates the deterministic `MockEmbedder`
 (`provider = "mock"` in `mdvs.toml`). It is off in production binaries

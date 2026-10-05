@@ -1,48 +1,77 @@
-use crate::discover::infer::InferredSchema;
-use crate::discover::scan::ScannedFiles;
-use crate::outcome::commands::InitOutcome;
-use crate::outcome::{InferOutcome, Outcome, ScanOutcome, WriteConfigOutcome};
-use crate::output::{DiscoveredField, OutputFormat};
-use crate::schema::config::MdvsToml;
-use crate::schema::json_schema::{canonical_to_dsl, validate_mdvs_schema};
-use crate::schema::load::load_schema;
-use crate::schema::shared::{FieldTypeSerde, FrontmatterFormat, ScanConfig};
-use crate::step::{CommandResult, ErrorKind, StepEntry};
-use std::path::Path;
-use std::time::Instant;
+use std::{path::Path, time::Instant};
+
 use tracing::{info, instrument};
+
+use crate::{
+    cmd::steps::{infer_step, scan_step},
+    outcome::{Outcome, WriteConfigOutcome, commands::InitOutcome},
+    output::{DiscoveredField, OutputFormat},
+    schema::{
+        config::MdvsToml,
+        json_schema::{canonical_to_dsl, validate_mdvs_schema},
+        load::load_schema,
+        shared::{FieldTypeSerde, FrontmatterFormat, ScanConfig},
+    },
+    step::{CommandResult, ErrorKind, StepEntry, elapsed_ms},
+};
+
+/// Switches for [`run`], mirroring the `mdvs init` flags.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct InitOptions {
+    /// Overwrite an existing `mdvs.toml` instead of refusing (`--force`).
+    pub force: bool,
+    /// Report what would be written without writing anything (`--dry-run`).
+    pub dry_run: bool,
+    /// How init scans the vault.
+    pub scan: InitScanFlags,
+}
+
+/// How init scans the vault. Each flag is persisted to the generated
+/// `[scan]` section.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct InitScanFlags {
+    /// Leave files without frontmatter out of the scan
+    /// (`--ignore-bare-files`, persisted as `include_bare_files = false`).
+    pub ignore_bare_files: bool,
+    /// Do not read `.gitignore` patterns during the scan
+    /// (`--skip-gitignore`, persisted as `skip_gitignore = true`).
+    pub skip_gitignore: bool,
+}
 
 /// Scan a directory, infer frontmatter schema, and write `mdvs.toml`.
 /// Schema-only — no model download, no embedding, no `.mdvs/` created.
 ///
 /// When `schema` is `Some(path)`, scanning + inference are skipped: the
 /// schema file is loaded, validated against the mdvs subset, translated to
-/// DSL fields, and written directly. The `glob`, `ignore_bare_files`, and
-/// `skip_gitignore` parameters still configure the resulting `[scan]` section.
+/// DSL fields, and written directly. `glob` and `opts.scan` still configure
+/// the resulting `[scan]` section.
 ///
 /// **Flag persistence.** Any flag the user passes to `init` that maps to a
 /// config field is persisted to the generated `mdvs.toml` — that includes
 /// `glob`, `ignore_bare_files`, `skip_gitignore`, and `default_output_format`
 /// (the global `--output` flag). Flags that don't have a config equivalent
-/// (`--force`, `--dry-run`, `--from-jsonschema`, `--verbose`, `--logs`)
+/// (`--force`, `--dry-run`, `--from-jsonschema`, `--logs`)
 /// remain one-shot modifiers. The rule: if you cared enough to pass a flag
 /// to `init`, you almost certainly want it to be the project default — so
 /// it ends up in the file. When the flag is absent the corresponding field
 /// is left unset (no `default_output_format` line at all), letting the
 /// global default win.
 #[instrument(name = "init", skip_all)]
-#[allow(clippy::too_many_arguments)] // CLI surface; a struct would just defer the same fields
 pub fn run(
     path: &Path,
     glob: &str,
-    force: bool,
-    dry_run: bool,
-    ignore_bare_files: bool,
-    skip_gitignore: bool,
-    _verbose: bool,
+    opts: InitOptions,
     schema: Option<&Path>,
     default_output_format: Option<OutputFormat>,
 ) -> CommandResult {
+    let InitOptions {
+        force,
+        dry_run,
+        scan: InitScanFlags {
+            ignore_bare_files,
+            skip_gitignore,
+        },
+    } = opts;
     let start = Instant::now();
     let mut steps = Vec::new();
 
@@ -92,57 +121,34 @@ pub fn run(
 
     // Schema-driven init: skip scan + infer, load+validate+translate, write.
     if let Some(schema_path) = schema {
-        return init_from_schema(
+        let outcome = init_from_schema(
             path,
-            &config_path,
             scan_config,
             schema_path,
             dry_run,
             default_output_format,
-            steps,
-            start,
+            &mut steps,
         );
+        return match outcome {
+            Ok(outcome) => init_result(steps, outcome, start),
+            Err(()) => CommandResult::failed_from_steps(steps, start),
+        };
     }
-    // 1. Scan — calls ScannedFiles::scan() directly
-    let scan_start = Instant::now();
-    let scanned = match ScannedFiles::scan(path, &scan_config) {
-        Ok(s) => {
-            steps.push(StepEntry::ok(
-                Outcome::Scan(ScanOutcome {
-                    files_found: s.files.len(),
-                    glob: scan_config.glob.clone(),
-                }),
-                scan_start.elapsed().as_millis() as u64,
-            ));
-            s
-        }
-        Err(e) => {
-            steps.push(StepEntry::err(
-                ErrorKind::Application,
-                e.to_string(),
-                scan_start.elapsed().as_millis() as u64,
-            ));
-            return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
-        }
+
+    let Ok(scanned) = scan_step(path, &scan_config, &mut steps) else {
+        return CommandResult::failed_from_steps(steps, start);
     };
 
-    // 2. Infer
     if scanned.files.is_empty() {
         let msg = format!("no markdown files found in '{}'", path.display());
         steps.push(StepEntry::err(ErrorKind::User, msg.clone(), 0));
         return CommandResult::failed(steps, ErrorKind::User, msg, start);
     }
 
-    // 2b. Infer — InferredSchema::infer() is infallible
-    let infer_start = Instant::now();
-    let schema = InferredSchema::infer(&scanned);
-    steps.push(StepEntry::ok(
-        Outcome::Infer(InferOutcome {
-            fields_inferred: schema.fields.len(),
-        }),
-        infer_start.elapsed().as_millis() as u64,
-    ));
-    schema.emit_dropped_warnings();
+    let schema = infer_step(&scanned, &mut steps);
+    for field in &schema.fields {
+        field.emit_inexact_widening_warning();
+    }
 
     let total_files = scanned.files.len();
     info!(fields = schema.fields.len(), "schema inferred");
@@ -154,63 +160,92 @@ pub fn run(
         .map(|f| f.to_discovered(total_files, true))
         .collect();
 
-    // 3. Write config — MdvsToml::from_inferred() + write() directly
-    if dry_run {
-        steps.push(StepEntry::skipped());
-    } else {
-        let write_start = Instant::now();
-        let mut toml_doc = MdvsToml::from_inferred(&schema, scan_config);
-        toml_doc.default_output_format = default_output_format;
-        match toml_doc.write(&config_path) {
-            Ok(()) => {
-                steps.push(StepEntry::ok(
-                    Outcome::WriteConfig(WriteConfigOutcome {
-                        config_path: config_path.display().to_string(),
-                        fields_written: schema.fields.len(),
-                    }),
-                    write_start.elapsed().as_millis() as u64,
-                ));
-            }
-            Err(e) => {
-                steps.push(StepEntry::err(
-                    ErrorKind::Application,
-                    e.to_string(),
-                    write_start.elapsed().as_millis() as u64,
-                ));
-            }
-        }
-    }
+    write_config_step(
+        &config_path,
+        schema.fields.len(),
+        dry_run,
+        &mut steps,
+        || {
+            let mut toml_doc = MdvsToml::from_inferred(&schema, scan_config);
+            toml_doc.default_output_format = default_output_format;
+            toml_doc
+        },
+    );
 
+    let outcome = InitOutcome {
+        path: path.to_path_buf(),
+        files_scanned: total_files,
+        fields,
+        dry_run,
+    };
+    init_result(steps, outcome, start)
+}
+
+/// Wrap a successful init outcome into the command result.
+fn init_result(steps: Vec<StepEntry>, outcome: InitOutcome, start: Instant) -> CommandResult {
     CommandResult {
         steps,
-        result: Ok(Outcome::Init(Box::new(InitOutcome {
-            path: path.to_path_buf(),
-            files_scanned: total_files,
-            fields,
-            dry_run,
-        }))),
-        elapsed_ms: start.elapsed().as_millis() as u64,
+        result: Ok(Outcome::Init(Box::new(outcome))),
+        elapsed_ms: elapsed_ms(start),
+    }
+}
+
+/// Write the generated config, or push a skipped step under `--dry-run`.
+///
+/// `build` constructs the config inside the timed step. A write failure is
+/// recorded as a failed step but does not fail the init command.
+fn write_config_step(
+    config_path: &Path,
+    fields_written: usize,
+    dry_run: bool,
+    steps: &mut Vec<StepEntry>,
+    build: impl FnOnce() -> MdvsToml,
+) {
+    if dry_run {
+        steps.push(StepEntry::skipped());
+        return;
+    }
+    let write_start = Instant::now();
+    let mut toml_doc = build();
+    match toml_doc.write(config_path) {
+        Ok(()) => {
+            steps.push(StepEntry::ok(
+                Outcome::WriteConfig(WriteConfigOutcome {
+                    config_path: config_path.display().to_string(),
+                    fields_written,
+                }),
+                elapsed_ms(write_start),
+            ));
+        }
+        Err(e) => {
+            steps.push(StepEntry::err(
+                ErrorKind::Application,
+                e.to_string(),
+                elapsed_ms(write_start),
+            ));
+        }
     }
 }
 
 /// Schema-driven init: load the schema, validate it against the mdvs subset,
 /// translate to DSL fields, build the `MdvsToml`, write it.
-#[allow(clippy::too_many_arguments)]
+///
+/// On failure the error step is pushed and `Err(())` is returned.
 fn init_from_schema(
     path: &Path,
-    config_path: &Path,
     scan_config: ScanConfig,
     schema_path: &Path,
     dry_run: bool,
     default_output_format: Option<OutputFormat>,
-    mut steps: Vec<StepEntry>,
-    start: Instant,
-) -> CommandResult {
+    steps: &mut Vec<StepEntry>,
+) -> Result<InitOutcome, ()> {
+    let config_path = path.join("mdvs.toml");
+
     let canonical = match load_schema(schema_path) {
         Ok(v) => v,
         Err(e) => {
             steps.push(StepEntry::err(ErrorKind::User, e.to_string(), 0));
-            return CommandResult::failed_from_steps(steps, start);
+            return Err(());
         }
     };
 
@@ -223,7 +258,7 @@ fn init_from_schema(
             ),
             0,
         ));
-        return CommandResult::failed_from_steps(steps, start);
+        return Err(());
     }
 
     let import = match canonical_to_dsl(&canonical) {
@@ -234,7 +269,7 @@ fn init_from_schema(
                 format!("cannot import schema '{}': {e}", schema_path.display()),
                 0,
             ));
-            return CommandResult::failed_from_steps(steps, start);
+            return Err(());
         }
     };
 
@@ -264,52 +299,27 @@ fn init_from_schema(
         })
         .collect();
 
-    if dry_run {
-        steps.push(StepEntry::skipped());
-    } else {
-        let write_start = Instant::now();
+    write_config_step(&config_path, total_fields, dry_run, steps, || {
         let mut toml_doc = MdvsToml::default_with_fields(import.fields, import.ignore);
         toml_doc.scan = scan_config;
         toml_doc.default_output_format = default_output_format;
-        match toml_doc.write(config_path) {
-            Ok(()) => {
-                steps.push(StepEntry::ok(
-                    Outcome::WriteConfig(WriteConfigOutcome {
-                        config_path: config_path.display().to_string(),
-                        fields_written: total_fields,
-                    }),
-                    write_start.elapsed().as_millis() as u64,
-                ));
-            }
-            Err(e) => {
-                steps.push(StepEntry::err(
-                    ErrorKind::Application,
-                    e.to_string(),
-                    write_start.elapsed().as_millis() as u64,
-                ));
-            }
-        }
-    }
+        toml_doc
+    });
 
-    CommandResult {
-        steps,
-        result: Ok(Outcome::Init(Box::new(InitOutcome {
-            path: path.to_path_buf(),
-            files_scanned: 0,
-            fields: fields_for_outcome,
-            dry_run,
-        }))),
-        elapsed_ms: start.elapsed().as_millis() as u64,
-    }
+    Ok(InitOutcome {
+        path: path.to_path_buf(),
+        files_scanned: 0,
+        fields: fields_for_outcome,
+        dry_run,
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::outcome::Outcome;
-    use crate::output::FieldHint;
-    use crate::step::CommandResult;
     use std::fs;
+
+    use super::*;
+    use crate::{outcome::Outcome, output::FieldHint, step::CommandResult};
 
     fn unwrap_init(result: &CommandResult) -> &InitOutcome {
         match &result.result {
@@ -341,11 +351,13 @@ mod tests {
         let step = run(
             tmp.path(),
             "**",
-            false,
-            false,
-            false,
-            true,
-            false,
+            InitOptions {
+                scan: InitScanFlags {
+                    skip_gitignore: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             None,
             None,
         );
@@ -367,11 +379,14 @@ mod tests {
         let step = run(
             tmp.path(),
             "**",
-            false,
-            true,
-            false,
-            true,
-            false,
+            InitOptions {
+                dry_run: true,
+                scan: InitScanFlags {
+                    skip_gitignore: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             None,
             None,
         );
@@ -389,11 +404,13 @@ mod tests {
         let step = run(
             tmp.path(),
             "**",
-            false,
-            false,
-            false,
-            true,
-            false,
+            InitOptions {
+                scan: InitScanFlags {
+                    skip_gitignore: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             None,
             None,
         );
@@ -402,11 +419,13 @@ mod tests {
         let step = run(
             tmp.path(),
             "**",
-            false,
-            false,
-            false,
-            true,
-            false,
+            InitOptions {
+                scan: InitScanFlags {
+                    skip_gitignore: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             None,
             None,
         );
@@ -421,11 +440,13 @@ mod tests {
         let step = run(
             tmp.path(),
             "**",
-            false,
-            false,
-            false,
-            true,
-            false,
+            InitOptions {
+                scan: InitScanFlags {
+                    skip_gitignore: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             None,
             None,
         );
@@ -434,11 +455,14 @@ mod tests {
         let step = run(
             tmp.path(),
             "**",
-            true,
-            false,
-            false,
-            true,
-            false,
+            InitOptions {
+                force: true,
+                scan: InitScanFlags {
+                    skip_gitignore: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             None,
             None,
         );
@@ -456,11 +480,13 @@ mod tests {
         let step = run(
             tmp.path(),
             "**",
-            false,
-            false,
-            false,
-            true,
-            false,
+            InitOptions {
+                scan: InitScanFlags {
+                    skip_gitignore: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             None,
             None,
         );
@@ -469,11 +495,14 @@ mod tests {
         let step = run(
             tmp.path(),
             "**",
-            true,
-            false,
-            false,
-            true,
-            false,
+            InitOptions {
+                force: true,
+                scan: InitScanFlags {
+                    skip_gitignore: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             None,
             None,
         );
@@ -489,11 +518,13 @@ mod tests {
         let step = run(
             tmp.path(),
             "empty/**",
-            false,
-            false,
-            false,
-            true,
-            false,
+            InitOptions {
+                scan: InitScanFlags {
+                    skip_gitignore: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             None,
             None,
         );
@@ -506,7 +537,19 @@ mod tests {
         let file = tmp.path().join("not-a-dir");
         fs::write(&file, "hello").unwrap();
 
-        let step = run(&file, "**", false, false, false, true, false, None, None);
+        let step = run(
+            &file,
+            "**",
+            InitOptions {
+                scan: InitScanFlags {
+                    skip_gitignore: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            None,
+            None,
+        );
         assert!(crate::step::has_failed(&step));
     }
 
@@ -518,11 +561,13 @@ mod tests {
         let step = run(
             tmp.path(),
             "**",
-            false,
-            false,
-            false,
-            true,
-            false,
+            InitOptions {
+                scan: InitScanFlags {
+                    skip_gitignore: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             None,
             None,
         );
@@ -553,11 +598,13 @@ mod tests {
         let step = run(
             tmp.path(),
             "**",
-            false,
-            false,
-            false,
-            true,
-            false,
+            InitOptions {
+                scan: InitScanFlags {
+                    skip_gitignore: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             None,
             None,
         );
@@ -602,11 +649,13 @@ mod tests {
         let step = run(
             tmp.path(),
             "**",
-            false,
-            false,
-            false,
-            true,
-            false,
+            InitOptions {
+                scan: InitScanFlags {
+                    skip_gitignore: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             Some(&schema_path),
             None,
         );
@@ -633,11 +682,14 @@ mod tests {
         let step = run(
             tmp.path(),
             "**",
-            false,
-            true,
-            false,
-            true,
-            false,
+            InitOptions {
+                dry_run: true,
+                scan: InitScanFlags {
+                    skip_gitignore: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             Some(&schema_path),
             None,
         );
@@ -655,11 +707,13 @@ mod tests {
         let step = run(
             tmp.path(),
             "**",
-            false,
-            false,
-            false,
-            true,
-            false,
+            InitOptions {
+                scan: InitScanFlags {
+                    skip_gitignore: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             Some(&schema_path),
             None,
         );
@@ -677,11 +731,13 @@ mod tests {
         let step = run(
             tmp.path(),
             "**",
-            false,
-            false,
-            false,
-            true,
-            false,
+            InitOptions {
+                scan: InitScanFlags {
+                    skip_gitignore: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             Some(&schema_path),
             None,
         );
@@ -699,11 +755,14 @@ mod tests {
         let step = run(
             tmp.path(),
             "**",
-            true,
-            false,
-            false,
-            true,
-            false,
+            InitOptions {
+                force: true,
+                scan: InitScanFlags {
+                    skip_gitignore: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             Some(&schema_path),
             None,
         );
@@ -722,11 +781,13 @@ mod tests {
         let step = run(
             tmp.path(),
             "**",
-            false,
-            false,
-            false,
-            true,
-            false,
+            InitOptions {
+                scan: InitScanFlags {
+                    skip_gitignore: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             None,
             Some(OutputFormat::Markdown),
         );
@@ -748,11 +809,13 @@ mod tests {
         let step = run(
             tmp.path(),
             "**",
-            false,
-            false,
-            false,
-            true,
-            false,
+            InitOptions {
+                scan: InitScanFlags {
+                    skip_gitignore: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             None,
             None,
         );
@@ -774,11 +837,13 @@ mod tests {
         let step = run(
             tmp.path(),
             "**",
-            false,
-            false,
-            false,
-            true,
-            false,
+            InitOptions {
+                scan: InitScanFlags {
+                    skip_gitignore: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             None,
             Some(OutputFormat::Markdown),
         );
@@ -788,11 +853,8 @@ mod tests {
         let step = run(
             tmp.path(),
             "**",
-            true, // force
-            false,
-            false,
-            true,
-            false,
+            InitOptions { force: true, dry_run: // force
+            false, scan: InitScanFlags { skip_gitignore: true, ..Default::default() } },
             None,
             Some(OutputFormat::Json),
         );
@@ -813,11 +875,13 @@ mod tests {
         let step = run(
             tmp.path(),
             "**",
-            false,
-            false,
-            false,
-            true,
-            false,
+            InitOptions {
+                scan: InitScanFlags {
+                    skip_gitignore: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             Some(&schema_path),
             Some(OutputFormat::Json),
         );

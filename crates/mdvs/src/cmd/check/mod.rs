@@ -2,44 +2,23 @@ mod collect;
 mod field_meta;
 mod validate;
 
+use std::{path::Path, time::Instant};
+
+use serde::Serialize;
+use tracing::instrument;
 pub use validate::validate;
 
-use crate::discover::infer::InferredSchema;
-use crate::discover::scan::ScannedFiles;
-use crate::outcome::commands::CheckOutcome;
-use crate::outcome::{
-    InferOutcome, Outcome, ReadConfigOutcome, ScanOutcome, ValidateOutcome, WriteConfigOutcome,
+use crate::{
+    cmd::steps::{auto_update_step, scan_step},
+    outcome::{Outcome, ReadConfigOutcome, ValidateOutcome, commands::CheckOutcome},
+    output::{FieldViolation, NewField},
+    schema::{
+        config::MdvsToml,
+        json_schema::{canonical_to_dsl, validate_mdvs_schema},
+        load::load_schema,
+    },
+    step::{CommandResult, ErrorKind, StepEntry, elapsed_ms},
 };
-use crate::output::{FieldViolation, NewField};
-use crate::schema::config::{MdvsToml, TomlField};
-use crate::schema::json_schema::{canonical_to_dsl, validate_mdvs_schema};
-use crate::schema::load::load_schema;
-use crate::schema::shared::FieldTypeSerde;
-use crate::step::{CommandResult, ErrorKind, StepEntry};
-use serde::Serialize;
-use std::collections::HashSet;
-use std::path::Path;
-use std::time::Instant;
-use tracing::instrument;
-// Test-only imports for the test mod's `use super::*;` — production code
-// in this module no longer references these directly (the helpers moved
-// to sibling sub-modules), but the tests below still construct fixtures
-// and assert on schema-translation primitives.
-#[cfg(test)]
-#[allow(unused_imports)]
-use crate::discover::field_type::FieldType;
-#[cfg(test)]
-#[allow(unused_imports)]
-use crate::output::{ViolatingFile, ViolationKind};
-#[cfg(test)]
-#[allow(unused_imports)]
-use crate::schema::json_schema::dsl_to_canonical;
-#[cfg(test)]
-#[allow(unused_imports)]
-use globset::Glob;
-#[cfg(test)]
-#[allow(unused_imports)]
-use serde_json::Value;
 
 // ============================================================================
 // CheckResult — kept for build compatibility during migration
@@ -96,13 +75,13 @@ pub fn run(
         Some(p) => p.display().to_string(),
         None => config_path_buf.display().to_string(),
     };
-    let config = match resolve_check_config(&config_path_buf, schema_override) {
+    let mut config = match resolve_check_config(&config_path_buf, schema_override) {
         Ok(cfg) => {
             steps.push(StepEntry::ok(
                 Outcome::ReadConfig(ReadConfigOutcome {
                     config_path: reported_path,
                 }),
-                config_start.elapsed().as_millis() as u64,
+                elapsed_ms(config_start),
             ));
             cfg
         }
@@ -110,7 +89,7 @@ pub fn run(
             steps.push(StepEntry::err(
                 ErrorKind::User,
                 e.to_string(),
-                config_start.elapsed().as_millis() as u64,
+                elapsed_ms(config_start),
             ));
             return CommandResult::failed_from_steps(steps, start);
         }
@@ -121,103 +100,22 @@ pub fn run(
     let no_update = no_update || schema_override.is_some();
 
     // 2. Scan (once — shared between auto-update and validate)
-    let scan_start = Instant::now();
-    let scanned = match ScannedFiles::scan(path, &config.scan) {
-        Ok(s) => {
-            steps.push(StepEntry::ok(
-                Outcome::Scan(ScanOutcome {
-                    files_found: s.files.len(),
-                    glob: config.scan.glob.clone(),
-                }),
-                scan_start.elapsed().as_millis() as u64,
-            ));
-            s
-        }
-        Err(e) => {
-            steps.push(StepEntry::err(
-                ErrorKind::Application,
-                e.to_string(),
-                scan_start.elapsed().as_millis() as u64,
-            ));
-            return CommandResult::failed_from_steps(steps, start);
-        }
+    let Ok(scanned) = scan_step(path, &config.scan, &mut steps) else {
+        return CommandResult::failed_from_steps(steps, start);
     };
 
     // 3. Auto-update: infer new fields, write config if changed
     let should_update = !no_update && config.check.as_ref().is_some_and(|c| c.auto_update);
-    let config = if should_update {
-        let infer_start = Instant::now();
-        let schema = InferredSchema::infer(&scanned);
-        steps.push(StepEntry::ok(
-            Outcome::Infer(InferOutcome {
-                fields_inferred: schema.fields.len(),
-            }),
-            infer_start.elapsed().as_millis() as u64,
-        ));
-        schema.emit_dropped_warnings();
-
-        // Find truly new fields (not in config, not ignored)
-        let existing: HashSet<&str> = config
-            .fields
-            .field
-            .iter()
-            .map(|f| f.name.as_str())
-            .collect();
-        let new_toml_fields: Vec<TomlField> = schema
-            .fields
-            .iter()
-            .filter(|f| !existing.contains(f.name.as_str()))
-            .filter(|f| !config.fields.ignore.contains(&f.name))
-            .map(|f| TomlField {
-                name: f.name.clone(),
-                field_type: FieldTypeSerde::from(&f.field_type),
-                allowed: f.allowed.clone(),
-                required: f.required.clone(),
-                nullable: f.nullable,
-                constraints: None,
-                preprocess: f.preprocess.clone(),
-            })
-            .collect();
-
-        if new_toml_fields.is_empty() {
-            config
-        } else {
-            let mut config = config;
-            config.fields.field.extend(new_toml_fields);
-            let write_start = Instant::now();
-            match config.write(&config_path_buf) {
-                Ok(()) => {
-                    steps.push(StepEntry::ok(
-                        Outcome::WriteConfig(WriteConfigOutcome {
-                            config_path: config_path_buf.display().to_string(),
-                            fields_written: config.fields.field.len(),
-                        }),
-                        write_start.elapsed().as_millis() as u64,
-                    ));
-                    // Re-read to pick up normalized TOML
-                    match MdvsToml::read(&config_path_buf) {
-                        Ok(c) => c,
-                        Err(_) => config,
-                    }
-                }
-                Err(e) => {
-                    steps.push(StepEntry::err(
-                        ErrorKind::Application,
-                        e.to_string(),
-                        write_start.elapsed().as_millis() as u64,
-                    ));
-                    return CommandResult::failed(
-                        steps,
-                        ErrorKind::Application,
-                        "auto-update failed to write config".into(),
-                        start,
-                    );
-                }
-            }
-        }
-    } else {
-        config
-    };
+    if should_update
+        && auto_update_step(&mut config, &config_path_buf, &scanned, &mut steps).is_err()
+    {
+        return CommandResult::failed(
+            steps,
+            ErrorKind::Application,
+            "auto-update failed to write config".into(),
+            start,
+        );
+    }
 
     // 4. Validate
     let validate_start = std::time::Instant::now();
@@ -227,7 +125,7 @@ pub fn run(
             steps.push(StepEntry::err(
                 ErrorKind::Application,
                 e.to_string(),
-                validate_start.elapsed().as_millis() as u64,
+                elapsed_ms(validate_start),
             ));
             return CommandResult::failed(
                 steps,
@@ -245,7 +143,7 @@ pub fn run(
             violations: check_result.field_violations.clone(),
             new_fields: check_result.new_fields.clone(),
         }),
-        validate_start.elapsed().as_millis() as u64,
+        elapsed_ms(validate_start),
     ));
 
     // Build command outcome
@@ -256,7 +154,7 @@ pub fn run(
             violations: check_result.field_violations,
             new_fields: check_result.new_fields,
         }))),
-        elapsed_ms: start.elapsed().as_millis() as u64,
+        elapsed_ms: elapsed_ms(start),
     }
 }
 
@@ -306,28 +204,35 @@ fn resolve_check_config(
     }
 }
 
-/// Validate scanned files against the schema in `mdvs.toml`. Reusable core called by both `check` and `build`.
-/// Kept for the unit tests that exercise the glob-matching semantics
-/// directly. Production code uses `FieldMeta.allowed` / `FieldMeta.required`
-/// (precompiled `GlobSet`s) instead.
-#[cfg(test)]
-fn matches_any_glob(patterns: &[String], path: &str) -> bool {
-    patterns.iter().any(|p| {
-        Glob::new(p)
-            .ok()
-            .map(|g| g.compile_matcher())
-            .is_some_and(|m| m.is_match(path))
-    })
-}
-
 #[cfg(test)]
 mod tests {
-    use super::collect::map_validation_error;
-    use super::*;
-    use crate::outcome::commands::CheckOutcome;
-    use crate::schema::config::{FieldsConfig, TomlField, UpdateConfig};
-    use crate::schema::shared::{FrontmatterFormat, ScanConfig};
     use std::fs;
+
+    use globset::Glob;
+
+    use super::{collect::map_validation_error, *};
+    use crate::{
+        cmd::init::{InitOptions, InitScanFlags},
+        num::F64_EXACT_INT_LIMIT_I64,
+        outcome::commands::CheckOutcome,
+        output::ViolationKind,
+        schema::{
+            config::{FieldsConfig, TomlField, UpdateConfig},
+            shared::{FieldTypeSerde, FrontmatterFormat, ScanConfig},
+        },
+    };
+
+    /// Kept for the unit tests that exercise the glob-matching semantics
+    /// directly. Production code uses `FieldMeta.allowed` / `FieldMeta.required`
+    /// (precompiled `GlobSet`s) instead.
+    fn matches_any_glob(patterns: &[String], path: &str) -> bool {
+        patterns.iter().any(|p| {
+            Glob::new(p)
+                .ok()
+                .map(|g| g.compile_matcher())
+                .is_some_and(|m| m.is_match(path))
+        })
+    }
 
     fn unwrap_check(result: &CommandResult) -> &CheckOutcome {
         match &result.result {
@@ -367,8 +272,8 @@ mod tests {
             fields: FieldsConfig {
                 ignore,
                 field: fields,
-                max_categories: 10,
-                min_category_repetition: 3,
+                max_categories: None,
+                min_category_repetition: None,
             },
             embedding_model: None,
             chunking: None,
@@ -564,6 +469,49 @@ mod tests {
         assert!(result.violations.is_empty());
     }
 
+    /// Writes a single file with the given integer `rating`, declares it as
+    /// a Float field with `widen_int_to_float`, and runs check.
+    fn check_widened_float_rating(rating: i64) -> CommandResult {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("blog")).unwrap();
+        fs::write(
+            tmp.path().join("blog/post1.md"),
+            format!("---\nrating: {rating}\n---\n# Post\nBody."),
+        )
+        .unwrap();
+        write_toml(
+            tmp.path(),
+            vec![TomlField {
+                name: "rating".into(),
+                field_type: FieldTypeSerde::Scalar("Float".into()),
+                allowed: vec!["**".into()],
+                required: vec![],
+                nullable: false,
+                constraints: None,
+                preprocess: vec![crate::preprocess::ValueStage::WidenIntToFloat],
+            }],
+            vec![],
+        );
+        run(tmp.path(), true, false, None)
+    }
+
+    #[test]
+    fn int_beyond_f64_precision_in_widened_float_is_wrong_type() {
+        let step = check_widened_float_rating(F64_EXACT_INT_LIMIT_I64 + 1);
+        let result = unwrap_check(&step);
+        assert_eq!(result.violations.len(), 1);
+        let v = &result.violations[0];
+        assert_eq!(v.field, "rating");
+        assert!(matches!(v.kind, ViolationKind::WrongType));
+    }
+
+    #[test]
+    fn int_at_f64_precision_limit_in_widened_float_passes() {
+        let step = check_widened_float_rating(F64_EXACT_INT_LIMIT_I64);
+        let result = unwrap_check(&step);
+        assert!(result.violations.is_empty());
+    }
+
     #[test]
     fn float_value_in_strict_float_passes() {
         // Regression guard: pure float `5.0` must not be flagged by the
@@ -753,8 +701,8 @@ mod tests {
                     constraints: None,
                     preprocess: vec![],
                 }],
-                max_categories: 10,
-                min_category_repetition: 3,
+                max_categories: None,
+                min_category_repetition: None,
             },
             embedding_model: None,
             chunking: None,
@@ -1270,11 +1218,13 @@ mod tests {
         let init_step = crate::cmd::init::run(
             tmp.path(),
             "**",
-            false,
-            false,
-            true,
-            false,
-            false,
+            InitOptions {
+                scan: InitScanFlags {
+                    ignore_bare_files: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             None,
             None,
         );
@@ -1313,11 +1263,13 @@ mod tests {
         let init_step = crate::cmd::init::run(
             tmp.path(),
             "**",
-            false,
-            false,
-            true,
-            false,
-            false,
+            InitOptions {
+                scan: InitScanFlags {
+                    ignore_bare_files: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             None,
             None,
         );
@@ -1362,11 +1314,13 @@ mod tests {
         let init_step = crate::cmd::init::run(
             tmp.path(),
             "**",
-            false,
-            false,
-            true,
-            false,
-            false,
+            InitOptions {
+                scan: InitScanFlags {
+                    ignore_bare_files: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             None,
             None,
         );
@@ -1695,20 +1649,23 @@ mod tests {
     }
 
     /// Run schema against instance, map all errors, return the resulting kinds.
-    fn mapped_kinds(schema: serde_json::Value, instance: serde_json::Value) -> Vec<ViolationKind> {
-        let validator = jsonschema::validator_for(&schema).expect("schema compiles");
+    fn mapped_kinds(
+        schema: &serde_json::Value,
+        instance: &serde_json::Value,
+    ) -> Vec<ViolationKind> {
+        let validator = jsonschema::validator_for(schema).expect("schema compiles");
         let f = dummy_field(FieldTypeSerde::Scalar("String".into()));
         validator
-            .iter_errors(&instance)
-            .map(|err| map_validation_error(&err, &instance, &f).kind)
+            .iter_errors(instance)
+            .map(|err| map_validation_error(&err, instance, &f).kind)
             .collect()
     }
 
     #[test]
     fn map_required_to_missing_required() {
         let kinds = mapped_kinds(
-            serde_json::json!({"type": "object", "required": ["x"], "properties": {"x": {"type": "string"}}}),
-            serde_json::json!({}),
+            &serde_json::json!({"type": "object", "required": ["x"], "properties": {"x": {"type": "string"}}}),
+            &serde_json::json!({}),
         );
         assert_eq!(kinds, vec![ViolationKind::MissingRequired]);
     }
@@ -1716,23 +1673,26 @@ mod tests {
     #[test]
     fn map_additional_properties_to_disallowed() {
         let kinds = mapped_kinds(
-            serde_json::json!({"type": "object", "properties": {}, "additionalProperties": false}),
-            serde_json::json!({"rogue": 1}),
+            &serde_json::json!({"type": "object", "properties": {}, "additionalProperties": false}),
+            &serde_json::json!({"rogue": 1}),
         );
         assert_eq!(kinds, vec![ViolationKind::Disallowed]);
     }
 
     #[test]
     fn map_type_string_got_integer_to_wrong_type() {
-        let kinds = mapped_kinds(serde_json::json!({"type": "string"}), serde_json::json!(42));
+        let kinds = mapped_kinds(
+            &serde_json::json!({"type": "string"}),
+            &serde_json::json!(42),
+        );
         assert_eq!(kinds, vec![ViolationKind::WrongType]);
     }
 
     #[test]
     fn map_type_object_got_array_to_wrong_type() {
         let kinds = mapped_kinds(
-            serde_json::json!({"type": "object"}),
-            serde_json::json!([1, 2]),
+            &serde_json::json!({"type": "object"}),
+            &serde_json::json!([1, 2]),
         );
         assert_eq!(kinds, vec![ViolationKind::WrongType]);
     }
@@ -1740,8 +1700,8 @@ mod tests {
     #[test]
     fn map_type_string_got_null_to_null_not_allowed() {
         let kinds = mapped_kinds(
-            serde_json::json!({"type": "string"}),
-            serde_json::json!(null),
+            &serde_json::json!({"type": "string"}),
+            &serde_json::json!(null),
         );
         assert_eq!(kinds, vec![ViolationKind::NullNotAllowed]);
     }
@@ -1749,8 +1709,8 @@ mod tests {
     #[test]
     fn map_type_union_no_violation_for_null_when_listed() {
         let kinds = mapped_kinds(
-            serde_json::json!({"type": ["string", "null"]}),
-            serde_json::json!(null),
+            &serde_json::json!({"type": ["string", "null"]}),
+            &serde_json::json!(null),
         );
         assert!(kinds.is_empty());
     }
@@ -1758,8 +1718,8 @@ mod tests {
     #[test]
     fn map_enum_to_invalid_category() {
         let kinds = mapped_kinds(
-            serde_json::json!({"enum": ["draft", "published", "archived"]}),
-            serde_json::json!("scheduled"),
+            &serde_json::json!({"enum": ["draft", "published", "archived"]}),
+            &serde_json::json!("scheduled"),
         );
         assert_eq!(kinds, vec![ViolationKind::InvalidCategory]);
     }
@@ -1767,8 +1727,8 @@ mod tests {
     #[test]
     fn map_const_to_invalid_category() {
         let kinds = mapped_kinds(
-            serde_json::json!({"const": "fixed"}),
-            serde_json::json!("other"),
+            &serde_json::json!({"const": "fixed"}),
+            &serde_json::json!("other"),
         );
         assert_eq!(kinds, vec![ViolationKind::InvalidCategory]);
     }
@@ -1776,8 +1736,8 @@ mod tests {
     #[test]
     fn map_minimum_to_out_of_range() {
         let kinds = mapped_kinds(
-            serde_json::json!({"type": "integer", "minimum": 0}),
-            serde_json::json!(-1),
+            &serde_json::json!({"type": "integer", "minimum": 0}),
+            &serde_json::json!(-1),
         );
         assert_eq!(kinds, vec![ViolationKind::OutOfRange]);
     }
@@ -1785,8 +1745,8 @@ mod tests {
     #[test]
     fn map_maximum_to_out_of_range() {
         let kinds = mapped_kinds(
-            serde_json::json!({"type": "integer", "maximum": 100}),
-            serde_json::json!(150),
+            &serde_json::json!({"type": "integer", "maximum": 100}),
+            &serde_json::json!(150),
         );
         assert_eq!(kinds, vec![ViolationKind::OutOfRange]);
     }
@@ -1794,8 +1754,8 @@ mod tests {
     #[test]
     fn map_exclusive_minimum_to_out_of_range() {
         let kinds = mapped_kinds(
-            serde_json::json!({"type": "number", "exclusiveMinimum": 0}),
-            serde_json::json!(0),
+            &serde_json::json!({"type": "number", "exclusiveMinimum": 0}),
+            &serde_json::json!(0),
         );
         assert_eq!(kinds, vec![ViolationKind::OutOfRange]);
     }
@@ -1803,8 +1763,8 @@ mod tests {
     #[test]
     fn map_exclusive_maximum_to_out_of_range() {
         let kinds = mapped_kinds(
-            serde_json::json!({"type": "number", "exclusiveMaximum": 1}),
-            serde_json::json!(1),
+            &serde_json::json!({"type": "number", "exclusiveMaximum": 1}),
+            &serde_json::json!(1),
         );
         assert_eq!(kinds, vec![ViolationKind::OutOfRange]);
     }
@@ -1812,8 +1772,8 @@ mod tests {
     #[test]
     fn map_multiple_of_to_out_of_range() {
         let kinds = mapped_kinds(
-            serde_json::json!({"type": "integer", "multipleOf": 5}),
-            serde_json::json!(7),
+            &serde_json::json!({"type": "integer", "multipleOf": 5}),
+            &serde_json::json!(7),
         );
         assert_eq!(kinds, vec![ViolationKind::OutOfRange]);
     }
@@ -1821,8 +1781,8 @@ mod tests {
     #[test]
     fn map_min_length_to_out_of_range() {
         let kinds = mapped_kinds(
-            serde_json::json!({"type": "string", "minLength": 3}),
-            serde_json::json!("ab"),
+            &serde_json::json!({"type": "string", "minLength": 3}),
+            &serde_json::json!("ab"),
         );
         assert_eq!(kinds, vec![ViolationKind::OutOfRange]);
     }
@@ -1830,8 +1790,8 @@ mod tests {
     #[test]
     fn map_max_length_to_out_of_range() {
         let kinds = mapped_kinds(
-            serde_json::json!({"type": "string", "maxLength": 5}),
-            serde_json::json!("too long"),
+            &serde_json::json!({"type": "string", "maxLength": 5}),
+            &serde_json::json!("too long"),
         );
         assert_eq!(kinds, vec![ViolationKind::OutOfRange]);
     }
@@ -1840,8 +1800,8 @@ mod tests {
     fn map_pattern_to_wrong_type() {
         // Pattern mismatch ≈ value isn't shaped right for the field's purpose.
         let kinds = mapped_kinds(
-            serde_json::json!({"type": "string", "pattern": "^[A-Z]+$"}),
-            serde_json::json!("lowercase"),
+            &serde_json::json!({"type": "string", "pattern": "^[A-Z]+$"}),
+            &serde_json::json!("lowercase"),
         );
         assert_eq!(kinds, vec![ViolationKind::WrongType]);
     }
@@ -1849,8 +1809,8 @@ mod tests {
     #[test]
     fn map_min_items_to_out_of_range() {
         let kinds = mapped_kinds(
-            serde_json::json!({"type": "array", "minItems": 2}),
-            serde_json::json!([1]),
+            &serde_json::json!({"type": "array", "minItems": 2}),
+            &serde_json::json!([1]),
         );
         assert_eq!(kinds, vec![ViolationKind::OutOfRange]);
     }
@@ -1858,8 +1818,8 @@ mod tests {
     #[test]
     fn map_max_items_to_out_of_range() {
         let kinds = mapped_kinds(
-            serde_json::json!({"type": "array", "maxItems": 2}),
-            serde_json::json!([1, 2, 3]),
+            &serde_json::json!({"type": "array", "maxItems": 2}),
+            &serde_json::json!([1, 2, 3]),
         );
         assert_eq!(kinds, vec![ViolationKind::OutOfRange]);
     }
@@ -1867,8 +1827,8 @@ mod tests {
     #[test]
     fn map_unique_items_to_out_of_range() {
         let kinds = mapped_kinds(
-            serde_json::json!({"type": "array", "uniqueItems": true}),
-            serde_json::json!([1, 2, 2]),
+            &serde_json::json!({"type": "array", "uniqueItems": true}),
+            &serde_json::json!([1, 2, 2]),
         );
         assert_eq!(kinds, vec![ViolationKind::OutOfRange]);
     }
@@ -1876,8 +1836,8 @@ mod tests {
     #[test]
     fn map_array_item_type_error_to_wrong_type() {
         let kinds = mapped_kinds(
-            serde_json::json!({"type": "array", "items": {"type": "string"}}),
-            serde_json::json!(["ok", 42, "also ok"]),
+            &serde_json::json!({"type": "array", "items": {"type": "string"}}),
+            &serde_json::json!(["ok", 42, "also ok"]),
         );
         assert_eq!(kinds, vec![ViolationKind::WrongType]);
     }
@@ -1885,8 +1845,8 @@ mod tests {
     #[test]
     fn map_nested_property_type_error() {
         let kinds = mapped_kinds(
-            serde_json::json!({"type": "object", "properties": {"draft": {"type": "boolean"}}}),
-            serde_json::json!({"draft": "yes please"}),
+            &serde_json::json!({"type": "object", "properties": {"draft": {"type": "boolean"}}}),
+            &serde_json::json!({"draft": "yes please"}),
         );
         assert_eq!(kinds, vec![ViolationKind::WrongType]);
     }
@@ -1894,7 +1854,7 @@ mod tests {
     #[test]
     fn map_multiple_violations_in_one_document() {
         let kinds = mapped_kinds(
-            serde_json::json!({
+            &serde_json::json!({
                 "type": "object",
                 "required": ["title"],
                 "properties": {
@@ -1902,7 +1862,7 @@ mod tests {
                     "draft": {"type": "boolean"}
                 }
             }),
-            serde_json::json!({"draft": "yes please"}),
+            &serde_json::json!({"draft": "yes please"}),
         );
         // Both Required (missing title) and Type (draft) should be mapped.
         assert!(kinds.contains(&ViolationKind::MissingRequired));

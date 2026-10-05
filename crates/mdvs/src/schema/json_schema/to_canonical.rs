@@ -10,12 +10,16 @@
 //!   each leaf property; intermediate Object nodes carry no `x-mdvs`.
 //! - No root-level `required` array — requirement is path-scoped.
 
-use crate::discover::field_type::FieldType;
-use crate::schema::config::{MdvsToml, TomlField};
-use crate::schema::constraints::Constraints;
 use serde_json::{Map, Value, json};
 
 use super::is_intermediate_object;
+use crate::{
+    discover::field_type::FieldType,
+    schema::{
+        config::{MdvsToml, TomlField},
+        constraints::Constraints,
+    },
+};
 
 /// JSON Schema 2020-12 `$schema` URI.
 pub(super) const JSON_SCHEMA_DRAFT: &str = "https://json-schema.org/draft/2020-12/schema";
@@ -100,11 +104,10 @@ pub(super) fn intermediate_object_schema() -> Value {
 }
 
 fn field_to_subschema(field: &TomlField) -> Value {
-    let ft = match FieldType::try_from(&field.field_type) {
-        Ok(ft) => ft,
-        // Unparseable types are caught by `MdvsToml::validate()` before this
-        // function is reachable. If we get here, fall through to an empty schema.
-        Err(_) => return json!({}),
+    // Unparseable types are caught by `MdvsToml::validate()` before this
+    // function is reachable. If we get here, fall through to an empty schema.
+    let Ok(ft) = FieldType::try_from(&field.field_type) else {
+        return json!({});
     };
 
     let mut subschema = type_subschema(&ft, field.nullable, field.constraints.as_ref());

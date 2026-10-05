@@ -6,15 +6,18 @@
 //! `[[fields.field]]` and `[fields].ignore` entries (preserving constraints,
 //! path-scoping, and `preprocess` arrays via `x-mdvs`).
 
-use crate::outcome::Outcome;
-use crate::outcome::commands::export_jsonschema::{ExportFormat, ExportJsonschemaOutcome};
-use crate::schema::config::MdvsToml;
-use crate::schema::json_schema::dsl_to_canonical;
-use crate::step::{CommandResult, ErrorKind, StepEntry};
-use std::fs;
-use std::path::Path;
-use std::time::Instant;
+use std::{fs, path::Path, time::Instant};
+
 use tracing::{info, instrument};
+
+use crate::{
+    outcome::{
+        Outcome,
+        commands::export_jsonschema::{ExportFormat, ExportJsonschemaOutcome},
+    },
+    schema::{config::MdvsToml, json_schema::dsl_to_canonical},
+    step::{CommandResult, ErrorKind, StepEntry, elapsed_ms},
+};
 
 /// Read `mdvs.toml`, translate to canonical JSON Schema, write to stdout or
 /// a file in the requested format.
@@ -92,23 +95,25 @@ pub fn run(path: &Path, format: ExportFormat, output_file: Option<&Path>) -> Com
         result: Ok(Outcome::ExportJsonschema(Box::new(
             ExportJsonschemaOutcome {
                 source: config_path,
-                destination: output_file.map(|p| p.to_path_buf()),
+                destination: output_file.map(Path::to_path_buf),
                 format,
                 fields_exported,
                 ignore_exported,
             },
         ))),
-        elapsed_ms: start.elapsed().as_millis() as u64,
+        elapsed_ms: elapsed_ms(start),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::outcome::Outcome;
-    use crate::schema::json_schema::canonical_to_dsl;
-    use crate::schema::load::load_schema;
     use std::fs;
+
+    use super::*;
+    use crate::{
+        outcome::Outcome,
+        schema::{json_schema::canonical_to_dsl, load::load_schema},
+    };
 
     fn unwrap_outcome(result: &CommandResult) -> &ExportJsonschemaOutcome {
         match &result.result {

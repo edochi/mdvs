@@ -2,27 +2,33 @@ mod read;
 mod search;
 mod where_translator;
 
-pub use search::SearchResults;
-pub use where_translator::WhereRewrite;
+use std::path::{Path, PathBuf};
 
-use crate::discover::field_type::FieldType;
-use crate::index::storage::{
-    BuildMetadata, COL_CHUNK_TEXT, COL_EMBEDDING, COL_FILE_ID, ChunkRow, FileIndexEntry, FileRow,
-    build_index_batch,
-};
 use anyhow::Context;
 use arrow::array::{
     Float32Array, Int32Array, RecordBatch, RecordBatchIterator, RecordBatchReader, StringArray,
 };
-use lancedb::DistanceType;
-use lancedb::connection::LanceFileVersion;
-use lancedb::database::CreateTableMode;
-use lancedb::database::listing::{ListingDatabaseOptions, NewTableConfig};
-use lancedb::index::Index;
-use lancedb::index::vector::IvfPqIndexBuilder;
+use lancedb::{
+    DistanceType,
+    connection::LanceFileVersion,
+    database::{
+        CreateTableMode,
+        listing::{ListingDatabaseOptions, NewTableConfig},
+    },
+    index::{Index, scalar::FtsIndexBuilder, vector::IvfPqIndexBuilder},
+};
+pub use search::SearchResults;
 use serde::Serialize;
-use std::path::{Path, PathBuf};
 use tracing::instrument;
+pub use where_translator::{WhereNaming, WhereRewrite};
+
+use crate::{
+    discover::field_type::FieldType,
+    index::storage::{
+        BuildMetadata, COL_CHUNK_TEXT, COL_EMBEDDING, COL_FILE_ID, ChunkRow, FileIndexEntry,
+        FileRow, build_index_batch,
+    },
+};
 
 /// Name of the single denormalized Lance table.
 const LANCE_TABLE: &str = "index";
@@ -43,6 +49,23 @@ pub enum SearchMode {
     /// Vector + BM25 fused by reciprocal rank fusion (default).
     #[default]
     Hybrid,
+}
+
+/// What to search for: the query text, how many files to return, an
+/// optional `--where` SQL filter over frontmatter fields, and the retrieval
+/// mode.
+#[derive(Debug, Clone, Copy)]
+pub struct SearchQuery<'a> {
+    /// Natural-language query text (embedded for semantic / hybrid, matched
+    /// by BM25 for full-text / hybrid).
+    pub text: &'a str,
+    /// Maximum number of files to return; `0` returns no hits.
+    pub limit: usize,
+    /// Optional `--where` SQL clause, written against frontmatter field
+    /// names.
+    pub where_clause: Option<&'a str>,
+    /// Retrieval mode.
+    pub mode: SearchMode,
 }
 
 /// A single search result with its relevance score.
@@ -88,7 +111,7 @@ impl Backend {
     /// `CreateTableMode::Overwrite`. Used on the first build and whenever
     /// `--force` is passed. For the small-delta case, use
     /// [`Backend::write_index_incremental`] instead — it avoids the full
-    /// table rewrite by deleting only the changed file_ids and appending
+    /// table rewrite by deleting only the changed `file_id`s and appending
     /// the newly embedded chunks.
     #[instrument(name = "write_index", skip_all)]
     pub async fn write_index(
@@ -103,15 +126,15 @@ impl Backend {
         }
     }
 
-    /// Incremental write: delete rows for the given file_ids (changed +
+    /// Incremental write: delete rows for the given `file_id`s (changed +
     /// removed), append rows for the given new chunks, refresh the schema
     /// metadata, and optimize the indexes. Used when an existing index is
     /// present and the change set is small — avoids the full-table rewrite
     /// (`CreateTableMode::Overwrite`) that `write_index` performs.
     ///
-    /// `file_ids_to_clear` must contain every file_id whose existing rows
+    /// `file_ids_to_clear` must contain every `file_id` whose existing rows
     /// must go (typically: removed files + edited files whose chunks are
-    /// being replaced). It may overlap with file_ids referenced by
+    /// being replaced). It may overlap with `file_id`s referenced by
     /// `new_chunks` — those files first have their old rows deleted, then
     /// their new chunks added.
     #[instrument(name = "write_index_incremental", skip_all)]
@@ -166,30 +189,14 @@ impl Backend {
     }
 
     #[instrument(name = "search_index", skip_all)]
-    #[allow(clippy::too_many_arguments)]
     pub async fn search(
         &self,
+        query: &SearchQuery<'_>,
         query_embedding: Option<Vec<f32>>,
-        query_text: &str,
-        mode: SearchMode,
-        where_clause: Option<&str>,
-        limit: usize,
-        internal_prefix: &str,
-        aliases: &std::collections::HashMap<String, String>,
+        naming: &WhereNaming<'_>,
     ) -> anyhow::Result<SearchResults> {
         match self {
-            Backend::Lance(b) => {
-                b.search(
-                    query_embedding,
-                    query_text,
-                    mode,
-                    where_clause,
-                    limit,
-                    internal_prefix,
-                    aliases,
-                )
-                .await
-            }
+            Backend::Lance(b) => b.search(query, query_embedding, naming).await,
         }
     }
 
@@ -382,7 +389,7 @@ impl LanceBackend {
             return Ok(());
         }
         table
-            .create_index(&[COL_CHUNK_TEXT], Index::FTS(Default::default()))
+            .create_index(&[COL_CHUNK_TEXT], Index::FTS(FtsIndexBuilder::default()))
             .execute()
             .await
             .context("building full-text index")?;
@@ -449,8 +456,7 @@ pub(super) fn f32_col<'a>(batch: &'a RecordBatch, name: &str) -> anyhow::Result<
 
 #[cfg(test)]
 mod tests {
-    use super::search::translate_where_to_struct;
-    use super::*;
+    use super::{search::translate_where_to_struct, *};
     use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig};
 
     fn test_schema_fields() -> Vec<(String, FieldType)> {
@@ -637,13 +643,17 @@ mod tests {
         // Query vector close to rust.md's embedding
         let results = backend
             .search(
+                &SearchQuery {
+                    text: "rust",
+                    limit: 10,
+                    where_clause: None,
+                    mode: SearchMode::Semantic,
+                },
                 Some(vec![1.0, 0.0, 0.0, 0.0]),
-                "rust",
-                SearchMode::Semantic,
-                None,
-                10,
-                "",
-                &std::collections::HashMap::new(),
+                &WhereNaming {
+                    internal_prefix: "",
+                    aliases: &std::collections::HashMap::new(),
+                },
             )
             .await
             .unwrap();
@@ -657,7 +667,7 @@ mod tests {
     }
 
     fn fields(names: &[&str]) -> std::collections::HashSet<String> {
-        names.iter().map(|s| s.to_string()).collect()
+        names.iter().map(ToString::to_string).collect()
     }
 
     fn xlate(clause: &str, children: &[&str]) -> String {

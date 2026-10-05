@@ -2,9 +2,10 @@
 
 use serde::Serialize;
 
-use crate::block::{Block, Render, TableStyle};
-use crate::output::BuildFileDetail;
-use crate::output::{NewField, format_file_count};
+use crate::{
+    block::{Block, Render, TableStyle},
+    output::{BuildFileDetail, NewField, format_file_count},
+};
 
 fn format_chunk_count(n: usize) -> String {
     if n == 1 {

@@ -104,9 +104,10 @@ not just at merge time.
 **Steps:**
 
 1. `cargo build`
-2. `cargo test`
-3. `cargo clippy -- -D warnings`
-4. `cargo fmt --check`
+2. `cargo test --features testing-mocks`
+3. `cargo clippy --all-targets --features testing-mocks -- -D warnings`
+4. Rust format check on the nightly pinned in `rustfmt-toolchain` (separate
+   `fmt-rust` job): `cargo +<pinned> fmt --check`
 
 **Runner:** `ubuntu-latest` with `rust-cache` for fast builds.
 

@@ -1,10 +1,15 @@
-use crate::index::backend::Backend;
-use crate::outcome::commands::CleanOutcome;
-use crate::outcome::{DeleteIndexOutcome, Outcome};
-use crate::step::{CommandResult, ErrorKind, StepEntry};
-use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::{
+    path::{Path, PathBuf},
+    time::Instant,
+};
+
 use tracing::instrument;
+
+use crate::{
+    index::backend::Backend,
+    outcome::{DeleteIndexOutcome, Outcome, commands::CleanOutcome},
+    step::{CommandResult, ErrorKind, StepEntry, elapsed_ms},
+};
 
 /// Count files and sum their sizes in a directory (recursively).
 fn walk_dir_stats(dir: &Path) -> anyhow::Result<(usize, u64)> {
@@ -43,7 +48,7 @@ pub async fn run(path: &Path) -> CommandResult {
         steps.push(StepEntry::err(
             ErrorKind::User,
             msg.clone(),
-            delete_start.elapsed().as_millis() as u64,
+            elapsed_ms(delete_start),
         ));
         return CommandResult::failed(steps, ErrorKind::User, msg, start);
     }
@@ -55,7 +60,7 @@ pub async fn run(path: &Path) -> CommandResult {
                 steps.push(StepEntry::err(
                     ErrorKind::Application,
                     e.to_string(),
-                    delete_start.elapsed().as_millis() as u64,
+                    elapsed_ms(delete_start),
                 ));
                 return CommandResult::failed_from_steps(steps, start);
             }
@@ -66,7 +71,7 @@ pub async fn run(path: &Path) -> CommandResult {
             steps.push(StepEntry::err(
                 ErrorKind::Application,
                 e.to_string(),
-                delete_start.elapsed().as_millis() as u64,
+                elapsed_ms(delete_start),
             ));
             return CommandResult::failed_from_steps(steps, start);
         }
@@ -88,7 +93,7 @@ pub async fn run(path: &Path) -> CommandResult {
             files_removed,
             size_bytes,
         }),
-        delete_start.elapsed().as_millis() as u64,
+        elapsed_ms(delete_start),
     ));
 
     CommandResult {
@@ -99,16 +104,16 @@ pub async fn run(path: &Path) -> CommandResult {
             files_removed,
             size_bytes,
         })),
-        elapsed_ms: start.elapsed().as_millis() as u64,
+        elapsed_ms: elapsed_ms(start),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::outcome::Outcome;
-    use crate::step::CommandResult;
     use std::fs;
+
+    use super::*;
+    use crate::{outcome::Outcome, step::CommandResult};
 
     fn unwrap_clean(result: &CommandResult) -> &CleanOutcome {
         match &result.result {

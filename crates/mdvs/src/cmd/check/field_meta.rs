@@ -8,13 +8,19 @@
 //! - [`FieldMeta`] — compiled `GlobSet`s for `allowed` / `required` plus
 //!   a cached `FieldType`, keyed by field name.
 
-use crate::discover::field_type::FieldType;
-use crate::schema::config::MdvsToml;
-use crate::schema::json_schema::{dsl_to_canonical, is_intermediate_object};
+use std::collections::HashMap;
+
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use jsonschema::Validator;
 use serde_json::{Map, Value};
-use std::collections::HashMap;
+
+use crate::{
+    discover::field_type::FieldType,
+    schema::{
+        config::MdvsToml,
+        json_schema::{dsl_to_canonical, is_intermediate_object},
+    },
+};
 
 /// Per-field precomputed metadata, built once per `validate()` call.
 pub(super) struct FieldMeta {
@@ -97,7 +103,7 @@ impl FieldValidators {
             let Some(subschema) = leaf_schemas.get(field.name.as_str()) else {
                 continue;
             };
-            if subschema.as_object().is_some_and(|o| o.is_empty()) {
+            if subschema.as_object().is_some_and(Map::is_empty) {
                 continue;
             }
             // Strip `x-mdvs` before compiling — it's an extension, not a

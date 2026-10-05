@@ -1,7 +1,10 @@
-use crate::TomlJsonOptions;
-use crate::error::{Error, Result};
 use serde_json::Value as Json;
 use toml::Value as Toml;
+
+use crate::{
+    TomlJsonOptions,
+    error::{Error, Result},
+};
 
 /// Decode a TOML string to a JSON value.
 ///
@@ -38,12 +41,13 @@ fn walk(v: &Toml, placeholder: &str, path_stack: &mut Vec<String>) -> Result<Jso
 
         Toml::Integer(i) => Ok(Json::Number((*i).into())),
 
-        Toml::Float(f) => match serde_json::Number::from_f64(*f) {
-            Some(n) => Ok(Json::Number(n)),
-            // `Number::from_f64` only rejects NaN / ±Inf — classify the
-            // failure mode for the user-facing error rather than panicking
-            // on a now-impossible-by-construction `expect`.
-            None => {
+        Toml::Float(f) => {
+            if let Some(n) = serde_json::Number::from_f64(*f) {
+                Ok(Json::Number(n))
+            } else {
+                // `Number::from_f64` only rejects NaN / ±Inf — classify the
+                // failure mode for the user-facing error rather than panicking
+                // on a now-impossible-by-construction `expect`.
                 let kind = if f.is_nan() {
                     "NaN"
                 } else if *f > 0.0 {
@@ -56,7 +60,7 @@ fn walk(v: &Toml, placeholder: &str, path_stack: &mut Vec<String>) -> Result<Jso
                     kind,
                 })
             }
-        },
+        }
 
         Toml::Boolean(b) => Ok(Json::Bool(*b)),
 
@@ -90,7 +94,7 @@ fn walk(v: &Toml, placeholder: &str, path_stack: &mut Vec<String>) -> Result<Jso
 
 fn format_path(segments: &[String]) -> String {
     if segments.is_empty() {
-        "".to_string()
+        String::new()
     } else {
         let mut out = String::new();
         for s in segments {

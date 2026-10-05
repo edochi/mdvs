@@ -1,16 +1,21 @@
-use crate::discover::scan::ScannedFiles;
-use crate::index::backend::Backend;
-use crate::outcome::commands::InfoOutcome;
-use crate::outcome::{Outcome, ReadConfigOutcome, ReadIndexOutcome, ScanOutcome};
-use crate::output::{FieldHint, field_hints};
-use crate::schema::config::MdvsToml;
-use crate::step::{CommandResult, ErrorKind, StepEntry};
+use std::{collections::HashMap, path::Path, time::Instant};
+
 use serde::Serialize;
 use serde_json::Value;
-use std::collections::HashMap;
-use std::path::Path;
-use std::time::Instant;
 use tracing::instrument;
+
+use crate::{
+    cmd::steps::{read_config_step, read_index_step, scan_step},
+    discover::scan::ScannedFile,
+    index::{
+        backend::{Backend, IndexStats},
+        storage::BuildMetadata,
+    },
+    outcome::{Outcome, commands::InfoOutcome},
+    output::{FieldHint, field_hints},
+    schema::config::MdvsToml,
+    step::{CommandResult, elapsed_ms},
+};
 
 /// A single field definition for info display.
 #[derive(Debug, Serialize)]
@@ -60,131 +65,22 @@ pub struct IndexInfo {
 
 /// Read config, scan files, and read index metadata.
 #[instrument(name = "info", skip_all)]
-pub async fn run(path: &Path, _verbose: bool) -> CommandResult {
+pub async fn run(path: &Path) -> CommandResult {
     let start = Instant::now();
     let mut steps = Vec::new();
 
-    // 1. Read config — calls MdvsToml::read() + validate() directly
-    let config_start = Instant::now();
-    let config_path_buf = path.join("mdvs.toml");
-    let config = match MdvsToml::read(&config_path_buf) {
-        Ok(cfg) => match cfg.validate() {
-            Ok(()) => {
-                steps.push(StepEntry::ok(
-                    Outcome::ReadConfig(ReadConfigOutcome {
-                        config_path: config_path_buf.display().to_string(),
-                    }),
-                    config_start.elapsed().as_millis() as u64,
-                ));
-                Some(cfg)
-            }
-            Err(e) => {
-                steps.push(StepEntry::err(
-                    ErrorKind::User,
-                    format!("mdvs.toml is invalid: {e} — fix the file or run 'mdvs init --force'"),
-                    config_start.elapsed().as_millis() as u64,
-                ));
-                None
-            }
-        },
-        Err(e) => {
-            steps.push(StepEntry::err(
-                ErrorKind::User,
-                e.to_string(),
-                config_start.elapsed().as_millis() as u64,
-            ));
-            None
-        }
+    let Ok((config, _)) = read_config_step(path, &mut steps) else {
+        return CommandResult::failed_from_steps(steps, start);
     };
 
-    let config = match config {
-        Some(c) => c,
-        None => {
-            return CommandResult::failed_from_steps(steps, start);
-        }
-    };
+    // A failed scan is reported but not fatal: info still shows the config.
+    let scanned = scan_step(path, &config.scan, &mut steps).ok();
 
-    // 2. Scan — calls ScannedFiles::scan() directly
-    let scan_start = Instant::now();
-    let scanned = match ScannedFiles::scan(path, &config.scan) {
-        Ok(s) => {
-            steps.push(StepEntry::ok(
-                Outcome::Scan(ScanOutcome {
-                    files_found: s.files.len(),
-                    glob: config.scan.glob.clone(),
-                }),
-                scan_start.elapsed().as_millis() as u64,
-            ));
-            Some(s)
-        }
-        Err(e) => {
-            steps.push(StepEntry::err(
-                ErrorKind::Application,
-                e.to_string(),
-                scan_start.elapsed().as_millis() as u64,
-            ));
-            None
-        }
-    };
+    let index_data = read_index_step(&Backend::lance(path), &mut steps).await;
 
-    // 3. Read index — calls Backend methods directly
-    let index_start = Instant::now();
-    let backend = Backend::lance(path);
-    let index_data = if !backend.exists() {
-        steps.push(StepEntry::ok(
-            Outcome::ReadIndex(ReadIndexOutcome {
-                exists: false,
-                files_indexed: 0,
-                chunks: 0,
-            }),
-            index_start.elapsed().as_millis() as u64,
-        ));
-        None
-    } else {
-        let build_meta = backend.read_metadata().await.ok().flatten();
-        let idx_stats = backend.stats().await.ok().flatten();
-        match (build_meta, idx_stats) {
-            (Some(metadata), Some(stats)) => {
-                steps.push(StepEntry::ok(
-                    Outcome::ReadIndex(ReadIndexOutcome {
-                        exists: true,
-                        files_indexed: stats.files_indexed,
-                        chunks: stats.chunks,
-                    }),
-                    index_start.elapsed().as_millis() as u64,
-                ));
-                Some((metadata, stats))
-            }
-            _ => {
-                steps.push(StepEntry::ok(
-                    Outcome::ReadIndex(ReadIndexOutcome {
-                        exists: false,
-                        files_indexed: 0,
-                        chunks: 0,
-                    }),
-                    index_start.elapsed().as_millis() as u64,
-                ));
-                None
-            }
-        }
-    };
-
-    // Build InfoOutcome from config + scanned + index_data
-    let empty_files = Vec::new();
-    let files = scanned.as_ref().map(|s| &s.files).unwrap_or(&empty_files);
+    let files = scanned.as_ref().map_or(&[][..], |s| &s.files);
     let total_files = files.len();
-
-    let field_counts: HashMap<String, usize> = {
-        let mut counts = HashMap::new();
-        for file in files {
-            if let Some(Value::Object(map)) = &file.data {
-                for key in map.keys() {
-                    *counts.entry(key.clone()).or_insert(0) += 1;
-                }
-            }
-        }
-        counts
-    };
+    let field_counts = count_fields(files);
 
     let fields: Vec<InfoField> = config
         .fields
@@ -202,24 +98,8 @@ pub async fn run(path: &Path, _verbose: bool) -> CommandResult {
         })
         .collect();
 
-    let index = index_data.map(|(metadata, stats)| {
-        let config_match = config.embedding_model.as_ref() == Some(&metadata.embedding_model)
-            && config.chunking.as_ref() == Some(&metadata.chunking);
-        IndexInfo {
-            model: metadata.embedding_model.name,
-            revision: metadata.embedding_model.revision,
-            chunk_size: metadata.chunking.max_chunk_size,
-            files_indexed: stats.files_indexed,
-            files_on_disk: total_files,
-            chunks: stats.chunks,
-            built_at: metadata.built_at,
-            config_status: if config_match {
-                "match".to_string()
-            } else {
-                "changed — rebuild recommended".to_string()
-            },
-        }
-    });
+    let index =
+        index_data.map(|(metadata, stats)| index_info(&config, metadata, &stats, total_files));
 
     CommandResult {
         steps,
@@ -230,20 +110,65 @@ pub async fn run(path: &Path, _verbose: bool) -> CommandResult {
             ignored_fields: config.fields.ignore.clone(),
             index,
         }))),
-        elapsed_ms: start.elapsed().as_millis() as u64,
+        elapsed_ms: elapsed_ms(start),
+    }
+}
+
+/// Count, per top-level frontmatter key, how many files contain it.
+fn count_fields(files: &[ScannedFile]) -> HashMap<String, usize> {
+    let mut counts = HashMap::new();
+    for file in files {
+        if let Some(Value::Object(map)) = &file.data {
+            for key in map.keys() {
+                *counts.entry(key.clone()).or_insert(0) += 1;
+            }
+        }
+    }
+    counts
+}
+
+/// Summarize the built index, comparing its model and chunking settings
+/// against the current config.
+fn index_info(
+    config: &MdvsToml,
+    metadata: BuildMetadata,
+    stats: &IndexStats,
+    files_on_disk: usize,
+) -> IndexInfo {
+    let config_match = config.embedding_model.as_ref() == Some(&metadata.embedding_model)
+        && config.chunking.as_ref() == Some(&metadata.chunking);
+    IndexInfo {
+        model: metadata.embedding_model.name,
+        revision: metadata.embedding_model.revision,
+        chunk_size: metadata.chunking.max_chunk_size,
+        files_indexed: stats.files_indexed,
+        files_on_disk,
+        chunks: stats.chunks,
+        built_at: metadata.built_at,
+        config_status: if config_match {
+            "match".to_string()
+        } else {
+            "changed — rebuild recommended".to_string()
+        },
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::outcome::Outcome;
-    use crate::schema::config::{FieldsConfig, MdvsToml, SearchConfig, UpdateConfig};
-    use crate::schema::shared::{
-        ChunkingConfig, EmbeddingModelConfig, FieldTypeSerde, FrontmatterFormat, ScanConfig,
-    };
-    use crate::step::CommandResult;
     use std::fs;
+
+    use super::*;
+    use crate::{
+        cmd::init::{InitOptions, InitScanFlags},
+        outcome::Outcome,
+        schema::{
+            config::{FieldsConfig, MdvsToml, SearchConfig, UpdateConfig},
+            shared::{
+                ChunkingConfig, EmbeddingModelConfig, FieldTypeSerde, FrontmatterFormat, ScanConfig,
+            },
+        },
+        step::CommandResult,
+    };
 
     fn unwrap_info(result: &CommandResult) -> &InfoOutcome {
         match &result.result {
@@ -311,8 +236,8 @@ mod tests {
                         preprocess: vec![],
                     },
                 ],
-                max_categories: 10,
-                min_category_repetition: 3,
+                max_categories: None,
+                min_category_repetition: None,
             },
             embedding_model: Some(EmbeddingModelConfig {
                 provider: "mock".into(),
@@ -336,10 +261,22 @@ mod tests {
     }
 
     async fn init_and_build(dir: &Path) {
-        let step = crate::cmd::init::run(dir, "**", false, false, true, false, false, None, None);
+        let step = crate::cmd::init::run(
+            dir,
+            "**",
+            InitOptions {
+                scan: InitScanFlags {
+                    ignore_bare_files: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            None,
+            None,
+        );
         assert!(!crate::step::has_failed(&step));
         swap_to_mock_embedder(dir);
-        let output = crate::cmd::build::run(dir, None, None, None, false, true, false).await;
+        let output = crate::cmd::build::run(dir, None, None, None, false, true).await;
         assert!(!crate::step::has_failed(&output));
     }
 
@@ -359,7 +296,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
         write_config(tmp.path());
-        let step = run(tmp.path(), false).await;
+        let step = run(tmp.path()).await;
         assert!(!crate::step::has_failed(&step));
         let result = unwrap_info(&step);
         assert_eq!(result.scan_glob, "**");
@@ -375,7 +312,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
         init_and_build(tmp.path()).await;
-        let step = run(tmp.path(), false).await;
+        let step = run(tmp.path()).await;
         assert!(!crate::step::has_failed(&step));
         let result = unwrap_info(&step);
         assert_eq!(result.files_on_disk, 2);
@@ -395,7 +332,7 @@ mod tests {
         let mut config = MdvsToml::read(&tmp.path().join("mdvs.toml")).unwrap();
         config.chunking.as_mut().unwrap().max_chunk_size = 512;
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
-        let step = run(tmp.path(), false).await;
+        let step = run(tmp.path()).await;
         assert!(!crate::step::has_failed(&step));
         let result = unwrap_info(&step);
         assert!(result.index.is_some());
@@ -434,8 +371,8 @@ mod tests {
                     constraints: None,
                     preprocess: vec![],
                 }],
-                max_categories: 10,
-                min_category_repetition: 3,
+                max_categories: None,
+                min_category_repetition: None,
             },
             embedding_model: None,
             chunking: None,
@@ -443,7 +380,7 @@ mod tests {
             search: None,
         };
         config.write(&tmp.path().join("mdvs.toml")).unwrap();
-        let step = run(tmp.path(), false).await;
+        let step = run(tmp.path()).await;
         assert!(!crate::step::has_failed(&step));
         let result = unwrap_info(&step);
         assert_eq!(result.fields.len(), 1);

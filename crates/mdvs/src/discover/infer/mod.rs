@@ -15,18 +15,23 @@ pub mod constraints;
 mod paths;
 mod types;
 
+use std::path::PathBuf;
+
 pub use constraints::infer_constraints;
 pub use paths::{DirectoryTree, FieldPaths};
+use serde_json::Value;
+use tracing::{info, instrument};
 pub use types::{FieldTypeInfo, infer_field_types};
 
-use crate::discover::field_type::FieldType;
-use crate::discover::scan::ScannedFiles;
-use crate::output::DiscoveredField;
-use crate::preprocess::{ValueStage, infer_value_stages};
-use crate::schema::shared::FieldTypeSerde;
-use serde_json::Value;
-use std::path::PathBuf;
-use tracing::{info, instrument};
+use crate::{
+    discover::{field_type::FieldType, scan::ScannedFiles},
+    output::DiscoveredField,
+    preprocess::{ValueStage, infer_value_stages, is_unwidenable_integer},
+    schema::shared::FieldTypeSerde,
+};
+
+/// Most inexact integer values listed in one widening warning.
+const MAX_LISTED_INEXACT_VALUES: usize = 3;
 
 /// Reason an inferred field was dropped from the final schema.
 ///
@@ -136,6 +141,49 @@ pub struct InferredField {
 }
 
 impl InferredField {
+    /// Warning for a field that widens integers to Float while holding
+    /// integers with no exact f64 equivalent (beyond ±2^53); `None` otherwise.
+    ///
+    /// Lists at most [`MAX_LISTED_INEXACT_VALUES`] values, then a count of the
+    /// rest.
+    pub fn inexact_widening_warning(&self) -> Option<String> {
+        if !self.preprocess.contains(&ValueStage::WidenIntToFloat) {
+            return None;
+        }
+        let inexact: Vec<&Value> = self
+            .distinct_values
+            .iter()
+            .filter(|v| is_unwidenable_integer(v))
+            .collect();
+        if inexact.is_empty() {
+            return None;
+        }
+        let mut listed: Vec<String> = inexact
+            .iter()
+            .take(MAX_LISTED_INEXACT_VALUES)
+            .map(ToString::to_string)
+            .collect();
+        let rest = inexact.len().saturating_sub(MAX_LISTED_INEXACT_VALUES);
+        if rest > 0 {
+            listed.push(format!("and {rest} more"));
+        }
+        Some(format!(
+            "warning: field '{}' widens integers to Float, but some exceed ±2^53 \
+             and have no exact Float equivalent ({}) — check will report them as type errors",
+            self.name,
+            listed.join(", "),
+        ))
+    }
+
+    /// Print [`Self::inexact_widening_warning`] to stderr, if any. Callers
+    /// invoke it only for fields they are about to write to `mdvs.toml`, so
+    /// the warning stops once the field is declared or ignored.
+    pub fn emit_inexact_widening_warning(&self) {
+        if let Some(line) = self.inexact_widening_warning() {
+            eprintln!("{line}");
+        }
+    }
+
     /// Convert to a [`DiscoveredField`] for command output.
     pub fn to_discovered(&self, total_files: usize, verbose: bool) -> DiscoveredField {
         DiscoveredField {
@@ -267,9 +315,13 @@ fn contains_object_inside_array(ft: &FieldType) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::discover::scan::{ScannedFile, ScannedFiles};
     use serde_json::json;
+
+    use super::*;
+    use crate::{
+        discover::scan::{ScannedFile, ScannedFiles},
+        num::F64_EXACT_INT_LIMIT_I64,
+    };
 
     fn sf(path: &str, data: Option<Value>, content: &str) -> ScannedFile {
         ScannedFile {
@@ -1156,6 +1208,79 @@ mod tests {
             },
             other => panic!("expected Array(Object), got {other:?}"),
         }
+    }
+
+    #[test]
+    fn infer_warns_when_widened_float_holds_inexact_integer() {
+        let scanned = ScannedFiles {
+            files: vec![
+                sf("a.md", Some(json!({"score": 0.5})), "# body"),
+                sf(
+                    "b.md",
+                    Some(json!({"score": F64_EXACT_INT_LIMIT_I64 + 1})),
+                    "# body",
+                ),
+            ],
+        };
+        let schema = InferredSchema::infer(&scanned);
+        let score = schema.field("score").unwrap();
+        assert_eq!(score.field_type, FieldType::Float);
+        let warning = score.inexact_widening_warning().unwrap();
+        assert!(warning.contains("'score'"));
+        assert!(warning.contains(&(F64_EXACT_INT_LIMIT_I64 + 1).to_string()));
+    }
+
+    #[test]
+    fn infer_warns_when_widened_array_float_holds_inexact_integer() {
+        let scanned = ScannedFiles {
+            files: vec![
+                sf("a.md", Some(json!({"scores": [0.5]})), "# body"),
+                sf("b.md", Some(json!({"scores": [u64::MAX]})), "# body"),
+            ],
+        };
+        let schema = InferredSchema::infer(&scanned);
+        let warning = schema
+            .field("scores")
+            .and_then(InferredField::inexact_widening_warning)
+            .unwrap();
+        assert!(warning.contains("'scores'"));
+        assert!(warning.contains(&u64::MAX.to_string()));
+    }
+
+    #[test]
+    fn inexact_widening_warning_caps_listed_values() {
+        let extra = 2;
+        let mut files = vec![sf("a.md", Some(json!({"score": 0.5})), "# body")];
+        let inexact: Vec<i64> = (0..MAX_LISTED_INEXACT_VALUES + extra)
+            .map(|i| F64_EXACT_INT_LIMIT_I64 + 1 + i64::try_from(i).unwrap())
+            .collect();
+        for (i, v) in inexact.iter().enumerate() {
+            files.push(sf(&format!("f{i}.md"), Some(json!({"score": v})), "# body"));
+        }
+        let schema = InferredSchema::infer(&ScannedFiles { files });
+        let warning = schema
+            .field("score")
+            .and_then(InferredField::inexact_widening_warning)
+            .unwrap();
+        assert!(warning.contains(&format!("and {extra} more")));
+        assert!(!warning.contains(&inexact[MAX_LISTED_INEXACT_VALUES].to_string()));
+    }
+
+    #[test]
+    fn infer_does_not_warn_for_widened_float_within_precision() {
+        let scanned = ScannedFiles {
+            files: vec![
+                sf("a.md", Some(json!({"score": 0.5})), "# body"),
+                sf(
+                    "b.md",
+                    Some(json!({"score": F64_EXACT_INT_LIMIT_I64})),
+                    "# body",
+                ),
+            ],
+        };
+        let schema = InferredSchema::infer(&scanned);
+        let score = schema.field("score").unwrap();
+        assert!(score.inexact_widening_warning().is_none());
     }
 
     #[test]

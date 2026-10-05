@@ -29,7 +29,7 @@
 //! live in `platform.toml` as data, not in Rust. Adding a new harness
 //! with a novel envelope shape is one toml file.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, hash::BuildHasher};
 
 use serde_json::{Map, Value};
 
@@ -37,7 +37,10 @@ use serde_json::{Map, Value};
 /// strings according to `vars`. See module docs for the substitution rules.
 ///
 /// Returns a new `Value`; the input is left untouched.
-pub fn substitute(template: &Value, vars: &HashMap<&str, Option<String>>) -> Value {
+pub fn substitute<S: BuildHasher>(
+    template: &Value,
+    vars: &HashMap<&str, Option<String>, S>,
+) -> Value {
     match template {
         Value::String(s) => match parse_marker(s) {
             Some(name) => match vars.get(name) {
@@ -84,7 +87,7 @@ fn parse_marker(s: &str) -> Option<&str> {
 /// Should this value be pruned from its parent container? True only if
 /// the value is a marker string whose name resolves to `None` (or isn't in
 /// `vars` at all).
-fn should_prune(value: &Value, vars: &HashMap<&str, Option<String>>) -> bool {
+fn should_prune<S: BuildHasher>(value: &Value, vars: &HashMap<&str, Option<String>, S>) -> bool {
     let Value::String(s) = value else {
         return false;
     };
@@ -96,13 +99,14 @@ fn should_prune(value: &Value, vars: &HashMap<&str, Option<String>>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     fn vars(pairs: &[(&'static str, Option<&str>)]) -> HashMap<&'static str, Option<String>> {
         pairs
             .iter()
-            .map(|(k, v)| (*k, v.map(|s| s.to_string())))
+            .map(|(k, v)| (*k, v.map(ToString::to_string)))
             .collect()
     }
 

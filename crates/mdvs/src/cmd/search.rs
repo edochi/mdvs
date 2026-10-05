@@ -1,20 +1,32 @@
-use crate::index::backend::{Backend, SearchMode};
-use crate::index::embed::{Embedder, ModelConfig};
-use crate::index::storage::BuildMetadata;
-use crate::outcome::commands::SearchOutcome;
-use crate::outcome::{
-    EmbedQueryOutcome, ExecuteSearchOutcome, LoadModelOutcome, Outcome, ReadConfigOutcome,
-    ReadIndexOutcome,
-};
-use crate::schema::config::MdvsToml;
-use crate::step::{CommandResult, ErrorKind, StepEntry};
-use std::path::Path;
-use std::time::Instant;
+use std::{collections::HashMap, path::Path, time::Instant};
+
 use tracing::instrument;
 
-/// Index metadata, used for model mismatch check.
-struct IndexData {
-    metadata: BuildMetadata,
+use crate::{
+    cmd::{
+        build::{build_core, mutate_config},
+        steps::{load_model_step, read_config_step, read_index_step},
+    },
+    index::{
+        backend::{Backend, SearchMode, SearchQuery, SearchResults, WhereNaming},
+        embed::Embedder,
+        storage::BuildMetadata,
+    },
+    outcome::{
+        EmbedQueryOutcome, ExecuteSearchOutcome, LoadModelOutcome, Outcome, commands::SearchOutcome,
+    },
+    schema::{config::MdvsToml, shared::EmbeddingModelConfig},
+    step::{CommandResult, ErrorKind, StepEntry, elapsed_ms},
+};
+
+/// Flags controlling the automatic build that `search` may run first.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct SearchOptions {
+    /// Skip auto-updating the schema with newly seen fields during the
+    /// automatic build.
+    pub no_update: bool,
+    /// Skip the automatic build and search the index as it is.
+    pub no_build: bool,
 }
 
 /// Validate --where clause for unmatched quotes.
@@ -35,320 +47,229 @@ fn validate_where_clause(w: &str) -> Result<(), String> {
 
 /// Embed a query, search the index, and return ranked results.
 #[instrument(name = "search", skip_all)]
-#[allow(clippy::too_many_arguments)]
-pub async fn run(
-    path: &Path,
-    query: &str,
-    limit: usize,
-    where_clause: Option<&str>,
-    mode: SearchMode,
-    no_update: bool,
-    no_build: bool,
-    _verbose: bool,
-) -> CommandResult {
+pub async fn run(path: &Path, query: SearchQuery<'_>, opts: SearchOptions) -> CommandResult {
     let start = Instant::now();
     let mut steps = Vec::new();
 
-    // 1. Read config — calls MdvsToml::read() + validate() directly
-    let config_start = Instant::now();
-    let config_path_buf = path.join("mdvs.toml");
-    let mut config = match MdvsToml::read(&config_path_buf) {
-        Ok(cfg) => match cfg.validate() {
-            Ok(()) => {
-                steps.push(StepEntry::ok(
-                    Outcome::ReadConfig(ReadConfigOutcome {
-                        config_path: config_path_buf.display().to_string(),
-                    }),
-                    config_start.elapsed().as_millis() as u64,
-                ));
-                Some(cfg)
-            }
-            Err(e) => {
-                steps.push(StepEntry::err(
-                    ErrorKind::User,
-                    format!("mdvs.toml is invalid: {e} — fix the file or run 'mdvs init --force'"),
-                    config_start.elapsed().as_millis() as u64,
-                ));
-                None
-            }
-        },
-        Err(e) => {
-            steps.push(StepEntry::err(
-                ErrorKind::User,
-                e.to_string(),
-                config_start.elapsed().as_millis() as u64,
-            ));
-            None
-        }
+    let Ok((mut config, config_path)) = read_config_step(path, &mut steps) else {
+        return CommandResult::failed_from_steps(steps, start);
     };
 
-    // Auto-build: run build core pipeline before searching if configured
-    let mut build_embedder: Option<Embedder> = None;
-    if let Some(ref mut cfg) = config {
-        let should_build = !no_build && cfg.search.as_ref().is_some_and(|s| s.auto_build);
-        if should_build {
-            let build_no_update = no_update || !cfg.search.as_ref().is_some_and(|s| s.auto_update);
-            let auto_update = !build_no_update && cfg.build.as_ref().is_some_and(|b| b.auto_update);
-
-            // Fill missing build sections (embedding_model, chunking, search, build)
-            crate::cmd::build::mutate_config(cfg, path, None, None, None, false);
-
-            match crate::cmd::build::build_core(
-                path,
-                cfg,
-                &config_path_buf,
-                false,
-                auto_update,
-                &mut steps,
-            )
-            .await
-            {
-                Ok((_build_outcome, embedder)) => {
-                    build_embedder = embedder;
-                }
-                Err(()) => {
-                    return CommandResult::failed(
-                        std::mem::take(&mut steps),
-                        ErrorKind::User,
-                        "auto-build failed".into(),
-                        start,
-                    );
-                }
-            }
-        }
-    }
-
-    let embedding = config.as_ref().and_then(|c| c.embedding_model.as_ref());
-
-    // 2. Read index — calls Backend methods directly
-    let index_data = match &config {
-        Some(_) => {
-            let index_start = Instant::now();
-            let backend = Backend::lance(path);
-            if !backend.exists() {
-                steps.push(StepEntry::ok(
-                    Outcome::ReadIndex(ReadIndexOutcome {
-                        exists: false,
-                        files_indexed: 0,
-                        chunks: 0,
-                    }),
-                    index_start.elapsed().as_millis() as u64,
-                ));
-                None
-            } else {
-                let build_meta = backend.read_metadata().await.ok().flatten();
-                let idx_stats = backend.stats().await.ok().flatten();
-                match (build_meta, idx_stats) {
-                    (Some(metadata), Some(stats)) => {
-                        steps.push(StepEntry::ok(
-                            Outcome::ReadIndex(ReadIndexOutcome {
-                                exists: true,
-                                files_indexed: stats.files_indexed,
-                                chunks: stats.chunks,
-                            }),
-                            index_start.elapsed().as_millis() as u64,
-                        ));
-                        Some(IndexData { metadata })
-                    }
-                    _ => {
-                        steps.push(StepEntry::ok(
-                            Outcome::ReadIndex(ReadIndexOutcome {
-                                exists: false,
-                                files_indexed: 0,
-                                chunks: 0,
-                            }),
-                            index_start.elapsed().as_millis() as u64,
-                        ));
-                        None
-                    }
-                }
-            }
-        }
-        None => {
-            return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
-        }
+    let Ok(build_embedder) =
+        auto_build_step(path, &mut config, &config_path, opts, &mut steps).await
+    else {
+        return CommandResult::failed(steps, ErrorKind::User, "auto-build failed".into(), start);
     };
 
-    // Pre-checks before loading model
-    let pre_check_error: Option<String> = match (config.as_ref(), embedding, index_data.as_ref()) {
-        (None, _, _) => None,
-        (_, None, _) => {
-            Some("missing [embedding_model] in mdvs.toml (run `mdvs build` first)".to_string())
-        }
-        (_, _, None) => Some("index not found (run `mdvs build` first)".to_string()),
-        (_, Some(emb), Some(data)) => {
-            if data.metadata.embedding_model != *emb {
-                Some(format!(
-                    "model mismatch: config has '{}' (rev {:?}) but index was built with '{}' (rev {:?}) — run 'mdvs build' to rebuild",
-                    emb.name,
-                    emb.revision,
-                    data.metadata.embedding_model.name,
-                    data.metadata.embedding_model.revision,
-                ))
-            } else {
-                None
-            }
-        }
-    };
+    let backend = Backend::lance(path);
+    let index = read_index_step(&backend, &mut steps).await;
 
-    // 3. Load model — calls ModelConfig::try_from() + Embedder::load() directly
-    if let Some(msg) = pre_check_error {
-        steps.push(StepEntry::err(ErrorKind::User, msg, 0));
-        return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
-    }
-
-    // 3. Load model (reuse from build if available).
-    // The pre_check above ensures `embedding` is Some when we reach this
-    // point; fall through to a step-level error if a future refactor
-    // breaks that invariant.
-    let Some(emb_config) = embedding else {
-        steps.push(StepEntry::err(
-            ErrorKind::Application,
-            "internal: missing embedding config after pre-check passed".to_string(),
-            0,
-        ));
-        return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
+    let emb_config = match pre_check(
+        config.embedding_model.as_ref(),
+        index.as_ref().map(|(metadata, _)| metadata),
+    ) {
+        Ok(emb_config) => emb_config,
+        Err(msg) => {
+            steps.push(StepEntry::err(ErrorKind::User, msg, 0));
+            return CommandResult::failed_from_steps(steps, start);
+        }
     };
 
     // Fulltext mode is BM25-only: the embedding is never read by the backend,
     // so skip the model load and the query-embedding step entirely.
-    let query_embedding: Option<Vec<f32>> = if mode == SearchMode::Fulltext {
+    let query_embedding = if query.mode == SearchMode::Fulltext {
         None
     } else {
-        let embedder = if let Some(emb) = build_embedder {
-            steps.push(StepEntry::ok(
-                Outcome::LoadModel(LoadModelOutcome {
-                    model_name: emb_config.name.clone(),
-                    dimension: emb.dimension(),
-                }),
-                0, // already loaded during build
-            ));
-            emb
-        } else {
-            let model_start = Instant::now();
-            match ModelConfig::try_from(emb_config) {
-                Ok(mc) => match Embedder::load(&mc) {
-                    Ok(emb) => {
-                        steps.push(StepEntry::ok(
-                            Outcome::LoadModel(LoadModelOutcome {
-                                model_name: emb_config.name.clone(),
-                                dimension: emb.dimension(),
-                            }),
-                            model_start.elapsed().as_millis() as u64,
-                        ));
-                        emb
-                    }
-                    Err(e) => {
-                        steps.push(StepEntry::err(
-                            ErrorKind::Application,
-                            e.to_string(),
-                            model_start.elapsed().as_millis() as u64,
-                        ));
-                        return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
-                    }
-                },
-                Err(e) => {
-                    steps.push(StepEntry::err(
-                        ErrorKind::Application,
-                        e.to_string(),
-                        model_start.elapsed().as_millis() as u64,
-                    ));
-                    return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
-                }
-            }
+        let Ok(embedder) = resolve_embedder(emb_config, build_embedder, &mut steps) else {
+            return CommandResult::failed_from_steps(steps, start);
         };
-
-        // 4. Embed query — calls embedder.embed() directly (infallible)
-        let embed_start = Instant::now();
-        let qe = embedder.embed(query).await;
-        steps.push(StepEntry::ok(
-            Outcome::EmbedQuery(EmbedQueryOutcome {
-                query: query.to_string(),
-            }),
-            embed_start.elapsed().as_millis() as u64,
-        ));
-        Some(qe)
+        Some(embed_query_step(&embedder, query.text, &mut steps).await)
     };
 
-    // 5. Execute search — calls backend.search() directly with quote validation.
-    // Same invariant as `embedding` above: pre_check guarantees `config` is Some.
-    let Some(cfg) = config.as_ref() else {
-        steps.push(StepEntry::err(
-            ErrorKind::Application,
-            "internal: missing config after pre-check passed".to_string(),
-            0,
-        ));
-        return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
-    };
-    let backend = Backend::lance(path);
-    let (prefix, aliases) = match &cfg.search {
-        Some(sc) => (sc.internal_prefix.as_str(), &sc.aliases),
-        None => ("", &std::collections::HashMap::new()),
-    };
-
-    if let Some(w) = where_clause
+    if let Some(w) = query.where_clause
         && let Err(msg) = validate_where_clause(w)
     {
         steps.push(StepEntry::err(ErrorKind::User, msg, 0));
-        return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
+        return CommandResult::failed_from_steps(steps, start);
     }
 
+    let empty_aliases = HashMap::new();
+    let naming = match &config.search {
+        Some(sc) => WhereNaming {
+            internal_prefix: sc.internal_prefix.as_str(),
+            aliases: &sc.aliases,
+        },
+        None => WhereNaming {
+            internal_prefix: "",
+            aliases: &empty_aliases,
+        },
+    };
+
+    let Ok(results) =
+        execute_search_step(&backend, &query, query_embedding, &naming, &mut steps).await
+    else {
+        return CommandResult::failed_from_steps(steps, start);
+    };
+
+    // chunk_text is populated by the backend from the persisted column.
+    CommandResult {
+        steps,
+        result: Ok(Outcome::Search(Box::new(SearchOutcome {
+            query: query.text.to_string(),
+            hits: results.hits,
+            model_name: emb_config.name.clone(),
+            limit: query.limit,
+            where_rewrites: results.where_rewrites,
+        }))),
+        elapsed_ms: elapsed_ms(start),
+    }
+}
+
+/// Run the build pipeline before searching, when `[search].auto_build` is on
+/// and `--no-build` was not passed.
+///
+/// Fills any missing build sections of `config` first. Returns the embedder
+/// the build loaded, if any, so the search can reuse it. `Ok(None)` also
+/// covers the case where no build ran.
+async fn auto_build_step(
+    path: &Path,
+    config: &mut MdvsToml,
+    config_path: &Path,
+    opts: SearchOptions,
+    steps: &mut Vec<StepEntry>,
+) -> Result<Option<Embedder>, ()> {
+    let search = config.search.as_ref();
+    if opts.no_build || !search.is_some_and(|s| s.auto_build) {
+        return Ok(None);
+    }
+    let build_no_update = opts.no_update || !search.is_some_and(|s| s.auto_update);
+    let auto_update = !build_no_update && config.build.as_ref().is_some_and(|b| b.auto_update);
+
+    // Fill missing build sections (embedding_model, chunking, search, build)
+    mutate_config(config, path, None, None, None, false);
+
+    let (_build_outcome, embedder) =
+        build_core(path, config, config_path, false, auto_update, steps).await?;
+    Ok(embedder)
+}
+
+/// Check that the config names an embedding model, that an index exists, and
+/// that the index was built with that model.
+///
+/// Returns the configured model, or the message for the failure step.
+fn pre_check<'a>(
+    embedding: Option<&'a EmbeddingModelConfig>,
+    index: Option<&BuildMetadata>,
+) -> Result<&'a EmbeddingModelConfig, String> {
+    match (embedding, index) {
+        (None, _) => {
+            Err("missing [embedding_model] in mdvs.toml (run `mdvs build` first)".to_string())
+        }
+        (_, None) => Err("index not found (run `mdvs build` first)".to_string()),
+        (Some(emb), Some(metadata)) => {
+            if metadata.embedding_model == *emb {
+                Ok(emb)
+            } else {
+                Err(format!(
+                    "model mismatch: config has '{}' (rev {:?}) but index was built with '{}' (rev {:?}) — run 'mdvs build' to rebuild",
+                    emb.name,
+                    emb.revision,
+                    metadata.embedding_model.name,
+                    metadata.embedding_model.revision,
+                ))
+            }
+        }
+    }
+}
+
+/// Reuse the embedder the automatic build loaded, or load one.
+///
+/// A reused embedder is still reported as a model-load step, with zero
+/// elapsed time since the load happened during the build.
+fn resolve_embedder(
+    emb_config: &EmbeddingModelConfig,
+    build_embedder: Option<Embedder>,
+    steps: &mut Vec<StepEntry>,
+) -> Result<Embedder, ()> {
+    let Some(embedder) = build_embedder else {
+        return load_model_step(emb_config, steps);
+    };
+    steps.push(StepEntry::ok(
+        Outcome::LoadModel(LoadModelOutcome {
+            model_name: emb_config.name.clone(),
+            dimension: embedder.dimension(),
+        }),
+        0, // already loaded during build
+    ));
+    Ok(embedder)
+}
+
+/// Embed the query text, timed as one step. Embedding cannot fail.
+async fn embed_query_step(embedder: &Embedder, text: &str, steps: &mut Vec<StepEntry>) -> Vec<f32> {
+    let embed_start = Instant::now();
+    let embedding = embedder.embed(text).await;
+    steps.push(StepEntry::ok(
+        Outcome::EmbedQuery(EmbedQueryOutcome {
+            query: text.to_string(),
+        }),
+        elapsed_ms(embed_start),
+    ));
+    embedding
+}
+
+/// Run the search against the index, timed as one step.
+async fn execute_search_step(
+    backend: &Backend,
+    query: &SearchQuery<'_>,
+    query_embedding: Option<Vec<f32>>,
+    naming: &WhereNaming<'_>,
+    steps: &mut Vec<StepEntry>,
+) -> Result<SearchResults, ()> {
     let search_start = Instant::now();
-    let results = match backend
-        .search(
-            query_embedding,
-            query,
-            mode,
-            where_clause,
-            limit,
-            prefix,
-            aliases,
-        )
-        .await
-    {
-        Ok(r) => {
+    match backend.search(query, query_embedding, naming).await {
+        Ok(results) => {
             steps.push(StepEntry::ok(
-                Outcome::ExecuteSearch(ExecuteSearchOutcome { hits: r.hits.len() }),
-                search_start.elapsed().as_millis() as u64,
+                Outcome::ExecuteSearch(ExecuteSearchOutcome {
+                    hits: results.hits.len(),
+                }),
+                elapsed_ms(search_start),
             ));
-            r
+            Ok(results)
         }
         Err(e) => {
             steps.push(StepEntry::err(
                 ErrorKind::Application,
                 e.to_string(),
-                search_start.elapsed().as_millis() as u64,
+                elapsed_ms(search_start),
             ));
-            return CommandResult::failed_from_steps(std::mem::take(&mut steps), start);
+            Err(())
         }
-    };
-
-    // chunk_text is populated by the backend from the persisted column.
-    let model_name = emb_config.name.clone();
-    CommandResult {
-        steps,
-        result: Ok(Outcome::Search(Box::new(SearchOutcome {
-            query: query.to_string(),
-            hits: results.hits,
-            model_name,
-            limit,
-            where_rewrites: results.where_rewrites,
-        }))),
-        elapsed_ms: start.elapsed().as_millis() as u64,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::index::embed::{Embedder, ModelConfig};
-    use crate::outcome::commands::SearchOutcome;
-    use crate::schema::config::{FieldsConfig, MdvsToml, SearchConfig, UpdateConfig};
-    use crate::schema::shared::{
-        ChunkingConfig, EmbeddingModelConfig, FrontmatterFormat, ScanConfig,
-    };
-    use crate::step::StepError;
     use std::fs;
+
+    use tempfile::TempDir;
+
+    use super::*;
+    use crate::{
+        cmd::init::{InitOptions, InitScanFlags},
+        index::embed::{Embedder, ModelConfig},
+        outcome::commands::SearchOutcome,
+        schema::{
+            config::{FieldsConfig, MdvsToml, SearchConfig, UpdateConfig},
+            shared::{ChunkingConfig, EmbeddingModelConfig, FrontmatterFormat, ScanConfig},
+        },
+        step::{ProcessStep, StepError},
+    };
+
+    /// Search the index as it is: no automatic build, no schema update.
+    const NO_AUTO: SearchOptions = SearchOptions {
+        no_update: true,
+        no_build: true,
+    };
 
     fn unwrap_search(result: &CommandResult) -> &SearchOutcome {
         match &result.result {
@@ -393,8 +314,8 @@ mod tests {
             fields: FieldsConfig {
                 ignore: vec![],
                 field: vec![],
-                max_categories: 10,
-                min_category_repetition: 3,
+                max_categories: None,
+                min_category_repetition: None,
             },
             embedding_model: Some(EmbeddingModelConfig {
                 provider: "mock".into(),
@@ -417,11 +338,29 @@ mod tests {
         config.write(&dir.join("mdvs.toml")).unwrap();
     }
 
-    async fn init_and_build(dir: &Path) {
-        let step = crate::cmd::init::run(dir, "**", false, false, true, false, false, None, None);
+    /// Initialise `dir` as a project that embeds with the mock model, without
+    /// building an index.
+    fn init_with_mock_embedder(dir: &Path) {
+        let step = crate::cmd::init::run(
+            dir,
+            "**",
+            InitOptions {
+                scan: InitScanFlags {
+                    ignore_bare_files: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            None,
+            None,
+        );
         assert!(!crate::step::has_failed(&step));
         swap_to_mock_embedder(dir);
-        let output = crate::cmd::build::run(dir, None, None, None, false, true, false).await;
+    }
+
+    async fn init_and_build(dir: &Path) {
+        init_with_mock_embedder(dir);
+        let output = crate::cmd::build::run(dir, None, None, None, false, true).await;
         assert!(!crate::step::has_failed(&output));
     }
 
@@ -436,18 +375,155 @@ mod tests {
         config.write(&dir.join("mdvs.toml")).unwrap();
     }
 
+    /// The completed outcome of a step, or `None` for a failed or skipped one.
+    fn completed(step: &StepEntry) -> Option<&ProcessStep> {
+        match step {
+            StepEntry::Completed(ps) => Some(ps),
+            StepEntry::Failed(_) | StepEntry::Skipped => None,
+        }
+    }
+
+    #[tokio::test]
+    async fn auto_build_writes_index_then_search_loads_model_embeds_and_executes() {
+        let tmp = tempfile::tempdir().unwrap();
+        create_test_vault(tmp.path());
+        init_with_mock_embedder(tmp.path());
+
+        let output = run(
+            tmp.path(),
+            SearchQuery {
+                text: "rust programming",
+                limit: 10,
+                where_clause: None,
+                mode: SearchMode::Hybrid,
+            },
+            SearchOptions::default(),
+        )
+        .await;
+        assert!(
+            !crate::step::has_failed(&output),
+            "search failed: {output:?}"
+        );
+        assert!(!unwrap_search(&output).hits.is_empty());
+
+        let steps: Vec<Option<&ProcessStep>> = output.steps.iter().map(completed).collect();
+        assert!(
+            matches!(steps.first(), Some(Some(ps)) if matches!(ps.outcome, Outcome::ReadConfig(_))),
+            "first step should read the config: {steps:?}"
+        );
+
+        // The build ran (it wrote the index) before the search read it.
+        let read_index = steps
+            .iter()
+            .position(|s| s.is_some_and(|ps| matches!(ps.outcome, Outcome::ReadIndex(_))))
+            .expect("a read-index step");
+        assert!(
+            steps[..read_index]
+                .iter()
+                .any(|s| s.is_some_and(|ps| matches!(ps.outcome, Outcome::WriteIndex(_)))),
+            "build steps should precede the index read: {steps:?}"
+        );
+
+        // After the index read: the model load, the query embedding, then the
+        // search itself. The zero elapsed time on the load step is consistent
+        // with reusing the build's model, but the mock embedder loads in well
+        // under a millisecond, so reuse and reload are not distinguishable here.
+        let tail = &steps[read_index + 1..];
+        assert!(
+            matches!(
+                tail,
+                [Some(load), Some(embed), Some(search)]
+                    if matches!(load.outcome, Outcome::LoadModel(_))
+                        && load.elapsed_ms == 0
+                        && matches!(embed.outcome, Outcome::EmbedQuery(_))
+                        && matches!(search.outcome, Outcome::ExecuteSearch(_))
+            ),
+            "expected LoadModel (0 ms), EmbedQuery, ExecuteSearch after ReadIndex: {tail:?}"
+        );
+    }
+
+    /// Chunk size recorded in hand-built index metadata; `pre_check` ignores it.
+    const TEST_CHUNK_SIZE: usize = 1024;
+
+    /// A mock-provider model config with the given name.
+    fn mock_model(name: &str) -> EmbeddingModelConfig {
+        EmbeddingModelConfig {
+            provider: "mock".into(),
+            name: name.into(),
+            revision: None,
+            dim: None,
+        }
+    }
+
+    /// Index metadata recording a build with `model`.
+    fn built_with(model: EmbeddingModelConfig) -> BuildMetadata {
+        BuildMetadata {
+            embedding_model: model,
+            chunking: ChunkingConfig {
+                max_chunk_size: TEST_CHUNK_SIZE,
+            },
+            glob: "**".into(),
+            built_at: String::new(),
+            schema_hash: String::new(),
+        }
+    }
+
+    #[test]
+    fn pre_check_reports_missing_model_config() {
+        let metadata = built_with(mock_model("mock"));
+        let err = pre_check(None, Some(&metadata)).unwrap_err();
+        assert_eq!(
+            err,
+            "missing [embedding_model] in mdvs.toml (run `mdvs build` first)"
+        );
+    }
+
+    #[test]
+    fn pre_check_missing_model_config_wins_over_missing_index() {
+        let err = pre_check(None, None).unwrap_err();
+        assert_eq!(
+            err,
+            "missing [embedding_model] in mdvs.toml (run `mdvs build` first)"
+        );
+    }
+
+    #[test]
+    fn pre_check_reports_missing_index() {
+        let model = mock_model("mock");
+        let err = pre_check(Some(&model), None).unwrap_err();
+        assert_eq!(err, "index not found (run `mdvs build` first)");
+    }
+
+    #[test]
+    fn pre_check_reports_model_mismatch() {
+        let model = mock_model("mock");
+        let metadata = built_with(mock_model("other"));
+        let err = pre_check(Some(&model), Some(&metadata)).unwrap_err();
+        assert_eq!(
+            err,
+            "model mismatch: config has 'mock' (rev None) but index was built with 'other' (rev None) — run 'mdvs build' to rebuild"
+        );
+    }
+
+    #[test]
+    fn pre_check_accepts_matching_model() {
+        let model = mock_model("mock");
+        let metadata = built_with(mock_model("mock"));
+        assert_eq!(pre_check(Some(&model), Some(&metadata)), Ok(&model));
+    }
+
     #[tokio::test]
     async fn missing_config() {
         let tmp = tempfile::tempdir().unwrap();
         let output = run(
             tmp.path(),
-            "test query",
-            10,
-            None,
-            SearchMode::Hybrid,
-            true,
-            true,
-            false,
+            SearchQuery {
+                text: "test query",
+                limit: 10,
+                where_clause: None,
+                mode: SearchMode::Hybrid,
+            },
+            NO_AUTO,
         )
         .await;
         assert!(crate::step::has_failed(&output));
@@ -460,13 +536,13 @@ mod tests {
 
         let output = run(
             tmp.path(),
-            "test query",
-            10,
-            None,
-            SearchMode::Hybrid,
-            true,
-            true,
-            false,
+            SearchQuery {
+                text: "test query",
+                limit: 10,
+                where_clause: None,
+                mode: SearchMode::Hybrid,
+            },
+            NO_AUTO,
         )
         .await;
         assert!(crate::step::has_failed(&output));
@@ -482,19 +558,18 @@ mod tests {
 
         let output = run(
             tmp.path(),
-            "rust programming",
-            10,
-            None,
-            SearchMode::Hybrid,
-            true,
-            true,
-            false,
+            SearchQuery {
+                text: "rust programming",
+                limit: 10,
+                where_clause: None,
+                mode: SearchMode::Hybrid,
+            },
+            NO_AUTO,
         )
         .await;
         assert!(
             !crate::step::has_failed(&output),
-            "search failed: {:?}",
-            output
+            "search failed: {output:?}"
         );
         let result = unwrap_search(&output);
         assert_eq!(result.query, "rust programming");
@@ -514,13 +589,13 @@ mod tests {
 
         let output = run(
             tmp.path(),
-            "rust",
-            10,
-            None,
-            SearchMode::Fulltext,
-            true,
-            true,
-            false,
+            SearchQuery {
+                text: "rust",
+                limit: 10,
+                where_clause: None,
+                mode: SearchMode::Fulltext,
+            },
+            NO_AUTO,
         )
         .await;
         assert!(
@@ -546,29 +621,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn end_to_end_verbose() {
-        let tmp = tempfile::tempdir().unwrap();
-        create_test_vault(tmp.path());
-        init_and_build(tmp.path()).await;
-
-        let output = run(
-            tmp.path(),
-            "rust programming",
-            10,
-            None,
-            SearchMode::Hybrid,
-            true,
-            true,
-            true,
-        )
-        .await;
-        assert!(!crate::step::has_failed(&output));
-        let result = unwrap_search(&output);
-        assert!(!result.hits.is_empty());
-        assert!(result.hits[0].chunk_text.is_some());
-    }
-
-    #[tokio::test]
     async fn with_limit() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
@@ -583,13 +635,17 @@ mod tests {
 
         let hits = backend
             .search(
+                &SearchQuery {
+                    text: "rust programming",
+                    limit: 1,
+                    where_clause: None,
+                    mode: SearchMode::Semantic,
+                },
                 Some(query_embedding),
-                "rust programming",
-                SearchMode::Semantic,
-                None,
-                1,
-                "",
-                &std::collections::HashMap::new(),
+                &WhereNaming {
+                    internal_prefix: "",
+                    aliases: &std::collections::HashMap::new(),
+                },
             )
             .await
             .unwrap();
@@ -611,13 +667,17 @@ mod tests {
 
         let hits = backend
             .search(
+                &SearchQuery {
+                    text: "cooking recipes",
+                    limit: 10,
+                    where_clause: Some("draft = false"),
+                    mode: SearchMode::Semantic,
+                },
                 Some(query_embedding),
-                "cooking recipes",
-                SearchMode::Semantic,
-                Some("draft = false"),
-                10,
-                "",
-                &std::collections::HashMap::new(),
+                &WhereNaming {
+                    internal_prefix: "",
+                    aliases: &std::collections::HashMap::new(),
+                },
             )
             .await
             .unwrap();
@@ -639,13 +699,13 @@ mod tests {
 
         let output = run(
             tmp.path(),
-            "test query",
-            10,
-            None,
-            SearchMode::Hybrid,
-            true,
-            true,
-            false,
+            SearchQuery {
+                text: "test query",
+                limit: 10,
+                where_clause: None,
+                mode: SearchMode::Hybrid,
+            },
+            NO_AUTO,
         )
         .await;
         assert!(crate::step::has_failed(&output));
@@ -661,13 +721,13 @@ mod tests {
 
         let output = run(
             tmp.path(),
-            "test",
-            10,
-            Some("author = 'O'Brien'"),
-            SearchMode::Hybrid,
-            true,
-            true,
-            false,
+            SearchQuery {
+                text: "test",
+                limit: 10,
+                where_clause: Some("author = 'O'Brien'"),
+                mode: SearchMode::Hybrid,
+            },
+            NO_AUTO,
         )
         .await;
         assert!(crate::step::has_failed(&output));
@@ -683,13 +743,13 @@ mod tests {
 
         let output = run(
             tmp.path(),
-            "test",
-            10,
-            Some("x = \"bad"),
-            SearchMode::Hybrid,
-            true,
-            true,
-            false,
+            SearchQuery {
+                text: "test",
+                limit: 10,
+                where_clause: Some("x = \"bad"),
+                mode: SearchMode::Hybrid,
+            },
+            NO_AUTO,
         )
         .await;
         assert!(crate::step::has_failed(&output));
@@ -705,13 +765,13 @@ mod tests {
 
         let output = run(
             tmp.path(),
-            "test",
-            10,
-            Some("author's name = O'Brien"),
-            SearchMode::Hybrid,
-            true,
-            true,
-            false,
+            SearchQuery {
+                text: "test",
+                limit: 10,
+                where_clause: Some("author's name = O'Brien"),
+                mode: SearchMode::Hybrid,
+            },
+            NO_AUTO,
         )
         .await;
         assert!(crate::step::has_failed(&output));
@@ -725,13 +785,13 @@ mod tests {
 
         let output = run(
             tmp.path(),
-            "test",
-            10,
-            Some("title = 'O''Brien'"),
-            SearchMode::Hybrid,
-            true,
-            true,
-            false,
+            SearchQuery {
+                text: "test",
+                limit: 10,
+                where_clause: Some("title = 'O''Brien'"),
+                mode: SearchMode::Hybrid,
+            },
+            NO_AUTO,
         )
         .await;
         // Should not fail with quote parity error
@@ -842,7 +902,17 @@ mod tests {
         mode: SearchMode,
         where_clause: Option<&str>,
     ) -> Vec<String> {
-        let result = run(dir, query, 50, where_clause, mode, true, true, false).await;
+        let result = run(
+            dir,
+            SearchQuery {
+                text: query,
+                limit: 50,
+                where_clause,
+                mode,
+            },
+            NO_AUTO,
+        )
+        .await;
         assert!(
             !crate::step::has_failed(&result),
             "search failed: {result:#?}"
@@ -896,143 +966,124 @@ mod tests {
         assert!(!hy.is_empty(), "hybrid should return results");
     }
 
+    /// Expected outcome of a `--where` filter over the rich vault. Files are
+    /// matched by path suffix.
+    enum WhereExpect {
+        /// The hits are exactly these files.
+        Only(&'static [&'static str]),
+        /// At least one hit; all of `include` appear and none of `exclude`.
+        Filtered {
+            include: &'static [&'static str],
+            exclude: &'static [&'static str],
+        },
+        /// At least one hit, and every hit's path starts with this prefix.
+        UnderPrefix(&'static str),
+        /// No hits, and no error.
+        Empty,
+        /// At least one hit, but fewer than the unfiltered search returns.
+        NarrowerThanUnfiltered,
+    }
+
+    /// Semantic search for a fixed query over the rich vault, with an optional
+    /// `--where` filter; returns the sorted hit filenames.
+    async fn where_files(tmp: &TempDir, where_clause: Option<&str>) -> Vec<String> {
+        search_files(tmp.path(), "content", SearchMode::Semantic, where_clause).await
+    }
+
     #[tokio::test]
     async fn integration_where_operators() {
         let tmp = tempfile::tempdir().unwrap();
         create_rich_vault(tmp.path());
         init_and_build(tmp.path()).await;
-        let q = "content";
+        let unfiltered = where_files(&tmp, None).await;
 
-        // String equality
-        let active = search_files(
-            tmp.path(),
-            q,
-            SearchMode::Semantic,
-            Some("status = 'active'"),
-        )
-        .await;
-        assert!(
-            active.iter().all(|f| !f.ends_with("cooking.md")),
-            "active filter excludes archived: {active:?}"
-        );
-        assert!(ends_with(&active, "rust.md") && ends_with(&active, "photonics.md"));
+        let cases = [
+            // String equality
+            (
+                "status = 'active'",
+                WhereExpect::Filtered {
+                    include: &["rust.md", "photonics.md"],
+                    exclude: &["cooking.md"],
+                },
+            ),
+            // Integer comparisons
+            (
+                "rating >= 4",
+                WhereExpect::Filtered {
+                    include: &[],
+                    exclude: &["cooking.md", "archive.md"],
+                },
+            ),
+            (
+                "rating BETWEEN 1 AND 2",
+                WhereExpect::Only(&["cooking.md", "archive.md"]),
+            ),
+            (
+                "rating IN (1, 5)",
+                WhereExpect::Only(&["rust.md", "archive.md"]),
+            ),
+            // Boolean
+            (
+                "draft = false",
+                WhereExpect::Filtered {
+                    include: &[],
+                    exclude: &["cooking.md", "draftpost.md"],
+                },
+            ),
+            // Array membership
+            ("array_has(tags, 'rust')", WhereExpect::Only(&["rust.md"])),
+            // LIKE on a string field
+            ("title LIKE 'Rust%'", WhereExpect::Only(&["rust.md"])),
+            // Date literal comparison
+            (
+                "published >= date '2024-01-01'",
+                WhereExpect::Filtered {
+                    include: &[],
+                    exclude: &["cooking.md", "archive.md"],
+                },
+            ),
+            // Nested dotted struct access
+            (
+                "calibration.baseline.wavelength > 800",
+                WhereExpect::Only(&["photonics.md"]),
+            ),
+            // AND composition
+            (
+                "status = 'active' AND rating >= 5",
+                WhereExpect::Only(&["rust.md"]),
+            ),
+            // Internal column filter (filepath stays top-level, not data-prefixed)
+            ("filepath LIKE 'blog/%'", WhereExpect::UnderPrefix("blog/")),
+            // A filter that matches nothing returns zero hits (not an error)
+            ("rating > 100", WhereExpect::Empty),
+            // Filtering reduces the result set vs. no filter
+            ("status = 'archived'", WhereExpect::NarrowerThanUnfiltered),
+        ];
 
-        // Integer comparisons
-        let hi = search_files(tmp.path(), q, SearchMode::Semantic, Some("rating >= 4")).await;
-        assert!(
-            !hi.is_empty()
-                && hi
-                    .iter()
-                    .all(|f| !f.ends_with("cooking.md") && !f.ends_with("archive.md"))
-        );
-        let lo = search_files(
-            tmp.path(),
-            q,
-            SearchMode::Semantic,
-            Some("rating BETWEEN 1 AND 2"),
-        )
-        .await;
-        assert!(ends_with(&lo, "cooking.md") && ends_with(&lo, "archive.md"));
-        let in_list = search_files(
-            tmp.path(),
-            q,
-            SearchMode::Semantic,
-            Some("rating IN (1, 5)"),
-        )
-        .await;
-        assert!(ends_with(&in_list, "rust.md") && ends_with(&in_list, "archive.md"));
-
-        // Boolean
-        let published =
-            search_files(tmp.path(), q, SearchMode::Semantic, Some("draft = false")).await;
-        assert!(
-            published
-                .iter()
-                .all(|f| !f.ends_with("cooking.md") && !f.ends_with("draftpost.md"))
-        );
-
-        // Array membership
-        let rusty = search_files(
-            tmp.path(),
-            q,
-            SearchMode::Semantic,
-            Some("array_has(tags, 'rust')"),
-        )
-        .await;
-        assert_eq!(rusty.len(), 1);
-        assert!(ends_with(&rusty, "rust.md"));
-
-        // LIKE on a string field
-        let titled = search_files(
-            tmp.path(),
-            q,
-            SearchMode::Semantic,
-            Some("title LIKE 'Rust%'"),
-        )
-        .await;
-        assert!(ends_with(&titled, "rust.md") && titled.len() == 1);
-
-        // Date literal comparison
-        let recent = search_files(
-            tmp.path(),
-            q,
-            SearchMode::Semantic,
-            Some("published >= date '2024-01-01'"),
-        )
-        .await;
-        assert!(
-            recent
-                .iter()
-                .all(|f| !f.ends_with("cooking.md") && !f.ends_with("archive.md"))
-        );
-
-        // Nested dotted struct access
-        let nested = search_files(
-            tmp.path(),
-            q,
-            SearchMode::Semantic,
-            Some("calibration.baseline.wavelength > 800"),
-        )
-        .await;
-        assert_eq!(nested.len(), 1);
-        assert!(ends_with(&nested, "photonics.md"));
-
-        // AND composition
-        let combo = search_files(
-            tmp.path(),
-            q,
-            SearchMode::Semantic,
-            Some("status = 'active' AND rating >= 5"),
-        )
-        .await;
-        assert_eq!(combo.len(), 1);
-        assert!(ends_with(&combo, "rust.md"));
-
-        // Internal column filter (filepath stays top-level, not data-prefixed)
-        let blog_only = search_files(
-            tmp.path(),
-            q,
-            SearchMode::Semantic,
-            Some("filepath LIKE 'blog/%'"),
-        )
-        .await;
-        assert!(blog_only.iter().all(|f| f.starts_with("blog/")));
-        assert!(!blog_only.is_empty());
-
-        // A filter that matches nothing returns zero hits (not an error)
-        let none = search_files(tmp.path(), q, SearchMode::Semantic, Some("rating > 100")).await;
-        assert!(none.is_empty());
-
-        // Filtering reduces the result set vs. no filter
-        let all = search_files(tmp.path(), q, SearchMode::Semantic, None).await;
-        let filtered = search_files(
-            tmp.path(),
-            q,
-            SearchMode::Semantic,
-            Some("status = 'archived'"),
-        )
-        .await;
-        assert!(filtered.len() < all.len() && !filtered.is_empty());
+        for (where_clause, expect) in cases {
+            let files = where_files(&tmp, Some(where_clause)).await;
+            let ctx = format!("{where_clause}: {files:?}");
+            match expect {
+                WhereExpect::Only(expected) => {
+                    assert_eq!(files.len(), expected.len(), "{ctx}");
+                    assert!(expected.iter().all(|e| ends_with(&files, e)), "{ctx}");
+                }
+                WhereExpect::Filtered { include, exclude } => {
+                    assert!(!files.is_empty(), "{ctx}");
+                    assert!(include.iter().all(|e| ends_with(&files, e)), "{ctx}");
+                    assert!(!exclude.iter().any(|e| ends_with(&files, e)), "{ctx}");
+                }
+                WhereExpect::UnderPrefix(prefix) => {
+                    assert!(!files.is_empty(), "{ctx}");
+                    assert!(files.iter().all(|f| f.starts_with(prefix)), "{ctx}");
+                }
+                WhereExpect::Empty => assert!(files.is_empty(), "{ctx}"),
+                WhereExpect::NarrowerThanUnfiltered => {
+                    assert!(!files.is_empty(), "{ctx}");
+                    assert!(files.len() < unfiltered.len(), "{ctx}");
+                }
+            }
+        }
     }
 
     #[tokio::test]
@@ -1058,13 +1109,13 @@ mod tests {
         // Limit is respected.
         let result = run(
             tmp.path(),
-            "content",
-            2,
-            None,
-            SearchMode::Semantic,
-            true,
-            true,
-            false,
+            SearchQuery {
+                text: "content",
+                limit: 2,
+                where_clause: None,
+                mode: SearchMode::Semantic,
+            },
+            NO_AUTO,
         )
         .await;
         assert!(!crate::step::has_failed(&result));
@@ -1073,13 +1124,13 @@ mod tests {
         // The snippet (chunk_text) is populated from the persisted column.
         let result = run(
             tmp.path(),
-            "wavelength",
-            1,
-            None,
-            SearchMode::Fulltext,
-            true,
-            true,
-            false,
+            SearchQuery {
+                text: "wavelength",
+                limit: 1,
+                where_clause: None,
+                mode: SearchMode::Fulltext,
+            },
+            NO_AUTO,
         )
         .await;
         let hits = &unwrap_search(&result).hits;
@@ -1159,7 +1210,17 @@ mod tests {
             SearchMode::Fulltext,
             SearchMode::Semantic,
         ] {
-            let result = run(tmp.path(), "content", 0, None, mode, true, true, false).await;
+            let result = run(
+                tmp.path(),
+                SearchQuery {
+                    text: "content",
+                    limit: 0,
+                    where_clause: None,
+                    mode,
+                },
+                NO_AUTO,
+            )
+            .await;
             assert!(
                 !crate::step::has_failed(&result),
                 "{mode:?} limit 0 should not fail"
@@ -1194,13 +1255,13 @@ mod tests {
         ] {
             let result = run(
                 tmp.path(),
-                "content",
-                10,
-                Some("measurement_values IS NOT NULL"),
-                mode,
-                true,
-                true,
-                false,
+                SearchQuery {
+                    text: "content",
+                    limit: 10,
+                    where_clause: Some("measurement_values IS NOT NULL"),
+                    mode,
+                },
+                NO_AUTO,
             )
             .await;
             assert!(
@@ -1230,13 +1291,13 @@ mod tests {
 
         let result = run(
             tmp.path(),
-            "note",
-            10,
-            Some("file_id = 'abc'"),
-            SearchMode::Semantic,
-            true,
-            true,
-            false,
+            SearchQuery {
+                text: "note",
+                limit: 10,
+                where_clause: Some("file_id = 'abc'"),
+                mode: SearchMode::Semantic,
+            },
+            NO_AUTO,
         )
         .await;
         assert!(

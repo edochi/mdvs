@@ -1,10 +1,10 @@
-//! Outcome types for config-related leaf steps (ReadConfig, WriteConfig).
+//! Outcome types for config-related leaf steps (`ReadConfig`, `WriteConfig`).
 
 use serde::Serialize;
 
 use crate::block::{Block, Render};
 
-/// Full outcome for the read_config step.
+/// Full outcome for the `read_config` step.
 #[derive(Debug, Serialize)]
 pub struct ReadConfigOutcome {
     /// Path to the config file that was read.
@@ -17,7 +17,7 @@ impl Render for ReadConfigOutcome {
     }
 }
 
-/// Full outcome for the write_config step.
+/// Full outcome for the `write_config` step.
 #[derive(Debug, Serialize)]
 pub struct WriteConfigOutcome {
     /// Path to the config file that was written.

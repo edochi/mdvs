@@ -18,5 +18,7 @@ pub mod init;
 pub mod scaffold;
 /// Query the search index.
 pub mod search;
+/// Pipeline steps shared across commands (read config, scan, infer, ...).
+pub(crate) mod steps;
 /// Re-scan and update the schema in `mdvs.toml`.
 pub mod update;

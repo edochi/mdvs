@@ -10,12 +10,16 @@
 //! Stage 2 entries based on observed type-widening events; users can also
 //! configure them manually.
 
-use crate::discover::field_type::FieldType;
-use crate::schema::config::{MdvsToml, TomlField};
+use std::{borrow::Cow, collections::HashMap};
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::borrow::Cow;
-use std::collections::HashMap;
+
+use crate::{
+    discover::field_type::FieldType,
+    num::i64_to_f64_exact,
+    schema::config::{MdvsToml, TomlField},
+};
 
 /// Per-field value preprocessor.
 ///
@@ -66,7 +70,7 @@ impl ValueStage {
 
     /// Apply this stage to a value. Returns `None` if no transformation
     /// applied — the caller keeps the input as-is.
-    fn apply(&self, value: &Value, field_type: &FieldType) -> Option<Value> {
+    fn apply(self, value: &Value, field_type: &FieldType) -> Option<Value> {
         match self {
             ValueStage::CoerceToString => coerce_to_string(value, field_type),
             ValueStage::WidenIntToFloat => widen_int_to_float(value, field_type),
@@ -117,14 +121,12 @@ impl Pipeline {
     /// Apply the field's Stage-2 preprocessors in declared order.
     /// Returns `Cow::Borrowed(value)` when no transformation occurs.
     pub(crate) fn apply_to_value<'a>(&self, field: &TomlField, value: &'a Value) -> Cow<'a, Value> {
-        let stages = match self.per_field.get(field.name.as_str()) {
-            Some(s) => s,
-            None => return Cow::Borrowed(value),
+        let Some(stages) = self.per_field.get(field.name.as_str()) else {
+            return Cow::Borrowed(value);
         };
 
-        let field_type = match FieldType::try_from(&field.field_type) {
-            Ok(ft) => ft,
-            Err(_) => return Cow::Borrowed(value),
+        let Ok(field_type) = FieldType::try_from(&field.field_type) else {
+            return Cow::Borrowed(value);
         };
 
         let mut current: Cow<'a, Value> = Cow::Borrowed(value);
@@ -168,26 +170,42 @@ fn coerce_to_string(value: &Value, field_type: &FieldType) -> Option<Value> {
 
 /// Convert integer-backed numbers to f64-backed numbers for Float / Array(Float)
 /// fields. Returns `None` when no conversion is needed.
+///
+/// Integers whose magnitude exceeds 2^53 have no exact f64 equivalent and are
+/// left as integers; [`strict_subtype_check`] reports them as type errors.
 fn widen_int_to_float(value: &Value, field_type: &FieldType) -> Option<Value> {
     match (field_type, value) {
         (FieldType::Float, Value::Number(n)) if n.is_i64() => n
             .as_i64()
-            .and_then(|i| serde_json::Number::from_f64(i as f64).map(Value::Number)),
+            .and_then(i64_to_f64_exact)
+            .and_then(serde_json::Number::from_f64)
+            .map(Value::Number),
         (FieldType::Array(inner), Value::Array(arr)) if matches!(**inner, FieldType::Float) => {
             let widened: Vec<Value> = arr
                 .iter()
                 .map(|elem| match elem {
                     Value::Number(n) if n.is_i64() => n
                         .as_i64()
-                        .and_then(|i| serde_json::Number::from_f64(i as f64))
-                        .map(Value::Number)
-                        .unwrap_or_else(|| elem.clone()),
+                        .and_then(i64_to_f64_exact)
+                        .and_then(serde_json::Number::from_f64)
+                        .map_or_else(|| elem.clone(), Value::Number),
                     _ => elem.clone(),
                 })
                 .collect();
             Some(Value::Array(widened))
         }
         _ => None,
+    }
+}
+
+/// Whether `value` is an integer-backed number that widening cannot turn into
+/// an exactly equal f64 (magnitude above 2^53, including u64 beyond i64).
+pub(crate) fn is_unwidenable_integer(value: &Value) -> bool {
+    match value {
+        Value::Number(n) if n.is_i64() || n.is_u64() => {
+            n.as_i64().and_then(i64_to_f64_exact).is_none()
+        }
+        _ => false,
     }
 }
 
@@ -213,28 +231,44 @@ pub(crate) fn strict_subtype_check(
     field_type: &FieldType,
     value: &Value,
 ) -> Option<String> {
-    // Float strict: reject integer-backed numbers unless widen_int_to_float
-    // is opted in.
-    if matches!(field_type, FieldType::Float)
-        && !field.preprocess.contains(&ValueStage::WidenIntToFloat)
-        && matches!(value, Value::Number(n) if n.is_i64() || n.is_u64())
-    {
-        return Some("got Integer".to_string());
+    let widens = field.preprocess.contains(&ValueStage::WidenIntToFloat);
+
+    if matches!(field_type, FieldType::Float) {
+        // Float strict: reject integer-backed numbers unless widen_int_to_float
+        // is opted in. Even when it is, an integer beyond 2^53 cannot widen
+        // exactly and is rejected rather than silently rounded.
+        if !widens && matches!(value, Value::Number(n) if n.is_i64() || n.is_u64()) {
+            return Some("got Integer".to_string());
+        }
+        if widens && is_unwidenable_integer(value) {
+            return Some(format!(
+                "got Integer {value} beyond ±2^53, which has no exact Float equivalent"
+            ));
+        }
     }
 
     // Array(Float) strict: reject if any element is integer-backed unless
-    // widen_int_to_float is opted in.
+    // widen_int_to_float is opted in; with it, reject elements beyond 2^53.
     if let FieldType::Array(inner) = field_type
         && matches!(**inner, FieldType::Float)
-        && !field.preprocess.contains(&ValueStage::WidenIntToFloat)
         && let Value::Array(arr) = value
     {
-        let bad = arr.iter().enumerate().find_map(|(i, elem)| match elem {
-            Value::Number(n) if n.is_i64() || n.is_u64() => Some(i),
-            _ => None,
-        });
-        if let Some(i) = bad {
-            return Some(format!("got Integer at index {i}"));
+        if !widens {
+            let bad = arr.iter().enumerate().find_map(|(i, elem)| match elem {
+                Value::Number(n) if n.is_i64() || n.is_u64() => Some(i),
+                _ => None,
+            });
+            if let Some(i) = bad {
+                return Some(format!("got Integer at index {i}"));
+            }
+        } else if let Some((i, elem)) = arr
+            .iter()
+            .enumerate()
+            .find(|(_, elem)| is_unwidenable_integer(elem))
+        {
+            return Some(format!(
+                "got Integer {elem} at index {i} beyond ±2^53, which has no exact Float equivalent"
+            ));
         }
     }
 
@@ -302,9 +336,10 @@ fn needs_widen_int_to_float(observed: &[FieldType], final_type: &FieldType) -> b
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::schema::shared::FieldTypeSerde;
     use serde_json::json;
+
+    use super::*;
+    use crate::{num::F64_EXACT_INT_LIMIT_I64, schema::shared::FieldTypeSerde};
 
     fn string_field(name: &str, preprocess: Vec<ValueStage>) -> TomlField {
         TomlField {
@@ -475,6 +510,73 @@ mod tests {
     }
 
     #[test]
+    fn widen_int_to_float_widens_at_precision_limit() {
+        let r = widen_int_to_float(&json!(F64_EXACT_INT_LIMIT_I64), &FieldType::Float).unwrap();
+        assert!(r.is_f64());
+        assert_eq!(r.as_i64(), None);
+        assert_eq!(r, json!(9_007_199_254_740_992.0));
+    }
+
+    #[test]
+    fn widen_int_to_float_skips_int_beyond_precision_limit() {
+        let r = widen_int_to_float(&json!(F64_EXACT_INT_LIMIT_I64 + 1), &FieldType::Float);
+        assert!(r.is_none());
+    }
+
+    #[test]
+    fn widen_int_to_float_keeps_array_element_beyond_precision_limit() {
+        let arr_float = FieldType::Array(Box::new(FieldType::Float));
+        let r = widen_int_to_float(&json!([1, F64_EXACT_INT_LIMIT_I64 + 1]), &arr_float).unwrap();
+        assert_eq!(r, json!([1.0, F64_EXACT_INT_LIMIT_I64 + 1]));
+    }
+
+    #[test]
+    fn strict_check_rejects_int_beyond_precision_limit_when_widening() {
+        let field = float_field("score", vec![ValueStage::WidenIntToFloat]);
+        let result = strict_subtype_check(
+            &field,
+            &FieldType::Float,
+            &json!(F64_EXACT_INT_LIMIT_I64 + 1),
+        );
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn strict_check_rejects_array_element_beyond_precision_limit_when_widening() {
+        let field = array_float_field("scores", vec![ValueStage::WidenIntToFloat]);
+        let arr_float = FieldType::Array(Box::new(FieldType::Float));
+        let result =
+            strict_subtype_check(&field, &arr_float, &json!([1, F64_EXACT_INT_LIMIT_I64 + 1]));
+        assert!(result.is_some_and(|d| d.contains("index 1")));
+    }
+
+    #[test]
+    fn strict_check_rejects_negative_int_beyond_precision_limit_when_widening() {
+        let field = float_field("score", vec![ValueStage::WidenIntToFloat]);
+        let result = strict_subtype_check(
+            &field,
+            &FieldType::Float,
+            &json!(-F64_EXACT_INT_LIMIT_I64 - 1),
+        );
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn strict_check_rejects_u64_beyond_i64_when_widening() {
+        let field = float_field("score", vec![ValueStage::WidenIntToFloat]);
+        let result = strict_subtype_check(&field, &FieldType::Float, &json!(u64::MAX));
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn strict_check_rejects_u64_array_element_beyond_i64_when_widening() {
+        let field = array_float_field("scores", vec![ValueStage::WidenIntToFloat]);
+        let arr_float = FieldType::Array(Box::new(FieldType::Float));
+        let result = strict_subtype_check(&field, &arr_float, &json!([0.5, u64::MAX]));
+        assert!(result.is_some_and(|d| d.contains("index 1")));
+    }
+
+    #[test]
     fn widen_int_to_float_no_op_on_float() {
         let r = widen_int_to_float(&json!(2.5), &FieldType::Float);
         assert!(r.is_none());
@@ -502,8 +604,10 @@ mod tests {
 
     #[test]
     fn pipeline_no_preprocess_returns_borrowed() {
-        use crate::schema::config::{FieldsConfig, UpdateConfig};
-        use crate::schema::shared::{FrontmatterFormat, ScanConfig};
+        use crate::schema::{
+            config::{FieldsConfig, UpdateConfig},
+            shared::{FrontmatterFormat, ScanConfig},
+        };
         let toml = MdvsToml {
             default_output_format: None,
             scan: ScanConfig {
@@ -517,8 +621,8 @@ mod tests {
             fields: FieldsConfig {
                 ignore: vec![],
                 field: vec![string_field("title", vec![])],
-                max_categories: 10,
-                min_category_repetition: 3,
+                max_categories: None,
+                min_category_repetition: None,
             },
             embedding_model: None,
             chunking: None,
@@ -533,8 +637,10 @@ mod tests {
 
     #[test]
     fn pipeline_applies_coerce_to_string() {
-        use crate::schema::config::{FieldsConfig, UpdateConfig};
-        use crate::schema::shared::{FrontmatterFormat, ScanConfig};
+        use crate::schema::{
+            config::{FieldsConfig, UpdateConfig},
+            shared::{FrontmatterFormat, ScanConfig},
+        };
         let toml = MdvsToml {
             default_output_format: None,
             scan: ScanConfig {
@@ -548,8 +654,8 @@ mod tests {
             fields: FieldsConfig {
                 ignore: vec![],
                 field: vec![string_field("title", vec![ValueStage::CoerceToString])],
-                max_categories: 10,
-                min_category_repetition: 3,
+                max_categories: None,
+                min_category_repetition: None,
             },
             embedding_model: None,
             chunking: None,
@@ -564,8 +670,10 @@ mod tests {
 
     #[test]
     fn pipeline_applies_widen_int_to_float() {
-        use crate::schema::config::{FieldsConfig, UpdateConfig};
-        use crate::schema::shared::{FrontmatterFormat, ScanConfig};
+        use crate::schema::{
+            config::{FieldsConfig, UpdateConfig},
+            shared::{FrontmatterFormat, ScanConfig},
+        };
         let toml = MdvsToml {
             default_output_format: None,
             scan: ScanConfig {
@@ -579,8 +687,8 @@ mod tests {
             fields: FieldsConfig {
                 ignore: vec![],
                 field: vec![float_field("score", vec![ValueStage::WidenIntToFloat])],
-                max_categories: 10,
-                min_category_repetition: 3,
+                max_categories: None,
+                min_category_repetition: None,
             },
             embedding_model: None,
             chunking: None,
@@ -595,8 +703,10 @@ mod tests {
 
     #[test]
     fn pipeline_array_string_per_element() {
-        use crate::schema::config::{FieldsConfig, UpdateConfig};
-        use crate::schema::shared::{FrontmatterFormat, ScanConfig};
+        use crate::schema::{
+            config::{FieldsConfig, UpdateConfig},
+            shared::{FrontmatterFormat, ScanConfig},
+        };
         let toml = MdvsToml {
             default_output_format: None,
             scan: ScanConfig {
@@ -610,8 +720,8 @@ mod tests {
             fields: FieldsConfig {
                 ignore: vec![],
                 field: vec![array_string_field("tags", vec![ValueStage::CoerceToString])],
-                max_categories: 10,
-                min_category_repetition: 3,
+                max_categories: None,
+                min_category_repetition: None,
             },
             embedding_model: None,
             chunking: None,

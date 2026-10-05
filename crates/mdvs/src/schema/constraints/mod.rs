@@ -14,8 +14,9 @@ mod length;
 mod pattern;
 mod range;
 
-use crate::discover::field_type::FieldType;
 use serde::{Deserialize, Serialize};
+
+use crate::discover::field_type::FieldType;
 
 // ---------------------------------------------------------------------------
 // Serde layer
@@ -154,7 +155,7 @@ impl ConstraintKind {
                 categories::validate_for_type(field_name, field_type, values)
             }
             ConstraintKind::Range { min, max } => {
-                range::validate_for_type(field_name, field_type, min, max)
+                range::validate_for_type(field_name, field_type, min.as_ref(), max.as_ref())
             }
             ConstraintKind::Length { min, max } => {
                 length::validate_for_type(field_name, field_type, *min, *max)
@@ -176,7 +177,7 @@ impl ConstraintKind {
         field_name: &str,
         _field_type: &FieldType,
     ) -> Option<String> {
-        use ConstraintKind::*;
+        use ConstraintKind::{Categories, Length, Pattern, Range};
         match (self, other) {
             (Categories(_), Categories(_)) => Some(format!(
                 "field '{field_name}': duplicate categories constraint"

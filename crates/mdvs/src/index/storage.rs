@@ -1,21 +1,32 @@
-use crate::discover::field_type::FieldType;
-use crate::schema::config::MdvsToml;
-use crate::schema::json_schema::dsl_to_canonical;
-use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+};
+
+use anyhow::Context;
+use arrow::{
+    array::{
+        ArrayRef, BooleanArray, Date32Array, FixedSizeListArray, Float32Array, Float64Array,
+        Int32Array, Int64Array, ListArray, StringArray, StructArray, TimestampMicrosecondArray,
+        TimestampMillisecondArray,
+    },
+    buffer::{NullBuffer, OffsetBuffer},
+    datatypes::{DataType, Field, Schema, TimeUnit},
+    record_batch::RecordBatch,
+};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use serde_json::Value;
 use xxhash_rust::xxh3::xxh3_64;
 
-use arrow::array::{
-    ArrayRef, BooleanArray, Date32Array, FixedSizeListArray, Float32Array, Float64Array,
-    Int32Array, Int64Array, ListArray, StringArray, StructArray, TimestampMicrosecondArray,
-    TimestampMillisecondArray,
+use crate::{
+    discover::field_type::FieldType,
+    num::i64_to_f64_exact,
+    schema::{
+        config::MdvsToml,
+        json_schema::dsl_to_canonical,
+        shared::{ChunkingConfig, EmbeddingModelConfig},
+    },
 };
-use arrow::buffer::{NullBuffer, OffsetBuffer};
-use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
-use arrow::record_batch::RecordBatch;
-use serde_json::Value;
-use std::sync::Arc;
 
 /// File ID column on each chunk row (duplicated per chunk).
 pub const COL_FILE_ID: &str = "file_id";
@@ -172,22 +183,38 @@ impl BuildMetadata {
 // Arrow array builder (recursive, from JSON + FieldType)
 // ============================================================================
 
-fn build_array(values: &[Option<&Value>], ft: &FieldType) -> ArrayRef {
+/// Build an Arrow array for `values` typed by `ft`, recursing into lists and
+/// structs.
+///
+/// # Errors
+///
+/// Fails when a list column holds more child values than Arrow's `i32` list
+/// offsets can address.
+fn build_array(values: &[Option<&Value>], ft: &FieldType) -> anyhow::Result<ArrayRef> {
     match ft {
         FieldType::Boolean => {
-            let arr: BooleanArray = values.iter().map(|v| v.and_then(|v| v.as_bool())).collect();
-            Arc::new(arr)
+            let arr: BooleanArray = values.iter().map(|v| v.and_then(Value::as_bool)).collect();
+            Ok(Arc::new(arr))
         }
         FieldType::Integer => {
-            let arr: Int64Array = values.iter().map(|v| v.and_then(|v| v.as_i64())).collect();
-            Arc::new(arr)
+            let arr: Int64Array = values.iter().map(|v| v.and_then(Value::as_i64)).collect();
+            Ok(Arc::new(arr))
         }
         FieldType::Float => {
             let arr: Float64Array = values
                 .iter()
-                .map(|v| v.and_then(|v| v.as_f64().or_else(|| v.as_i64().map(|i| i as f64))))
+                .map(|v| {
+                    v.and_then(|v| match v {
+                        // `as_f64` on an integer-backed number rounds silently,
+                        // so integers go through the exact conversion and
+                        // become null when they have no exact f64 equivalent.
+                        Value::Number(n) if n.is_f64() => n.as_f64(),
+                        Value::Number(n) => n.as_i64().and_then(i64_to_f64_exact),
+                        _ => None,
+                    })
+                })
                 .collect();
-            Arc::new(arr)
+            Ok(Arc::new(arr))
         }
         FieldType::String => {
             let arr: StringArray = values
@@ -200,7 +227,7 @@ fn build_array(values: &[Option<&Value>], ft: &FieldType) -> ArrayRef {
                     })
                 })
                 .collect();
-            Arc::new(arr)
+            Ok(Arc::new(arr))
         }
         FieldType::Date => {
             // Parse JSON strings as RFC 3339 full-date (`YYYY-MM-DD`) and
@@ -222,7 +249,7 @@ fn build_array(values: &[Option<&Value>], ft: &FieldType) -> ArrayRef {
                         .map(|d| d.num_days_from_ce() - EPOCH_DAYS_FROM_CE)
                 })
                 .collect();
-            Arc::new(arr)
+            Ok(Arc::new(arr))
         }
         FieldType::DateTime => {
             // Parse RFC 3339 datetimes and store as Arrow Timestamp(ms, UTC).
@@ -238,67 +265,91 @@ fn build_array(values: &[Option<&Value>], ft: &FieldType) -> ArrayRef {
                         .map(|dt| dt.with_timezone(&chrono::Utc).timestamp_millis())
                 })
                 .collect();
-            Arc::new(raw.with_timezone(Arc::from("UTC")))
+            Ok(Arc::new(raw.with_timezone(Arc::from("UTC"))))
         }
-        FieldType::Array(inner) => {
-            let mut offsets: Vec<i32> = vec![0];
-            let mut child_values: Vec<Option<&Value>> = Vec::new();
-            let mut nulls: Vec<bool> = Vec::new();
-            for v in values {
-                match v.and_then(|v| v.as_array()) {
-                    Some(arr) => {
-                        for elem in arr {
-                            child_values.push(Some(elem));
-                        }
-                        offsets.push(child_values.len() as i32);
-                        nulls.push(true);
-                    }
-                    None => {
-                        // `offsets` is seeded with `vec![0]`, so `.last()`
-                        // is always Some here. The `unwrap_or(&0)` fallback
-                        // preserves correctness if a future refactor breaks
-                        // that invariant.
-                        offsets.push(*offsets.last().unwrap_or(&0));
-                        nulls.push(false);
-                    }
-                }
+        FieldType::Array(inner) => build_list_array(values, inner),
+        FieldType::Object(fields) => build_struct_array(values, fields),
+    }
+}
+
+/// Build an Arrow `ListArray` whose elements are typed by `inner`; non-array
+/// values become null list entries.
+///
+/// # Errors
+///
+/// Fails when the list holds more child values than Arrow's `i32` list
+/// offsets can address.
+fn build_list_array(values: &[Option<&Value>], inner: &FieldType) -> anyhow::Result<ArrayRef> {
+    let mut offsets: Vec<i32> = vec![0];
+    let mut child_values: Vec<Option<&Value>> = Vec::new();
+    let mut nulls: Vec<bool> = Vec::new();
+    for v in values {
+        if let Some(arr) = v.and_then(|v| v.as_array()) {
+            for elem in arr {
+                child_values.push(Some(elem));
             }
-            let child_array = build_array(&child_values, inner);
-            let inner_dt: DataType = inner.as_ref().into();
-            Arc::new(ListArray::new(
-                Arc::new(Field::new("item", inner_dt, true)),
-                OffsetBuffer::new(offsets.into()),
-                child_array,
-                Some(NullBuffer::from(nulls)),
-            ))
-        }
-        FieldType::Object(fields) => {
-            let nulls: Vec<bool> = values
-                .iter()
-                .map(|v| v.and_then(|v| v.as_object()).is_some())
-                .collect();
-            let children: Vec<(Arc<Field>, ArrayRef)> = fields
-                .iter()
-                .map(|(name, sub_ft)| {
-                    let sub_values: Vec<Option<&Value>> = values
-                        .iter()
-                        .map(|v| v.and_then(|v| v.get(name.as_str())))
-                        .collect();
-                    let sub_dt: DataType = sub_ft.into();
-                    (
-                        Arc::new(Field::new(name, sub_dt, true)),
-                        build_array(&sub_values, sub_ft),
-                    )
-                })
-                .collect();
-            let (child_fields, child_arrays): (Vec<_>, Vec<_>) = children.into_iter().unzip();
-            Arc::new(StructArray::new(
-                child_fields.into(),
-                child_arrays,
-                Some(NullBuffer::from(nulls)),
-            ))
+            let offset = i32::try_from(child_values.len()).with_context(|| {
+                format!(
+                    "list column holds {} values, beyond the Arrow list offset limit of {}",
+                    child_values.len(),
+                    i32::MAX
+                )
+            })?;
+            offsets.push(offset);
+            nulls.push(true);
+        } else {
+            // `offsets` is seeded with `vec![0]`, so `.last()`
+            // is always Some here. The `unwrap_or(&0)` fallback
+            // preserves correctness if a future refactor breaks
+            // that invariant.
+            offsets.push(*offsets.last().unwrap_or(&0));
+            nulls.push(false);
         }
     }
+    let child_array = build_array(&child_values, inner)?;
+    let inner_dt: DataType = inner.into();
+    Ok(Arc::new(ListArray::new(
+        Arc::new(Field::new("item", inner_dt, true)),
+        OffsetBuffer::new(offsets.into()),
+        child_array,
+        Some(NullBuffer::from(nulls)),
+    )))
+}
+
+/// Build an Arrow `StructArray` with one child per entry of `fields`;
+/// non-object values become null struct entries.
+///
+/// # Errors
+///
+/// Propagates list-offset overflow from any nested list child.
+fn build_struct_array(
+    values: &[Option<&Value>],
+    fields: &BTreeMap<String, FieldType>,
+) -> anyhow::Result<ArrayRef> {
+    let nulls: Vec<bool> = values
+        .iter()
+        .map(|v| v.and_then(|v| v.as_object()).is_some())
+        .collect();
+    let children: Vec<(Arc<Field>, ArrayRef)> = fields
+        .iter()
+        .map(|(name, sub_ft)| {
+            let sub_values: Vec<Option<&Value>> = values
+                .iter()
+                .map(|v| v.and_then(|v| v.get(name.as_str())))
+                .collect();
+            let sub_dt: DataType = sub_ft.into();
+            Ok((
+                Arc::new(Field::new(name, sub_dt, true)),
+                build_array(&sub_values, sub_ft)?,
+            ))
+        })
+        .collect::<anyhow::Result<_>>()?;
+    let (child_fields, child_arrays): (Vec<_>, Vec<_>) = children.into_iter().unzip();
+    Ok(Arc::new(StructArray::new(
+        child_fields.into(),
+        child_arrays,
+        Some(NullBuffer::from(nulls)),
+    )))
 }
 
 // ============================================================================
@@ -332,7 +383,7 @@ pub fn build_files_batch(
     // each file's whole frontmatter Value as the per-row value.
     let storage_ft = transpose_to_storage_type(schema_fields);
     let values: Vec<Option<&Value>> = files.iter().map(|f| f.frontmatter.as_ref()).collect();
-    let data_arr = build_array(&values, &storage_ft);
+    let data_arr = build_array(&values, &storage_ft)?;
     let data_struct_type: DataType = (&storage_ft).into();
 
     let schema = Schema::new(vec![
@@ -410,8 +461,8 @@ fn insert_at_segments(map: &mut BTreeMap<String, FieldType>, segments: &[&str], 
 /// (`filepath`, `content_hash`, `data` Struct, `built_at`) duplicated inline.
 /// LanceDB is single-table, so file and chunk rows are joined here.
 ///
-/// Column order: chunk_id, file_id, chunk_index, start_line, end_line,
-/// chunk_text, embedding, filepath, content_hash, data, built_at.
+/// Column order: `chunk_id`, `file_id`, `chunk_index`, `start_line`, `end_line`,
+/// `chunk_text`, `embedding`, `filepath`, `content_hash`, `data`, `built_at`.
 pub fn build_index_batch(
     schema_fields: &[(String, FieldType)],
     files: &[FileRow],
@@ -442,10 +493,16 @@ pub fn build_index_batch(
     let end_line_arr: Int32Array = chunks.iter().map(|c| Some(c.end_line)).collect();
     let chunk_text_arr: StringArray = chunks.iter().map(|c| Some(c.chunk_text.as_str())).collect();
 
-    let dimension = chunks
-        .first()
-        .map(|c| c.embedding.len() as i32)
-        .unwrap_or(0);
+    let dimension = match chunks.first() {
+        Some(c) => i32::try_from(c.embedding.len()).with_context(|| {
+            format!(
+                "embedding dimension {} exceeds the Arrow fixed-size list limit of {}",
+                c.embedding.len(),
+                i32::MAX
+            )
+        })?,
+        None => 0,
+    };
     let flat_values: Vec<f32> = chunks
         .iter()
         .flat_map(|c| c.embedding.iter().copied())
@@ -472,7 +529,7 @@ pub fn build_index_batch(
     // data Struct, one (possibly null) frontmatter Value per chunk's file
     let storage_ft = transpose_to_storage_type(schema_fields);
     let data_values: Vec<Option<&Value>> = parents.iter().map(|f| f.frontmatter.as_ref()).collect();
-    let data_arr = build_array(&data_values, &storage_ft);
+    let data_arr = build_array(&data_values, &storage_ft)?;
     let data_struct_type: DataType = (&storage_ft).into();
 
     let schema = Schema::new(vec![
@@ -536,14 +593,32 @@ pub struct FileIndexEntry {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use arrow::array::Array;
+    use serde_json::json;
+
+    use super::*;
+    use crate::num::F64_EXACT_INT_LIMIT_I64;
+
+    #[test]
+    fn float_column_stores_unrepresentable_integer_as_null() {
+        let exact = json!(1);
+        // 2^53 + 1, the smallest positive integer with no exact f64 equivalent.
+        let beyond = json!(F64_EXACT_INT_LIMIT_I64 + 1);
+        let values = [Some(&exact), Some(&beyond)];
+        let arr = build_array(&values, &FieldType::Float).unwrap();
+        let floats = arr.as_any().downcast_ref::<Float64Array>().unwrap();
+        assert_eq!(floats.iter().collect::<Vec<_>>(), vec![Some(1.0), None]);
+    }
 
     // ------------------------------------------------------------------------
     // TODO-0097 step 5: dotted-name leaves → nested Arrow Struct columns
     // ------------------------------------------------------------------------
 
     #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "float values are stored without arithmetic, so they must come back bit-exact"
+    )]
     fn dotted_leaves_produce_nested_struct_columns() {
         // Three leaves: one flat, two under a shared `cal.baseline` parent.
         // The resulting `data` Struct should have a top-level `title` Utf8
@@ -638,6 +713,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "float values are stored without arithmetic, so they must come back bit-exact"
+    )]
     fn dotted_leaves_handle_partial_intermediate() {
         // File has `cal.baseline` but only `intensity`, not `wavelength`.
         // Both leaves are declared. The Struct exists; wavelength is null.
@@ -968,8 +1047,10 @@ mod tests {
     // ------------------------------------------------------------------------
 
     fn sample_toml() -> MdvsToml {
-        use crate::schema::config::{FieldsConfig, TomlField, UpdateConfig};
-        use crate::schema::shared::{FieldTypeSerde, FrontmatterFormat, ScanConfig};
+        use crate::schema::{
+            config::{FieldsConfig, TomlField, UpdateConfig},
+            shared::{FieldTypeSerde, FrontmatterFormat, ScanConfig},
+        };
         MdvsToml {
             default_output_format: None,
             scan: ScanConfig {
@@ -995,8 +1076,8 @@ mod tests {
                     constraints: None,
                     preprocess: vec![],
                 }],
-                max_categories: 10,
-                min_category_repetition: 3,
+                max_categories: None,
+                min_category_repetition: None,
             },
         }
     }
@@ -1011,8 +1092,7 @@ mod tests {
 
     #[test]
     fn schema_hash_changes_when_field_added() {
-        use crate::schema::config::TomlField;
-        use crate::schema::shared::FieldTypeSerde;
+        use crate::schema::{config::TomlField, shared::FieldTypeSerde};
         let mut t = sample_toml();
         let h1 = compute_schema_hash(&t);
         t.fields.field.push(TomlField {

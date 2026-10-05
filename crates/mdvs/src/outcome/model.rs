@@ -1,10 +1,10 @@
-//! Outcome types for the load_model leaf step.
+//! Outcome types for the `load_model` leaf step.
 
 use serde::Serialize;
 
 use crate::block::{Block, Render};
 
-/// Full outcome for the load_model step.
+/// Full outcome for the `load_model` step.
 #[derive(Debug, Serialize)]
 pub struct LoadModelOutcome {
     /// Name of the embedding model loaded.

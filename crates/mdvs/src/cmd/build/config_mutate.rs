@@ -9,11 +9,15 @@
 //! - [`normalize_revision`] is the small helper that treats empty / `None`
 //!   strings as "no pinned revision".
 
-use crate::index::backend::Backend;
-use crate::index::storage::compute_schema_hash;
-use crate::schema::config::{BuildConfig, MdvsToml, SearchConfig};
-use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig};
 use std::path::Path;
+
+use crate::{
+    index::{backend::Backend, storage::compute_schema_hash},
+    schema::{
+        config::{BuildConfig, MdvsToml, SearchConfig},
+        shared::{ChunkingConfig, EmbeddingModelConfig},
+    },
+};
 
 // Unused under `cfg(any(test, feature = "testing-mocks"))` since the
 // default falls back to the mock embedder in that build flavor.

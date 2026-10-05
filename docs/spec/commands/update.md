@@ -23,8 +23,9 @@ build step.
    - `reinfer field1 field2` → named fields are targets, rest protected
    - `reinfer` (no fields) → all are targets
 6. **Compare** — for each inferred field: if protected → skip; if in ignore →
-   skip; else construct `TomlField` with constraints, compare against old
-   definition → added/changed/unchanged/removed
+   skip; else print `emit_inexact_widening_warning()` if the field widens
+   integers beyond ±2^53 to Float, construct `TomlField` with constraints,
+   compare against old definition → added/changed/unchanged/removed
 7. **Write** — update `config.fields.field` with new list, write TOML (unless
    dry_run or no changes)
 

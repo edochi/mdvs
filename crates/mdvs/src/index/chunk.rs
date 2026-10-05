@@ -21,6 +21,7 @@ pub struct Chunks(Vec<Chunk>);
 
 impl std::ops::Deref for Chunks {
     type Target = Vec<Chunk>;
+
     fn deref(&self) -> &Self::Target {
         &self.0
     }
@@ -106,8 +107,7 @@ pub fn strip_wikilinks(text: &str) -> String {
         // impossible given the regex shape, but no panic either way).
         caps.get(2)
             .or_else(|| caps.get(1))
-            .map(|m| m.as_str())
-            .unwrap_or("")
+            .map_or("", |m| m.as_str())
             .to_string()
     })
     .into_owned()
@@ -187,7 +187,7 @@ mod tests {
         assert!(text.contains("bold"));
         assert!(text.contains("italic"));
         assert!(!text.contains("**"));
-        assert!(!text.contains("#"));
+        assert!(!text.contains('#'));
     }
 
     #[test]

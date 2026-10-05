@@ -43,12 +43,13 @@ Verify each stage handles the change correctly.
 - Run the full test suite, not just the changed module:
 
 ```bash
-cargo test
-cargo clippy
-cargo fmt
+cargo test --features testing-mocks
+cargo clippy --all-targets --features testing-mocks
+just fmt
 ```
 
-Always run `cargo fmt` after `cargo clippy`.
+Always run `just fmt` after `cargo clippy` (not plain `cargo fmt`: the
+`rustfmt.toml` options need the pinned nightly).
 
 ## Updating Specs
 
