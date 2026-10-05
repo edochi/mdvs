@@ -203,3 +203,4 @@
 | [0199](TODO-0199.md) | Incremental build panics in Lance after editing files                                                | todo                      | high     | 2026-10-04 |
 | [0200](TODO-0200.md) | Frontmatter-only edits never reach the search index                                                  | todo                      | high     | 2026-10-04 |
 | [0201](TODO-0201.md) | Emptying a file's body leaves its old chunks in the index                                            | todo                      | medium   | 2026-10-04 |
+| [0202](TODO-0202.md) | Merge and group imports with nightly rustfmt                                                         | todo                      | low      | 2026-10-05 |
