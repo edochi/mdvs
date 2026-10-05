@@ -2,6 +2,44 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## v0.8.6 - 2026-10-05
+#### Bug Fixes
+- (**hook**) validate .markdown edits, not just .md - (acaf88c) - edochi, *Claude*
+- (**infer**) compute range bounds without rounding through f64 - (67a5d85) - edochi, *Claude*
+- reject integers beyond 2^53 on Float fields instead of rounding - (fcbdb03) - edochi, *Claude*
+#### Documentation
+- add TODO-0202 to merge and group imports with nightly rustfmt - (fe403f6) - edochi, *Claude*
+- close TODO-0197 - (597810e) - edochi, *Claude*
+- add TODOs for incremental-build bugs found during cleanup - (f834cff) - edochi, *Claude*
+- add TODO-0198 for nondeterministic search results on score ties - (07a0b86) - edochi, *Claude*
+- tighten TODO-0197 cast rule and record follow-ups - (2e15abb) - edochi, *Claude*
+- fix clippy doc_markdown lint - (7464b99) - edochi, *Claude*
+- add TODO-0197 for the clippy pedantic + nursery cleanup - (7982c35) - edochi, *Claude*
+- add columnar + CSR sidecar assessment to spec archive - (c90f0e8) - edochi, *Claude*
+#### Refactoring
+- remove remaining bare allows and dedupe test helpers - (c718d42) - edochi, *Claude*
+- split main into per-command runners returning ExitCode - (eacae9b) - edochi, *Claude*
+- split build_core into phase helpers and plan writes with WritePlan - (41298bc) - edochi, *Claude*
+- split search::run into step helpers and take SearchOptions - (314ae4f) - edochi, *Claude*
+- pass SearchQuery and WhereNaming to backend search - (8083b57) - edochi, *Claude*
+- share command step helpers across info, check, init and update - (769fb12) - edochi, *Claude*
+- split long leaf functions and add ValidationContext - (f3a0a20) - edochi, *Claude*
+- group init::run flags into InitOptions - (e1b7c15) - edochi, *Claude*
+- fix clippy pedantic signature lints - (d492b63) - edochi, *Claude*
+- saturate elapsed-time milliseconds instead of casting - (b2dc634) - edochi, *Claude*
+- replace narrowing casts with checked conversions - (eed854f) - edochi, *Claude*
+- fix clippy pedantic control-flow lints - (7b9f550) - edochi, *Claude*
+#### Miscellaneous Chores
+- drop rustfmt normalize_comments and restore the comments it rewrote - (30bb635) - edochi, *Claude*
+- format Rust with pinned nightly rustfmt (merged, grouped imports) - (ecd55d5) - edochi, *Claude*
+- enable clippy pedantic via workspace lints - (f5f4064) - edochi, *Claude*
+- add ship skill and agents for agent-driven waves - (5dbf2c3) - edochi, *Claude*
+#### Style
+- apply rustfmt import merging and grouping - (63a7865) - edochi, *Claude*
+- fix auto-fixable clippy pedantic lints - (aa1ba2a) - edochi, *Claude*
+
+- - -
+
 ## v0.8.5 - 2026-09-21
 #### Bug Fixes
 - (**deps**) update lockfile to patch RUSTSEC-2026-0285 - (0cba70b) - edochi, *Claude*
