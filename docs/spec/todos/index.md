@@ -198,7 +198,7 @@
 | [0194](TODO-0194.md) | Directory-scoped schema policy — freeze undeclared fields per path                                   | todo                      | high     | 2026-08-17 |
 | [0195](TODO-0195.md) | Cross-field rules — conditional requiredness, and the variant-type question                          | todo                      | medium   | 2026-08-17 |
 | [0196](TODO-0196.md) | Duplicate `[[fields.field]]` names are silently accepted — last one wins                             | done                      | high     | 2026-08-20 |
-| [0197](TODO-0197.md) | Clean up the codebase to pass clippy pedantic                                                        | in-progress               | medium   | 2026-10-01 |
+| [0197](TODO-0197.md) | Clean up the codebase to pass clippy pedantic                                                        | done                      | medium   | 2026-10-01 |
 | [0198](TODO-0198.md) | Search results are nondeterministic when scores tie                                                  | todo                      | medium   | 2026-10-02 |
 | [0199](TODO-0199.md) | Incremental build panics in Lance after editing files                                                | todo                      | high     | 2026-10-04 |
 | [0200](TODO-0200.md) | Frontmatter-only edits never reach the search index                                                  | todo                      | high     | 2026-10-04 |
