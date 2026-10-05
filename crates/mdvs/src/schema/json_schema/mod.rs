@@ -20,25 +20,6 @@ pub(crate) use validate::validate_mdvs_schema;
 
 use serde_json::Value;
 
-// Test-only imports for the round-trip and integration tests below. The
-// production code in this mod.rs (just `is_intermediate_object`) doesn't
-// need them, but the test mod's `use super::*;` pulls them in.
-#[cfg(test)]
-#[allow(unused_imports)]
-use crate::discover::field_type::FieldType;
-#[cfg(test)]
-#[allow(unused_imports)]
-use crate::schema::config::MdvsToml;
-#[cfg(test)]
-#[allow(unused_imports)]
-use crate::schema::constraints::Constraints;
-#[cfg(test)]
-#[allow(unused_imports)]
-use serde_json::{Map, json};
-#[cfg(test)]
-#[allow(unused_imports)]
-use to_canonical::JSON_SCHEMA_DRAFT;
-
 /// True if the value is the exact shape produced by
 /// `to_canonical::intermediate_object_schema` (or its post-population
 /// state): an object schema with a `properties` map and no `x-mdvs`
@@ -56,9 +37,12 @@ pub(crate) fn is_intermediate_object(v: &Value) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::to_canonical::JSON_SCHEMA_DRAFT;
     use super::*;
-    use crate::schema::config::{FieldsConfig, TomlField, UpdateConfig};
+    use crate::schema::config::{FieldsConfig, MdvsToml, TomlField, UpdateConfig};
+    use crate::schema::constraints::Constraints;
     use crate::schema::shared::{FieldTypeSerde, FrontmatterFormat, ScanConfig};
+    use serde_json::json;
 
     fn empty_toml() -> MdvsToml {
         MdvsToml {

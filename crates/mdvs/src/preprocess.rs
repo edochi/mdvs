@@ -334,6 +334,7 @@ fn needs_widen_int_to_float(observed: &[FieldType], final_type: &FieldType) -> b
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::num::F64_EXACT_INT_LIMIT_I64;
     use crate::schema::shared::FieldTypeSerde;
     use serde_json::json;
 
@@ -505,14 +506,9 @@ mod tests {
         assert_eq!(r.as_f64(), Some(42.0));
     }
 
-    /// 2^53, the largest magnitude at which every integer is an exact f64.
-    fn f64_exact_limit() -> i64 {
-        i64::try_from(crate::num::F64_EXACT_INT_LIMIT).unwrap()
-    }
-
     #[test]
     fn widen_int_to_float_widens_at_precision_limit() {
-        let r = widen_int_to_float(&json!(f64_exact_limit()), &FieldType::Float).unwrap();
+        let r = widen_int_to_float(&json!(F64_EXACT_INT_LIMIT_I64), &FieldType::Float).unwrap();
         assert!(r.is_f64());
         assert_eq!(r.as_i64(), None);
         assert_eq!(r, json!(9_007_199_254_740_992.0));
@@ -520,21 +516,25 @@ mod tests {
 
     #[test]
     fn widen_int_to_float_skips_int_beyond_precision_limit() {
-        let r = widen_int_to_float(&json!(f64_exact_limit() + 1), &FieldType::Float);
+        let r = widen_int_to_float(&json!(F64_EXACT_INT_LIMIT_I64 + 1), &FieldType::Float);
         assert!(r.is_none());
     }
 
     #[test]
     fn widen_int_to_float_keeps_array_element_beyond_precision_limit() {
         let arr_float = FieldType::Array(Box::new(FieldType::Float));
-        let r = widen_int_to_float(&json!([1, f64_exact_limit() + 1]), &arr_float).unwrap();
-        assert_eq!(r, json!([1.0, f64_exact_limit() + 1]));
+        let r = widen_int_to_float(&json!([1, F64_EXACT_INT_LIMIT_I64 + 1]), &arr_float).unwrap();
+        assert_eq!(r, json!([1.0, F64_EXACT_INT_LIMIT_I64 + 1]));
     }
 
     #[test]
     fn strict_check_rejects_int_beyond_precision_limit_when_widening() {
         let field = float_field("score", vec![ValueStage::WidenIntToFloat]);
-        let result = strict_subtype_check(&field, &FieldType::Float, &json!(f64_exact_limit() + 1));
+        let result = strict_subtype_check(
+            &field,
+            &FieldType::Float,
+            &json!(F64_EXACT_INT_LIMIT_I64 + 1),
+        );
         assert!(result.is_some());
     }
 
@@ -542,15 +542,19 @@ mod tests {
     fn strict_check_rejects_array_element_beyond_precision_limit_when_widening() {
         let field = array_float_field("scores", vec![ValueStage::WidenIntToFloat]);
         let arr_float = FieldType::Array(Box::new(FieldType::Float));
-        let result = strict_subtype_check(&field, &arr_float, &json!([1, f64_exact_limit() + 1]));
+        let result =
+            strict_subtype_check(&field, &arr_float, &json!([1, F64_EXACT_INT_LIMIT_I64 + 1]));
         assert!(result.is_some_and(|d| d.contains("index 1")));
     }
 
     #[test]
     fn strict_check_rejects_negative_int_beyond_precision_limit_when_widening() {
         let field = float_field("score", vec![ValueStage::WidenIntToFloat]);
-        let result =
-            strict_subtype_check(&field, &FieldType::Float, &json!(-f64_exact_limit() - 1));
+        let result = strict_subtype_check(
+            &field,
+            &FieldType::Float,
+            &json!(-F64_EXACT_INT_LIMIT_I64 - 1),
+        );
         assert!(result.is_some());
     }
 

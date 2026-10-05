@@ -374,7 +374,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn auto_build_runs_before_search_and_reuses_its_model() {
+    async fn auto_build_writes_index_then_search_loads_model_embeds_and_executes() {
         let tmp = tempfile::tempdir().unwrap();
         create_test_vault(tmp.path());
         init_with_mock_embedder(tmp.path());
@@ -414,8 +414,10 @@ mod tests {
             "build steps should precede the index read: {steps:?}"
         );
 
-        // After the index read: the model reused from the build (reported at
-        // zero elapsed time), the query embedding, then the search itself.
+        // After the index read: the model load, the query embedding, then the
+        // search itself. The zero elapsed time on the load step is consistent
+        // with reusing the build's model, but the mock embedder loads in well
+        // under a millisecond, so reuse and reload are not distinguishable here.
         let tail = &steps[read_index + 1..];
         assert!(
             matches!(

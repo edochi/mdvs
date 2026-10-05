@@ -163,6 +163,7 @@ fn format_toml_num(v: &toml::Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::num::F64_EXACT_INT_LIMIT_I64;
     use std::collections::BTreeMap;
 
     // -- helpers --
@@ -362,19 +363,14 @@ mod tests {
         assert!(err.contains("greater than"));
     }
 
-    /// 2^53, the largest magnitude at which every integer is an exact f64.
-    fn f64_exact_limit() -> i64 {
-        i64::try_from(crate::num::F64_EXACT_INT_LIMIT).unwrap()
-    }
-
     #[test]
     fn integer_field_bounds_beyond_f64_precision_compare_exactly() {
         // As f64 both bounds round to 2^53 and would look equal.
         let err = validate_for_type(
             "f",
             &FieldType::Integer,
-            Some(&int_min(f64_exact_limit() + 1)),
-            Some(&int_max(f64_exact_limit())),
+            Some(&int_min(F64_EXACT_INT_LIMIT_I64 + 1)),
+            Some(&int_max(F64_EXACT_INT_LIMIT_I64)),
         )
         .unwrap();
         assert!(err.contains("greater than"));
@@ -386,8 +382,8 @@ mod tests {
             validate_for_type(
                 "f",
                 &FieldType::Integer,
-                Some(&int_min(-f64_exact_limit() - 1)),
-                Some(&int_max(f64_exact_limit() + 1)),
+                Some(&int_min(-F64_EXACT_INT_LIMIT_I64 - 1)),
+                Some(&int_max(F64_EXACT_INT_LIMIT_I64 + 1)),
             )
             .is_none()
         );
@@ -398,7 +394,7 @@ mod tests {
         let err = validate_for_type(
             "f",
             &FieldType::Float,
-            Some(&int_min(f64_exact_limit() + 1)),
+            Some(&int_min(F64_EXACT_INT_LIMIT_I64 + 1)),
             None,
         )
         .unwrap();
@@ -411,7 +407,7 @@ mod tests {
             "f",
             &FieldType::Float,
             Some(&int_min(0)),
-            Some(&int_max(f64_exact_limit() + 1)),
+            Some(&int_max(F64_EXACT_INT_LIMIT_I64 + 1)),
         )
         .unwrap();
         assert!(err.contains("beyond"));
@@ -423,7 +419,7 @@ mod tests {
         let err = validate_for_type(
             "f",
             &ft,
-            Some(&int_min(-f64_exact_limit() - 1)),
+            Some(&int_min(-F64_EXACT_INT_LIMIT_I64 - 1)),
             Some(&float_max(1.0)),
         )
         .unwrap();
@@ -435,7 +431,7 @@ mod tests {
         let err = validate_for_type(
             "f",
             &FieldType::Float,
-            Some(&int_min(f64_exact_limit())),
+            Some(&int_min(F64_EXACT_INT_LIMIT_I64)),
             Some(&float_max(1.0)),
         )
         .unwrap();

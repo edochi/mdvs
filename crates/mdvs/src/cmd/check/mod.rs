@@ -16,25 +16,6 @@ use serde::Serialize;
 use std::path::Path;
 use std::time::Instant;
 use tracing::instrument;
-// Test-only imports for the test mod's `use super::*;` — production code
-// in this module no longer references these directly (the helpers moved
-// to sibling sub-modules), but the tests below still construct fixtures
-// and assert on schema-translation primitives.
-#[cfg(test)]
-#[allow(unused_imports)]
-use crate::discover::field_type::FieldType;
-#[cfg(test)]
-#[allow(unused_imports)]
-use crate::output::{ViolatingFile, ViolationKind};
-#[cfg(test)]
-#[allow(unused_imports)]
-use crate::schema::json_schema::dsl_to_canonical;
-#[cfg(test)]
-#[allow(unused_imports)]
-use globset::Glob;
-#[cfg(test)]
-#[allow(unused_imports)]
-use serde_json::Value;
 
 // ============================================================================
 // CheckResult — kept for build compatibility during migration
@@ -220,29 +201,30 @@ fn resolve_check_config(
     }
 }
 
-/// Validate scanned files against the schema in `mdvs.toml`. Reusable core called by both `check` and `build`.
-/// Kept for the unit tests that exercise the glob-matching semantics
-/// directly. Production code uses `FieldMeta.allowed` / `FieldMeta.required`
-/// (precompiled `GlobSet`s) instead.
-#[cfg(test)]
-fn matches_any_glob(patterns: &[String], path: &str) -> bool {
-    patterns.iter().any(|p| {
-        Glob::new(p)
-            .ok()
-            .map(|g| g.compile_matcher())
-            .is_some_and(|m| m.is_match(path))
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::collect::map_validation_error;
     use super::*;
     use crate::cmd::init::{InitOptions, InitScanFlags};
+    use crate::num::F64_EXACT_INT_LIMIT_I64;
     use crate::outcome::commands::CheckOutcome;
+    use crate::output::ViolationKind;
     use crate::schema::config::{FieldsConfig, TomlField, UpdateConfig};
     use crate::schema::shared::{FieldTypeSerde, FrontmatterFormat, ScanConfig};
+    use globset::Glob;
     use std::fs;
+
+    /// Kept for the unit tests that exercise the glob-matching semantics
+    /// directly. Production code uses `FieldMeta.allowed` / `FieldMeta.required`
+    /// (precompiled `GlobSet`s) instead.
+    fn matches_any_glob(patterns: &[String], path: &str) -> bool {
+        patterns.iter().any(|p| {
+            Glob::new(p)
+                .ok()
+                .map(|g| g.compile_matcher())
+                .is_some_and(|m| m.is_match(path))
+        })
+    }
 
     fn unwrap_check(result: &CommandResult) -> &CheckOutcome {
         match &result.result {
@@ -479,11 +461,6 @@ mod tests {
         assert!(result.violations.is_empty());
     }
 
-    /// 2^53, the largest magnitude at which every integer is an exact f64.
-    fn f64_exact_limit() -> i64 {
-        i64::try_from(crate::num::F64_EXACT_INT_LIMIT).unwrap()
-    }
-
     /// Writes a single file with the given integer `rating`, declares it as
     /// a Float field with `widen_int_to_float`, and runs check.
     fn check_widened_float_rating(rating: i64) -> CommandResult {
@@ -512,7 +489,7 @@ mod tests {
 
     #[test]
     fn int_beyond_f64_precision_in_widened_float_is_wrong_type() {
-        let step = check_widened_float_rating(f64_exact_limit() + 1);
+        let step = check_widened_float_rating(F64_EXACT_INT_LIMIT_I64 + 1);
         let result = unwrap_check(&step);
         assert_eq!(result.violations.len(), 1);
         let v = &result.violations[0];
@@ -522,7 +499,7 @@ mod tests {
 
     #[test]
     fn int_at_f64_precision_limit_in_widened_float_passes() {
-        let step = check_widened_float_rating(f64_exact_limit());
+        let step = check_widened_float_rating(F64_EXACT_INT_LIMIT_I64);
         let result = unwrap_check(&step);
         assert!(result.violations.is_empty());
     }

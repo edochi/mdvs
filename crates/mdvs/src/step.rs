@@ -306,7 +306,6 @@ mod tests {
     use crate::outcome::{CleanOutcome, DeleteIndexOutcome, Outcome};
     use std::path::PathBuf;
 
-    /// Upper bound on the milliseconds a just-taken `Instant` can report.
     #[test]
     fn duration_ms_saturates_beyond_u64() {
         assert_eq!(duration_ms(Duration::from_secs(u64::MAX)), u64::MAX);

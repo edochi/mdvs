@@ -10,9 +10,15 @@ use tabled::settings::{
 
 pub use tabled::builder::Builder;
 
-/// Detect terminal width, falling back to 80 columns.
+/// Column count assumed when the terminal width cannot be detected (output
+/// piped or redirected): the classic 80-column terminal.
+const FALLBACK_TERM_WIDTH: usize = 80;
+
+/// Detect terminal width, falling back to [`FALLBACK_TERM_WIDTH`] columns.
 pub fn term_width() -> usize {
-    terminal_size::terminal_size().map_or(80, |(terminal_size::Width(w), _)| w as usize)
+    terminal_size::terminal_size().map_or(FALLBACK_TERM_WIDTH, |(terminal_size::Width(w), _)| {
+        usize::from(w)
+    })
 }
 
 /// Apply compact table style: rounded borders, no internal horizontal lines,

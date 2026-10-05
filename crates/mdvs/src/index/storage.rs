@@ -585,6 +585,7 @@ pub struct FileIndexEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::num::F64_EXACT_INT_LIMIT_I64;
     use arrow::array::Array;
     use serde_json::json;
 
@@ -592,7 +593,7 @@ mod tests {
     fn float_column_stores_unrepresentable_integer_as_null() {
         let exact = json!(1);
         // 2^53 + 1, the smallest positive integer with no exact f64 equivalent.
-        let beyond = json!(i64::try_from(crate::num::F64_EXACT_INT_LIMIT).unwrap() + 1);
+        let beyond = json!(F64_EXACT_INT_LIMIT_I64 + 1);
         let values = [Some(&exact), Some(&beyond)];
         let arr = build_array(&values, &FieldType::Float).unwrap();
         let floats = arr.as_any().downcast_ref::<Float64Array>().unwrap();

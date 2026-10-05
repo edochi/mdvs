@@ -315,6 +315,7 @@ fn contains_object_inside_array(ft: &FieldType) -> bool {
 mod tests {
     use super::*;
     use crate::discover::scan::{ScannedFile, ScannedFiles};
+    use crate::num::F64_EXACT_INT_LIMIT_I64;
     use serde_json::json;
 
     fn sf(path: &str, data: Option<Value>, content: &str) -> ScannedFile {
@@ -1204,17 +1205,16 @@ mod tests {
         }
     }
 
-    /// 2^53 + 1, the smallest positive integer with no exact f64 equivalent.
-    fn beyond_f64_exact() -> i64 {
-        i64::try_from(crate::num::F64_EXACT_INT_LIMIT).unwrap() + 1
-    }
-
     #[test]
     fn infer_warns_when_widened_float_holds_inexact_integer() {
         let scanned = ScannedFiles {
             files: vec![
                 sf("a.md", Some(json!({"score": 0.5})), "# body"),
-                sf("b.md", Some(json!({"score": beyond_f64_exact()})), "# body"),
+                sf(
+                    "b.md",
+                    Some(json!({"score": F64_EXACT_INT_LIMIT_I64 + 1})),
+                    "# body",
+                ),
             ],
         };
         let schema = InferredSchema::infer(&scanned);
@@ -1222,7 +1222,7 @@ mod tests {
         assert_eq!(score.field_type, FieldType::Float);
         let warning = score.inexact_widening_warning().unwrap();
         assert!(warning.contains("'score'"));
-        assert!(warning.contains(&beyond_f64_exact().to_string()));
+        assert!(warning.contains(&(F64_EXACT_INT_LIMIT_I64 + 1).to_string()));
     }
 
     #[test]
@@ -1247,7 +1247,7 @@ mod tests {
         let extra = 2;
         let mut files = vec![sf("a.md", Some(json!({"score": 0.5})), "# body")];
         let inexact: Vec<i64> = (0..MAX_LISTED_INEXACT_VALUES + extra)
-            .map(|i| beyond_f64_exact() + i64::try_from(i).unwrap())
+            .map(|i| F64_EXACT_INT_LIMIT_I64 + 1 + i64::try_from(i).unwrap())
             .collect();
         for (i, v) in inexact.iter().enumerate() {
             files.push(sf(&format!("f{i}.md"), Some(json!({"score": v})), "# body"));
@@ -1268,7 +1268,7 @@ mod tests {
                 sf("a.md", Some(json!({"score": 0.5})), "# body"),
                 sf(
                     "b.md",
-                    Some(json!({"score": beyond_f64_exact() - 1})),
+                    Some(json!({"score": F64_EXACT_INT_LIMIT_I64})),
                     "# body",
                 ),
             ],

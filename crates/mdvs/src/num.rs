@@ -1,7 +1,12 @@
 // --- Exact integer-to-float conversion ---
 
 /// Largest magnitude at or below which f64 represents every integer exactly (2^53).
-pub(crate) const F64_EXACT_INT_LIMIT: u64 = 1 << 53;
+pub(crate) const F64_EXACT_INT_LIMIT: u64 = 1 << f64::MANTISSA_DIGITS;
+
+/// [`F64_EXACT_INT_LIMIT`] as an i64, for tests that build integer values at
+/// the exactness boundary.
+#[cfg(test)]
+pub(crate) const F64_EXACT_INT_LIMIT_I64: i64 = 1 << f64::MANTISSA_DIGITS;
 
 /// 2^32 as an f64, used to scale the high half of a split integer.
 const TWO_POW_32: f64 = 4_294_967_296.0;
@@ -40,8 +45,9 @@ mod tests {
     /// -(2^32 + 5): a negative value with both halves non-trivial.
     const NEG_SPLIT: i64 = -4_294_967_301;
 
-    fn limit() -> i64 {
-        i64::try_from(F64_EXACT_INT_LIMIT).unwrap()
+    #[test]
+    fn signed_and_unsigned_limits_agree() {
+        assert_eq!(F64_EXACT_INT_LIMIT_I64.unsigned_abs(), F64_EXACT_INT_LIMIT);
     }
 
     #[test]
@@ -61,27 +67,33 @@ mod tests {
 
     #[test]
     fn positive_limit_converts_exactly() {
-        assert_eq!(i64_to_f64_exact(limit()), Some(TWO_POW_53));
+        assert_eq!(i64_to_f64_exact(F64_EXACT_INT_LIMIT_I64), Some(TWO_POW_53));
     }
 
     #[test]
     fn negative_limit_converts_exactly() {
-        assert_eq!(i64_to_f64_exact(-limit()), Some(-TWO_POW_53));
+        assert_eq!(
+            i64_to_f64_exact(-F64_EXACT_INT_LIMIT_I64),
+            Some(-TWO_POW_53)
+        );
     }
 
     #[test]
     fn just_below_limit_converts_exactly() {
-        assert_eq!(i64_to_f64_exact(limit() - 1), Some(9_007_199_254_740_991.0));
+        assert_eq!(
+            i64_to_f64_exact(F64_EXACT_INT_LIMIT_I64 - 1),
+            Some(9_007_199_254_740_991.0)
+        );
     }
 
     #[test]
     fn positive_beyond_limit_is_none() {
-        assert_eq!(i64_to_f64_exact(limit() + 1), None);
+        assert_eq!(i64_to_f64_exact(F64_EXACT_INT_LIMIT_I64 + 1), None);
     }
 
     #[test]
     fn negative_beyond_limit_is_none() {
-        assert_eq!(i64_to_f64_exact(-limit() - 1), None);
+        assert_eq!(i64_to_f64_exact(-F64_EXACT_INT_LIMIT_I64 - 1), None);
     }
 
     #[test]

@@ -16,8 +16,12 @@ hybrid (RRF reranker over both).
    `--mode fulltext`.
 5. **Embed query** — `embedder.embed(&query)` → `Vec<f32>`. Skipped for
    `--mode fulltext`.
-6. **Execute search** —
-   `LanceBackend::search(mode, query, query_embedding, where_clause, limit)`:
+6. **Execute search** — first, `validate_where_clause` rejects a `--where`
+   clause with an unmatched single or double quote as a user error, before any
+   query runs. Then
+   `Backend::search(&SearchQuery, Option<Vec<f32>>, &WhereNaming)`, where
+   `SearchQuery` carries the query text, `limit`, `where_clause` and `mode`, and
+   `WhereNaming` carries the `[search]` internal prefix and aliases:
    - Translates `--where` via `translate_where_to_struct` (bare frontmatter
      names → `data.*`; scalar function calls left as-is; references to
      `Array(Float)` fields rejected — see TODO-0159).

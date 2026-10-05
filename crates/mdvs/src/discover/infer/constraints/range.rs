@@ -65,6 +65,7 @@ pub fn infer(field: &InferredField) -> Option<(toml::Value, toml::Value)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::num::F64_EXACT_INT_LIMIT_I64;
     use serde_json::json;
 
     fn make_field(name: &str, ft: FieldType, distinct: Vec<serde_json::Value>) -> InferredField {
@@ -162,21 +163,16 @@ mod tests {
         assert!(infer(&f).is_none());
     }
 
-    /// 2^53 + 1, the smallest positive integer an f64 cannot represent.
-    fn beyond_f64_exact() -> i64 {
-        i64::try_from(crate::num::F64_EXACT_INT_LIMIT).unwrap() + 1
-    }
-
     #[test]
     fn infer_integer_range_keeps_values_beyond_f64_precision() {
         let f = make_field(
             "id",
             FieldType::Integer,
-            vec![json!(1), json!(beyond_f64_exact())],
+            vec![json!(1), json!(F64_EXACT_INT_LIMIT_I64 + 1)],
         );
         let (min, max) = infer(&f).unwrap();
         assert_eq!(min, toml::Value::Integer(1));
-        assert_eq!(max, toml::Value::Integer(beyond_f64_exact()));
+        assert_eq!(max, toml::Value::Integer(F64_EXACT_INT_LIMIT_I64 + 1));
     }
 
     #[test]
@@ -190,7 +186,7 @@ mod tests {
         let f = make_field(
             "score",
             FieldType::Float,
-            vec![json!(0.5), json!(beyond_f64_exact())],
+            vec![json!(0.5), json!(F64_EXACT_INT_LIMIT_I64 + 1)],
         );
         assert!(infer(&f).is_none());
     }
