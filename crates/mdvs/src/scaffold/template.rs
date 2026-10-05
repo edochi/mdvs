@@ -45,9 +45,9 @@ pub fn substitute<S: BuildHasher>(
         Value::String(s) => match parse_marker(s) {
             Some(name) => match vars.get(name) {
                 Some(Some(value)) => Value::String(value.clone()),
-                _ => Value::Null, /* sentinel; only reachable if substitute is
-                                   * called with a bare-marker root. Callers
-                                   * walking objects/arrays prune before recursion. */
+                _ => Value::Null, // sentinel; only reachable if substitute is
+                                  // called with a bare-marker root. Callers
+                                  // walking objects/arrays prune before recursion.
             },
             None => Value::String(s.clone()),
         },

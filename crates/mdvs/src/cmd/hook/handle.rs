@@ -121,10 +121,8 @@ fn handle_validate<W: Write>(
     // expect an edit to silently write new fields into the schema).
     let result = check::run(
         &vault_root,
-        // no_update
-        true,
-        // verbose
-        false,
+        /* no_update */ true,
+        /* verbose */ false,
         None,
     );
 
