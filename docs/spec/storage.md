@@ -132,15 +132,16 @@ reflected even when no embedding work happens.
 
 `BuildMetadata` in `index/storage.rs` stores the build configuration snapshot:
 
-| Key                | Source                                                                 |
-| ------------------ | ---------------------------------------------------------------------- |
-| `mdvs.provider`    | `EmbeddingModelConfig.provider`                                        |
-| `mdvs.model`       | `EmbeddingModelConfig.name`                                            |
-| `mdvs.revision`    | `EmbeddingModelConfig.revision`                                        |
-| `mdvs.chunk_size`  | `ChunkingConfig.max_chunk_size`                                        |
-| `mdvs.glob`        | `ScanConfig.glob`                                                      |
-| `mdvs.built_at`    | ISO 8601 timestamp                                                     |
-| `mdvs.schema_hash` | xxh3-64 hex of `dsl_to_canonical(config)` serialized as canonical JSON |
+| Key                 | Source                                                                 |
+| ------------------- | ---------------------------------------------------------------------- |
+| `mdvs.provider`     | `EmbeddingModelConfig.provider`                                        |
+| `mdvs.model`        | `EmbeddingModelConfig.name`                                            |
+| `mdvs.revision`     | `EmbeddingModelConfig.revision`                                        |
+| `mdvs.chunk_size`   | `ChunkingConfig.max_chunk_size`                                        |
+| `mdvs.glob`         | `ScanConfig.glob`                                                      |
+| `mdvs.built_at`     | ISO 8601 timestamp                                                     |
+| `mdvs.schema_hash`  | xxh3-64 hex of `dsl_to_canonical(config)` serialized as canonical JSON |
+| `mdvs.index_format` | `INDEX_FORMAT` of the build that wrote the index (missing → 0)         |
 
 Stored as table-level key-value metadata on the Lance dataset. The full-rebuild
 path (`LanceBackend::write_index()`) routes the keys through the Arrow
@@ -153,12 +154,22 @@ via `NativeTable::replace_schema_metadata`. Both are read back via
 preprocessors) that don't show up in any of the other keys. Computed via
 `compute_schema_hash(config)` in `index/storage.rs`. Hashing the
 post-translation canonical JSON makes it whitespace-insensitive and
-key-order-insensitive. Pre-Wave-B datasets without this key read as `""` →
-treated as changed (conservative, requires `--force`).
+key-order-insensitive. Pre-Wave-B datasets without this key read as `""`; they
+also predate `mdvs.index_format`, so they are rebuilt automatically (below).
+
+**Index format**: `INDEX_FORMAT` in `index/storage.rs` versions what an index
+stores. When the stored `mdvs.index_format` is lower (or missing, as on every
+index written by mdvs 0.8.6 or earlier), the next build is a full rebuild
+without `--force`, and the config change check is skipped because the rebuild
+uses the current config anyway. Bump it whenever existing indexes must be
+rebuilt, e.g. a change to what goes into the chunk text. Format 1 was introduced
+because indexes written by lancedb 0.29 hold frontmatter data that Lance 10
+panics on when compaction reads it back.
 
 **Config change detection**: build compares current config against stored
 `BuildMetadata` using `PartialEq`. Mismatch → requires `--force` for full
-rebuild. The schema-hash mismatch error reads:
+rebuild, unless the index format is outdated. The schema-hash mismatch error
+reads:
 `"schema: fields, types, constraints, path-scoping, or preprocessors have changed"`.
 Search compares model identity → hard error on mismatch.
 
@@ -201,9 +212,10 @@ Lance dataset write happens. The skip predicate uses chunk count (not file
 count) because empty-body files (e.g. Hugo `_index.md`) are always classified as
 needing embedding but produce zero chunks.
 
-**Full overwrite** — when `full_rebuild` is true (first build or `--force`). A
-full rebuild retains no chunks, so the newly embedded chunks are the whole
-table. `Backend::write_index` builds one Arrow `RecordBatch` from them and calls
+**Full overwrite** — when `full_rebuild` is true (first build, `--force`, or an
+outdated index format). A full rebuild retains no chunks, so the newly embedded
+chunks are the whole table. `Backend::write_index` builds one Arrow
+`RecordBatch` from them and calls
 `Connection::create_table(...).mode(CreateTableMode::Overwrite)`. The FTS index
 on `chunk_text` and, above 10k chunks, the IVF-PQ vector index on `embedding`
 are rebuilt inside the new table.
@@ -242,7 +254,7 @@ Key methods:
 
 - `write_index()` — full rebuild path: builds the combined Arrow batch and calls
   `create_table(...).mode(Overwrite)`, then `build_indexes()`. Used on the first
-  build and whenever `--force` is passed.
+  build, whenever `--force` is passed, and when the index format is outdated.
 - `write_index_incremental()` — delta path: opens the existing table, deletes
   the rows for `file_ids_to_clear`, appends the new chunks, refreshes the schema
   metadata via `NativeTable::replace_schema_metadata`, and runs `optimize(All)`

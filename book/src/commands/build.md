@@ -44,13 +44,13 @@ cheap on unchanged corpora — no model load, no Lance write.
    nothing needs embedding.
 6. **Embed** — chunk and embed new/edited files.
 7. **Write index** — branches on the change set: **skip** (nothing changed and
-   not a full rebuild), **full overwrite** (first build or `--force`), or
-   **incremental** (delete the rows for new/edited/removed files, append the new
-   chunks, refresh metadata, optimize). The Lance dataset is always at
-   `.mdvs/index.lance/` with one row per chunk; a full-text BM25 index on
-   `chunk_text` is rebuilt with the table; a cosine IVF-PQ vector index on
-   `embedding` is created only above 10,000 chunks (smaller vaults rely on
-   LanceDB's exact flat scan).
+   not a full rebuild), **full overwrite** (first build, `--force`, or an index
+   written by an older mdvs), or **incremental** (delete the rows for
+   new/edited/removed files, append the new chunks, refresh metadata, optimize).
+   The Lance dataset is always at `.mdvs/index.lance/` with one row per chunk; a
+   full-text BM25 index on `chunk_text` is rebuilt with the table; a cosine
+   IVF-PQ vector index on `embedding` is created only above 10,000 chunks
+   (smaller vaults rely on LanceDB's exact flat scan).
 
 See [Search & Indexing](../concepts/search.md) for details on chunking,
 embedding, and how the index is structured.
@@ -99,6 +99,11 @@ Use --force to rebuild with new schema
 This catches edits to `[[fields.field]]` definitions, constraint changes,
 preprocessor changes, and path-scoping changes — anything that affects what gets
 stored in the `data` column of the index.
+
+When an mdvs upgrade changes what the index stores, the first `build` after it
+(or the first `search`, which builds automatically) rebuilds the whole index and
+re-embeds every file. No `--force` is needed, and config changes made since the
+previous build are picked up by the rebuild.
 
 The `--set-model`, `--set-revision`, and `--set-chunk-size` flags update
 `mdvs.toml` and require `--force` (since they change the config and trigger a
