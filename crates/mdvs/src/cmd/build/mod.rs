@@ -332,12 +332,17 @@ fn build_outcome(
 mod tests {
     use std::{
         collections::{HashMap, HashSet},
-        fs,
+        fs::{self, OpenOptions},
+        io::Write,
     };
 
     use super::*;
     use crate::{
-        cmd::init::{InitOptions, InitScanFlags},
+        cmd::{
+            init::{InitOptions, InitScanFlags},
+            search::{self, SearchOptions},
+        },
+        index::backend::{SearchMode, SearchQuery},
         schema::config::MdvsToml,
         step::StepError,
     };
@@ -516,6 +521,184 @@ mod tests {
         assert!(
             !third_chunks.is_empty(),
             "post3.md should have at least one chunk"
+        );
+    }
+
+    /// Copy `src` into `dest` recursively, skipping dot-entries (build state, local scratch files).
+    fn copy_dir(src: &Path, dest: &Path) {
+        fs::create_dir_all(dest).unwrap();
+        for entry in fs::read_dir(src).unwrap() {
+            let entry = entry.unwrap();
+            if entry.file_name().to_string_lossy().starts_with('.') {
+                continue;
+            }
+            let path = entry.path();
+            let target = dest.join(entry.file_name());
+            if path.is_dir() {
+                copy_dir(&path, &target);
+            } else {
+                fs::copy(&path, &target).unwrap();
+            }
+        }
+    }
+
+    /// Append `text` to the file at `path`.
+    fn append(path: &Path, text: &str) {
+        let mut file = OpenOptions::new().append(true).open(path).unwrap();
+        file.write_all(text.as_bytes()).unwrap();
+    }
+
+    /// An index directory left by an older lancedb, which eagerly created a
+    /// `__manifest` namespace with config current lancedb rejects, must stay
+    /// searchable and buildable; the stale directory is removed on open.
+    #[tokio::test]
+    async fn legacy_manifest_dir_is_removed_and_index_stays_usable() {
+        /// Comfortably above the vault's file count.
+        const SEARCH_LIMIT: usize = 10;
+
+        let tmp = tempfile::tempdir().unwrap();
+        create_test_vault(tmp.path());
+        let init_out = crate::cmd::init::run(
+            tmp.path(),
+            "**",
+            InitOptions {
+                scan: InitScanFlags {
+                    ignore_bare_files: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            None,
+            None,
+        );
+        assert!(!crate::step::has_failed(&init_out));
+        let first = run(tmp.path(), None, None, None, false, true).await;
+        assert!(
+            !crate::step::has_failed(&first),
+            "first build failed: {first:#?}"
+        );
+
+        let legacy = tmp.path().join(".mdvs/__manifest");
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/legacy-manifest/__manifest");
+        copy_dir(&fixture, &legacy);
+        assert!(legacy.is_dir());
+
+        let output = search::run(
+            tmp.path(),
+            SearchQuery {
+                text: "rust",
+                limit: SEARCH_LIMIT,
+                where_clause: None,
+                mode: SearchMode::Fulltext,
+            },
+            SearchOptions {
+                no_build: true,
+                ..Default::default()
+            },
+        )
+        .await;
+        let hits = match &output.result {
+            Ok(Outcome::Search(o)) => &o.hits,
+            other => panic!("expected Ok(Search), got: {other:?}"),
+        };
+        assert!(
+            hits.iter().any(|h| h.filename == "blog/post1.md"),
+            "search for 'rust' should find blog/post1.md: {hits:?}"
+        );
+        assert!(!legacy.exists(), "legacy __manifest should be removed");
+
+        append(&tmp.path().join("blog/post2.md"), "\nAn added line.\n");
+        let second = run(tmp.path(), None, None, None, false, true).await;
+        assert!(
+            !crate::step::has_failed(&second),
+            "incremental build failed: {second:#?}"
+        );
+        assert!(!unwrap_build(&second).full_rebuild);
+    }
+
+    /// Regression for a lance panic (buffer slice out of bounds) that this
+    /// add, edit, edit-another-file sequence triggered in the incremental
+    /// write path; it needs `example_kb`'s data to reproduce.
+    #[tokio::test]
+    async fn incremental_add_edit_then_edit_other_file_keeps_index_readable() {
+        /// Comfortably above the vault's file count.
+        const SEARCH_LIMIT: usize = 100;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let example_kb = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../example_kb");
+        copy_dir(&example_kb, tmp.path());
+        let config_path = tmp.path().join("mdvs.toml");
+        let mut config = MdvsToml::read(&config_path).unwrap();
+        config.embedding_model = Some(EmbeddingModelConfig {
+            provider: "mock".into(),
+            name: "mock".into(),
+            revision: None,
+            dim: None,
+        });
+        config.write(&config_path).unwrap();
+
+        let build = || run(tmp.path(), None, None, None, false, true);
+
+        let first = build().await;
+        assert!(
+            !crate::step::has_failed(&first),
+            "first build failed: {first:#?}"
+        );
+
+        let new_note = tmp.path().join("new-note.md");
+        fs::write(
+            &new_note,
+            "# Drift\n\nCalibration drift notes added later.\n",
+        )
+        .unwrap();
+        let second = build().await;
+        assert!(
+            !crate::step::has_failed(&second),
+            "build after add failed: {second:#?}"
+        );
+        assert!(!unwrap_build(&second).full_rebuild);
+
+        append(&new_note, "\nA second observation about drift.\n");
+        let third = build().await;
+        assert!(
+            !crate::step::has_failed(&third),
+            "build after edit failed: {third:#?}"
+        );
+        assert!(!unwrap_build(&third).full_rebuild);
+
+        append(
+            &tmp.path().join("scratch.md"),
+            "\n- Recheck the drift notes\n",
+        );
+        let fourth = build().await;
+        assert!(
+            !crate::step::has_failed(&fourth),
+            "build after editing another file failed: {fourth:#?}"
+        );
+        assert!(!unwrap_build(&fourth).full_rebuild);
+
+        let output = search::run(
+            tmp.path(),
+            SearchQuery {
+                text: "drift",
+                limit: SEARCH_LIMIT,
+                where_clause: None,
+                mode: SearchMode::Fulltext,
+            },
+            SearchOptions {
+                no_build: true,
+                ..Default::default()
+            },
+        )
+        .await;
+        let hits = match &output.result {
+            Ok(Outcome::Search(o)) => &o.hits,
+            other => panic!("expected Ok(Search), got: {other:?}"),
+        };
+        assert!(
+            hits.iter().any(|h| h.filename == "new-note.md"),
+            "search for 'drift' should find new-note.md: {hits:?}"
         );
     }
 

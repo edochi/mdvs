@@ -46,16 +46,17 @@ clap = { version = "4", features = ["derive"] }
 # Async (required by DataFusion)
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
-# Embedded vector DB (storage + search). TODO-0016. Pins arrow 58.
-lancedb = "0.29"
+# Embedded vector DB (storage + search). Pins arrow 58. On upgrade, check
+# that lancedb still doesn't write `.mdvs/__manifest` (LanceBackend::connect deletes it).
+lancedb = "0.37"
 
 # Arrow in-memory columnar format (RecordBatch construction). Version
 # matches lancedb's arrow.
 arrow = "58"
 
 # Full-text search query type (not re-exported from lancedb). Exact pin
-# matches lancedb 0.29's lance-index dependency.
-lance-index = "=6.0.0"
+# matches lancedb's lance-index dependency.
+lance-index = "=10.0.0"
 
 # Stream combinators for collecting LanceDB query result streams.
 futures = "0.3"
@@ -94,7 +95,7 @@ uuid = { version = "1", default-features = false, features = ["v4"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 # Table rendering
-tabled = "0.20"
+tabled = "0.22"
 terminal_size = "0.4"
 
 # Telemetry

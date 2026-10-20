@@ -234,6 +234,10 @@ projections), and `search.rs` (mode-dispatched query + `--where` translator).
 - `.mdvs/` — index directory
 - `.mdvs/index.lance/` — Lance dataset (the table is named `index`)
 
+Every connection first deletes `.mdvs/__manifest` if it exists. Indexes built
+with lancedb 0.29 contain that namespace directory, and newer Lance rejects its
+config in debug builds. lancedb 0.37 never creates it.
+
 Key methods:
 
 - `write_index()` — full rebuild path: builds the combined Arrow batch and calls

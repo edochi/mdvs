@@ -13,16 +13,12 @@ targets = [
 unused-ignored-advisory = "deny"
 # Each reason: dependency path + a "Revisit when" trigger. Last checked 2026-10-19.
 ignore = [
-    # Via lancedb → lance-tokenizer → lindera 0.44
-    { id = "RUSTSEC-2025-0141", reason = "bincode 2.x is unmaintained; pulled in via lancedb → lance-tokenizer → lindera 0.44. Revisit when bumping lancedb: 0.40 (lance 13 → lindera 3.x) no longer pulls it in." },
-    { id = "RUSTSEC-2021-0153", reason = "encoding is unmaintained; pulled in via lancedb → lance-tokenizer → lindera-dictionary 0.44 (CJK encodings). Revisit when bumping lancedb: 0.40 (lance 13 → lindera-dictionary 3.x) no longer pulls it in." },
-    { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml is unmaintained; pulled in via lancedb → lance-tokenizer → lindera 0.44 → serde_yaml 0.9 (deprecated). Revisit when bumping lancedb: 0.40 (lance 13 → lindera 3.x) no longer pulls in serde_yaml." },
-    # Via lancedb → datafusion 53 and model2vec-rs → tokenizers (compile-time only, proc-macro)
-    { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained; compile-time only (proc-macro), pulled in via lancedb → datafusion 53 / lance-bitpacking and model2vec-rs → tokenizers 0.21. Revisit when tokenizers drops it: lancedb 0.40 clears the datafusion side, but model2vec-rs 0.3.0 still uses tokenizers 0.21, which requires it." },
+    # Via lancedb → lance-tokenizer → lindera 3.0.7
+    { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml is unmaintained; pulled in via lancedb 0.37 → lance-tokenizer 10 → lindera 3.0.7 → serde_yaml_ng 0.10. Revisit when lindera drops YAML: lindera 6.x has no YAML dependency." },
+    # Via lancedb → lance-bitpacking and model2vec-rs → tokenizers (compile-time only, proc-macro)
+    { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained; compile-time only (proc-macro), pulled in via lancedb 0.37 → lance-bitpacking 10 and model2vec-rs → tokenizers 0.21. Revisit when both lance-bitpacking and tokenizers drop it; even the latest model2vec-rs (0.3.0) still uses tokenizers 0.21." },
     # Via model2vec-rs → hf-hub / tokenizers → indicatif 0.17
-    { id = "RUSTSEC-2025-0119", reason = "number_prefix is unmaintained; pulled in via model2vec-rs → hf-hub / tokenizers → indicatif 0.17. Revisit when hf-hub / tokenizers move to indicatif 0.18 (model2vec-rs 0.3.0 still uses hf-hub 0.4 and tokenizers 0.21), or if disabling their optional indicatif feature works." },
-    # Via tabled → tabled_derive 0.11 (compile-time only, proc-macro)
-    { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2 is unmaintained; compile-time only (proc-macro), pulled in via tabled 0.20 → tabled_derive 0.11. Revisit when bumping tabled: 0.22 (tabled_derive 0.12) no longer pulls it in." },
+    { id = "RUSTSEC-2025-0119", reason = "number_prefix is unmaintained; pulled in via model2vec-rs → hf-hub / tokenizers → indicatif 0.17. Revisit when hf-hub / tokenizers move to indicatif 0.18, or if disabling their optional indicatif feature works; even the latest model2vec-rs (0.3.0) still uses hf-hub 0.4 and tokenizers 0.21." },
 ]
 
 # -- Licenses ----------------------------------------------------------
@@ -41,10 +37,7 @@ allow = [
     "Zlib",
     "MPL-2.0",
     "CDLA-Permissive-2.0",
-    # CC0 is a public-domain dedication, used by lindera dictionary index
-    # crates (encoding-index-japanese / -korean / -simpchinese / -singlebyte
-    # / -tradchinese) that are pulled in transitively via
-    # lancedb → lance → lance-tokenizer → lindera.
+    # CC0: tiny-keccak 2.0.2, via arrow → ahash → const-random.
     "CC0-1.0",
 ]
 confidence-threshold = 0.8
