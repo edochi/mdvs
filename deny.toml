@@ -9,15 +9,20 @@ targets = [
 
 # -- Advisories --------------------------------------------------------
 [advisories]
+# Fail on stale ignores so they're dropped as soon as a bump makes them unnecessary.
+unused-ignored-advisory = "deny"
+# Each reason: dependency path + a "Revisit when" trigger. Last checked 2026-10-19.
 ignore = [
-    # Transitive deps from model2vec-rs — unmaintained but no security issue
-    { id = "RUSTSEC-2024-0436", reason = "paste is a transitive dep via tokenizers/parquet, no replacement available" },
-    { id = "RUSTSEC-2025-0119", reason = "number_prefix is a transitive dep via indicatif/model2vec-rs" },
-    # Transitive deps from lancedb — unmaintained but no security issue
-    { id = "RUSTSEC-2025-0141", reason = "bincode 1.x is unmaintained; pulled in transitively via lance for legacy serialization" },
-    { id = "RUSTSEC-2021-0153", reason = "encoding is unmaintained; pulled in via lance-tokenizer → lindera dictionaries (CJK encodings)" },
-    # Transitive dep from tabled — unmaintained but compile-time only (proc-macro)
-    { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2 is unmaintained as of 2026; pulled in transitively via tabled → tabled_derive; compile-time only, no runtime impact. Revisit when tabled drops the dependency." },
+    # Via lancedb → lance-tokenizer → lindera 0.44
+    { id = "RUSTSEC-2025-0141", reason = "bincode 2.x is unmaintained; pulled in via lancedb → lance-tokenizer → lindera 0.44. Revisit when bumping lancedb: 0.40 (lance 13 → lindera 3.x) no longer pulls it in." },
+    { id = "RUSTSEC-2021-0153", reason = "encoding is unmaintained; pulled in via lancedb → lance-tokenizer → lindera-dictionary 0.44 (CJK encodings). Revisit when bumping lancedb: 0.40 (lance 13 → lindera-dictionary 3.x) no longer pulls it in." },
+    { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml is unmaintained; pulled in via lancedb → lance-tokenizer → lindera 0.44 → serde_yaml 0.9 (deprecated). Revisit when bumping lancedb: 0.40 (lance 13 → lindera 3.x) no longer pulls in serde_yaml." },
+    # Via lancedb → datafusion 53 and model2vec-rs → tokenizers (compile-time only, proc-macro)
+    { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained; compile-time only (proc-macro), pulled in via lancedb → datafusion 53 / lance-bitpacking and model2vec-rs → tokenizers 0.21. Revisit when tokenizers drops it: lancedb 0.40 clears the datafusion side, but model2vec-rs 0.3.0 still uses tokenizers 0.21, which requires it." },
+    # Via model2vec-rs → hf-hub / tokenizers → indicatif 0.17
+    { id = "RUSTSEC-2025-0119", reason = "number_prefix is unmaintained; pulled in via model2vec-rs → hf-hub / tokenizers → indicatif 0.17. Revisit when hf-hub / tokenizers move to indicatif 0.18 (model2vec-rs 0.3.0 still uses hf-hub 0.4 and tokenizers 0.21), or if disabling their optional indicatif feature works." },
+    # Via tabled → tabled_derive 0.11 (compile-time only, proc-macro)
+    { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2 is unmaintained; compile-time only (proc-macro), pulled in via tabled 0.20 → tabled_derive 0.11. Revisit when bumping tabled: 0.22 (tabled_derive 0.12) no longer pulls it in." },
 ]
 
 # -- Licenses ----------------------------------------------------------

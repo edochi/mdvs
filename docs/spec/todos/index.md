@@ -204,3 +204,4 @@
 | [0200](TODO-0200.md) | Frontmatter-only edits never reach the search index                                                  | todo                      | high     | 2026-10-04 |
 | [0201](TODO-0201.md) | Emptying a file's body leaves its old chunks in the index                                            | todo                      | medium   | 2026-10-04 |
 | [0202](TODO-0202.md) | Merge and group imports with nightly rustfmt                                                         | done                      | low      | 2026-10-05 |
+| [0203](TODO-0203.md) | Upgrade lancedb and tabled to clear deny.toml advisory ignores                                       | todo                      | medium   | 2026-10-19 |
