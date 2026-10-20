@@ -205,3 +205,8 @@
 | [0201](TODO-0201.md) | Emptying a file's body leaves its old chunks in the index                                            | todo                      | medium   | 2026-10-04 |
 | [0202](TODO-0202.md) | Merge and group imports with nightly rustfmt                                                         | done                      | low      | 2026-10-05 |
 | [0203](TODO-0203.md) | Upgrade lancedb and tabled to clear deny.toml advisory ignores                                       | todo                      | medium   | 2026-10-19 |
+| [0204](TODO-0204.md) | Search loads the embedding model on every run when the vault has empty-body files                    | todo                      | high     | 2026-10-19 |
+| [0205](TODO-0205.md) | Revisit the default embedding model's load cost                                                      | todo                      | medium   | 2026-10-19 |
+| [0206](TODO-0206.md) | Strip symbols from release binaries                                                                  | todo                      | low      | 2026-10-19 |
+| [0207](TODO-0207.md) | Refresh the published benchmark numbers                                                              | todo                      | medium   | 2026-10-19 |
+| [0208](TODO-0208.md) | Re-check the Lance 6 search workarounds on Lance 10                                                  | todo                      | low      | 2026-10-19 |
