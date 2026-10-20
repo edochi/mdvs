@@ -256,7 +256,10 @@ mod tests {
     use super::*;
     use crate::{
         cmd::init::{InitOptions, InitScanFlags},
-        index::embed::{Embedder, ModelConfig},
+        index::{
+            embed::{Embedder, ModelConfig},
+            storage::INDEX_FORMAT,
+        },
         outcome::commands::SearchOutcome,
         schema::{
             config::{FieldsConfig, MdvsToml, SearchConfig, UpdateConfig},
@@ -465,6 +468,7 @@ mod tests {
             glob: "**".into(),
             built_at: String::new(),
             schema_hash: String::new(),
+            index_format: INDEX_FORMAT,
         }
     }
 
