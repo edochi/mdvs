@@ -210,3 +210,6 @@
 | [0206](TODO-0206.md) | Strip symbols from release binaries                                                                  | todo                      | low      | 2026-10-19 |
 | [0207](TODO-0207.md) | Refresh the published benchmark numbers                                                              | todo                      | medium   | 2026-10-19 |
 | [0208](TODO-0208.md) | Re-check the Lance 6 search workarounds on Lance 10                                                  | todo                      | low      | 2026-10-19 |
+| [0209](TODO-0209.md) | Backend comparison harness, and Turso as a candidate backend                                         | in-progress               | medium   | 2026-10-20 |
+| [0210](TODO-0210.md) | Chunker drops raw HTML and inline code from chunk text                                               | todo                      | high     | 2026-10-20 |
+| [0211](TODO-0211.md) | Semantic search on large vaults misses most of the true top results                                  | todo                      | high     | 2026-10-20 |
