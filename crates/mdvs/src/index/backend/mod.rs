@@ -2,7 +2,10 @@ mod read;
 mod search;
 mod where_translator;
 
-use std::path::{Path, PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use anyhow::Context;
 use arrow::array::{
@@ -19,7 +22,7 @@ use lancedb::{
 };
 pub use search::SearchResults;
 use serde::Serialize;
-use tracing::instrument;
+use tracing::{instrument, warn};
 pub use where_translator::{WhereNaming, WhereRewrite};
 
 use crate::{
@@ -221,6 +224,9 @@ impl Backend {
     }
 }
 
+/// Namespace dir older lancedb created eagerly; current lancedb rejects its config.
+const LEGACY_MANIFEST_DIR: &str = "__manifest";
+
 pub(crate) struct LanceBackend {
     root: PathBuf,
 }
@@ -240,6 +246,16 @@ impl LanceBackend {
             .to_str()
             .ok_or_else(|| anyhow::anyhow!("non-UTF8 path: {}", self.db_dir().display()))?
             .to_string();
+        let legacy_manifest = self.db_dir().join(LEGACY_MANIFEST_DIR);
+        if legacy_manifest.is_dir()
+            && let Err(e) = fs::remove_dir_all(&legacy_manifest)
+        {
+            warn!(
+                path = %legacy_manifest.display(),
+                error = %e,
+                "failed to remove legacy lancedb manifest dir"
+            );
+        }
         // Write Lance v2.2 files. The crate default is v2.1, whose miniblock
         // encoding caps a chunk at 32 KiB (u16 metadata). Sparse nested
         // frontmatter (many optional fields, mostly null per row) generates
@@ -281,7 +297,7 @@ impl LanceBackend {
         chunks: &[ChunkRow],
         metadata: BuildMetadata,
     ) -> anyhow::Result<()> {
-        std::fs::create_dir_all(self.db_dir())?;
+        fs::create_dir_all(self.db_dir())?;
 
         let batch = build_index_batch(schema_fields, files, chunks)?;
         // Bake the seven mdvs.* build-metadata keys into the schema (spike #5).
@@ -414,7 +430,7 @@ impl LanceBackend {
     fn clean(&self) -> anyhow::Result<()> {
         let dir = self.db_dir();
         if dir.exists() {
-            std::fs::remove_dir_all(&dir)?;
+            fs::remove_dir_all(&dir)?;
         }
         Ok(())
     }
