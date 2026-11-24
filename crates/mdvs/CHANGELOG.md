@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## v0.8.9 - 2026-11-24
+#### Continuous Integration
+- (**release**) build aarch64-apple-darwin on macos-15 - (fef25a3) - edochi, *Claude Opus 5.5*
+
+- - -
+
 ## v0.8.8 - 2026-11-24
 #### Miscellaneous Chores
 - (**version**) v0.8.7 - (2afccdb) - release-bot
