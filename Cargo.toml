@@ -20,6 +20,11 @@ protobuf = '*'
 [workspace.metadata.dist.dependencies.apt]
 protobuf-compiler = '*'
 
+# dist 0.31.0 defaults aarch64-apple-darwin to `macos-14`, which GitHub has
+# retired (jobs are cancelled with "configuration not supported").
+[workspace.metadata.dist.github-custom-runners]
+aarch64-apple-darwin = "macos-15"
+
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
 
