@@ -2,6 +2,23 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## v0.8.7 - 2026-11-24
+#### Bug Fixes
+- (**build**) rebuild indexes written by older mdvs versions in full - (9137140) - edochi, *Claude*
+- (**deps**) bump zstd, tokio, pulldown-cmark and others for 23 RustSec advisories - (83aa3ae) - edochi, *Claude Opus 5.5*
+- (**deps**) upgrade lancedb to 0.37 and tabled to 0.22 for 3 RustSec advisories - (c90273d) - edochi, *Claude*
+- (**deps**) ignore RUSTSEC-2024-0449 and fail on stale advisory ignores - (6911525) - edochi, *Claude*
+- (**deps**) bump rustls to 0.23.46 for 4 RustSec advisories - (e3e3aed) - edochi, *Claude*
+#### Documentation
+- add TODOs 0209-0211 for the backend harness, empty chunks and IVF-PQ recall - (e6a2f44) - edochi, *Claude*
+- add TODOs 0204-0208 for search latency and Lance 10 follow-ups - (f62e1d0) - edochi, *Claude*
+- add TODO-0203 to upgrade lancedb and tabled to clear advisory ignores - (a523fd3) - edochi, *Claude*
+#### Miscellaneous Chores
+- (**benchmarks**) add a backend comparison harness for Lance and Turso - (9161f88) - edochi, *Claude*
+- add audit-fix skill for failed Audit workflow runs - (06f05d4) - edochi, *Claude*
+
+- - -
+
 ## v0.8.6 - 2026-10-05
 #### Bug Fixes
 - (**hook**) validate .markdown edits, not just .md - (acaf88c) - edochi, *Claude*
