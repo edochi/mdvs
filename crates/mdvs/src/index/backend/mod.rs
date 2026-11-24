@@ -300,7 +300,7 @@ impl LanceBackend {
         fs::create_dir_all(self.db_dir())?;
 
         let batch = build_index_batch(schema_fields, files, chunks)?;
-        // Bake the seven mdvs.* build-metadata keys into the schema (spike #5).
+        // Bake the mdvs.* build-metadata keys into the schema.
         let schema_md = (*batch.schema())
             .clone()
             .with_metadata(metadata.to_hash_map());
@@ -473,7 +473,10 @@ pub(super) fn f32_col<'a>(batch: &'a RecordBatch, name: &str) -> anyhow::Result<
 #[cfg(test)]
 mod tests {
     use super::{search::translate_where_to_struct, *};
-    use crate::schema::shared::{ChunkingConfig, EmbeddingModelConfig};
+    use crate::{
+        index::storage::INDEX_FORMAT,
+        schema::shared::{ChunkingConfig, EmbeddingModelConfig},
+    };
 
     fn test_schema_fields() -> Vec<(String, FieldType)> {
         vec![
@@ -538,6 +541,7 @@ mod tests {
             glob: "**".into(),
             built_at: "2026-03-02T12:00:00+00:00".into(),
             schema_hash: "test".into(),
+            index_format: INDEX_FORMAT,
         }
     }
 
