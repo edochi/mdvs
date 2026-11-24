@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## v0.8.8 - 2026-11-24
+#### Miscellaneous Chores
+- (**version**) v0.8.7 - (2afccdb) - release-bot
+
+- - -
+
 ## v0.8.7 - 2026-11-24
 #### Bug Fixes
 - (**build**) rebuild indexes written by older mdvs versions in full - (9137140) - edochi, *Claude*
