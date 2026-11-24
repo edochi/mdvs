@@ -25,7 +25,7 @@ use crate::{
     index::{
         backend::Backend,
         embed::Embedder,
-        storage::{BuildMetadata, compute_schema_hash},
+        storage::{BuildMetadata, INDEX_FORMAT, compute_schema_hash},
     },
     outcome::{Outcome, ValidateOutcome, commands::BuildOutcome},
     output::{BuildFileDetail, NewField},
@@ -138,10 +138,11 @@ pub async fn build_core(
         embedding,
         chunking,
         backend,
+        outdated_index,
     } = pre_check_step(path, config, force, steps).await?;
 
     // 5. Classify
-    let full_rebuild = force || !backend.exists();
+    let full_rebuild = force || outdated_index || !backend.exists();
     let classify_data = classify_step(&backend, &scanned, full_rebuild, steps).await?;
 
     // 6. Load model and check its dimension against the index
@@ -173,6 +174,7 @@ pub async fn build_core(
         glob: config.scan.glob.clone(),
         built_at: chrono::Utc::now().to_rfc3339(),
         schema_hash: compute_schema_hash(config),
+        index_format: INDEX_FORMAT,
     };
     let plan = WritePlan::decide(&classify_data, &file_rows, &new_chunk_rows);
     write_index_step(&backend, &schema_fields, plan, build_meta, steps).await?;
@@ -249,6 +251,9 @@ struct PreChecked<'a> {
     chunking: &'a ChunkingConfig,
     /// The index backend for `path`.
     backend: Backend,
+    /// The existing index was written in an older [`INDEX_FORMAT`] and must
+    /// be rebuilt in full.
+    outdated_index: bool,
 }
 
 /// Parse the field types, require the `[embedding_model]` and `[chunking]`
@@ -290,7 +295,24 @@ async fn pre_check_step<'a>(
     };
 
     let backend = Backend::lance(path);
-    if let Some(msg) = detect_config_changes(&backend, embedding, chunking, config, force).await {
+    let stored = if force {
+        None
+    } else {
+        backend
+            .read_metadata()
+            .await
+            .map_err(|e| steps.push(StepEntry::err(ErrorKind::User, e.to_string(), 0)))?
+    };
+    // An index from an older format is rebuilt in full with the current
+    // config, so config changes since that build need no `--force`.
+    let outdated_index = stored
+        .as_ref()
+        .is_some_and(|m| m.index_format < INDEX_FORMAT);
+    if !outdated_index
+        && let Some(msg) = stored
+            .as_ref()
+            .and_then(|m| detect_config_changes(m, embedding, chunking, config))
+    {
         steps.push(StepEntry::err(ErrorKind::User, msg, 0));
         return Err(());
     }
@@ -299,6 +321,7 @@ async fn pre_check_step<'a>(
         embedding,
         chunking,
         backend,
+        outdated_index,
     })
 }
 
@@ -700,6 +723,56 @@ mod tests {
             hits.iter().any(|h| h.filename == "new-note.md"),
             "search for 'drift' should find new-note.md: {hits:?}"
         );
+    }
+
+    /// An index written before `INDEX_FORMAT` existed (a real one, from an
+    /// older lancedb whose data later incremental builds could not read
+    /// back) is rebuilt in full on the next build, without `--force` even
+    /// though the model changed, and later incremental builds succeed.
+    #[tokio::test]
+    async fn outdated_index_format_is_rebuilt_in_full() {
+        let tmp = tempfile::tempdir().unwrap();
+        let example_kb = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../example_kb");
+        copy_dir(&example_kb, tmp.path());
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/legacy-index");
+        copy_dir(&fixture, &tmp.path().join(".mdvs"));
+        let config_path = tmp.path().join("mdvs.toml");
+        let mut config = MdvsToml::read(&config_path).unwrap();
+        config.embedding_model = Some(EmbeddingModelConfig {
+            provider: "mock".into(),
+            name: "mock".into(),
+            revision: None,
+            dim: None,
+        });
+        config.write(&config_path).unwrap();
+
+        let build = || run(tmp.path(), None, None, None, false, true);
+
+        let first = build().await;
+        assert!(
+            !crate::step::has_failed(&first),
+            "build of an outdated index failed: {first:#?}"
+        );
+        assert!(unwrap_build(&first).full_rebuild);
+
+        for (i, file) in [
+            "AGENTS.md",
+            "scratch.md",
+            "lab-values.md",
+            "README.md",
+            "projects/alpha/overview.md",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            append(&tmp.path().join(file), &format!("\nEdit {i}.\n"));
+            let output = build().await;
+            assert!(
+                !crate::step::has_failed(&output),
+                "build after editing {file} failed: {output:#?}"
+            );
+            assert!(!unwrap_build(&output).full_rebuild);
+        }
     }
 
     #[tokio::test]

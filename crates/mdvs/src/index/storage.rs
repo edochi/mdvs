@@ -92,6 +92,11 @@ pub struct ChunkRow {
     pub embedding: Vec<f32>,
 }
 
+/// Version of what an index stores. Bump it when a change means existing
+/// indexes must be rebuilt; `build` then rebuilds them automatically.
+/// Indexes written before this key existed read as 0.
+pub const INDEX_FORMAT: u32 = 1;
+
 /// Configuration snapshot stored as Lance table-level key-value metadata.
 ///
 /// Captures the exact settings used for a build so that subsequent builds
@@ -111,6 +116,8 @@ pub struct BuildMetadata {
     /// constraints, path-scoping, or preprocess arrays invalidates the
     /// existing dataset; rebuild required).
     pub schema_hash: String,
+    /// [`INDEX_FORMAT`] of the build that wrote the index.
+    pub index_format: u32,
 }
 
 /// Compute a deterministic hash of the canonical JSON Schema for a given
@@ -150,6 +157,7 @@ impl BuildMetadata {
         m.insert("mdvs.glob".into(), self.glob.clone());
         m.insert("mdvs.built_at".into(), self.built_at.clone());
         m.insert("mdvs.schema_hash".into(), self.schema_hash.clone());
+        m.insert("mdvs.index_format".into(), self.index_format.to_string());
         m
     }
 
@@ -175,6 +183,10 @@ impl BuildMetadata {
             glob: meta.get("mdvs.glob")?.clone(),
             built_at: meta.get("mdvs.built_at")?.clone(),
             schema_hash: meta.get("mdvs.schema_hash").cloned().unwrap_or_default(),
+            index_format: meta
+                .get("mdvs.index_format")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0),
         })
     }
 }
@@ -1187,6 +1199,7 @@ mod tests {
             glob: "**".into(),
             built_at: "2026-05-11T00:00:00+00:00".into(),
             schema_hash: "deadbeef".into(),
+            index_format: INDEX_FORMAT,
         };
         let m = meta.to_hash_map();
         let parsed = BuildMetadata::from_hash_map(&m).unwrap();
@@ -1206,6 +1219,7 @@ mod tests {
         m.insert("mdvs.built_at".into(), "2026-01-01".into());
         let parsed = BuildMetadata::from_hash_map(&m).unwrap();
         assert_eq!(parsed.schema_hash, "");
+        assert_eq!(parsed.index_format, 0);
     }
 
     #[test]

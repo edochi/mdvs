@@ -12,7 +12,7 @@
 use std::path::Path;
 
 use crate::{
-    index::{backend::Backend, storage::compute_schema_hash},
+    index::storage::{BuildMetadata, compute_schema_hash},
     schema::{
         config::{BuildConfig, MdvsToml, SearchConfig},
         shared::{ChunkingConfig, EmbeddingModelConfig},
@@ -136,24 +136,14 @@ pub(crate) fn mutate_config(
     None
 }
 
-/// Detect manual config changes against the existing Lance table-level metadata.
-/// Returns `Some(error_message)` if config changed and --force not given.
-pub(crate) async fn detect_config_changes(
-    backend: &Backend,
+/// Compare the config against the metadata of the existing index.
+/// Returns `Some(error_message)` listing the changes that need `--force`.
+pub(crate) fn detect_config_changes(
+    meta: &BuildMetadata,
     embedding: &EmbeddingModelConfig,
     chunking: &ChunkingConfig,
     config: &MdvsToml,
-    force: bool,
 ) -> Option<String> {
-    if force {
-        return None;
-    }
-    let meta = match backend.read_metadata().await {
-        Ok(Some(m)) => m,
-        Ok(None) => return None, // first build, no metadata
-        Err(e) => return Some(e.to_string()),
-    };
-
     let mut mismatches = Vec::new();
     if meta.embedding_model != *embedding {
         mismatches.push(format!(

@@ -26,7 +26,8 @@ drive it directly and read the per-phase `StepEntry` timings.
    - Unchanged (hash matches) → retain existing chunks
    - Removed (in index, not in scan) → drop
 6. **Config change check** — compare current `BuildMetadata` against stored.
-   Mismatch → error unless `--force`.
+   Mismatch → error unless `--force`. An index with an outdated
+   `mdvs.index_format` skips this check and is rebuilt in full.
 7. **Load model** — `Embedder::load()` (`index/embed.rs`). Skipped if
    `needs_embedding == 0`.
 8. **Chunk + embed** — for each new/edited file: `Chunks::new(body, max_chars)`
@@ -41,10 +42,10 @@ drive it directly and read the per-phase `StepEntry` timings.
       output. The skip predicate uses the new chunk rows (not file count)
       because empty-body files like Hugo `_index.md` always classify as needing
       embedding but produce zero chunks.
-    - **Full overwrite** when `full_rebuild` is true (first build or `--force`)
-      — `LanceBackend::write_index()` recreates the table via
-      `CreateTableMode::Overwrite` and rebuilds the FTS + (above 10k chunks)
-      IVF-PQ indexes.
+    - **Full overwrite** when `full_rebuild` is true (first build, `--force`, or
+      an outdated index format) — `LanceBackend::write_index()` recreates the
+      table via `CreateTableMode::Overwrite` and rebuilds the FTS + (above 10k
+      chunks) IVF-PQ indexes.
     - **Incremental** otherwise — `LanceBackend::write_index_incremental()`
       deletes the rows for `file_ids_to_clear` (= new + edited + removed
       file_ids), appends the freshly embedded chunks, refreshes the schema
